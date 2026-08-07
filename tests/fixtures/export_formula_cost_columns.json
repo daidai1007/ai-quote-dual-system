@@ -1,0 +1,85 @@
+{
+  "quote_id": "REG-FORMULA-COST-COLUMNS-20260804",
+  "quote_date": "2026-08-04",
+  "company_code": "REGRESSION",
+  "company_name": "公式成本列回归测试公司",
+  "items": [
+    {
+      "source_pdf_name": "JF100MKD2.80.03-001电气柜图纸.pdf",
+      "product_family": "JS",
+      "product_code": "JS_SINGLE",
+      "model_code": "JF100MKD2.80.03-001",
+      "material_code": "SECC",
+      "width_mm": 1000,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "quantity": 1,
+      "formula_discount": 1,
+      "quick_discount": 0.95,
+      "formula": {
+        "material_cost": 700,
+        "auxiliary_cost": 300,
+        "labor_cost": 500,
+        "spray_cost": 165.81,
+        "management_fee": 65,
+        "attachment_fee": 92,
+        "total_cost": 1822.81
+      },
+      "quick": {
+        "attachment_fee": 92,
+        "total_cost": 4106.29
+      },
+      "attachments": [
+        {
+          "item_name": "风机",
+          "model_code": "KA2206HA2B",
+          "variant": "国产",
+          "quantity": 1,
+          "unit_price": 80
+        },
+        {
+          "item_name": "接地线",
+          "variant": "红绿线",
+          "quantity": 2,
+          "unit_price": 6
+        }
+      ],
+      "final_remark": "公式法五项成本列回归测试。"
+    },
+    {
+      "source_pdf_name": "KP802060005控制柜总装图.pdf",
+      "product_family": "JP",
+      "product_code": "JP_DOUBLE",
+      "model_code": "KP802060005",
+      "material_code": "SUS304",
+      "width_mm": 800,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "quantity": 3,
+      "formula_discount": 0.9,
+      "quick_discount": 1,
+      "formula": {
+        "material_cost": 2000,
+        "auxiliary_cost": 300,
+        "labor_cost": 800,
+        "spray_cost": 308.8,
+        "management_fee": 104,
+        "attachment_fee": 18,
+        "total_cost": 3530.8
+      },
+      "quick": {
+        "attachment_fee": 18,
+        "total_cost": 4288.6
+      },
+      "attachments": [
+        {
+          "item_name": "文件夹",
+          "variant": "A4",
+          "quantity": 3,
+          "unit_price": 6
+        }
+      ],
+      "final_remark": "折扣及附件右移回归测试。"
+    }
+  ]
+}

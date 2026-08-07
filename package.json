@@ -1,0 +1,15 @@
+{
+  "name": "ai-quote-dual-system",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "PostgreSQL-driven dual quotation API and Windows desktop client",
+  "license": "MIT",
+  "scripts": {
+    "start": "node api/server.mjs",
+    "check": "node --check api/server.mjs && node --check export_dual_quote_workbook.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

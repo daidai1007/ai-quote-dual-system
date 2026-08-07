@@ -1,0 +1,114 @@
+{
+  "quote_id": "REG-COST-DETAIL-20260805",
+  "quote_date": "2026-08-05",
+  "company_code": "REGRESSION",
+  "company_name": "成本明细回归测试公司",
+  "items": [
+    {
+      "source_pdf_name": "JF100MKD2.80.03-001电气柜图纸.pdf",
+      "product_family": "JS",
+      "product_code": "JS_SINGLE",
+      "model_code": "JF100MKD2.80.03-001",
+      "material_code": "SECC",
+      "width_mm": 1000,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "quantity": 2,
+      "formula_discount": 0.9,
+      "quick_discount": 1,
+      "coating_type": "平光",
+      "formula": {
+        "material_cost": 200,
+        "corrected_material_weight_kg": 50,
+        "material_unit_price": 4,
+        "auxiliary_cost": 100,
+        "labor_cost": 300,
+        "attachment_fee": 50,
+        "spray_cost": 150,
+        "spray_unit_price": 30,
+        "management_fee": 39,
+        "product_area_m2": 5,
+        "total_cost": 839
+      },
+      "quick": {
+        "attachment_fee": 50,
+        "total_cost": 3200
+      },
+      "auxiliary_detail": {
+        "method": "bom",
+        "source_file": "辅材BOM清单.xlsx",
+        "source_sheet": "JS单门",
+        "lines": [
+          {
+            "line_no": 1,
+            "item_name": "安装条",
+            "spec_model": "JS-1000",
+            "quantity": 2,
+            "unit_price": 20,
+            "line_total": 40,
+            "source_row_no": 6
+          },
+          {
+            "line_no": 2,
+            "item_name": "导轨",
+            "spec_model": "35mm",
+            "quantity": 3,
+            "unit_price": 20,
+            "line_total": 60,
+            "source_row_no": 7
+          }
+        ]
+      },
+      "attachments": [
+        {
+          "item_name": "A4资料盒",
+          "model_code": "A4",
+          "quantity": 1,
+          "unit_price": 30,
+          "price_source": "控制柜附件价格表.xlsx"
+        },
+        {
+          "item_name": "接地线",
+          "model_code": "编织带",
+          "quantity": 2,
+          "unit_price": 10,
+          "price_source": "控制柜附件价格表.xlsx"
+        }
+      ],
+      "final_remark": "成本明细回归测试。"
+    },
+    {
+      "source_pdf_name": "KP802060005控制柜总装图.pdf",
+      "product_family": "JP",
+      "product_code": "JP_DOUBLE",
+      "model_code": "KP802060005",
+      "material_code": "SUS304",
+      "width_mm": 800,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "quantity": 1,
+      "formula_discount": 1,
+      "quick_discount": 1,
+      "coating_type": "橘纹",
+      "formula": {
+        "material_cost": 400,
+        "corrected_material_weight_kg": 25,
+        "material_unit_price": 16,
+        "auxiliary_cost": 120,
+        "labor_cost": 350,
+        "attachment_fee": 0,
+        "spray_cost": 200,
+        "spray_unit_price": 25,
+        "management_fee": 45.5,
+        "product_area_m2": 8,
+        "total_cost": 1115.5
+      },
+      "quick": {
+        "attachment_fee": 0,
+        "total_cost": 4100
+      },
+      "attachments": [],
+      "final_remark": "成本明细第二行回归测试。"
+    }
+  ]
+}

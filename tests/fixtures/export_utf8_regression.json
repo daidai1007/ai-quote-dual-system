@@ -1,0 +1,84 @@
+{
+  "quote_id": "REG-EXPORT-UTF8-20260803",
+  "quote_date": "2026-08-03",
+  "company_code": "REGRESSION",
+  "company_name": "回归测试公司",
+  "items": [
+    {
+      "source_pdf_name": "JF100MKD2.80.03-001电气柜图纸.pdf",
+      "product_family": "JS",
+      "product_code": "JS_SINGLE",
+      "model_code": "JF100MKD2.80.03-001",
+      "material_code": "SECC",
+      "coating_type": "橘纹",
+      "variant_code": "SINGLE",
+      "variant_name": "单门",
+      "width_mm": 1000,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "quantity": 1,
+      "formula_discount": 1,
+      "quick_discount": 0.95,
+      "formula": {
+        "total_cost": 1822.81,
+        "attachment_fee": 92
+      },
+      "quick": {
+        "total_cost": 4106.29,
+        "attachment_fee": 92
+      },
+      "attachments": [
+        {
+          "item_name": "风机",
+          "model_code": "KA2206HA2B",
+          "variant": "国产",
+          "quantity": 1,
+          "unit_price": 80,
+          "price_source": "国产"
+        },
+        {
+          "item_name": "接地线",
+          "variant": "红绿线",
+          "quantity": 2,
+          "unit_price": 6
+        }
+      ],
+      "source_ocr_remark": "技术要求：\n1. 焊缝均匀，断续焊。\n2. 表面喷塑RAL7035桔纹。\n3. 配24V灯、门限位开关。路径 C:\\图纸\\测试。",
+      "final_remark": "仿威图JS柜，碳钢喷塑RAL7035橘纹，柜体1.5，门板2.0，前单开门后背板，配国产KA2206HA2B风机1个，配接地线2套。"
+    },
+    {
+      "source_pdf_name": "KP802060005控制柜总装图.pdf",
+      "product_family": "JP",
+      "product_code": "JP_DOUBLE",
+      "model_code": "KP802060005",
+      "material_code": "SUS304",
+      "coating_type": "橘纹",
+      "variant_code": "DOUBLE",
+      "variant_name": "双门",
+      "width_mm": 800,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "quantity": 3,
+      "formula_discount": 0.9,
+      "quick_discount": 1,
+      "formula": {
+        "total_cost": 3530.8,
+        "attachment_fee": 18
+      },
+      "quick": {
+        "total_cost": 4288.6,
+        "attachment_fee": 18
+      },
+      "attachments": [
+        {
+          "item_name": "文件夹",
+          "variant": "A4",
+          "quantity": 3,
+          "unit_price": 6
+        }
+      ],
+      "source_ocr_remark": "技术要求：\n1. 标志使用红色，中文文字使用蓝色，英文使用黑色。\n2. 型号柜体订货号：KP802060005（800×2000×600 RAL7035），3个。",
+      "final_remark": "仿威图JP柜，不锈钢304材质，表面喷塑RAL7035橘纹，柜体1.5，门板2.0，前双开门后背板，配A4文件夹3个。"
+    }
+  ]
+}
