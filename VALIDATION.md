@@ -16,3 +16,13 @@ The Excel exporter currently imports `@oai/artifact-tool`. That runtime is not d
 ## Data limitation
 
 Migration files define schema and calculation behavior only. Real material prices, attachment prices, formula workbooks, customer history, drawings, and quick-quote experience data must be supplied separately with sanitized test data or local business data.
+
+## Quick-only configuration attachments
+
+Run the source regression with:
+
+```powershell
+npm test
+```
+
+Build `2026-08-15-quick-only-attachment-v1` keeps the five configured cabinet transformations out of the formula quote and includes them in the quick quote. The production regression also covers quantity, `unit_price_override`, ordinary attachments, mixed selections, and idempotent application.

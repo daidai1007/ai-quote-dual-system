@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyQuickOnlyAttachmentRuleToQuoteRow } from './attachment_rules.mjs';
 
 const PORT = Number(process.env.AI_QUOTE_API_PORT || 8080);
 const HOST = process.env.AI_QUOTE_API_HOST || '127.0.0.1';
@@ -15,7 +16,7 @@ const DB_HOST = process.env.AI_QUOTE_DB_HOST || '127.0.0.1';
 const DB_PORT = process.env.AI_QUOTE_DB_PORT || '5432';
 const DB_NAME = process.env.AI_QUOTE_DB_NAME || 'ai_quote_dev';
 const DB_USER = process.env.AI_QUOTE_DB_USER || 'postgres';
-const API_BUILD = '2026-08-05-cost-detail-v2';
+const API_BUILD = '2026-08-15-quick-only-attachment-v1';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -793,7 +794,8 @@ const server = http.createServer(async (req, res) => {
     // Parse the final non-empty line so both empty-attachment and selected-
     // attachment requests use the same response path.
     const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
-    json(res, 200, JSON.parse(jsonLine));
+    const quote = applyQuickOnlyAttachmentRuleToQuoteRow(JSON.parse(jsonLine), input.attachments);
+    json(res, 200, quote);
   } catch (error) {
     json(res, error.message?.includes('required') || error.message?.includes('must be') ? 400 : 500, {
       error: 'dual_quote_failed',

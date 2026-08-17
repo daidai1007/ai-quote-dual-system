@@ -96,7 +96,7 @@ API_URL = str(
     or "http://127.0.0.1:8080/api/quotes/calculate-dual"
 ).strip()
 API_KEY = str(os.getenv("AI_QUOTE_API_KEY") or CLIENT_CONFIG.get("api_key") or "").strip()
-MIN_EXPORT_API_BUILD = "2026-08-04-client-trial-v1"
+REQUIRED_EXPORT_API_BUILD = "2026-08-15-quick-only-attachment-v1"
 
 
 def api_headers(has_json_body: bool = False) -> dict[str, str]:
@@ -2757,7 +2757,7 @@ class MainWindow(QMainWindow):
                 "双报价接口没有运行。请先启动 start_api.ps1，再重新导出。"
             ) from exc
         build = str(health.get("build") or "")
-        if build != MIN_EXPORT_API_BUILD:
+        if build != REQUIRED_EXPORT_API_BUILD:
             raise RuntimeError(
                 f"双报价接口版本过旧（当前：{build or '未知'}）。"
                 "请关闭占用 8080 端口的旧接口，重新运行 start_api.ps1。"

@@ -7,7 +7,8 @@
   "license": "MIT",
   "scripts": {
     "start": "node api/server.mjs",
-    "check": "node --check api/server.mjs && node --check export_dual_quote_workbook.mjs"
+    "check": "node --check api/server.mjs && node --check api/attachment_rules.mjs && node --check export_dual_quote_workbook.mjs",
+    "test": "node api/attachment_rules.quick_only.test.mjs"
   },
   "engines": {
     "node": ">=20"
