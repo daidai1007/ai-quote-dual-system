@@ -1,0 +1,10 @@
+**
+!package.json
+!package-lock.json
+!api/
+!api/server.mjs
+!api/attachment_rules.mjs
+!api/runtime_config.mjs
+!exceljs_range_adapter.mjs
+!quote_export_contract.mjs
+!export_dual_quote_workbook.mjs
