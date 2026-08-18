@@ -1,15 +1,25 @@
 /*
  * Formal dual quotation workbook exporter.
  *
- * Input is a confirmed multi-cabinet JSON snapshot.  The reference workbook
- * remains the visual template; this script creates method-specific formula
- * and quick-quote sheets and fills only quote values.  No calculation is
- * performed here.
+ * Input is a confirmed multi-cabinet JSON snapshot.  The public quotation
+ * layout is generated from a sanitized, code-owned template so source and
+ * packaged deployments do not depend on a private workbook or Codex runtime.
+ * Cost calculation remains database-owned; this exporter only lays out the
+ * already-confirmed values.
  */
-import { FileBlob, SpreadsheetFile } from "@oai/artifact-tool";
+import ExcelJS from "@excel.js/exceljs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  attachRangeApi,
+  attachWorkbookRangeApi,
+  rangePlainValues,
+  scanWorkbookFormulaErrors,
+} from "./exceljs_range_adapter.mjs";
+import {
+  isDrawingSourcedQuoteItem,
+  validateConfirmedQuoteSnapshot,
+} from "./quote_export_contract.mjs";
 
 const [inputPath, outputPath] = process.argv.slice(2);
 if (!inputPath || !outputPath) throw new Error("usage: export_dual_quote_workbook.mjs input.json output.xlsx");
@@ -17,48 +27,24 @@ const payload = JSON.parse(await fs.readFile(inputPath, "utf8"));
 if (!Array.isArray(payload.items) || payload.items.length === 0) {
   throw new Error("报价清单为空，无法生成正式报价单");
 }
-const projectRoot = path.dirname(fileURLToPath(import.meta.url));
-const templatePath = path.join(projectRoot, "templates", "quote_template.xlsx");
-try {
-  await fs.access(templatePath);
-} catch {
-  throw new Error(`找不到正式报价单模板：${templatePath}`);
-}
-const template = await FileBlob.load(templatePath);
-const workbook = await SpreadsheetFile.importXlsx(template);
-const formulaSheet = workbook.worksheets.getItemAt(0);
-formulaSheet.name = "公式法报价单";
-const quickSheet = workbook.worksheets.add("快速报价单");
-quickSheet.getRange("A1:Y20").copyFrom(formulaSheet.getRange("A1:Y20"), "all");
-// artifact-tool's current cross-sheet copyFrom("all") copies cell values and
-// formulas but does not carry the imported XLSX style index.  Both sheets live
-// in the same workbook and therefore share the same style table, so copying
-// each cell's styleIndex is the lossless way to preserve borders, fills,
-// fonts, alignment and number formats from the reference sheet.
-for (let row = 0; row < 20; row += 1) {
-  for (let column = 0; column < 25; column += 1) {
-    const sourceCell = formulaSheet.__getCell(row, column);
-    if (!sourceCell || sourceCell.styleIndex === undefined) continue;
-    quickSheet.__getOrCreateCell(row, column).styleIndex = sourceCell.styleIndex;
-  }
-}
+validateConfirmedQuoteSnapshot(payload);
 
 // Cross-sheet copyFrom() also does not reproduce the source worksheet's
 // merged cells, column widths or row heights. Apply the fixed template
 // geometry explicitly so both quotation sheets have the same layout in
 // Excel/WPS.
 const templateColumnWidths = {
-  A: 4.33333333333333,
-  B: 17.2833333333333,
-  C: 22.775,
-  D: 5.775,
-  E: 5.10833333333333,
-  F: 9,
-  G: 9,
-  H: 9,
-  I: 9,
-  J: 54.4916666666667,
-  K: 25.2,
+  A: 5,
+  B: 18,
+  C: 24,
+  D: 7,
+  E: 7,
+  F: 11,
+  G: 12,
+  H: 58,
+  I: 3,
+  J: 3,
+  K: 3,
   L: 9.26666666666667,
   M: 9.26666666666667,
   N: 10.05,
@@ -86,11 +72,11 @@ const templateRowHeights = {
 const templateMergeRanges = [
   "A1:C2",
   "E1:G1", "E2:G2",
-  "B4:D4", "F4:J4",
-  "B5:D5", "F5:J5",
-  "B6:D6", "F6:J6",
-  "B7:D7", "F7:J7",
-  "B8:D8", "F8:J8",
+  "B4:D4", "F4:H4",
+  "B5:D5", "F5:H5",
+  "B6:D6", "F6:H6",
+  "B7:D7", "F7:H7",
+  "B8:D8", "F8:H8",
 ];
 
 function applyTemplateGeometry(sheet, applyMerges = false) {
@@ -105,22 +91,119 @@ function applyTemplateGeometry(sheet, applyMerges = false) {
   }
 }
 
+function buildQuotationTemplate(targetWorkbook) {
+  const sheet = attachRangeApi(targetWorkbook.addWorksheet("报价模板"));
+  sheet.views = [{ showGridLines: false }];
+  applyTemplateGeometry(sheet, true);
+
+  sheet.getRange("A1").values = [["报价单"]];
+  sheet.getRange("D1").values = [["编号"]];
+  sheet.getRange("D2").values = [["日期"]];
+  sheet.getRange("A4:A8").values = [["买方"], ["地址"], ["电话"], ["传真"], ["邮箱"]];
+  sheet.getRange("E4:E8").values = [["卖方"], ["地址"], ["电话"], ["传真"], ["邮箱"]];
+  sheet.getRange("A10:H10").values = [[
+    "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "金额", "备注",
+  ]];
+  sheet.getRange("L10:Y10").values = [[
+    "柜体", "底座", "侧板", "三排纵梁", "安装板", "灯/开关", "文件夹",
+    "风机滤网", "门限位器", "接地线", "双开门", "安装板单发", "运费", "折扣",
+  ]];
+
+  sheet.getRange("A1:Y20").format.font = {
+    name: "Microsoft YaHei",
+    size: 10,
+    color: "#1F2937",
+  };
+  sheet.getRange("A1:C2").format.font = {
+    name: "Microsoft YaHei",
+    size: 22,
+    bold: true,
+    color: "#111827",
+  };
+  sheet.getRange("A1:C2").format.horizontalAlignment = "center";
+  sheet.getRange("A1:C2").format.verticalAlignment = "middle";
+  sheet.getRange("A1:C2").format.borders = {
+    preset: "all", style: "medium", color: "#1F2937",
+  };
+  sheet.getRange("D1:G2").format.horizontalAlignment = "center";
+  sheet.getRange("D1:G2").format.verticalAlignment = "middle";
+  sheet.getRange("D1:G2").format.borders = {
+    preset: "all", style: "medium", color: "#1F2937",
+  };
+  sheet.getRange("D1:D2").format.font = { bold: true, color: "#374151" };
+
+  for (const row of [4, 5, 6, 7, 8]) {
+    for (const range of [`A${row}:D${row}`, `E${row}:H${row}`]) {
+      sheet.getRange(range).format.borders = {
+        bottom: { style: "thin", color: "#374151" },
+      };
+    }
+  }
+  sheet.getRange("A4:A8").format.font = { bold: true, color: "#374151" };
+  sheet.getRange("E4:E8").format.font = { bold: true, color: "#374151" };
+  sheet.getRange("B4:D8").format.horizontalAlignment = "center";
+  sheet.getRange("F4:H8").format.horizontalAlignment = "center";
+
+  sheet.getRange("A10:H10").format.fill = "#E9EEF5";
+  sheet.getRange("A10:H10").format.font = { bold: true, color: "#1F3A5F" };
+  sheet.getRange("A10:H10").format.horizontalAlignment = "center";
+  sheet.getRange("A10:H10").format.verticalAlignment = "middle";
+  sheet.getRange("A10:H10").format.wrapText = true;
+  sheet.getRange("A10:H10").format.borders = {
+    preset: "all", style: "thin", color: "#4B5563",
+  };
+
+  sheet.getRange("A11:H17").format.verticalAlignment = "middle";
+  sheet.getRange("A11:H17").format.wrapText = true;
+  sheet.getRange("A11:H17").format.borders = {
+    preset: "all", style: "thin", color: "#6B7280",
+  };
+  sheet.getRange("A11:G17").format.horizontalAlignment = "center";
+  sheet.getRange("H11:H17").format.horizontalAlignment = "left";
+  sheet.getRange("A18:H18").format.fill = "#F3F6FA";
+  sheet.getRange("A18:H18").format.font = { bold: true, color: "#1F3A5F" };
+  sheet.getRange("A18:H18").format.verticalAlignment = "middle";
+  sheet.getRange("A18:H18").format.borders = {
+    preset: "all", style: "thin", color: "#4B5563",
+  };
+  sheet.getRange("A18:G18").format.horizontalAlignment = "center";
+  sheet.getRange("F11:G18").format.numberFormat = "#,##0.00";
+
+  sheet.getRange("L10:Y10").format.fill = "#EEF3F8";
+  sheet.getRange("L10:Y10").format.font = { bold: true, color: "#40566F" };
+  sheet.getRange("L10:Y10").format.horizontalAlignment = "center";
+  sheet.getRange("L10:Y10").format.verticalAlignment = "middle";
+  sheet.getRange("L10:Y10").format.wrapText = true;
+  sheet.getRange("L10:Y10").format.borders = {
+    preset: "all", style: "thin", color: "#CBD5E1",
+  };
+  sheet.getRange("L11:Y18").format.horizontalAlignment = "center";
+  sheet.getRange("L11:Y18").format.verticalAlignment = "middle";
+  sheet.getRange("L11:Y18").format.numberFormat = "#,##0.00";
+  return sheet;
+}
+
+const workbook = new ExcelJS.Workbook();
+const formulaSheet = buildQuotationTemplate(workbook);
+formulaSheet.name = "公式法报价单";
+const quickSheet = attachRangeApi(workbook.addWorksheet("快速报价单"));
+quickSheet.views = [{ showGridLines: false }];
+quickSheet.getRange("A1:Y20").copyFrom(formulaSheet.getRange("A1:Y20"), "all");
+applyTemplateGeometry(quickSheet, true);
+
 const col = (n) => {
   let text = "";
   for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) text = String.fromCharCode(65 + (x - 1) % 26) + text;
   return text;
 };
 
-applyTemplateGeometry(formulaSheet);
-applyTemplateGeometry(quickSheet, true);
-
 // The formula sheet exposes its five database cost components before the
 // attachment-price columns.  The quick sheet intentionally keeps the original
 // fixed template unchanged.  In the formula sheet, replace the old L “柜体”
 // column with the five component columns L:P, then move the original attachment
 // columns M:Y four places to the right (Q:AC).  Same-sheet copyFrom preserves
-// values/formulas; copying styleIndex explicitly also protects formatting when
-// artifact-tool imports the source XLSX with indexed styles.
+// values and formatting.  The range adapter snapshots each source column so
+// overlapping moves cannot overwrite columns that are still waiting to move.
 // Source and destination overlap. Move one column at a time from right to
 // left so an already-copied destination can never overwrite a source column
 // that is still waiting to be moved.
@@ -131,11 +214,6 @@ for (let sourceColumn = 25; sourceColumn >= 13; sourceColumn -= 1) {
     formulaSheet.getRange(`${sourceLetter}1:${sourceLetter}28`),
     "all",
   );
-  for (let row = 0; row < 28; row += 1) {
-    const sourceCell = formulaSheet.__getCell(row, sourceColumn - 1);
-    if (!sourceCell || sourceCell.styleIndex === undefined) continue;
-    formulaSheet.__getOrCreateCell(row, sourceColumn + 3).styleIndex = sourceCell.styleIndex;
-  }
 }
 for (let sourceColumn = 13; sourceColumn <= 25; sourceColumn += 1) {
   const sourceLetter = col(sourceColumn);
@@ -177,8 +255,15 @@ const attachmentColumn = (itemName = "") => {
 
 const asNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const fmt = (value) => String(asNumber(value)).replace(/\.0+$/, "");
+const quoteSpecification = (item = {}) => {
+  const explicit = String(item.specification || "").trim();
+  if (explicit) return explicit;
+  // Engineering/cost calculations retain W/H/D internally.  The approved
+  // customer-facing quotation column is W*D*H.
+  return `${fmt(item.width_mm)}*${fmt(item.depth_mm)}*${fmt(item.height_mm)}`;
+};
 const drawingNameBeforeChinese = (value) => {
-  const stem = path.basename(String(value || "").trim()).replace(/\.pdf$/i, "");
+  const stem = path.basename(String(value || "").trim()).replace(/\.(?:pdf|dwg|dxf|jpe?g|png|bmp|tiff?)$/i, "");
   const firstChinese = stem.search(/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/u);
   const prefix = firstChinese >= 0 ? stem.slice(0, firstChinese) : stem;
   return prefix.trim() || stem;
@@ -276,7 +361,8 @@ const attachmentRemark = (item = {}) => {
 // wording approved for the formal quotation.  This fallback also upgrades
 // draft rows created by older client builds at export time.
 const standardizedRemark = (item = {}) => {
-  const stored = String(item.final_remark || item.notes || "").trim();
+  const stored = String(item.final_remark ?? item.notes ?? "").trim();
+  if (isDrawingSourcedQuoteItem(item)) return stored;
   const source = String(item.source_ocr_remark || stored).trim();
   const numbered = /(?:^|\n)\s*\d+[\.、)]/.test(source);
   if (stored && !stored.includes("技术要求") && !numbered) return stored;
@@ -375,8 +461,9 @@ function fillSheet(sheet, method) {
     // final_remark is the operator-confirmed wording shown on the Remarks page.
     // Keep notes as a backward-compatible fallback for older saved drafts.
     const note = standardizedRemark(item);
-    // 规格型号始终是柜体尺寸，不能再被 PDF 编号或产品规格覆盖。
-    const spec = `${fmt(item.width_mm)}×${fmt(item.height_mm)}×${fmt(item.depth_mm)}`;
+    // 规格型号优先使用人工确认的 W*D*H 高度表达式；未提供时按
+    // 内部 W/H/D 尺寸回退，不能再被图号或产品型号覆盖。
+    const spec = quoteSpecification(item);
     const values = Array(columnCount).fill("");
     values[0] = index + 1;
     values[1] = drawingNameBeforeChinese(
@@ -386,8 +473,8 @@ function fillSheet(sheet, method) {
     values[3] = qty;
     values[4] = "台";
     values[5] = unitCost;
-    // G/H/I deliberately remain blank: historical/amount fields are pending.
-    values[9] = note;
+    values[6] = unitCost * qty;
+    values[7] = note;
     const attachments = item.attachments || [];
     const extras = attachmentAmounts(attachments, discount, method);
     for (const [columnIndex, amount] of Object.entries(extras)) values[Number(columnIndex) - 1] = amount;
@@ -412,13 +499,13 @@ function fillSheet(sheet, method) {
       values[24] = discount;
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];
-    sheet.getRange(`J${row}`).format.wrapText = true;
-    sheet.getRange(`J${row}`).format.verticalAlignment = "middle";
+    sheet.getRange(`H${row}`).format.wrapText = true;
+    sheet.getRange(`H${row}`).format.verticalAlignment = "middle";
   });
-  sheet.getRange(`A${subtotalRow}`).values = [["本页小计"]];
-  sheet.getRange(`F${subtotalRow}`).values = [[subtotal]];
+  sheet.getRange(`B${subtotalRow}`).values = [["合计"]];
+  sheet.getRange(`G${subtotalRow}`).values = [[subtotal]];
   sheet.getRange(`A${subtotalRow}:${lastColumn}${subtotalRow}`).format.font = { bold: true };
-  sheet.getRange(`F${firstRow}:F${subtotalRow}`).format.numberFormat = "#,##0.00";
+  sheet.getRange(`F${firstRow}:G${subtotalRow}`).format.numberFormat = "#,##0.00";
   sheet.getRange(`L${firstRow}:${col(columnCount - 1)}${dataEnd}`).format.numberFormat = "#,##0.00";
   sheet.getRange(`${discountColumn}${firstRow}:${discountColumn}${dataEnd}`).format.numberFormat = "0.00";
 }
@@ -426,7 +513,8 @@ function fillSheet(sheet, method) {
 let costDetailLastRow = 7;
 
 function buildFormulaCostDetailSheet() {
-  const sheet = workbook.worksheets.add("成本明细");
+  const sheet = attachRangeApi(workbook.addWorksheet("成本明细"));
+  sheet.views = [{ showGridLines: false }];
   const items = payload.items || [];
   const headers = [
     "柜号", "名称", "规格型号", "成本类别", "明细项目", "规格/说明",
@@ -446,7 +534,7 @@ function buildFormulaCostDetailSheet() {
       drawingNameBeforeChinese(
         item.source_pdf_name || item.name || item.product_family || item.product_code,
       ),
-      `${fmt(item.width_mm)}×${fmt(item.height_mm)}×${fmt(item.depth_mm)}`,
+      quoteSpecification(item),
       category,
       detailName,
       spec || "",
@@ -683,64 +771,104 @@ function buildFormulaCostDetailSheet() {
 fillSheet(formulaSheet, "formula");
 fillSheet(quickSheet, "quick");
 buildFormulaCostDetailSheet();
-for (const sheetName of ["公式法报价单", "快速报价单", "成本明细"]) {
-  const auditLastColumn = sheetName === "公式法报价单" ? "AC"
-    : sheetName === "快速报价单" ? "Y" : "O";
-  const audit = await workbook.inspect({
-    kind: "table",
-    sheetId: sheetName,
-    range: sheetName === "成本明细" ? `A1:${auditLastColumn}${costDetailLastRow}`
-      : `A10:${auditLastColumn}25`,
-    maxChars: 16000,
-  });
-  if (!audit || !audit.ndjson) throw new Error(`workbook verification failed: ${sheetName}`);
-}
-const formulaErrors = await workbook.inspect({
-  kind: "match",
-  searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A",
-  options: { useRegex: true, maxResults: 100 },
-  summary: "formal quotation formula error scan",
-});
-if (formulaErrors?.ndjson && /\"matchCount\"\s*:\s*[1-9]/.test(formulaErrors.ndjson)) {
-  throw new Error("formal quotation contains formula errors");
-}
-if (process.env.QUOTE_EXPORT_QA_DIR) {
-  await fs.mkdir(process.env.QUOTE_EXPORT_QA_DIR, { recursive: true });
-  const remarkAudit = {};
-  for (const sheetName of ["公式法报价单", "快速报价单", "成本明细"]) {
-    const previewLastColumn = sheetName === "公式法报价单" ? "AC"
-      : sheetName === "快速报价单" ? "Y" : "O";
-    const remarks = await workbook.inspect({
-      kind: "table",
-      sheetId: sheetName,
-      range: sheetName === "成本明细"
-        ? `A1:O${costDetailLastRow}`
-        : `B10:J${Math.max(11, 10 + (payload.items || []).length)}`,
-      include: "values,formulas",
-      tableMaxRows: sheetName === "成本明细" ? costDetailLastRow : Math.max(2, (payload.items || []).length + 1),
-      tableMaxCols: sheetName === "成本明细" ? 15 : 9,
-      maxChars: 12000,
-    });
-    remarkAudit[sheetName] = remarks?.ndjson || "";
-    const preview = await workbook.render({
-      sheetName,
-      range: `A1:${previewLastColumn}20`,
-      scale: 1,
-      format: "png",
-    });
-    const fileName = sheetName === "公式法报价单" ? "formula.png"
-      : sheetName === "快速报价单" ? "quick.png" : "cost-detail.png";
-    await fs.writeFile(
-      path.join(process.env.QUOTE_EXPORT_QA_DIR, fileName),
-      new Uint8Array(await preview.arrayBuffer()),
-    );
+
+const assertClose = (actual, expected, label) => {
+  if (!Number.isFinite(Number(actual)) || Math.abs(Number(actual) - Number(expected)) > 0.01) {
+    throw new Error(`${label} mismatch: expected ${expected}, got ${actual}`);
   }
-  await fs.writeFile(
-    path.join(process.env.QUOTE_EXPORT_QA_DIR, "remarks-audit.json"),
-    JSON.stringify(remarkAudit, null, 2),
-    "utf8",
+};
+
+const assertRow = (actual, expected, label) => {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label} mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+};
+
+const verifyWorkbookContents = (candidateWorkbook) => {
+  attachWorkbookRangeApi(candidateWorkbook);
+  const items = payload.items || [];
+  const publicHeaders = [
+    "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "金额", "备注",
+  ];
+  const audit = {};
+  for (const [sheetName, method] of [["公式法报价单", "formula"], ["快速报价单", "quick"]]) {
+    const sheet = attachRangeApi(candidateWorkbook.getWorksheet(sheetName));
+    if (!sheet) throw new Error(`saved workbook is missing sheet: ${sheetName}`);
+    assertRow(rangePlainValues(sheet, "A10:H10")[0], publicHeaders, `${sheetName} public headers`);
+    let subtotal = 0;
+    items.forEach((item, index) => {
+      const row = 11 + index;
+      const quote = method === "formula" ? item.formula : item.quick;
+      const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
+      const unitCost = asNumber(quote?.total_cost) * discount;
+      const quantity = asNumber(item.quantity || 1);
+      subtotal += unitCost * quantity;
+      const actual = rangePlainValues(sheet, `A${row}:H${row}`)[0];
+      const expected = [
+        index + 1,
+        drawingNameBeforeChinese(item.source_pdf_name || item.name || item.product_family || item.product_code),
+        quoteSpecification(item),
+        quantity,
+        "台",
+        unitCost,
+        unitCost * quantity,
+        standardizedRemark(item),
+      ];
+      assertRow(actual.slice(0, 5), expected.slice(0, 5), `${sheetName} row ${row} identity`);
+      assertClose(actual[5], expected[5], `${sheetName} row ${row} unit price`);
+      assertClose(actual[6], expected[6], `${sheetName} row ${row} amount`);
+      if (actual[7] !== expected[7]) throw new Error(`${sheetName} row ${row} remark changed`);
+    });
+    const subtotalRow = 11 + items.length;
+    if (rangePlainValues(sheet, `B${subtotalRow}`)[0][0] !== "合计") {
+      throw new Error(`${sheetName} subtotal label is missing`);
+    }
+    assertClose(
+      rangePlainValues(sheet, `G${subtotalRow}`)[0][0],
+      subtotal,
+      `${sheetName} subtotal`,
+    );
+    audit[sheetName] = rangePlainValues(sheet, `B10:H${subtotalRow}`);
+  }
+
+  const serializedFormulaSheet = attachRangeApi(candidateWorkbook.getWorksheet("公式法报价单"));
+  const serializedQuickSheet = attachRangeApi(candidateWorkbook.getWorksheet("快速报价单"));
+  assertRow(
+    rangePlainValues(serializedFormulaSheet, "L10:P10")[0],
+    ["材料成本", "辅材成本", "人工成本", "喷塑费用", "管理费用"],
+    "formula cost headers",
   );
-}
+  assertRow(
+    rangePlainValues(serializedFormulaSheet, "Q10:AC10")[0],
+    rangePlainValues(serializedQuickSheet, "M10:Y10")[0],
+    "shifted attachment headers",
+  );
+
+  const costSheet = attachRangeApi(candidateWorkbook.getWorksheet("成本明细"));
+  if (!costSheet) throw new Error("saved workbook is missing sheet: 成本明细");
+  if (rangePlainValues(costSheet, `A${costDetailLastRow}`)[0][0] !== "合计") {
+    throw new Error("saved workbook cost-detail subtotal is missing");
+  }
+  const formulaOrderTotal = items.reduce((sum, item) => sum
+    + asNumber(item.formula?.total_cost) * (asNumber(item.formula_discount) || 1) * asNumber(item.quantity || 1), 0);
+  assertClose(
+    rangePlainValues(costSheet, `M${costDetailLastRow}`)[0][0],
+    formulaOrderTotal,
+    "cost-detail order total",
+  );
+  audit["成本明细"] = rangePlainValues(costSheet, `A1:O${costDetailLastRow}`);
+
+  const formulaErrors = scanWorkbookFormulaErrors(candidateWorkbook);
+  if (formulaErrors.length) {
+    throw new Error(`formal quotation contains formula errors: ${formulaErrors.join(", ")}`);
+  }
+  audit.formula_errors = [];
+  return audit;
+};
+
+// Verify before serialization, then verify the serialized temporary file again
+// before publishing it to the user-selected path.
+verifyWorkbookContents(workbook);
 // Generate beside the destination first and publish only after the workbook
 // is complete. A crash can no longer leave a zero-byte or half-written final
 // quotation in the user's folder.
@@ -748,10 +876,20 @@ const resolvedOutputPath = path.resolve(outputPath);
 await fs.mkdir(path.dirname(resolvedOutputPath), { recursive: true });
 const temporaryOutputPath = `${resolvedOutputPath}.tmp-${process.pid}-${Date.now()}.xlsx`;
 try {
-  const out = await SpreadsheetFile.exportXlsx(workbook);
-  await out.save(temporaryOutputPath);
+  await workbook.xlsx.writeFile(temporaryOutputPath);
   const stat = await fs.stat(temporaryOutputPath);
   if (!stat.isFile() || stat.size === 0) throw new Error("导出组件生成了空文件");
+  const serializedWorkbook = new ExcelJS.Workbook();
+  await serializedWorkbook.xlsx.readFile(temporaryOutputPath);
+  const serializedAudit = verifyWorkbookContents(serializedWorkbook);
+  if (process.env.QUOTE_EXPORT_QA_DIR) {
+    await fs.mkdir(process.env.QUOTE_EXPORT_QA_DIR, { recursive: true });
+    await fs.writeFile(
+      path.join(process.env.QUOTE_EXPORT_QA_DIR, "workbook-audit.json"),
+      JSON.stringify(serializedAudit, null, 2),
+      "utf8",
+    );
+  }
   await fs.copyFile(temporaryOutputPath, resolvedOutputPath);
   const finalStat = await fs.stat(resolvedOutputPath);
   if (!finalStat.isFile() || finalStat.size !== stat.size) {
@@ -759,8 +897,5 @@ try {
   }
 } finally {
   await fs.rm(temporaryOutputPath, { force: true });
-  await fs.rm(`${temporaryOutputPath}.inspect.ndjson`, { force: true });
-  // The artifact verifier may write a diagnostic sidecar next to the workbook.
-  await fs.rm(`${resolvedOutputPath}.inspect.ndjson`, { force: true });
 }
 console.log(`exported ${resolvedOutputPath}`);

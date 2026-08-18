@@ -1,16 +1,20 @@
 {
   "name": "ai-quote-dual-system",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "description": "PostgreSQL-driven dual quotation API and Windows desktop client",
   "license": "MIT",
   "scripts": {
     "start": "node api/server.mjs",
-    "check": "node --check api/server.mjs && node --check api/attachment_rules.mjs && node --check export_dual_quote_workbook.mjs",
-    "test": "node api/attachment_rules.quick_only.test.mjs"
+    "check": "node --check api/server.mjs && node --check api/runtime_config.mjs && node --check api/attachment_rules.mjs && node --check exceljs_range_adapter.mjs && node --check quote_export_contract.mjs && node --check export_dual_quote_workbook.mjs",
+    "test": "node --test api/runtime_config.test.mjs api/cloud_liveness.test.mjs api/attachment_rules.quick_only.test.mjs",
+    "verify": "npm run check && npm test"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "dependencies": {
+    "@excel.js/exceljs": "0.13.0"
   }
 }
