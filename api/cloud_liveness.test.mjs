@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import net from 'node:net';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+const reservePort = () => new Promise((resolve, reject) => {
+  const probe = net.createServer();
+  probe.once('error', reject);
+  probe.listen(0, '127.0.0.1', () => {
+    const address = probe.address();
+    probe.close((error) => {
+      if (error) reject(error);
+      else resolve(address.port);
+    });
+  });
+});
+
+test('Docker-compatible server starts and serves a database-free health check', { timeout: 15000 }, async (t) => {
+  const port = await reservePort();
+  const child = spawn(process.execPath, ['api/server.mjs'], {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      RENDER: 'true',
+      PORT: String(port),
+      AI_QUOTE_API_KEY: 'cloud-test-key',
+      DATABASE_URL: 'postgresql://test:test@example.neon.tech/quote_test?sslmode=require',
+    },
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => {
+    if (!child.killed) child.kill();
+  });
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(stderr || 'server startup timed out')), 8000);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.stdout.on('data', (chunk) => {
+      if (chunk.toString().includes('AI quote dual API listening')) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/health`);
+  assert.equal(response.status, 200);
+  const health = await response.json();
+  assert.equal(health.ok, true);
+  assert.equal(health.build, '2026-08-17-auxiliary-bom-v1');
+  assert.equal(health.deployment, '2026-08-18-render-neon-docker-v1');
+  assert.equal(health.database_checked, false);
+
+  const protectedResponse = await fetch(`http://127.0.0.1:${port}/api/health/database`);
+  assert.equal(protectedResponse.status, 401);
+});

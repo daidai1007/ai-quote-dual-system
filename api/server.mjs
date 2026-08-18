@@ -5,18 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyQuickOnlyAttachmentRuleToQuoteRow } from './attachment_rules.mjs';
+import { buildPsqlArgs, resolveRuntimeConfig } from './runtime_config.mjs';
 
-const PORT = Number(process.env.AI_QUOTE_API_PORT || 8080);
-const HOST = process.env.AI_QUOTE_API_HOST || '127.0.0.1';
-const API_KEY = String(process.env.AI_QUOTE_API_KEY || '').trim();
-// Resolve psql from PATH by default. Windows users may override this with
-// PSQL_PATH when PostgreSQL's bin directory is not on PATH.
-const PSQL_PATH = process.env.PSQL_PATH || 'psql';
-const DB_HOST = process.env.AI_QUOTE_DB_HOST || '127.0.0.1';
-const DB_PORT = process.env.AI_QUOTE_DB_PORT || '5432';
-const DB_NAME = process.env.AI_QUOTE_DB_NAME || 'ai_quote_dev';
-const DB_USER = process.env.AI_QUOTE_DB_USER || 'postgres';
-const API_BUILD = '2026-08-15-quick-only-attachment-v1';
+const RUNTIME_CONFIG = resolveRuntimeConfig();
+const PORT = RUNTIME_CONFIG.port;
+const HOST = RUNTIME_CONFIG.host;
+const API_KEY = RUNTIME_CONFIG.apiKey;
+const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
+const API_BUILD = '2026-08-17-auxiliary-bom-v1';
+const DEPLOYMENT_BUILD = '2026-08-18-render-neon-docker-v1';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -88,6 +85,18 @@ const validateRequest = (input) => {
     throw new Error('attachments must be an array');
   }
   if ((input.attachments || []).length > 100) throw new Error('attachments cannot exceed 100 items');
+  return input;
+};
+
+const normalizeProductVariant = (input = {}) => {
+  const productCode = String(input.product_code || '').trim();
+  const variantCode = String(input.variant_code || '').trim().toUpperCase();
+  if (productCode === 'JP_WIDE_EXP' || productCode === 'JS_WIDE_EXP') {
+    return { ...input, variant_code: 'WIDE' };
+  }
+  if (productCode === 'JM' && (!variantCode || variantCode === 'DEFAULT')) {
+    return { ...input, variant_code: 'SINGLE' };
+  }
   return input;
 };
 
@@ -181,13 +190,19 @@ LEFT JOIN LATERAL (
 };
 
 const runPsql = (sql, clientEncoding = 'UTF8') => new Promise((resolve, reject) => {
-  const child = spawn(PSQL_PATH, [
-    '-X', '-w', '-A', '-t', '-q', '-v', 'ON_ERROR_STOP=1',
-    '-h', DB_HOST, '-p', DB_PORT, '-U', DB_USER, '-d', DB_NAME,
-  ], { env: { ...process.env, PGCLIENTENCODING: clientEncoding }, windowsHide: true });
+  const child = spawn(PSQL_PATH, buildPsqlArgs(RUNTIME_CONFIG), {
+    env: { ...process.env, PGCLIENTENCODING: clientEncoding },
+    windowsHide: true,
+  });
   let stdout = '';
   let stderr = '';
   let settled = false;
+  const timeout = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    if (!child.killed) child.kill();
+    reject(new Error(`database command timed out after ${RUNTIME_CONFIG.psqlTimeoutMs} ms`));
+  }, RUNTIME_CONFIG.psqlTimeoutMs);
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
   child.stdout.on('data', (chunk) => { stdout += chunk; });
@@ -195,6 +210,7 @@ const runPsql = (sql, clientEncoding = 'UTF8') => new Promise((resolve, reject) 
   const fail = (error) => {
     if (settled) return;
     settled = true;
+    clearTimeout(timeout);
     reject(error);
   };
   child.on('error', fail);
@@ -202,6 +218,7 @@ const runPsql = (sql, clientEncoding = 'UTF8') => new Promise((resolve, reject) 
   child.on('close', (code) => {
     if (settled) return;
     settled = true;
+    clearTimeout(timeout);
     if (code !== 0) reject(new Error(stderr.trim() || `psql exited with code ${code}`));
     else resolve(stdout.trim());
   });
@@ -551,8 +568,9 @@ const runWorkbookExporter = async (payload) => {
 };
 
 const auxiliaryLookupKey = (item = {}) => {
-  const productCode = String(item.product_code || '').trim();
-  const variant = String(item.variant_code || '').trim().toUpperCase();
+  const normalizedItem = normalizeProductVariant(item);
+  const productCode = String(normalizedItem.product_code || '').trim();
+  const variant = String(normalizedItem.variant_code || '').trim().toUpperCase();
   const mappedProduct = {
     JS_SINGLE: 'JS', JS_DOUBLE: 'JS',
     JP_SINGLE: 'JP', JP_DOUBLE: 'JP',
@@ -667,12 +685,57 @@ const enrichExportCostDetails = async (payload) => {
   };
 };
 
+const databaseReadinessSql = `
+SELECT jsonb_build_object(
+  'schema_ready', to_regnamespace('calc') IS NOT NULL,
+  'product_ready', to_regclass('calc.cabinet_template') IS NOT NULL
+    OR to_regclass('calc.experience_product') IS NOT NULL,
+  'material_ready', to_regclass('calc.material') IS NOT NULL,
+  'spray_ready', to_regclass('calc.spray_price') IS NOT NULL,
+  'auxiliary_ready', to_regclass('calc.auxiliary_bom') IS NOT NULL,
+  'attachment_ready', to_regclass('calc.attachment_price') IS NOT NULL,
+  'calculation_ready', EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'calc' AND p.proname = 'calculate_dual_quote'
+  )
+)::text;`;
+
+const getDatabaseReadiness = async () => {
+  const output = await runPsql(databaseReadinessSql);
+  const line = output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).at(-1);
+  return line ? JSON.parse(line) : {};
+};
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
-    return json(res, 200, { ok: true, service: 'ai-quote-dual-api', build: API_BUILD });
+    // Keep the public liveness check database-free. Render calls it frequently;
+    // querying Neon here would prevent a free test database from scaling down.
+    return json(res, 200, {
+      ok: true,
+      service: 'ai-quote-dual-api',
+      build: API_BUILD,
+      deployment: DEPLOYMENT_BUILD,
+      database_checked: false,
+    });
   }
   if (API_KEY && req.url?.startsWith('/api/') && String(req.headers['x-ai-quote-key'] || '') !== API_KEY) {
     return json(res, 401, { error: 'unauthorized', message: 'invalid client access key' });
+  }
+  if (req.method === 'GET' && req.url === '/api/health/database') {
+    try {
+      const checks = await getDatabaseReadiness();
+      const ready = Object.values(checks).every(Boolean);
+      return json(res, ready ? 200 : 503, { ready, checks, build: API_BUILD });
+    } catch (error) {
+      return json(res, 503, {
+        ready: false,
+        error: 'database_unavailable',
+        message: String(error?.message || 'database connection failed'),
+        build: API_BUILD,
+      });
+    }
   }
   if (req.method === 'GET' && req.url === '/api/companies/catalog') {
     try {
@@ -787,7 +850,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 404, { error: 'not_found' });
   }
   try {
-    const input = validateRequest(await readBody(req));
+    const input = normalizeProductVariant(validateRequest(await readBody(req)));
     const output = await runPsql(buildSql(input));
     if (!output) throw new Error('database returned no quote result');
     // Attachment selection adds one INSERT result before the final JSON row.
