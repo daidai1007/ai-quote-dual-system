@@ -16,7 +16,7 @@ const DB_HOST = process.env.AI_QUOTE_DB_HOST || '127.0.0.1';
 const DB_PORT = process.env.AI_QUOTE_DB_PORT || '5432';
 const DB_NAME = process.env.AI_QUOTE_DB_NAME || 'ai_quote_dev';
 const DB_USER = process.env.AI_QUOTE_DB_USER || 'postgres';
-const API_BUILD = '2026-08-15-quick-only-attachment-v1';
+const API_BUILD = '2026-08-17-auxiliary-bom-v1';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -88,6 +88,18 @@ const validateRequest = (input) => {
     throw new Error('attachments must be an array');
   }
   if ((input.attachments || []).length > 100) throw new Error('attachments cannot exceed 100 items');
+  return input;
+};
+
+const normalizeProductVariant = (input = {}) => {
+  const productCode = String(input.product_code || '').trim();
+  const variantCode = String(input.variant_code || '').trim().toUpperCase();
+  if (productCode === 'JP_WIDE_EXP' || productCode === 'JS_WIDE_EXP') {
+    return { ...input, variant_code: 'WIDE' };
+  }
+  if (productCode === 'JM' && (!variantCode || variantCode === 'DEFAULT')) {
+    return { ...input, variant_code: 'SINGLE' };
+  }
   return input;
 };
 
@@ -551,8 +563,9 @@ const runWorkbookExporter = async (payload) => {
 };
 
 const auxiliaryLookupKey = (item = {}) => {
-  const productCode = String(item.product_code || '').trim();
-  const variant = String(item.variant_code || '').trim().toUpperCase();
+  const normalizedItem = normalizeProductVariant(item);
+  const productCode = String(normalizedItem.product_code || '').trim();
+  const variant = String(normalizedItem.variant_code || '').trim().toUpperCase();
   const mappedProduct = {
     JS_SINGLE: 'JS', JS_DOUBLE: 'JS',
     JP_SINGLE: 'JP', JP_DOUBLE: 'JP',
@@ -787,7 +800,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 404, { error: 'not_found' });
   }
   try {
-    const input = validateRequest(await readBody(req));
+    const input = normalizeProductVariant(validateRequest(await readBody(req)));
     const output = await runPsql(buildSql(input));
     if (!output) throw new Error('database returned no quote result');
     // Attachment selection adds one INSERT result before the final JSON row.
