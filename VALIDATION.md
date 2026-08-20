@@ -26,3 +26,10 @@ npm test
 ```
 
 Build `2026-08-15-quick-only-attachment-v1` keeps the five configured cabinet transformations out of the formula quote and includes them in the quick quote. The production regression also covers quantity, `unit_price_override`, ordinary attachments, mixed selections, and idempotent application.
+
+## v2026.8.18
+
+- API build `2026-08-17-auxiliary-bom-v1` normalizes wide-experience and JM variants before auxiliary-cost lookup while retaining cloud-safe `psql` path configuration.
+- The formula quote card exposes an `人工成本折扣系数` control. Changing it immediately recalculates labor cost, the linked 13% management fee, and the formula total from the unmodified database result.
+- Draft items persist both the original formula result and the selected labor multiplier, preventing repeated edits from applying the multiplier more than once.
+- Client typography and quotation-card sizing were increased for clearer presentation.

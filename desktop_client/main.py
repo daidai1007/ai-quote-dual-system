@@ -1955,6 +1955,7 @@ class MainWindow(QMainWindow):
         self.company_catalog: list[dict] = []
         self.attachments: list[dict] = []
         self.current_result: dict | None = None
+        self._formula_base_result: dict | None = None
         self.current_template_code: str | None = None
         self.template_serial = 0
         self.draft_items: list[dict] = []
@@ -2139,8 +2140,6 @@ class MainWindow(QMainWindow):
         self.weight_edit = QLineEdit(); self.weight_edit.setReadOnly(True); self.weight_edit.setPlaceholderText("数据库公式计算后自动带入")
         self.area_edit = QLineEdit(); self.area_edit.setReadOnly(True); self.area_edit.setPlaceholderText("数据库公式计算后自动带入")
         field(9, "公式基准重量（kg）", self.weight_edit); field(10, "公式喷涂面积（m²）", self.area_edit)
-        self.labor_multiplier = QDoubleSpinBox(); self.labor_multiplier.setRange(0.01, 10); self.labor_multiplier.setDecimals(2); self.labor_multiplier.setSingleStep(0.05); self.labor_multiplier.setValue(1.0); self.labor_multiplier.setSuffix(" ×")
-        field(11, "人工成本修正系数", self.labor_multiplier)
         attachment_panel = QWidget(); attachment_layout = QVBoxLayout(attachment_panel); attachment_layout.setContentsMargins(0, 0, 0, 0)
         self.attachment_recommendation = QLabel("OCR 推荐附件：—")
         self.attachment_recommendation.setWordWrap(True)
@@ -2157,6 +2156,20 @@ class MainWindow(QMainWindow):
         action_row.addWidget(self.calculate_button); action_row.addWidget(add_btn); action_row.addWidget(clear_btn); action_row.addStretch(); root.addLayout(action_row)
         results = QHBoxLayout(); results.setSpacing(14)
         self.formula_box, self.formula_labels, self.formula_discount = self.build_result_card("公式法报价", ("material", "auxiliary", "labor", "attachment", "spray", "management", "area", "total"), "formulaCard")
+        self.labor_multiplier = QDoubleSpinBox()
+        self.labor_multiplier.setRange(0.01, 10)
+        self.labor_multiplier.setDecimals(2)
+        self.labor_multiplier.setSingleStep(0.05)
+        self.labor_multiplier.setValue(1.0)
+        self.labor_multiplier.setSuffix(" ×")
+        self.labor_multiplier.setObjectName("laborMultiplier")
+        self.labor_multiplier.setToolTip("调整后，人工成本和管理费用会立即重新计算")
+        self.labor_multiplier.valueChanged.connect(self.refresh_discounted_totals)
+        self.formula_box.layout().insertRow(
+            self.formula_box.layout().rowCount() - 1,
+            "人工成本折扣系数",
+            self.labor_multiplier,
+        )
         self.quick_box, self.quick_labels, self.quick_discount = self.build_result_card("快速报价", ("base_price", "matched_size", "attachment", "total"), "quickCard")
         self.formula_discount.valueChanged.connect(self.refresh_discounted_totals); self.quick_discount.valueChanged.connect(self.refresh_discounted_totals)
         results.addWidget(self.formula_box, 1); results.addWidget(self.quick_box, 1); root.addLayout(results)
@@ -2166,6 +2179,7 @@ class MainWindow(QMainWindow):
 
     def build_result_card(self, title, keys, object_name):
         box = QGroupBox(title); box.setObjectName(object_name)
+        box.setMinimumHeight(360)
         layout = QFormLayout(box); layout.setContentsMargins(18, 18, 18, 16); layout.setVerticalSpacing(7)
         captions = {"material":"材料成本", "auxiliary":"辅材成本", "labor":"人工成本", "attachment":"附件成本", "spray":"喷塑费用", "management":"管理费用", "area":"产品面积", "base_price":"面价", "matched_size":"匹配尺寸", "total":"总成本"}
         labels = {}
@@ -2603,11 +2617,8 @@ class MainWindow(QMainWindow):
 
     def show_result(self, result):
         formula = dict(result.get("formula_cost") or {}); quick = dict(result.get("quick_quote") or {})
-        labor = formula.get("labor_cost"); management = formula.get("management_fee"); total = formula.get("total_cost")
-        if labor is not None and management is not None and total is not None:
-            new_labor = float(labor) * self.labor_multiplier.value(); new_mgmt = new_labor * .13
-            formula["labor_cost"] = new_labor; formula["management_fee"] = new_mgmt; formula["total_cost"] = float(total) - float(labor) - float(management) + new_labor + new_mgmt
-        self.current_result = {"formula": formula, "quick": quick, "risk_flags": result.get("risk_flags") or [], "quote_id": result.get("quote_id")}
+        self._formula_base_result = dict(formula)
+        self.current_result = {"formula": dict(formula), "quick": quick, "risk_flags": result.get("risk_flags") or [], "quote_id": result.get("quote_id")}
         self.refresh_discounted_totals()
         risks = self.current_result["risk_flags"]
         if risks:
@@ -2617,7 +2628,17 @@ class MainWindow(QMainWindow):
 
     def refresh_discounted_totals(self):
         if not self.current_result: return
-        formula, quick = self.current_result["formula"], self.current_result["quick"]
+        formula = dict(self._formula_base_result or self.current_result["formula"])
+        labor = formula.get("labor_cost"); management = formula.get("management_fee"); total = formula.get("total_cost")
+        if labor is not None and management is not None and total is not None:
+            multiplier = float(self.labor_multiplier.value())
+            new_labor = float(labor) * multiplier
+            new_management = new_labor * 0.13
+            formula["labor_cost"] = new_labor
+            formula["management_fee"] = new_management
+            formula["total_cost"] = float(total) - float(labor) - float(management) + new_labor + new_management
+        self.current_result["formula"] = formula
+        quick = self.current_result["quick"]
         values = {"material": formula.get("material_cost"), "auxiliary": formula.get("auxiliary_cost"), "labor": formula.get("labor_cost"), "attachment": formula.get("attachment_fee"), "spray": formula.get("spray_cost"), "management": formula.get("management_fee")}
         for key, value in values.items(): self.formula_labels[key].setText(money(value))
         area = formula.get("product_area_m2"); self.formula_labels["area"].setText("—" if area is None else f"{float(area):,.6f} m²")
@@ -2660,7 +2681,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "数据待补充", "公式法或快速报价存在缺失数据，不能加入正式汇总清单。"); return
         source_ocr_remark = self.notes_text.toPlainText().strip()
         single_count, double_count = self.door_counts()
-        item = {"name": self.cabinet_name(), "model_code": self.model_edit.text().strip(), "product_code": self.selected_product_code(), "product_family": self.product_combo.currentText(), "variant_code": self.selected_variant_code(), "variant_name": self.selected_variant_name(), "single_door_count": single_count, "double_door_count": double_count, "material_code": self.material_combo.currentData(), "coating_type": self.coating_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "quantity": self.quantity_spin.value(), "attachments": [dict(x) for x in self.attachments], "source_ocr_remark": source_ocr_remark, "source_pdf_name": self.active_drawing.get("name") if self.active_drawing else None, "formula": dict(self.current_result["formula"]), "quick": dict(self.current_result["quick"]), "formula_discount": self.formula_discount.value(), "quick_discount": self.quick_discount.value()}
+        item = {"name": self.cabinet_name(), "model_code": self.model_edit.text().strip(), "product_code": self.selected_product_code(), "product_family": self.product_combo.currentText(), "variant_code": self.selected_variant_code(), "variant_name": self.selected_variant_name(), "single_door_count": single_count, "double_door_count": double_count, "material_code": self.material_combo.currentData(), "coating_type": self.coating_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "quantity": self.quantity_spin.value(), "attachments": [dict(x) for x in self.attachments], "source_ocr_remark": source_ocr_remark, "source_pdf_name": self.active_drawing.get("name") if self.active_drawing else None, "formula": dict(self.current_result["formula"]), "formula_base": dict(self._formula_base_result or self.current_result["formula"]), "quick": dict(self.current_result["quick"]), "formula_discount": self.formula_discount.value(), "quick_discount": self.quick_discount.value(), "labor_multiplier": self.labor_multiplier.value()}
         final_remark = build_standardized_quote_remark(item, source_ocr_remark)
         item["notes"] = final_remark
         item["final_remark"] = final_remark
@@ -2707,10 +2728,10 @@ class MainWindow(QMainWindow):
         mi = self.material_combo.findData(item["material_code"]); ci = self.coating_combo.findData(item["coating_type"])
         if mi >= 0: self.material_combo.setCurrentIndex(mi)
         if ci >= 0: self.coating_combo.setCurrentIndex(ci)
-        self.attachments = [dict(x) for x in item["attachments"]]; self.notes_text.setPlainText(item.get("final_remark", item.get("notes", ""))); self.formula_discount.setValue(item["formula_discount"]); self.quick_discount.setValue(item["quick_discount"]); self.update_attachment_view(); self.current_result = {"formula": item["formula"], "quick": item["quick"], "risk_flags": []}; self.refresh_discounted_totals(); self.refresh_formula_inputs()
+        self.attachments = [dict(x) for x in item["attachments"]]; self.notes_text.setPlainText(item.get("final_remark", item.get("notes", ""))); self.formula_discount.setValue(item["formula_discount"]); self.quick_discount.setValue(item["quick_discount"]); self.labor_multiplier.setValue(item.get("labor_multiplier", 1.0)); self.update_attachment_view(); self._formula_base_result = dict(item.get("formula_base") or item["formula"]); self.current_result = {"formula": dict(item["formula"]), "quick": dict(item["quick"]), "risk_flags": []}; self.refresh_discounted_totals(); self.refresh_formula_inputs()
 
     def reset_current_cabinet(self, keep_company=False):
-        self.model_edit.clear(); self.width_spin.setValue(1000); self.height_spin.setValue(1800); self.depth_spin.setValue(600); self.quantity_spin.setValue(1); self.material_combo.setCurrentIndex(0); self.coating_combo.setCurrentIndex(0); self.labor_multiplier.setValue(1); self.formula_discount.setValue(1); self.quick_discount.setValue(1); self.attachments = []; self.notes_text.clear(); self.active_drawing = None; self.recommended_attachments = []; self.attachment_recommendation.setText("OCR 推荐附件：—"); self.current_result = None; self.weight_edit.clear(); self.area_edit.clear(); self.update_attachment_view()
+        self.model_edit.clear(); self.width_spin.setValue(1000); self.height_spin.setValue(1800); self.depth_spin.setValue(600); self.quantity_spin.setValue(1); self.material_combo.setCurrentIndex(0); self.coating_combo.setCurrentIndex(0); self.labor_multiplier.setValue(1); self.formula_discount.setValue(1); self.quick_discount.setValue(1); self.attachments = []; self.notes_text.clear(); self.active_drawing = None; self.recommended_attachments = []; self.attachment_recommendation.setText("OCR 推荐附件：—"); self._formula_base_result = None; self.current_result = None; self.weight_edit.clear(); self.area_edit.clear(); self.update_attachment_view()
         for label in self.formula_labels.values(): label.setText("—")
         for label in self.quick_labels.values(): label.setText("—")
         self.risk_label.setStyleSheet(""); self.risk_label.setText("尚未计算")
@@ -2898,7 +2919,7 @@ def main() -> int:
             background: #f4f7fb;
             color: #203044;
             font-family: "Microsoft YaHei";
-            font-size: 10pt;
+            font-size: 11pt;
         }
         QFrame#navPanel {
             background: #163f67;
@@ -2906,21 +2927,21 @@ def main() -> int:
         }
         QLabel#navTitle {
             color: #ffffff;
-            font-size: 15pt;
+            font-size: 16pt;
             font-weight: 700;
         }
         QLabel#navHint, QLabel#navFooter {
             color: #bcd0e4;
-            font-size: 9pt;
+            font-size: 10pt;
         }
         QLabel#companyLabel {
             color: #ffffff;
-            font-size: 10pt;
+            font-size: 11pt;
             font-weight: 600;
         }
         QLabel#companyHint {
             color: #bcd0e4;
-            font-size: 8pt;
+            font-size: 9pt;
         }
         QComboBox#companyCombo {
             color: #173d63;
@@ -2928,7 +2949,7 @@ def main() -> int:
             border: 1px solid #d7e5f2;
             border-radius: 8px;
             padding: 6px 8px;
-            min-height: 26px;
+            min-height: 30px;
         }
         QComboBox#companyCombo QAbstractItemView {
             color: #173d63;
@@ -2942,7 +2963,7 @@ def main() -> int:
             border-radius: 12px;
             padding: 10px 14px;
             font-weight: 600;
-            font-size: 11pt;
+            font-size: 12pt;
         }
         QPushButton#navButton:hover {
             background: #24527d;
@@ -2954,12 +2975,12 @@ def main() -> int:
         }
         QLabel#sectionTitle {
             color: #173d63;
-            font-size: 18pt;
+            font-size: 19pt;
             font-weight: 700;
         }
         QLabel#sectionSubtitle {
             color: #60758a;
-            font-size: 10pt;
+            font-size: 11pt;
         }
         QGroupBox#attachmentCard, QGroupBox#drawingCard,
         QGroupBox#drawingConfirmCard, QGroupBox#summaryCard {
@@ -3023,12 +3044,12 @@ def main() -> int:
         }
         QLabel#heroTitle {
             color: #ffffff;
-            font-size: 22pt;
+            font-size: 23pt;
             font-weight: 700;
         }
         QLabel#heroSubtitle {
             color: #c8d9ea;
-            font-size: 10pt;
+            font-size: 11pt;
         }
         QLabel#apiBadge {
             color: #d8ffe6;
@@ -3043,7 +3064,7 @@ def main() -> int:
             border-radius: 12px;
             margin-top: 12px;
             padding-top: 12px;
-            font-size: 12pt;
+            font-size: 13pt;
             font-weight: 700;
         }
         QGroupBox::title {
@@ -3060,7 +3081,7 @@ def main() -> int:
             border: 1px solid #bfcedc;
             border-radius: 6px;
             padding: 6px 9px;
-            min-height: 18px;
+            min-height: 22px;
             selection-background-color: #2c78c4;
         }
         QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus,
@@ -3074,7 +3095,7 @@ def main() -> int:
             border-radius: 7px;
             padding: 8px 18px;
             font-weight: 600;
-            min-height: 20px;
+            min-height: 24px;
         }
         QPushButton:hover { background: #1f64a7; }
         QPushButton:pressed { background: #174f84; }
@@ -3087,7 +3108,7 @@ def main() -> int:
         QGroupBox#formulaCard QLabel#result_total,
         QGroupBox#quickCard QLabel#result_total {
             color: #113c69;
-            font-size: 15pt;
+            font-size: 18pt;
             font-weight: 700;
         }
         QGroupBox#formulaCard QLabel#result_labor,

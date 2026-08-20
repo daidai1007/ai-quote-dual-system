@@ -1,13 +1,9 @@
 // Billing rules for attachments that are quick-quote only.
-// These five configuration-change items are intentionally excluded from the
+// This configuration-change item is intentionally excluded from the
 // formula quotation while remaining part of the quick quotation.
 
 export const QUICK_ONLY_ATTACHMENT_PRICES = Object.freeze({
-  JAJE单门改为双门: 60,
   JSJP单门改为上下门: 150,
-  JSJP单门改为双门: 120,
-  JSJP后背板改为单门: 150,
-  JSJP后背板改为双门: 270,
 });
 
 function normalizeName(value) {
@@ -77,7 +73,7 @@ function clone(value) {
 }
 
 /**
- * Adjust a dual-quote result so the five configuration-change attachments are
+ * Adjust a dual-quote result so the configuration-change attachment is
  * billed only in quick quote. The operation is idempotent.
  */
 export function applyQuickOnlyAttachmentRuleToQuoteRow(row, selectedAttachments = []) {
@@ -100,7 +96,7 @@ export function applyQuickOnlyAttachmentRuleToQuoteRow(row, selectedAttachments 
 
   result.attachment_billing_rules = {
     ...(result.attachment_billing_rules ?? {}),
-    version: "quick-only-config-v1",
+    version: "quick-only-config-v2",
     quick_only_attachment_fee: fee,
     formula_excluded: true,
   };
