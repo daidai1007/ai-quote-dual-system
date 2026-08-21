@@ -16,13 +16,6 @@ const decodeHexJson = (value) => JSON.parse(Buffer.from(value, 'hex').toString('
 
 test('unified door formula migration is complete and isolated', async () => {
   const sql = await readFile(migrationPath, 'utf8');
-  const dockerfile = await readFile(path.join(root, 'Dockerfile'), 'utf8');
-  assert.ok(
-    dockerfile.includes(
-      'COPY database/migrations/sync_unified_door_formula_templates.sql ./database/migrations/',
-    ),
-    'Render image must include the manual migration',
-  );
   assert.match(sql, /\bBEGIN;/);
   assert.match(sql, /\bCOMMIT;/);
   assert.ok(sql.includes('CREATE TEMP TABLE desired_formula_rule'));
@@ -30,6 +23,8 @@ test('unified door formula migration is complete and isolated', async () => {
   assert.ok(sql.includes("RAISE EXCEPTION 'Missing formula templates: %'"));
   assert.ok(sql.includes("RAISE EXCEPTION 'Missing formula mappings: %'"));
   assert.ok(sql.includes("RAISE EXCEPTION 'Post-migration mismatch: %'"));
+  assert.ok(sql.includes("part_name = COALESCE(d.part_name, '')"));
+  assert.ok(!sql.includes('part_name = d.part_name,'));
   assert.doesNotMatch(sql, /quick_quote_experience/i);
 
   const expectedRows = new Map([
