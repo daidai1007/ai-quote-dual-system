@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">AI 双报价系统图标</title>
+  <desc id="desc">两块折弯金属报价页与中央柜门分缝组成的双报价标志</desc>
+  <defs>
+    <linearGradient id="navy" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#123a5a"/><stop offset="0.42" stop-color="#0b1f33"/>
+    </linearGradient>
+  </defs>
+  <rect x="80" y="70" width="864" height="864" rx="210" fill="url(#navy)"/>
+  <rect x="196" y="214" width="282" height="546" rx="66" fill="#1682d4"/>
+  <rect x="546" y="214" width="282" height="546" rx="66" fill="#28b58c"/>
+  <path d="M382 214h96v96z" fill="#55b8f3"/><path d="M382 214l96 96" stroke="#cbefff" stroke-width="12"/>
+  <path d="M546 214h96l-96 96z" fill="#72e0be"/><path d="M642 214l-96 96" stroke="#f5fbff" stroke-width="12"/>
+  <g fill="#f5fbff">
+    <rect x="250" y="404" width="174" height="34" rx="17"/><rect x="250" y="488" width="132" height="34" rx="17"/>
+    <rect x="600" y="404" width="174" height="34" rx="17"/><rect x="600" y="488" width="132" height="34" rx="17"/>
+    <rect x="496" y="270" width="32" height="420" rx="16"/>
+  </g>
+  <path d="M512 684l-82 106m82-106l82 106" stroke="#f5fbff" stroke-width="32" stroke-linecap="round"/>
+  <circle cx="775" cy="837" r="31" fill="#72e0be"/>
+</svg>
