@@ -194,6 +194,7 @@ calculator_module = ast.fix_missing_locations(ast.Module(body=[calculator_node],
 calculator_namespace = {"math": math, "re": re}
 exec(compile(calculator_module, "FormulaDatabaseCalculator", "exec"), calculator_namespace)
 formula_calculator = calculator_namespace["FormulaDatabaseCalculator"]()
+assert formula_calculator.DETAIL_ROWS["JP_SINGLE"][:3] == (5, 26, 29)
 door_combinations = ((1, 0), (0, 1), (0, 2), (2, 0), (1, 1))
 expected_weights = (10, 20, 40, 20, 30)
 for product_code in ("JS_SINGLE", "JP_SINGLE", "JA_SINGLE", "JE_SINGLE"):
@@ -212,6 +213,19 @@ for product_code in ("JS_SINGLE", "JP_SINGLE", "JA_SINGLE", "JE_SINGLE"):
         weight, area = formula_calculator.calculate(product_code, 1000, 1800, 600, *counts)
         assert weight == expected_weight, (product_code, counts, weight)
         assert area == (counts[0] * 2 + counts[1] * 3) / area_divisor
+
+# Quoted model names that resemble Excel addresses must remain text.  The JE
+# template uses MS828 in lock-rod branches; treating it as a cell reference
+# drops the lock-rod weight or makes the strict V3 evaluator reject the row.
+formula_calculator.sheets = {
+    "JE_SINGLE": {
+        "cells": {"H5": 7, "M5": 12, "N5": "", "Y5": 1},
+        "formulas": {"E5": 'IF(B16=1,"MS828锁杆","")'},
+    }
+}
+weight, area = formula_calculator.calculate("JE_SINGLE", 600, 2000, 300, 1, 0)
+assert weight == 12, weight
+assert area == 0.5, area
 
 
 class DoorRuleWindow:
