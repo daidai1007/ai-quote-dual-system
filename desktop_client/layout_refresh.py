@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 
 WIDGET_MAX = 16_777_215
 VALID_DOOR_COMBINATIONS = {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
+FORMULA_MULTI_DOOR_FAMILIES = {"JS", "JP", "JA", "JE"}
 
 # Cold-rolled sheet metal, drawing ink and inspection marks.  Keep the palette
 # compact so every state color has one stable meaning throughout the client.
@@ -351,6 +352,23 @@ def _sync_manual_specification_to_dimensions(window, text: str, parser=None) -> 
     return True
 
 
+def _allowed_door_combinations(window) -> set[tuple[int, int]]:
+    product_combo = getattr(window, "product_combo", None)
+    if not isinstance(product_combo, QComboBox):
+        return set(VALID_DOOR_COMBINATIONS)
+    family = str(product_combo.currentData() or "").strip().upper()
+    if family in FORMULA_MULTI_DOOR_FAMILIES:
+        return set(VALID_DOOR_COMBINATIONS)
+    entry = getattr(window, "product_catalog", {}).get(product_combo.currentData() or "", {})
+    codes = entry.get("codes") or {}
+    allowed = set()
+    if "SINGLE" in codes:
+        allowed.add((1, 0))
+    if "DOUBLE" in codes:
+        allowed.add((0, 1))
+    return allowed
+
+
 def _set_default_door_combination(window) -> None:
     single = getattr(window, "single_door_combo", None)
     double = getattr(window, "double_door_combo", None)
@@ -363,16 +381,43 @@ def _set_default_door_combination(window) -> None:
         counts = tuple(int(value) for value in counts)
     except (TypeError, ValueError):
         counts = (-1, -1)
-    if counts in VALID_DOOR_COMBINATIONS:
+    allowed = _allowed_door_combinations(window)
+    if counts in allowed:
+        return
+    target = (1, 0) if (1, 0) in allowed else ((0, 1) if (0, 1) in allowed else None)
+    if target is None:
         return
     setter = getattr(window, "set_door_counts", None)
     if callable(setter):
-        setter(1, 0)
+        setter(*target)
         return
-    for combo, wanted in ((single, 1), (double, 0)):
+    for combo, wanted in ((single, target[0]), (double, target[1])):
         index = combo.findData(wanted)
         if index >= 0:
             combo.setCurrentIndex(index)
+
+
+def _enforce_product_door_combination(window, source: str) -> bool:
+    count_getter = getattr(window, "door_counts", None)
+    setter = getattr(window, "set_door_counts", None)
+    if not callable(count_getter) or not callable(setter):
+        return False
+    counts = tuple(count_getter())
+    allowed = _allowed_door_combinations(window)
+    if not allowed or counts in allowed:
+        return False
+    if source == "double" and (0, 1) in allowed and counts[1] > 0:
+        target = (0, 1)
+    elif source == "single" and (1, 0) in allowed and counts[0] > 0:
+        target = (1, 0)
+    else:
+        target = (1, 0) if (1, 0) in allowed else (0, 1)
+    setter(*target)
+    for method_name in ("refresh_formula_inputs", "request_history_match"):
+        method = getattr(window, method_name, None)
+        if callable(method):
+            method()
+    return True
 
 
 def _configure_quote_rule_interactions(window, parser=None) -> None:
@@ -392,10 +437,10 @@ def _configure_quote_rule_interactions(window, parser=None) -> None:
     double = getattr(window, "double_door_combo", None)
     if isinstance(single, QComboBox):
         single.setAccessibleName("单门数量")
-        single.setToolTip("单门数量；默认1，与双门数量组合使用")
+        single.setToolTip("单门数量；JS/JP/JA/JE 支持五种组合，其他产品按数据库单/双门记录选择")
     if isinstance(double, QComboBox):
         double.setAccessibleName("双门数量")
-        double.setToolTip("双门数量；默认0，与单门数量组合使用")
+        double.setToolTip("双门数量；快速报价会将 0/1、0/2 视为双门，其余批准组合视为单门")
     _set_default_door_combination(window)
 
     specification = getattr(window, "quote_spec_edit", None)
@@ -1212,6 +1257,7 @@ def install_layout_refresh(namespace: dict) -> None:
     original_recognition_finished = main_window.pdf_recognition_finished
     original_refresh_summary = main_window.refresh_summary
     original_product_changed = getattr(main_window, "product_changed", None)
+    original_door_counts_changed = getattr(main_window, "door_counts_changed", None)
     original_product_catalog_loaded = getattr(main_window, "product_catalog_loaded", None)
     original_formula_template_loaded = getattr(main_window, "formula_template_loaded", None)
 
@@ -1264,6 +1310,12 @@ def install_layout_refresh(namespace: dict) -> None:
             _refresh_model_suggestions(self)
             return result
         main_window.product_changed = product_changed_with_default_door
+    if callable(original_door_counts_changed):
+        def door_counts_changed_with_product_rules(self, source):
+            if _enforce_product_door_combination(self, source):
+                return None
+            return original_door_counts_changed(self, source)
+        main_window.door_counts_changed = door_counts_changed_with_product_rules
     if callable(original_product_catalog_loaded):
         def product_catalog_loaded_with_database_options(self, result):
             loaded = original_product_catalog_loaded(self, result)

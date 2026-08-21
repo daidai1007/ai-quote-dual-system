@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import ast
+import math
+import re
 import sys
 import types
 from pathlib import Path
@@ -182,8 +185,62 @@ assert abs(formula._nonstandard_perimeter_ratio - expected_ratio) < 1e-12
 
 
 source = (ROOT / "desktop_client" / "main.py").read_text(encoding="utf-8")
-assert 'cells[door_cells[0]] = int(single_door_count)' in source
-assert 'cells[door_cells[1]] = int(double_door_count)' in source
-assert 'DOOR_CONTROL_CELLS' in source
+tree = ast.parse(source)
+calculator_node = next(
+    node for node in tree.body
+    if isinstance(node, ast.ClassDef) and node.name == "FormulaDatabaseCalculator"
+)
+calculator_module = ast.fix_missing_locations(ast.Module(body=[calculator_node], type_ignores=[]))
+calculator_namespace = {"math": math, "re": re}
+exec(compile(calculator_module, "FormulaDatabaseCalculator", "exec"), calculator_namespace)
+formula_calculator = calculator_namespace["FormulaDatabaseCalculator"]()
+door_combinations = ((1, 0), (0, 1), (0, 2), (2, 0), (1, 1))
+expected_weights = (10, 20, 40, 20, 30)
+for product_code in ("JS_SINGLE", "JP_SINGLE", "JA_SINGLE", "JE_SINGLE"):
+    single_cell, double_cell = formula_calculator.DOOR_CONTROL_CELLS[product_code]
+    formula_calculator.sheets = {
+        product_code: {
+            "cells": {"E5": "后背板", "H5": 1, "N5": ""},
+            "formulas": {
+                "M5": f"{single_cell}*10+{double_cell}*20",
+                "Y5": f"{single_cell}*2+{double_cell}*3",
+            },
+        }
+    }
+    area_divisor = formula_calculator.DETAIL_ROWS[product_code][4]
+    for counts, expected_weight in zip(door_combinations, expected_weights):
+        weight, area = formula_calculator.calculate(product_code, 1000, 1800, 600, *counts)
+        assert weight == expected_weight, (product_code, counts, weight)
+        assert area == (counts[0] * 2 + counts[1] * 3) / area_divisor
+
+
+class DoorRuleWindow:
+    def __init__(self, family, codes, counts):
+        self.product_combo = Combo(family)
+        self.product_catalog = {family: {"codes": codes}}
+        self._counts = counts
+        self.refreshed = 0
+
+    def door_counts(self):
+        return self._counts
+
+    def set_door_counts(self, single, double):
+        self._counts = (single, double)
+
+    def refresh_formula_inputs(self):
+        self.refreshed += 1
+
+    def request_history_match(self):
+        self.refreshed += 1
+
+
+ja_window = DoorRuleWindow("JA", {"SINGLE": "JA_SINGLE"}, (0, 2))
+assert layout_refresh._allowed_door_combinations(ja_window) == layout_refresh.VALID_DOOR_COMBINATIONS
+assert not layout_refresh._enforce_product_door_combination(ja_window, "double")
+other_window = DoorRuleWindow("XX", {"SINGLE": "XX_SINGLE", "DOUBLE": "XX_DOUBLE"}, (1, 1))
+assert layout_refresh._allowed_door_combinations(other_window) == {(1, 0), (0, 1)}
+assert layout_refresh._enforce_product_door_combination(other_window, "double")
+assert other_window.door_counts() == (0, 1)
+assert other_window.refreshed == 2
 
 print("V3 program rule contracts passed")

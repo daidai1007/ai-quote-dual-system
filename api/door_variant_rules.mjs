@@ -10,7 +10,15 @@ export const VALID_DOOR_COMBINATIONS = Object.freeze([
   Object.freeze([1, 1]),
 ]);
 
+export const FORMULA_MULTI_DOOR_FAMILIES = Object.freeze(['JS', 'JP', 'JA', 'JE']);
+
 const VALID_DOOR_KEYS = new Set(VALID_DOOR_COMBINATIONS.map(([single, double]) => `${single}/${double}`));
+const FORMULA_MULTI_DOOR_FAMILY_SET = new Set(FORMULA_MULTI_DOOR_FAMILIES);
+
+const productFamily = (productCode) => String(productCode || '')
+  .trim()
+  .toUpperCase()
+  .replace(/_(?:SINGLE|DOUBLE)$/i, '');
 
 const integerCount = (value, name) => {
   const count = Number(value);
@@ -42,13 +50,32 @@ export function databaseVariantForDoorCounts(counts) {
   return counts.single > 0 ? 'SINGLE' : 'DOUBLE';
 }
 
+export const quickDoorVariantForCounts = databaseVariantForDoorCounts;
+
 export function normalizeDoorVariantInput(input = {}) {
   const counts = doorCountsFromInput(input, { allowZeroPair: true });
   if (!counts) return input;
   if (counts.single === 0 && counts.double === 0) return input;
   const currentProduct = String(input.product_code || '').trim();
   const currentVariant = String(input.variant_code || '').trim().toUpperCase();
+  const family = productFamily(currentProduct);
+  const key = `${counts.single}/${counts.double}`;
+  if (!FORMULA_MULTI_DOOR_FAMILY_SET.has(family) && key !== '1/0' && key !== '0/1') {
+    throw new Error(`${family || 'product'} door combination must be 1/0 or 0/1`);
+  }
   if (currentVariant === 'WIDE' || /_WIDE(?:_EXP)?$/i.test(currentProduct)) return input;
+
+  // JA has one database formula template. All five JA door combinations are
+  // evaluated by its two formula control cells, so never invent JA_DOUBLE.
+  if (family === 'JA') {
+    return {
+      ...input,
+      product_code: currentProduct,
+      variant_code: currentVariant || 'SINGLE',
+      single_door_count: counts.single,
+      double_door_count: counts.double,
+    };
+  }
 
   const variant = databaseVariantForDoorCounts(counts);
   const productCode = /_(?:SINGLE|DOUBLE)$/i.test(currentProduct)
@@ -62,11 +89,6 @@ export function normalizeDoorVariantInput(input = {}) {
     double_door_count: counts.double,
   };
 }
-
-const productFamily = (productCode) => String(productCode || '')
-  .trim()
-  .toUpperCase()
-  .replace(/_(?:SINGLE|DOUBLE)$/i, '');
 
 export function quickDoorVariantSurcharge(input = {}) {
   const counts = doorCountsFromInput(input, { allowZeroPair: true });
@@ -100,12 +122,31 @@ const clone = (value) => {
 
 export function applyDoorVariantQuickPrice(row, input = {}) {
   const result = clone(row ?? {});
+  const counts = doorCountsFromInput(input, { allowMissing: true, allowZeroPair: true });
+  const quickVariant = counts && (counts.single !== 0 || counts.double !== 0)
+    ? quickDoorVariantForCounts(counts) : null;
+  if (quickVariant && result.quick_quote && typeof result.quick_quote === 'object') {
+    result.quick_quote.door_variant = quickVariant;
+  }
   const surcharge = quickDoorVariantSurcharge(input);
-  if (surcharge <= 0) return result;
+  if (surcharge <= 0) {
+    if (quickVariant) {
+      result.door_variant_billing_rule = {
+        version: 'door-count-quick-v2',
+        product_family: productFamily(input.product_code),
+        quick_door_variant: quickVariant,
+        single_door_count: counts.single,
+        double_door_count: counts.double,
+        quick_price_surcharge: 0,
+        migrated_legacy_attachment_fee: 0,
+        formula_unchanged: true,
+      };
+    }
+    return result;
+  }
 
-  const counts = doorCountsFromInput(input, { allowMissing: false });
   const existingRule = result.door_variant_billing_rule;
-  if (existingRule?.version === 'door-count-quick-v1'
+  if (existingRule?.version === 'door-count-quick-v2'
       && Number(existingRule.quick_price_surcharge) === surcharge
       && Number(existingRule.single_door_count) === counts.single
       && Number(existingRule.double_door_count) === counts.double) return result;
@@ -129,8 +170,9 @@ export function applyDoorVariantQuickPrice(row, input = {}) {
   }
 
   result.door_variant_billing_rule = {
-    version: 'door-count-quick-v1',
+    version: 'door-count-quick-v2',
     product_family: productFamily(input.product_code),
+    quick_door_variant: quickVariant,
     single_door_count: counts.single,
     double_door_count: counts.double,
     quick_price_surcharge: surcharge,

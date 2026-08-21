@@ -26,9 +26,13 @@ node .\api\server.mjs
 
 必填字段：`quote_id`、`product_code`、`material_code`、`width_mm`、`height_mm`、`depth_mm`。
 
-门型产品同时传入 `single_door_count` 和 `double_door_count`，仅允许
-`1/0`、`0/1`、`0/2`、`2/0`、`1/1`五种组合。快速报价的门型加价由 API
-响应层自动处理，不改动公式法结果。
+门型产品同时传入 `single_door_count` 和 `double_door_count`。JS、JP、JA、JE
+公式产品支持 `1/0`、`0/1`、`0/2`、`2/0`、`1/1` 五种组合，
+单/双门数量会进入数据库公式模板控制单元，从而分别计算重量和产品面积。
+其他门型产品仅接受 `1/0` 和 `0/1`，分别使用数据库单门和双门产品。
+
+快速报价只区分单门和双门：`0/1`、`0/2` 为双门，`1/0`、`2/0`、`1/1`
+为单门。门型加价由 API 响应层自动处理，不修改公式法结果。
 
 公式法使用的标准柜体重量和喷涂面积可通过 `base_material_weight_kg`、`product_area_m2` 传入；如果未传入，接口仍会返回快速报价，同时在 `risk_flags` 中返回公式数据缺失提示。
 

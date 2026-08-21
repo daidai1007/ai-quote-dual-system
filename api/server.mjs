@@ -15,7 +15,7 @@ const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
 const API_BUILD = '2026-08-17-auxiliary-bom-v1';
-const DEPLOYMENT_BUILD = '2026-08-21-door-variant-v1';
+const DEPLOYMENT_BUILD = '2026-08-21-door-formula-v2';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -75,9 +75,6 @@ const validateRequest = (input) => {
   if (!input || typeof input !== 'object') throw new Error('JSON body is required');
   for (const key of ['quote_id', 'product_code', 'material_code']) {
     if (!input[key] || typeof input[key] !== 'string') throw new Error(`${key} is required`);
-  }
-  if (!['SECC', 'SUS304', 'SUS316'].includes(input.material_code)) {
-    throw new Error('material_code must be SECC, SUS304 or SUS316');
   }
   for (const key of ['width_mm', 'height_mm', 'depth_mm']) {
     const n = Number(input[key]);

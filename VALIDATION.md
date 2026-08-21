@@ -25,9 +25,12 @@ Run the source regression with:
 npm test
 ```
 
-Build `2026-08-21-door-variant-v1` validates the five door-count combinations,
-selects the matching single/double database product record and applies only the
-approved quick-price increments. Formula totals remain unchanged. Regression
+Build `2026-08-21-door-formula-v2` validates all five JS/JP/JA/JE formula
+door-count combinations and verifies that the two counts drive formula weight
+and area. Other door products accept only 1/0 and 0/1 and select the matching
+database single/double record. Quick quote classifies 0/1 and 0/2 as DOUBLE,
+and 1/0, 2/0 and 1/1 as SINGLE, then applies only the approved increments.
+Formula totals remain unchanged by the quick surcharge. Regression
 coverage also verifies compatibility with the legacy JS/JP quick-only attachment
 row so the same transformation cannot be charged twice.
 
