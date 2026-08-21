@@ -21,8 +21,8 @@ const assertClose = (actual, expected, label) => {
 const formulaHeaders = formulaSheet.getRange("L10:AC10").values[0].map(normalize);
 const expectedFormulaHeaders = [
   "材料成本", "辅材成本", "人工成本", "喷塑费用", "管理费用",
-  "底座", "侧板", "三排", "填充安装板", "灯开关/门限位", "文件夹",
-  "风机滤网", "门限位器", "接地线", "前双开门", "安装板单发", "运费", "折扣",
+  "底座", "侧板", "三排纵梁", "安装板", "灯/开关", "文件夹",
+  "风机滤网", "门限位器", "接地线", "双开门", "安装板单发", "运费", "折扣",
 ];
 assert(
   JSON.stringify(formulaHeaders) === JSON.stringify(expectedFormulaHeaders.map(normalize)),
@@ -31,8 +31,8 @@ assert(
 
 const quickHeaders = quickSheet.getRange("L10:Y10").values[0].map(normalize);
 const expectedQuickHeaders = [
-  "柜体", "底座", "侧板", "三排", "填充安装板", "灯开关/门限位", "文件夹",
-  "风机滤网", "门限位器", "接地线", "前双开门", "安装板单发", "运费", "折扣",
+  "柜体", "底座", "侧板", "三排纵梁", "安装板", "灯/开关", "文件夹",
+  "风机滤网", "门限位器", "接地线", "双开门", "安装板单发", "运费", "折扣",
 ];
 assert(
   JSON.stringify(quickHeaders) === JSON.stringify(expectedQuickHeaders.map(normalize)),

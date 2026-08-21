@@ -29,6 +29,14 @@ if (!Array.isArray(payload.items) || payload.items.length === 0) {
 }
 validateConfirmedQuoteSnapshot(payload);
 
+const sellerInformation = {
+  name: "浙江京能电力设备有限公司",
+  address: "杭州临安横畈工业功能区桑园路18号",
+  telephone: "0571-88520091",
+  fax: "0571-88520077",
+  email: "",
+};
+
 // Cross-sheet copyFrom() also does not reproduce the source worksheet's
 // merged cells, column widths or row heights. Apply the fixed template
 // geometry explicitly so both quotation sheets have the same layout in
@@ -101,8 +109,19 @@ function buildQuotationTemplate(targetWorkbook) {
   sheet.getRange("D2").values = [["日期"]];
   sheet.getRange("A4:A8").values = [["买方"], ["地址"], ["电话"], ["传真"], ["邮箱"]];
   sheet.getRange("E4:E8").values = [["卖方"], ["地址"], ["电话"], ["传真"], ["邮箱"]];
+  sheet.getRange("F4:F8").values = [[
+    sellerInformation.name,
+  ], [
+    sellerInformation.address,
+  ], [
+    sellerInformation.telephone,
+  ], [
+    sellerInformation.fax,
+  ], [
+    sellerInformation.email,
+  ]];
   sheet.getRange("A10:H10").values = [[
-    "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "金额", "备注",
+    "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "总价", "备注",
   ]];
   sheet.getRange("L10:Y10").values = [[
     "柜体", "底座", "侧板", "三排纵梁", "安装板", "灯/开关", "文件夹",
@@ -698,10 +717,6 @@ function buildFormulaCostDetailSheet() {
   sheet.getRange("G2").values = [["下单公司"]];
   sheet.mergeCells(`H2:${lastColumn}2`);
   sheet.getRange("H2").values = [[payload.company_name || ""]];
-  sheet.mergeCells(`A3:${lastColumn}3`);
-  sheet.getRange("A3").values = [[
-    "说明：材料和喷塑展示完整计算公式；辅材按 BOM 逐行展开；附件按实际选择逐行展开；经验值与调整项均明确标注数据来源。",
-  ]];
   sheet.getRange(`A5:${lastColumn}5`).values = [headers];
   if (detailRows.length) {
     sheet.getRange(`A${firstDataRow}:${lastColumn}${subtotalRow - 1}`).values = detailRows;
@@ -720,10 +735,6 @@ function buildFormulaCostDetailSheet() {
 
   sheet.getRange(`A2:${lastColumn}2`).format.fill = "#EAF2F8";
   sheet.getRange(`A2:${lastColumn}2`).format.font = { bold: true, color: "#173F67" };
-  sheet.getRange(`A3:${lastColumn}3`).format.fill = "#FFF7E6";
-  sheet.getRange(`A3:${lastColumn}3`).format.font = { color: "#8A5A00" };
-  sheet.getRange(`A3:${lastColumn}3`).format.wrapText = true;
-  sheet.getRange(`A3:${lastColumn}3`).format.rowHeight = 34;
 
   sheet.getRange(`A5:${lastColumn}5`).format.fill = "#2F7DC5";
   sheet.getRange(`A5:${lastColumn}5`).format.font = { bold: true, color: "#FFFFFF" };
@@ -788,13 +799,18 @@ const verifyWorkbookContents = (candidateWorkbook) => {
   attachWorkbookRangeApi(candidateWorkbook);
   const items = payload.items || [];
   const publicHeaders = [
-    "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "金额", "备注",
+    "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "总价", "备注",
   ];
   const audit = {};
   for (const [sheetName, method] of [["公式法报价单", "formula"], ["快速报价单", "quick"]]) {
     const sheet = attachRangeApi(candidateWorkbook.getWorksheet(sheetName));
     if (!sheet) throw new Error(`saved workbook is missing sheet: ${sheetName}`);
     assertRow(rangePlainValues(sheet, "A10:H10")[0], publicHeaders, `${sheetName} public headers`);
+    assertRow(
+      rangePlainValues(sheet, "F4:F8").map((row) => row[0]),
+      Object.values(sellerInformation).map((value) => value || null),
+      `${sheetName} seller information`,
+    );
     let subtotal = 0;
     items.forEach((item, index) => {
       const row = 11 + index;
@@ -846,6 +862,9 @@ const verifyWorkbookContents = (candidateWorkbook) => {
 
   const costSheet = attachRangeApi(candidateWorkbook.getWorksheet("成本明细"));
   if (!costSheet) throw new Error("saved workbook is missing sheet: 成本明细");
+  if (rangePlainValues(costSheet, "A3:O3")[0].some((value) => value !== null)) {
+    throw new Error("saved workbook still contains the cost-detail annotation box");
+  }
   if (rangePlainValues(costSheet, `A${costDetailLastRow}`)[0][0] !== "合计") {
     throw new Error("saved workbook cost-detail subtotal is missing");
   }
