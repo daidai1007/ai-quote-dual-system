@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node api/server.mjs",
     "check": "node --check api/server.mjs && node --check api/runtime_config.mjs && node --check api/attachment_rules.mjs && node --check api/attachment_catalog_rules.mjs && node --check api/door_variant_rules.mjs && node --check exceljs_range_adapter.mjs && node --check quote_export_contract.mjs && node --check export_dual_quote_workbook.mjs",
-    "test": "node --test api/runtime_config.test.mjs api/cloud_liveness.test.mjs api/attachment_rules.quick_only.test.mjs api/attachment_catalog_rules.test.mjs api/door_variant_rules.test.mjs database/migrations/program_rules.contract.test.mjs",
+    "test": "node --test api/runtime_config.test.mjs api/cloud_liveness.test.mjs api/attachment_rules.quick_only.test.mjs api/attachment_catalog_rules.test.mjs api/door_variant_rules.test.mjs database/migrations/program_rules.contract.test.mjs database/migrations/unified_door_formula_sync.contract.test.mjs",
     "verify": "npm run check && npm test"
   },
   "engines": {

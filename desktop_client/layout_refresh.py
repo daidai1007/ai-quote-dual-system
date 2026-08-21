@@ -42,6 +42,90 @@ WIDGET_MAX = 16_777_215
 VALID_DOOR_COMBINATIONS = {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
 FORMULA_MULTI_DOOR_FAMILIES = {"JS", "JP", "JA", "JE"}
 
+
+class _QuotedTextSafeCellPattern:
+    """Proxy a compiled cell regex while preserving quoted Excel strings."""
+
+    def __init__(self, pattern):
+        self.pattern = pattern
+
+    def sub(self, replacement, expression: str, count: int = 0) -> str:
+        segments = re.split(r'("(?:[^"]|"")*")', expression)
+        remaining = int(count or 0)
+        output = []
+        for index, segment in enumerate(segments):
+            if index % 2:
+                output.append(segment)
+                continue
+            limit = remaining if count else 0
+            replaced, matches = self.pattern.subn(replacement, segment, count=limit)
+            output.append(replaced)
+            if count:
+                remaining -= matches
+                if remaining <= 0:
+                    output.extend(segments[index + 1:])
+                    break
+        return "".join(output)
+
+
+def _install_formula_cell_reference_guard(namespace: dict) -> None:
+    calculator = namespace.get("FormulaDatabaseCalculator")
+    pattern = getattr(calculator, "_CELL_RE", None) if calculator is not None else None
+    if pattern is None or isinstance(pattern, _QuotedTextSafeCellPattern):
+        return
+    calculator._CELL_RE = _QuotedTextSafeCellPattern(pattern)
+    calculator.DETAIL_ROWS.update({
+        "JS_SINGLE": (5, 25, 28, 28, 1),
+        "JS_DOUBLE": (5, 25, 28, 28, 1),
+        "JP_SINGLE": (5, 26, 29, 29, 1),
+        "JP_DOUBLE": (5, 26, 29, 29, 1),
+        "JA_SINGLE": (5, 25, 28, 28, 2),
+        "JE_SINGLE": (5, 25, 28, 28, 2),
+        "JE_DOUBLE": (5, 25, 28, 28, 2),
+    })
+    calculator.DOOR_CONTROL_CELLS.update({
+        "JS_SINGLE": ("B17", "B11"),
+        "JS_DOUBLE": ("B17", "B11"),
+        "JP_SINGLE": ("B24", "B11"),
+        "JP_DOUBLE": ("B24", "B11"),
+        "JA_SINGLE": ("B16", "B17"),
+        "JE_SINGLE": ("B16", "B17"),
+        "JE_DOUBLE": ("B16", "B17"),
+    })
+    if not getattr(calculator, "_unified_formula_hydration_installed", False):
+        original_load_template = calculator.load_template
+
+        def load_template_with_dynamic_totals(self, payload):
+            result = original_load_template(self, payload)
+            template = payload.get("template", payload) if isinstance(payload, dict) else {}
+            code = str(template.get("template_code") or "").strip()
+            sheet = self.sheets.get(code) if code else None
+            formulas = sheet.get("formulas") if isinstance(sheet, dict) else None
+            if not isinstance(formulas, dict):
+                return result
+            for rule in template.get("rules") or []:
+                raw = rule.get("raw_rule") or {}
+                row = int(rule.get("source_row_no") or raw.get("source_row_no") or 0)
+                if row <= 0:
+                    continue
+                if rule.get("include_material_cost") and f"M{row}" not in formulas:
+                    formulas[f"M{row}"] = (
+                        f"L{row}*J{row}*I{row}*H{row}*G{row}*F{row}*1.2"
+                    )
+                if f"K{row}" in formulas and f"L{row}" not in formulas:
+                    formulas[f"L{row}"] = f"K{row}*B$9"
+                if rule.get("include_spray_area") and f"Y{row}" not in formulas:
+                    formulas[f"Y{row}"] = (
+                        f'IF(OR(N{row}="镀锌板",N{row}="蓝白锌",'
+                        f'N{row}="镀彩锌",N{row}="镀白锌",N{row}="镀锡",'
+                        f'N{row}="镀铜",N{row}="外协",N{row}="外购"),0,'
+                        f'(F{row}/1000)*(G{row}/1000)*2*L{row})'
+                    )
+            return result
+
+        calculator.load_template = load_template_with_dynamic_totals
+        calculator._unified_formula_hydration_installed = True
+
 # Cold-rolled sheet metal, drawing ink and inspection marks.  Keep the palette
 # compact so every state color has one stable meaning throughout the client.
 STEEL_CANVAS = "#F4F6F8"
@@ -1241,6 +1325,7 @@ def _install_attachment_catalog_addition(namespace: dict) -> None:
 def install_layout_refresh(namespace: dict) -> None:
     """Install the layout pass on an extracted or packaged V3 namespace."""
 
+    _install_formula_cell_reference_guard(namespace)
     main_window = namespace["MainWindow"]
     if getattr(main_window, "_layout_refresh_installed", False):
         return

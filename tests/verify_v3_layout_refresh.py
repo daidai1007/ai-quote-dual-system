@@ -45,6 +45,21 @@ def buttons_with_text(root, captions: set[str]):
 
 namespace = v3_launcher.load_v3_namespace()
 
+runtime_calculator = namespace["FormulaDatabaseCalculator"]()
+assert runtime_calculator.DETAIL_ROWS["JP_SINGLE"][:3] == (5, 26, 29)
+assert runtime_calculator.DOOR_CONTROL_CELLS["JE_SINGLE"] == ("B16", "B17")
+runtime_calculator.sheets = {
+    "JE_SINGLE": {
+        "cells": {"H5": 7, "M5": 12, "N5": "", "Y5": 1},
+        "formulas": {"E5": 'IF(B16=1,"MS828锁杆","")'},
+    }
+}
+runtime_weight, runtime_area = runtime_calculator.calculate(
+    "JE_SINGLE", 600, 2000, 300, 1, 0
+)
+assert runtime_weight == 12, runtime_weight
+assert runtime_area == 0.5, runtime_area
+
 # The layout contract is offline.  Product/company loading is separately
 # covered by API tests and must not contact Render or Neon from this check.
 namespace["MainWindow"].load_catalogs = lambda self: None

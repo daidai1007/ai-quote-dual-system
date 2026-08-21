@@ -280,7 +280,7 @@ class FormulaDatabaseCalculator:
     DETAIL_ROWS = {
         "JS_SINGLE": (5, 25, 28, 28, 1),
         "JS_DOUBLE": (5, 25, 28, 28, 1),
-        "JP_SINGLE": (5, 25, 28, 28, 1),
+        "JP_SINGLE": (5, 26, 29, 29, 1),
         "JP_DOUBLE": (5, 26, 29, 29, 1),
         "JA_SINGLE": (5, 25, 28, 28, 2),
         "JE_SINGLE": (5, 25, 28, 28, 2),
@@ -302,6 +302,21 @@ class FormulaDatabaseCalculator:
         "JE_DOUBLE": ("B16", "B17"),
     }
     _CELL_RE = re.compile(r"(?<![A-Za-z0-9_])\$?([A-Z]{1,3})\$?(\d+)")
+
+    @classmethod
+    def _replace_cell_references(cls, expression: str, replacement) -> str:
+        """Replace cell references without touching quoted Excel text.
+
+        Model names such as ``MS828`` are valid text in formula branches but
+        also resemble an Excel address.  Splitting string literals out before
+        applying the cell-reference pattern keeps those names unchanged.
+        """
+
+        segments = re.split(r'("(?:[^"]|"")*")', expression)
+        return "".join(
+            segment if index % 2 else cls._CELL_RE.sub(replacement, segment)
+            for index, segment in enumerate(segments)
+        )
 
     def __init__(self):
         self.sheets: dict[str, dict[str, object]] = {}
@@ -346,6 +361,8 @@ class FormulaDatabaseCalculator:
                     f"L{source_row}*J{source_row}*I{source_row}*H{source_row}*"
                     f"G{source_row}*F{source_row}*1.2"
                 )
+            if f"K{source_row}" in formulas and f"L{source_row}" not in formulas:
+                formulas[f"L{source_row}"] = f"K{source_row}*B$9"
             if rule.get("include_spray_area") and f"Y{source_row}" not in formulas:
                 formulas[f"Y{source_row}"] = (
                     f'IF(OR(N{source_row}="镀锌板",N{source_row}="蓝白锌",'
@@ -505,8 +522,9 @@ class FormulaDatabaseCalculator:
         def evaluate_expression(expression: str, concat: bool = False):
             default_if = "\"\"" if concat else "0"
             expression = re.sub(r",\s*\)", f",{default_if})", expression)
-            expression = self._CELL_RE.sub(
-                lambda match: f'CELL("{match.group(1)}{match.group(2)}")', expression
+            expression = self._replace_cell_references(
+                expression,
+                lambda match: f'CELL("{match.group(1)}{match.group(2)}")'
             )
             environment = {
                 "CELL": cell, "IF": self._excel_if, "AND": self._excel_and,
