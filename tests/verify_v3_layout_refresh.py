@@ -106,7 +106,14 @@ assert window.findChild(QAbstractButton, "primaryQuoteAction").accessibleName() 
 assert window.width_spin.specialValueText() == ""
 assert window.depth_spin.specialValueText() == ""
 assert window.height_spin.specialValueText() == ""
-assert window.door_counts() == (1, 0)
+window.product_catalog = {"JA": {"codes": {"SINGLE": "JA_SINGLE"}, "method": "formula"}}
+window.product_combo.clear()
+window.product_combo.addItem("JA", "JA")
+window.single_door_combo.setEnabled(True)
+window.double_door_combo.setEnabled(True)
+window.set_door_counts(0, 0)
+layout_refresh._set_default_door_combination(window)
+assert window.door_counts() == (1, 0), window.door_counts()
 assert "宽×深×高" in window.quote_spec_edit.toolTip()
 
 window.stack.setCurrentIndex(3)

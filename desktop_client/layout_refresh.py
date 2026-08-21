@@ -1304,8 +1304,8 @@ def install_layout_refresh(namespace: dict) -> None:
     main_window.pdf_recognition_finished = recognition_finished_without_strip
     main_window.refresh_summary = refresh_summary_with_action_state
     if callable(original_product_changed):
-        def product_changed_with_default_door(self, *args, **kwargs):
-            result = original_product_changed(self, *args, **kwargs)
+        def product_changed_with_default_door(self, *_signal_args, **_signal_kwargs):
+            result = original_product_changed(self)
             _set_default_door_combination(self)
             _refresh_model_suggestions(self)
             return result
