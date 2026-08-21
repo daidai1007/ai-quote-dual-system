@@ -51,11 +51,16 @@ git -C "G:\gongsi\banjinxitong\板件后续二次修改\render-test-deploy" push
 Invoke-RestMethod "https://ai-quote-dual-test.onrender.com/health" | ConvertTo-Json
 ```
 
-然后在 Render 服务的 Shell 中，使用服务已有的 `DATABASE_URL` 执行事务型迁移：
+Free 实例不提供 Render Shell。先在 Neon 建立恢复点或临时分支，再打开
+Neon Console 的 SQL Editor，载入并执行以下本地事务型迁移文件：
 
-```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/migrations/sync_unified_door_formula_templates.sql
 ```
+G:\gongsi\banjinxitong\板件后续二次修改\render-test-deploy\database\migrations\sync_unified_door_formula_templates.sql
+```
+
+执行前确认 SQL Editor 连接的是目标数据库；脚本以 `BEGIN` 开始、以
+`COMMIT` 结束，断言失败时事务不会提交。不要把数据库口令粘贴到聊天或
+提交到 GitHub。
 
 迁移只同步 JS、JP、JA、JE 对应的 7 个公式模板，不修改快速报价经验表。执行完毕后，先检查 `/api/health/database`，再运行 `600×300×2000` 门型回归：
 
