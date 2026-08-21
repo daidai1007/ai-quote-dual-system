@@ -717,6 +717,10 @@ function buildFormulaCostDetailSheet() {
   sheet.getRange("G2").values = [["下单公司"]];
   sheet.mergeCells(`H2:${lastColumn}2`);
   sheet.getRange("H2").values = [[payload.company_name || ""]];
+  sheet.mergeCells(`A3:${lastColumn}3`);
+  sheet.getRange("A3").values = [[
+    "说明：材料和喷塑展示完整计算公式；辅材按 BOM 逐行展开；附件按实际选择逐行展开；经验值与调整项均明确标注数据来源。",
+  ]];
   sheet.getRange(`A5:${lastColumn}5`).values = [headers];
   if (detailRows.length) {
     sheet.getRange(`A${firstDataRow}:${lastColumn}${subtotalRow - 1}`).values = detailRows;
@@ -735,6 +739,10 @@ function buildFormulaCostDetailSheet() {
 
   sheet.getRange(`A2:${lastColumn}2`).format.fill = "#EAF2F8";
   sheet.getRange(`A2:${lastColumn}2`).format.font = { bold: true, color: "#173F67" };
+  sheet.getRange(`A3:${lastColumn}3`).format.fill = "#FFF7E6";
+  sheet.getRange(`A3:${lastColumn}3`).format.font = { color: "#8A5A00" };
+  sheet.getRange(`A3:${lastColumn}3`).format.wrapText = true;
+  sheet.getRange(`A3:${lastColumn}3`).format.rowHeight = 34;
 
   sheet.getRange(`A5:${lastColumn}5`).format.fill = "#2F7DC5";
   sheet.getRange(`A5:${lastColumn}5`).format.font = { bold: true, color: "#FFFFFF" };
@@ -792,6 +800,35 @@ const assertClose = (actual, expected, label) => {
 const assertRow = (actual, expected, label) => {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`${label} mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+};
+
+const xlsxEntryNames = (buffer) => {
+  const names = [];
+  for (let offset = 0; offset + 46 <= buffer.length;) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) {
+      offset += 1;
+      continue;
+    }
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const nameStart = offset + 46;
+    names.push(buffer.toString("utf8", nameStart, nameStart + nameLength));
+    offset = nameStart + nameLength + extraLength + commentLength;
+  }
+  return names;
+};
+
+const assertNoWorkbookAnnotations = (buffer) => {
+  const annotationPattern = /^(?:xl\/comments\d+\.xml|xl\/threadedComments\/|xl\/persons\/|xl\/drawings\/vmlDrawing\d+\.vml)/i;
+  const entryNames = xlsxEntryNames(buffer);
+  if (!entryNames.includes("xl/workbook.xml")) {
+    throw new Error("formal quotation ZIP directory is invalid");
+  }
+  const annotations = entryNames.filter((name) => annotationPattern.test(name));
+  if (annotations.length) {
+    throw new Error(`formal quotation contains annotation objects: ${annotations.join(", ")}`);
   }
 };
 
@@ -862,9 +899,6 @@ const verifyWorkbookContents = (candidateWorkbook) => {
 
   const costSheet = attachRangeApi(candidateWorkbook.getWorksheet("成本明细"));
   if (!costSheet) throw new Error("saved workbook is missing sheet: 成本明细");
-  if (rangePlainValues(costSheet, "A3:O3")[0].some((value) => value !== null)) {
-    throw new Error("saved workbook still contains the cost-detail annotation box");
-  }
   if (rangePlainValues(costSheet, `A${costDetailLastRow}`)[0][0] !== "合计") {
     throw new Error("saved workbook cost-detail subtotal is missing");
   }
@@ -898,6 +932,7 @@ try {
   await workbook.xlsx.writeFile(temporaryOutputPath);
   const stat = await fs.stat(temporaryOutputPath);
   if (!stat.isFile() || stat.size === 0) throw new Error("导出组件生成了空文件");
+  assertNoWorkbookAnnotations(await fs.readFile(temporaryOutputPath));
   const serializedWorkbook = new ExcelJS.Workbook();
   await serializedWorkbook.xlsx.readFile(temporaryOutputPath);
   const serializedAudit = verifyWorkbookContents(serializedWorkbook);

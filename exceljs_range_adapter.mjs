@@ -218,7 +218,11 @@ class ExcelRange {
       cell.value = null;
       if (applyTo === "all") {
         cell.style = {};
-        cell.note = undefined;
+        // The current @excel.js/exceljs build serializes `cell.note = undefined`
+        // on an empty cell as a blank legacy comment plus a VML drawing. Excel
+        // and WPS then show a red note indicator even though there is no text.
+        // Generated quotation templates contain no notes, so clearing values and
+        // styles is sufficient and avoids creating those phantom annotations.
       }
     });
   }

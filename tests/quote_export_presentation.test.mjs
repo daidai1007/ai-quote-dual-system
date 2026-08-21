@@ -31,6 +31,23 @@ const closeTo = (actual, expected, label) => {
   assert.ok(Math.abs(Number(actual) - expected) < 0.01, `${label}: expected ${expected}, got ${actual}`);
 };
 
+const xlsxEntryNames = (buffer) => {
+  const names = [];
+  for (let offset = 0; offset + 46 <= buffer.length;) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) {
+      offset += 1;
+      continue;
+    }
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const nameStart = offset + 46;
+    names.push(buffer.toString("utf8", nameStart, nameStart + nameLength));
+    offset = nameStart + nameLength + extraLength + commentLength;
+  }
+  return names;
+};
+
 test("formal workbook exports the revised presentation without changing quote detail", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-export-presentation-"));
   const outputPath = path.join(tempDir, "presentation-regression.xlsx");
@@ -38,6 +55,11 @@ test("formal workbook exports the revised presentation without changing quote de
     await runExporter(outputPath);
     const stat = await fs.stat(outputPath);
     assert.ok(stat.size > 0, "exported workbook is empty");
+    const annotationPattern = /^(?:xl\/comments\d+\.xml|xl\/threadedComments\/|xl\/persons\/|xl\/drawings\/vmlDrawing\d+\.vml)/i;
+    const entryNames = xlsxEntryNames(await fs.readFile(outputPath));
+    assert.ok(entryNames.includes("xl/workbook.xml"), "XLSX ZIP directory could not be parsed");
+    const annotationEntries = entryNames.filter((name) => annotationPattern.test(name));
+    assert.deepEqual(annotationEntries, [], "workbook contains legacy or threaded annotation objects");
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
@@ -66,12 +88,8 @@ test("formal workbook exports the revised presentation without changing quote de
     }
 
     const detailSheet = workbook.getWorksheet("成本明细");
-    assert.ok(!detailSheet.model.merges.includes("A3:O3"), "annotation box merge remains");
-    assert.deepEqual(
-      Array.from({ length: 15 }, (_, index) => detailSheet.getCell(3, index + 1).text),
-      Array(15).fill(""),
-      "annotation box content remains",
-    );
+    assert.ok(detailSheet.model.merges.includes("A3:O3"), "cost-detail explanation merge was lost");
+    assert.match(detailSheet.getCell("A3").text, /^说明：/, "cost-detail explanation was lost");
     const detailRows = [];
     detailSheet.eachRow({ includeEmpty: false }, (row) => detailRows.push(row.values.slice(1).map(String)));
     assert.ok(detailRows.some((row) => row.includes("安装条")), "BOM row was lost");
