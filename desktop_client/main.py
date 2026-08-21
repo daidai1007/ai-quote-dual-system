@@ -2510,7 +2510,7 @@ class MainWindow(QMainWindow):
             if self.door_counts() not in self.VALID_DOOR_COMBINATIONS:
                 self.set_door_counts(1, 0)
         else:
-            self.set_door_counts(0, 0)
+            self.set_door_counts(1, 0)
         defaults = entry.get("defaults")
         if defaults:
             self.width_spin.setValue(float(defaults[0] or 1000)); self.height_spin.setValue(float(defaults[1] or 1800)); self.depth_spin.setValue(float(defaults[2] or 600))

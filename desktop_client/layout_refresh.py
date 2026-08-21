@@ -465,6 +465,9 @@ def _set_default_door_combination(window) -> None:
     if not isinstance(single, QComboBox) or not isinstance(double, QComboBox):
         return
     if not single.isEnabled() and not double.isEnabled():
+        setter = getattr(window, "set_door_counts", None)
+        if callable(setter):
+            setter(1, 0)
         return
     counts = (single.currentData(), double.currentData())
     try:

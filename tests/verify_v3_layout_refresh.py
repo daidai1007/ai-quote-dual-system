@@ -121,6 +121,13 @@ assert window.findChild(QAbstractButton, "primaryQuoteAction").accessibleName() 
 assert window.width_spin.specialValueText() == ""
 assert window.depth_spin.specialValueText() == ""
 assert window.height_spin.specialValueText() == ""
+window.product_catalog = {"JM": {"codes": {"DEFAULT": "JM"}, "method": "quick"}}
+window.product_combo.clear()
+window.product_combo.addItem("JM", "JM")
+window.product_changed()
+assert not window.single_door_combo.isEnabled()
+assert not window.double_door_combo.isEnabled()
+assert window.door_counts() == (1, 0), window.door_counts()
 window.product_catalog = {"JA": {"codes": {"SINGLE": "JA_SINGLE"}, "method": "formula"}}
 window.product_combo.clear()
 window.product_combo.addItem("JA", "JA")
