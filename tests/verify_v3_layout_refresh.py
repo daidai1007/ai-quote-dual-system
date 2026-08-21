@@ -103,6 +103,11 @@ quote_left, quote_right = quote_workspace.sizes()
 assert quote_left >= 570, quote_workspace.sizes()
 assert 520 <= quote_right <= 680, quote_workspace.sizes()
 assert window.findChild(QAbstractButton, "primaryQuoteAction").accessibleName() == "计算双报价"
+assert window.width_spin.specialValueText() == ""
+assert window.depth_spin.specialValueText() == ""
+assert window.height_spin.specialValueText() == ""
+assert window.door_counts() == (1, 0)
+assert "宽×深×高" in window.quote_spec_edit.toolTip()
 
 window.stack.setCurrentIndex(3)
 app.processEvents()

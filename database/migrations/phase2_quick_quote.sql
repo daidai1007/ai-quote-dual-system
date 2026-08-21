@@ -127,7 +127,15 @@ AS $function$
            THEN 0 ELSE 1 END AS range_rank,
       sqrt(power(p_width_mm-q.reference_width_mm,2)
          + power(p_height_mm-q.reference_height_mm,2)
-         + power(p_depth_mm-q.reference_depth_mm,2)) AS distance
+         + power(p_depth_mm-q.reference_depth_mm,2)) AS distance,
+      abs((p_width_mm + p_height_mm + p_depth_mm)
+        - (q.reference_width_mm + q.reference_height_mm + q.reference_depth_mm)) AS perimeter_distance,
+      CASE
+        WHEN (q.reference_width_mm + q.reference_height_mm + q.reference_depth_mm) > 0
+        THEN (p_width_mm + p_height_mm + p_depth_mm)
+           / (q.reference_width_mm + q.reference_height_mm + q.reference_depth_mm)
+        ELSE 1
+      END AS perimeter_ratio
     FROM calc.quick_quote_experience q
     CROSS JOIN canonical c
     WHERE q.product_code = c.product_code
@@ -139,21 +147,20 @@ AS $function$
   ), best AS (
     SELECT *
     FROM candidates
-    ORDER BY model_rank, range_rank, distance, effective_from DESC, quick_rule_id DESC
+    ORDER BY perimeter_distance, distance, model_rank, range_rank, effective_from DESC, quick_rule_id DESC
     LIMIT 1
   )
   SELECT b.quick_rule_id,b.product_code,b.model_code,b.material_code,
          b.reference_width_mm,b.reference_height_mm,b.reference_depth_mm,
-         b.quick_material_cost,b.quick_auxiliary_cost,b.quick_labor_cost,
-         b.quick_attachment_fee,b.quick_spray_cost,b.quick_management_fee,
+         ROUND(b.quick_material_cost * b.perimeter_ratio, 6),
+         b.quick_auxiliary_cost,
+         ROUND(b.quick_labor_cost * b.perimeter_ratio, 6),
+         b.quick_attachment_fee,
+         ROUND(b.quick_spray_cost * b.perimeter_ratio, 6),
+         ROUND(b.quick_management_fee * b.perimeter_ratio, 6),
          ROUND(
            COALESCE(b.quick_base_price,b.quick_total_cost)
-           * CASE
-               WHEN 4 * (b.reference_width_mm + b.reference_height_mm + b.reference_depth_mm) > 0
-               THEN 4 * (p_width_mm + p_height_mm + p_depth_mm)
-                    / (4 * (b.reference_width_mm + b.reference_height_mm + b.reference_depth_mm))
-               ELSE 1
-             END,
+           * b.perimeter_ratio,
            6
          ),
          CASE

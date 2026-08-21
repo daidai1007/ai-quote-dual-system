@@ -58,9 +58,27 @@ test('Docker-compatible server starts and serves a database-free health check', 
   const health = await response.json();
   assert.equal(health.ok, true);
   assert.equal(health.build, '2026-08-17-auxiliary-bom-v1');
-  assert.equal(health.deployment, '2026-08-20-quick-only-v2');
+  assert.equal(health.deployment, '2026-08-21-door-variant-v1');
   assert.equal(health.database_checked, false);
 
   const protectedResponse = await fetch(`http://127.0.0.1:${port}/api/health/database`);
   assert.equal(protectedResponse.status, 401);
+
+  const attachmentValidation = await fetch(`http://127.0.0.1:${port}/api/attachments/catalog`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    body: JSON.stringify({ item_name: '', price: -1 }),
+  });
+  assert.equal(attachmentValidation.status, 400);
+
+  const doorValidation = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    body: JSON.stringify({
+      quote_id: 'TEST-INVALID-DOOR', product_code: 'JS_SINGLE', material_code: 'SECC',
+      width_mm: 1000, height_mm: 1800, depth_mm: 600,
+      single_door_count: 2, double_door_count: 1,
+    }),
+  });
+  assert.equal(doorValidation.status, 400);
 });

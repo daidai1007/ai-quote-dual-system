@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyQuickOnlyAttachmentRuleToQuoteRow } from './attachment_rules.mjs';
+import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
+import { applyDoorVariantQuickPrice, normalizeDoorVariantInput } from './door_variant_rules.mjs';
 import { buildPsqlArgs, resolveRuntimeConfig } from './runtime_config.mjs';
 
 const RUNTIME_CONFIG = resolveRuntimeConfig();
@@ -13,7 +15,7 @@ const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
 const API_BUILD = '2026-08-17-auxiliary-bom-v1';
-const DEPLOYMENT_BUILD = '2026-08-20-quick-only-v2';
+const DEPLOYMENT_BUILD = '2026-08-21-door-variant-v1';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -89,15 +91,16 @@ const validateRequest = (input) => {
 };
 
 const normalizeProductVariant = (input = {}) => {
-  const productCode = String(input.product_code || '').trim();
-  const variantCode = String(input.variant_code || '').trim().toUpperCase();
+  const doorNormalized = normalizeDoorVariantInput(input);
+  const productCode = String(doorNormalized.product_code || '').trim();
+  const variantCode = String(doorNormalized.variant_code || '').trim().toUpperCase();
   if (productCode === 'JP_WIDE_EXP' || productCode === 'JS_WIDE_EXP') {
-    return { ...input, variant_code: 'WIDE' };
+    return { ...doorNormalized, variant_code: 'WIDE' };
   }
   if (productCode === 'JM' && (!variantCode || variantCode === 'DEFAULT')) {
-    return { ...input, variant_code: 'SINGLE' };
+    return { ...doorNormalized, variant_code: 'SINGLE' };
   }
-  return input;
+  return doorNormalized;
 };
 
 const attachmentStatements = (input) => (input.attachments || []).map((a, index) => {
@@ -296,6 +299,65 @@ FROM (
     attachment_price_id DESC
 ) x;`;
 
+const addAttachmentCatalogSql = (input) => {
+  const item = normalizeCatalogAttachment(input);
+  const values = {
+    itemName: sqlUnicodeText(item.item_name),
+    modelCode: sqlUnicodeText(item.model_code),
+    variant: sqlUnicodeText(item.variant),
+    width: item.width_mm === null ? 'NULL' : sqlNumber(item.width_mm, 'width_mm'),
+    height: item.height_mm === null ? 'NULL' : sqlNumber(item.height_mm, 'height_mm'),
+    depth: item.depth_mm === null ? 'NULL' : sqlNumber(item.depth_mm, 'depth_mm'),
+    price: sqlNumber(item.price, 'price', true),
+    priceText: sqlUnicodeText(item.price_text),
+    unit: sqlUnicodeText(item.unit),
+    source: sqlUnicodeText(item.price_source),
+    notes: sqlUnicodeText(item.notes),
+  };
+  return {
+    item,
+    sql: `
+WITH existing AS (
+  SELECT attachment_price_id
+  FROM calc.attachment_price
+  WHERE is_active = TRUE
+    AND item_name = ${values.itemName}
+    AND model_code IS NOT DISTINCT FROM ${values.modelCode}
+    AND variant IS NOT DISTINCT FROM ${values.variant}
+    AND width_mm IS NOT DISTINCT FROM ${values.width}
+    AND height_mm IS NOT DISTINCT FROM ${values.height}
+    AND depth_mm IS NOT DISTINCT FROM ${values.depth}
+    AND price = ${values.price}
+    AND COALESCE(unit, '') = COALESCE(${values.unit}, '')
+    AND COALESCE(price_source, '') = COALESCE(${values.source}, '')
+  ORDER BY attachment_price_id DESC
+  LIMIT 1
+), inserted AS (
+  INSERT INTO calc.attachment_price (
+    item_name, model_code, variant, width_mm, height_mm, depth_mm,
+    price, price_text, unit, price_source, notes, is_active
+  )
+  SELECT ${values.itemName}, ${values.modelCode}, ${values.variant},
+         ${values.width}, ${values.height}, ${values.depth},
+         ${values.price}, ${values.priceText}, ${values.unit},
+         ${values.source}, ${values.notes}, TRUE
+  WHERE NOT EXISTS (SELECT 1 FROM existing)
+  RETURNING attachment_price_id
+), chosen AS (
+  SELECT attachment_price_id, TRUE AS created FROM inserted
+  UNION ALL
+  SELECT attachment_price_id, FALSE AS created FROM existing
+)
+SELECT jsonb_build_object(
+  'saved', TRUE,
+  'created', created,
+  'attachment_price_id', attachment_price_id
+)::text
+FROM chosen
+LIMIT 1;`,
+  };
+};
+
 // Formula quotation inputs are sourced from PostgreSQL.  The client receives
 // the persisted template metadata and part formulas once, then evaluates the
 // same rules locally for responsive dimension editing; no workbook is read at
@@ -332,19 +394,55 @@ FROM (
 // hard-coded list. Formula templates and experience products are returned
 // together for the selector.
 const productCatalogSql = `
-SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.sort_order, x.product_code), '[]'::jsonb)::text
-FROM (
+WITH products AS (
   SELECT 1 AS sort_order, template_code AS product_code,
          template_name AS product_name, 'formula' AS product_method,
-         default_width_mm, default_height_mm, default_depth_mm
+         default_width_mm, default_height_mm, default_depth_mm,
+         '[]'::jsonb AS models
   FROM calc.cabinet_template
   WHERE is_active = TRUE
   UNION ALL
   SELECT 2 AS sort_order, product_code, product_name, 'experience' AS product_method,
-         NULL::numeric, NULL::numeric, NULL::numeric
-  FROM calc.experience_product
-  WHERE is_active = TRUE
-) x;`;
+         NULL::numeric, NULL::numeric, NULL::numeric,
+         COALESCE((
+           SELECT jsonb_agg(jsonb_build_object(
+             'model_code', epm.model_code,
+             'width_mm', epm.width_mm,
+             'height_mm', epm.height_mm,
+             'depth_mm', epm.depth_mm
+           ) ORDER BY epm.model_code, epm.model_id)
+           FROM calc.experience_product_model epm
+           WHERE epm.experience_product_id = ep.experience_product_id
+             AND epm.is_active = TRUE
+         ), '[]'::jsonb) AS models
+  FROM calc.experience_product ep
+  WHERE ep.is_active = TRUE
+), materials AS (
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'code', m.material_code,
+    'name', COALESCE(NULLIF(to_jsonb(m)->>'material_name', ''), m.material_code)
+  ) ORDER BY m.material_code), '[]'::jsonb) AS value
+  FROM calc.material m
+  WHERE COALESCE((to_jsonb(m)->>'is_active')::boolean, TRUE)
+), coatings AS (
+  SELECT COALESCE(jsonb_agg(c.name ORDER BY c.name), '[]'::jsonb) AS value
+  FROM (
+    SELECT DISTINCT COALESCE(
+      NULLIF(to_jsonb(s)->>'coating_type', ''),
+      NULLIF(to_jsonb(s)->>'spray_type', ''),
+      NULLIF(to_jsonb(s)->>'surface_type', '')
+    ) AS name
+    FROM calc.spray_price s
+    WHERE COALESCE((to_jsonb(s)->>'is_active')::boolean, TRUE)
+  ) c
+  WHERE c.name IS NOT NULL
+)
+SELECT jsonb_build_object(
+  'items', COALESCE((SELECT jsonb_agg(to_jsonb(p) - 'sort_order' ORDER BY p.sort_order, p.product_code) FROM products p), '[]'::jsonb),
+  'materials', (SELECT value FROM materials),
+  'coatings', (SELECT value FROM coatings),
+  'source', 'postgresql'
+)::text;`;
 
 const companyCatalogSql = `
 SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.company_name, x.company_code), '[]'::jsonb)::text
@@ -796,7 +894,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/api/products/catalog') {
     try {
       const output = await runPsql(productCatalogSql);
-      return json(res, 200, { items: output ? JSON.parse(output) : [], source: 'postgresql' });
+      return json(res, 200, output ? JSON.parse(output) : {
+        items: [], materials: [], coatings: [], source: 'postgresql',
+      });
     } catch (error) {
       return json(res, 500, { error: 'product_catalog_failed', message: error.message });
     }
@@ -810,6 +910,19 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { items: output ? decodeAttachmentCatalog(JSON.parse(output)) : [] });
     } catch (error) {
       return json(res, 500, { error: 'attachment_catalog_failed', message: error.message });
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/attachments/catalog') {
+    try {
+      const input = await readBody(req);
+      const command = addAttachmentCatalogSql(input);
+      const output = await runPsql(command.sql);
+      const saved = output ? JSON.parse(output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)) : {};
+      return json(res, 200, { ...saved, item: command.item, source: 'postgresql' });
+    } catch (error) {
+      const message = String(error?.message || 'attachment catalogue write failed');
+      return json(res, message.includes('required') || message.includes('must be') || message.includes('cannot exceed')
+        ? 400 : 500, { error: 'attachment_catalog_save_failed', message });
     }
   }
   if (req.method === 'POST' && req.url === '/api/quotes/formula-template') {
@@ -857,7 +970,8 @@ const server = http.createServer(async (req, res) => {
     // Parse the final non-empty line so both empty-attachment and selected-
     // attachment requests use the same response path.
     const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
-    const quote = applyQuickOnlyAttachmentRuleToQuoteRow(JSON.parse(jsonLine), input.attachments);
+    const attachmentAdjusted = applyQuickOnlyAttachmentRuleToQuoteRow(JSON.parse(jsonLine), input.attachments);
+    const quote = applyDoorVariantQuickPrice(attachmentAdjusted, input);
     json(res, 200, quote);
   } catch (error) {
     json(res, error.message?.includes('required') || error.message?.includes('must be') ? 400 : 500, {

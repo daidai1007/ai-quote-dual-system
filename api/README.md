@@ -26,6 +26,10 @@ node .\api\server.mjs
 
 必填字段：`quote_id`、`product_code`、`material_code`、`width_mm`、`height_mm`、`depth_mm`。
 
+门型产品同时传入 `single_door_count` 和 `double_door_count`，仅允许
+`1/0`、`0/1`、`0/2`、`2/0`、`1/1`五种组合。快速报价的门型加价由 API
+响应层自动处理，不改动公式法结果。
+
 公式法使用的标准柜体重量和喷涂面积可通过 `base_material_weight_kg`、`product_area_m2` 传入；如果未传入，接口仍会返回快速报价，同时在 `risk_flags` 中返回公式数据缺失提示。
 
 附件数组示例：
@@ -37,6 +41,11 @@ node .\api\server.mjs
 ```
 
 快速报价未匹配经验值时，`quick_quote.total_cost` 为 `null`，并返回 `quick_quote_missing` 风险，不会按 0 元处理。
+
+`GET /api/products/catalog` 返回产品、数据库型号、材质和喷塑选项。
+
+`GET /api/attachments/catalog` 读取附件库；`POST /api/attachments/catalog`
+新增一条持久附件。新增请求至少包含 `item_name` 和非负 `price`。
 
 ## 快速检查
 

@@ -6,10 +6,13 @@ The source-controlled V3 maintenance layer consists of:
 
 - `v3_launcher.py`: loads the verified V3 core and installs compatibility layers;
 - `recognition_repair.py`: preserves the deployed OCR evidence repair;
-- `layout_refresh.py`: owns responsive layout, visual tokens and UI state feedback.
+- `layout_refresh.py`: owns responsive layout, visual tokens, door-count state,
+  manual specification parsing, database-driven option presentation and the
+  persistent attachment-catalog entry point.
 
-Quote formulas, quick-quote rules, attachment pricing, BOM data, database writes
-and Excel generation remain outside `layout_refresh.py`.
+Quote formulas, quick-quote rules, BOM data and Excel generation remain outside
+`layout_refresh.py`. Attachment catalogue writes are sent to the API and are
+never stored only in the desktop process.
 
 ## Local layout verification
 

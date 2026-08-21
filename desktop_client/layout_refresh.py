@@ -1,32 +1,45 @@
-"""Presentation and interaction refinements for the V3 desktop workbench.
+"""Presentation and approved interaction refinements for the V3 workbench.
 
-The recovered V3 core continues to own recognition, quote calculation,
-database access, BOM data and workbook export.  This overlay changes layout,
-visual hierarchy, accessible copy and state-gated navigation only.
+The recovered V3 core continues to own recognition, formula evaluation, BOM
+data and workbook export. This overlay adds the source-controlled UI state,
+database catalogue presentation and API interactions approved for V3.
 """
 
 from __future__ import annotations
 
+import json
+import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QComboBox,
+    QCompleter,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
+    QFormLayout,
     QFrame,
     QHeaderView,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSplitter,
     QTableWidget,
+    QVBoxLayout,
     QWidget,
 )
 
 
 WIDGET_MAX = 16_777_215
+VALID_DOOR_COMBINATIONS = {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
 
 # Cold-rolled sheet metal, drawing ink and inspection marks.  Keep the palette
 # compact so every state color has one stable meaning throughout the client.
@@ -260,6 +273,265 @@ def _refresh_recognition_page(window) -> None:
     if progress is not None:
         _force_hide_recognition_progress(window)
     _sync_recognition_action_state(window)
+
+
+def _parse_specification_dimensions(text: str, parser=None) -> tuple[float, float, float] | None:
+    """Return width, height and depth from an operator-entered W*D*H spec."""
+
+    value = str(text or "").strip()
+    if not value:
+        return None
+    if callable(parser):
+        try:
+            parsed = parser(value)
+            dimensions = parsed.get("dimensions") if isinstance(parsed, dict) else None
+            if isinstance(dimensions, (list, tuple)) and len(dimensions) >= 3:
+                width, height, depth = map(float, dimensions[:3])
+                if min(width, height, depth) > 0:
+                    return width, height, depth
+        except Exception:
+            pass
+
+    # The visible specification convention is width * depth * height.  Keep
+    # the accepted separators intentionally small and predictable.
+    match = re.fullmatch(
+        r"\s*(\d+(?:\.\d+)?)\s*[xX×＊*]\s*"
+        r"(\d+(?:\.\d+)?)\s*[xX×＊*]\s*(\d+(?:\.\d+)?)\s*",
+        value,
+    )
+    if not match:
+        return None
+    width, depth, height = (float(part) for part in match.groups())
+    if min(width, height, depth) <= 0:
+        return None
+    return width, height, depth
+
+
+def _sync_manual_specification_to_dimensions(window, text: str, parser=None) -> bool:
+    """Populate dimension fields from a manual specification without recursion."""
+
+    if getattr(window, "active_drawing", None):
+        return False
+    dimensions = _parse_specification_dimensions(text, parser)
+    if dimensions is None:
+        return False
+
+    width, height, depth = dimensions
+    fields = (
+        (getattr(window, "width_spin", None), width),
+        (getattr(window, "height_spin", None), height),
+        (getattr(window, "depth_spin", None), depth),
+    )
+    if not all(isinstance(field, QDoubleSpinBox) for field, _ in fields):
+        return False
+    for field, number in fields:
+        previous = field.blockSignals(True)
+        try:
+            field.setValue(number)
+        finally:
+            field.blockSignals(previous)
+
+    source = getattr(window, "quote_parameter_source", None)
+    if isinstance(source, QLabel):
+        source.setText("来源：人工输入规格")
+        source.setToolTip("已从规格型号按宽×深×高自动填充")
+
+    for method_name in (
+        "clear_quote_result",
+        "refresh_formula_inputs",
+        "request_history_match",
+        "update_quote_readiness",
+    ):
+        method = getattr(window, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except TypeError:
+                pass
+    return True
+
+
+def _set_default_door_combination(window) -> None:
+    single = getattr(window, "single_door_combo", None)
+    double = getattr(window, "double_door_combo", None)
+    if not isinstance(single, QComboBox) or not isinstance(double, QComboBox):
+        return
+    if not single.isEnabled() and not double.isEnabled():
+        return
+    counts = (single.currentData(), double.currentData())
+    try:
+        counts = tuple(int(value) for value in counts)
+    except (TypeError, ValueError):
+        counts = (-1, -1)
+    if counts in VALID_DOOR_COMBINATIONS:
+        return
+    setter = getattr(window, "set_door_counts", None)
+    if callable(setter):
+        setter(1, 0)
+        return
+    for combo, wanted in ((single, 1), (double, 0)):
+        index = combo.findData(wanted)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+
+def _configure_quote_rule_interactions(window, parser=None) -> None:
+    for name, label in (
+        ("width_spin", "宽度（mm）"),
+        ("depth_spin", "深度（mm）"),
+        ("height_spin", "高度（mm）"),
+    ):
+        field = getattr(window, name, None)
+        if isinstance(field, QDoubleSpinBox):
+            field.setSpecialValueText("")
+            field.lineEdit().setPlaceholderText("")
+            field.setAccessibleName(label)
+            field.setToolTip("可直接输入；在规格型号输入宽×深×高也会自动填充")
+
+    single = getattr(window, "single_door_combo", None)
+    double = getattr(window, "double_door_combo", None)
+    if isinstance(single, QComboBox):
+        single.setAccessibleName("单门数量")
+        single.setToolTip("单门数量；默认1，与双门数量组合使用")
+    if isinstance(double, QComboBox):
+        double.setAccessibleName("双门数量")
+        double.setToolTip("双门数量；默认0，与单门数量组合使用")
+    _set_default_door_combination(window)
+
+    specification = getattr(window, "quote_spec_edit", None)
+    if isinstance(specification, QLineEdit):
+        specification.setToolTip("可输入宽×深×高，例如 1000×600×1800")
+        if not getattr(specification, "_manual_dimension_sync_connected", False):
+            specification.textEdited.connect(
+                lambda value: _sync_manual_specification_to_dimensions(window, value, parser)
+            )
+            specification._manual_dimension_sync_connected = True
+
+
+def _refresh_model_suggestions(window) -> None:
+    model_edit = getattr(window, "model_edit", None)
+    product_combo = getattr(window, "product_combo", None)
+    if not isinstance(model_edit, QLineEdit) or not isinstance(product_combo, QComboBox):
+        return
+    entry = getattr(window, "product_catalog", {}).get(product_combo.currentData() or "", {})
+    models = entry.get("models") or []
+    values = sorted({
+        str(item.get("model_code") or "").strip()
+        for item in models if isinstance(item, dict) and item.get("model_code")
+    })
+    completer = QCompleter(values, model_edit)
+    completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+    completer.setFilterMode(Qt.MatchFlag.MatchContains)
+    model_edit.setCompleter(completer)
+    model_edit._database_completer = completer
+    model_edit.setToolTip(
+        "输入型号；下拉建议来自当前产品的数据库记录"
+        if values else "当前产品暂无数据库型号建议，可输入非标规格"
+    )
+
+
+def _apply_database_catalog_options(window, result: dict) -> None:
+    if not isinstance(result, dict):
+        return
+    records = result.get("items") or []
+    family_for_code = getattr(window, "family_for_code", None)
+    catalog = getattr(window, "product_catalog", {})
+    if callable(family_for_code) and isinstance(catalog, dict):
+        for row in records:
+            if not isinstance(row, dict):
+                continue
+            family = family_for_code(row.get("product_code"))
+            if family in catalog:
+                catalog[family].setdefault("models", []).extend(row.get("models") or [])
+                defaults = (
+                    row.get("default_width_mm"),
+                    row.get("default_height_mm"),
+                    row.get("default_depth_mm"),
+                )
+                if all(value is not None for value in defaults):
+                    code = str(row.get("product_code") or "")
+                    variant = "SINGLE" if code.endswith("_SINGLE") else "DOUBLE" if code.endswith("_DOUBLE") else "DEFAULT"
+                    catalog[family].setdefault("defaults_by_variant", {})[variant] = defaults
+
+    material_combo = getattr(window, "material_combo", None)
+    materials = result.get("materials") or []
+    if isinstance(material_combo, QComboBox) and materials:
+        selected = material_combo.currentData()
+        material_combo.blockSignals(True)
+        material_combo.clear()
+        for item in materials:
+            if not isinstance(item, dict) or not item.get("code"):
+                continue
+            code = str(item["code"])
+            name = str(item.get("name") or code)
+            material_combo.addItem(f"{name} ({code})" if name != code else code, code)
+        index = material_combo.findData(selected)
+        material_combo.setCurrentIndex(index if index >= 0 else 0)
+        material_combo.blockSignals(False)
+        material_combo.setToolTip("可选材质由数据库材料表提供")
+
+    coating_combo = getattr(window, "coating_combo", None)
+    coatings = [str(value).strip() for value in (result.get("coatings") or []) if str(value).strip()]
+    if isinstance(coating_combo, QComboBox) and coatings:
+        selected = coating_combo.currentData()
+        coating_combo.blockSignals(True)
+        coating_combo.clear()
+        for coating in coatings:
+            coating_combo.addItem(coating, coating)
+        index = coating_combo.findData(selected)
+        coating_combo.setCurrentIndex(index if index >= 0 else 0)
+        coating_combo.blockSignals(False)
+        coating_combo.setToolTip("可选喷塑方式由数据库喷塑价格表提供")
+    _refresh_model_suggestions(window)
+
+
+def _apply_nonstandard_formula_ratio(window) -> bool:
+    """Scale DB standard weight/area by nearest-standard perimeter ratio."""
+
+    product_combo = getattr(window, "product_combo", None)
+    if not isinstance(product_combo, QComboBox):
+        return False
+    entry = getattr(window, "product_catalog", {}).get(product_combo.currentData() or "", {})
+    if entry.get("method") != "formula":
+        return False
+    variant_getter = getattr(window, "selected_variant_code", None)
+    variant = variant_getter() if callable(variant_getter) else "DEFAULT"
+    defaults = (entry.get("defaults_by_variant") or {}).get(variant) or entry.get("defaults")
+    if not defaults or len(defaults) < 3:
+        return False
+    default_width, default_height, default_depth = map(float, defaults[:3])
+    input_width = float(window.width_spin.value())
+    input_height = float(window.height_spin.value())
+    input_depth = float(window.depth_spin.value())
+    if all(abs(current - standard) < 0.0001 for current, standard in (
+        (input_width, default_width),
+        (input_height, default_height),
+        (input_depth, default_depth),
+    )):
+        return False
+    denominator = default_width + default_height + default_depth
+    if denominator <= 0:
+        return False
+    code_getter = getattr(window, "selected_product_code", None)
+    count_getter = getattr(window, "door_counts", None)
+    code = code_getter() if callable(code_getter) else None
+    counts = count_getter() if callable(count_getter) else (0, 0)
+    values = window.formula_calculator.calculate(
+        code, default_width, default_height, default_depth, counts[0], counts[1]
+    )
+    if not values:
+        return False
+    ratio = (input_width + input_height + input_depth) / denominator
+    window.weight_edit.setText(f"{float(values[0]) * ratio:.6f}".rstrip("0").rstrip("."))
+    window.area_edit.setText(f"{float(values[1]) * ratio:.6f}".rstrip("0").rstrip("."))
+    source = getattr(window, "quote_parameter_source", None)
+    if isinstance(source, QLabel):
+        source.setText("来源：数据库标准尺寸·周长比例")
+        source.setToolTip(
+            f"非标尺寸按输入周长÷匹配周长换算，当前比例 {ratio:.6f}"
+        )
+    window._nonstandard_perimeter_ratio = ratio
+    return True
 
 
 def _refresh_quote_page(window) -> None:
@@ -508,6 +780,11 @@ QPushButton#secondaryQuoteAction {{
     background: {BLUEPRINT_PALE}; color: #145681; border: 1px solid #B9D7EA;
     border-radius: 6px; font-weight: 700;
 }}
+QPushButton#addAttachmentCatalogButton {{
+    background: {PAPER}; color: #145681; border: 1px solid #9CC7E2;
+    border-radius: 6px; font-weight: 700; padding: 7px 12px;
+}}
+QPushButton#addAttachmentCatalogButton:hover {{ background: {BLUEPRINT_PALE}; }}
 QPushButton[uiRole="candidateAction"], QPushButton[uiRole="listAction"] {{
     background: {PAPER}; color: #34414D; border: 1px solid #BCC6CF;
     border-radius: 5px; padding: 6px 10px;
@@ -769,6 +1046,153 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
     main_window._layout_refresh_discount_patched = True
 
 
+def _attachment_api_url(dialog) -> str:
+    base = str(getattr(dialog, "api_url", "") or "").rstrip("/")
+    marker = base.find("/api/")
+    if marker >= 0:
+        base = base[:marker]
+    return f"{base}/api/attachments/catalog"
+
+
+def _new_optional_dimension(parent) -> QDoubleSpinBox:
+    field = QDoubleSpinBox(parent)
+    field.setRange(0, 1_000_000)
+    field.setDecimals(2)
+    field.setSpecialValueText("")
+    field.setSuffix(" mm")
+    return field
+
+
+def _show_add_attachment_dialog(owner, namespace: dict) -> None:
+    editor = QDialog(owner)
+    editor.setWindowTitle("新增附件到附件库")
+    editor.setMinimumWidth(460)
+    root = QVBoxLayout(editor)
+    root.setContentsMargins(18, 16, 18, 16)
+    root.setSpacing(12)
+    explanation = QLabel("保存后会立即加入附件库，下次打开也可继续使用。", editor)
+    explanation.setWordWrap(True)
+    root.addWidget(explanation)
+
+    form = QFormLayout()
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    name = QLineEdit(editor)
+    name.setPlaceholderText("必填")
+    model = QLineEdit(editor)
+    variant = QLineEdit(editor)
+    width = _new_optional_dimension(editor)
+    depth = _new_optional_dimension(editor)
+    height = _new_optional_dimension(editor)
+    price = QDoubleSpinBox(editor)
+    price.setRange(0, 100_000_000)
+    price.setDecimals(2)
+    price.setPrefix("¥ ")
+    unit = QLineEdit("元", editor)
+    source = QLineEdit("人工新增", editor)
+    notes = QLineEdit(editor)
+    for caption, field in (
+        ("附件名称 *", name),
+        ("型号（可选）", model),
+        ("变体（可选）", variant),
+        ("宽度（可选）", width),
+        ("深度（可选）", depth),
+        ("高度（可选）", height),
+        ("价格 *", price),
+        ("单位", unit),
+        ("来源", source),
+        ("备注", notes),
+    ):
+        form.addRow(caption, field)
+    root.addLayout(form)
+
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel,
+        parent=editor,
+    )
+    save = buttons.button(QDialogButtonBox.StandardButton.Save)
+    save.setText("保存到附件库")
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+    root.addWidget(buttons)
+
+    def submit():
+        item_name = name.text().strip()
+        if not item_name:
+            name.setFocus()
+            QMessageBox.warning(editor, "信息不完整", "请输入附件名称。")
+            return
+        payload = {
+            "item_name": item_name,
+            "model_code": model.text().strip() or None,
+            "variant": variant.text().strip() or None,
+            "width_mm": width.value() or None,
+            "depth_mm": depth.value() or None,
+            "height_mm": height.value() or None,
+            "price": price.value(),
+            "unit": unit.text().strip() or "元",
+            "price_source": source.text().strip() or "人工新增",
+            "notes": notes.text().strip() or None,
+        }
+        save.setEnabled(False)
+        save.setText("正在保存…")
+        try:
+            header_builder = namespace.get("api_headers")
+            headers = header_builder(True) if callable(header_builder) else {"Content-Type": "application/json"}
+            request = urllib.request.Request(
+                _attachment_api_url(owner),
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=60) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            reload_catalog = getattr(owner, "reload_catalog", None)
+            if callable(reload_catalog):
+                reload_catalog()
+            search = getattr(owner, "search_edit", None)
+            if isinstance(search, QLineEdit):
+                search.setText(item_name)
+            editor.accept()
+            created = bool(result.get("created")) if isinstance(result, dict) else True
+            message = "已新增并保存到附件库。" if created else "附件库中已存在相同记录，已为你定位。"
+            QMessageBox.information(owner, "附件库已更新", message)
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            QMessageBox.critical(editor, "保存失败", f"附件服务返回错误：{detail}")
+        except Exception as error:
+            QMessageBox.critical(editor, "保存失败", f"无法保存附件：{error}")
+        finally:
+            save.setEnabled(True)
+            save.setText("保存到附件库")
+
+    save.clicked.connect(submit)
+    buttons.rejected.connect(editor.reject)
+    editor.exec()
+
+
+def _install_attachment_catalog_addition(namespace: dict) -> None:
+    dialog_class = namespace.get("AttachmentDialog")
+    if dialog_class is None or getattr(dialog_class, "_catalog_addition_installed", False):
+        return
+    original_init = dialog_class.__init__
+
+    def init_with_catalog_addition(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        button = QPushButton("新增附件到附件库", self)
+        button.setObjectName("addAttachmentCatalogButton")
+        button.setAccessibleName("新增附件到附件库")
+        button.setToolTip("当当前附件库缺少所需附件时，永久新增一条记录")
+        button.clicked.connect(lambda: _show_add_attachment_dialog(self, namespace))
+        layout = self.layout()
+        if layout is not None and hasattr(layout, "insertWidget"):
+            layout.insertWidget(1, button, 0, Qt.AlignmentFlag.AlignRight)
+        elif layout is not None:
+            layout.addWidget(button)
+        self.add_attachment_catalog_button = button
+
+    dialog_class.__init__ = init_with_catalog_addition
+    dialog_class._catalog_addition_installed = True
+
+
 def install_layout_refresh(namespace: dict) -> None:
     """Install the layout pass on an extracted or packaged V3 namespace."""
 
@@ -777,6 +1201,7 @@ def install_layout_refresh(namespace: dict) -> None:
         return
 
     _install_stable_preview(namespace)
+    _install_attachment_catalog_addition(namespace)
     _patch_family_for_code(main_window)
     _patch_discounted_totals(namespace, main_window)
 
@@ -786,10 +1211,14 @@ def install_layout_refresh(namespace: dict) -> None:
     original_recognition_progress = main_window.pdf_recognition_progress
     original_recognition_finished = main_window.pdf_recognition_finished
     original_refresh_summary = main_window.refresh_summary
+    original_product_changed = getattr(main_window, "product_changed", None)
+    original_product_catalog_loaded = getattr(main_window, "product_catalog_loaded", None)
+    original_formula_template_loaded = getattr(main_window, "formula_template_loaded", None)
 
     def build_ui_with_refresh(self):
         original_build_ui(self)
         apply_layout_refresh(self)
+        _configure_quote_rule_interactions(self, namespace.get("parse_review_specification"))
 
     def refresh_document_list_with_preview(self):
         original_refresh_document_list(self)
@@ -828,4 +1257,30 @@ def install_layout_refresh(namespace: dict) -> None:
     main_window.pdf_recognition_progress = recognition_progress_without_strip
     main_window.pdf_recognition_finished = recognition_finished_without_strip
     main_window.refresh_summary = refresh_summary_with_action_state
+    if callable(original_product_changed):
+        def product_changed_with_default_door(self, *args, **kwargs):
+            result = original_product_changed(self, *args, **kwargs)
+            _set_default_door_combination(self)
+            _refresh_model_suggestions(self)
+            return result
+        main_window.product_changed = product_changed_with_default_door
+    if callable(original_product_catalog_loaded):
+        def product_catalog_loaded_with_database_options(self, result):
+            loaded = original_product_catalog_loaded(self, result)
+            _apply_database_catalog_options(self, result)
+            return loaded
+        main_window.product_catalog_loaded = product_catalog_loaded_with_database_options
+    if callable(original_formula_template_loaded):
+        def formula_template_loaded_with_perimeter_rule(self, *args, **kwargs):
+            loaded = original_formula_template_loaded(self, *args, **kwargs)
+            try:
+                _apply_nonstandard_formula_ratio(self)
+            except Exception as error:
+                self.weight_edit.clear()
+                self.area_edit.clear()
+                risk = getattr(self, "risk_label", None)
+                if isinstance(risk, QLabel):
+                    risk.setText(f"非标尺寸周长换算失败：{error}")
+            return loaded
+        main_window.formula_template_loaded = formula_template_loaded_with_perimeter_rule
     main_window._layout_refresh_installed = True

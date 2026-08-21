@@ -84,6 +84,8 @@ BEGIN
 
   SELECT epm.*,
          CASE WHEN epm.material_code = p_material_code THEN 0 ELSE 1 END AS material_rank,
+         abs((epm.width_mm + epm.height_mm + epm.depth_mm)
+           - (p_width_mm + p_height_mm + p_depth_mm)) AS perimeter_distance,
          power(epm.width_mm - p_width_mm, 2)
            + power(epm.height_mm - p_height_mm, 2)
            + power(epm.depth_mm - p_depth_mm, 2) AS dimension_distance
@@ -97,7 +99,7 @@ BEGIN
       epm.material_code = p_material_code
       OR (p_material_code IN ('SUS304', 'SUS316') AND epm.material_code = 'SECC')
     )
-  ORDER BY material_rank, dimension_distance, epm.model_id DESC
+  ORDER BY material_rank, perimeter_distance, dimension_distance, epm.model_id DESC
   LIMIT 1;
 
   IF NOT FOUND THEN
@@ -247,6 +249,8 @@ BEGIN
 
   SELECT r.*,
          CASE WHEN r.material_code = p_material_code THEN 0 ELSE 1 END AS material_rank,
+         abs((r.width_mm + r.height_mm + r.depth_mm)
+           - (p_width_mm + p_height_mm + p_depth_mm)) AS perimeter_distance,
          power(r.width_mm - p_width_mm, 2)
            + power(r.height_mm - p_height_mm, 2)
            + power(r.depth_mm - p_depth_mm, 2) AS dimension_distance
@@ -261,7 +265,7 @@ BEGIN
       r.material_code = p_material_code
       OR (p_material_code IN ('SUS304', 'SUS316') AND r.material_code = 'SECC')
     )
-  ORDER BY material_rank, dimension_distance, r.labor_rule_id DESC
+  ORDER BY material_rank, perimeter_distance, dimension_distance, r.labor_rule_id DESC
   LIMIT 1;
 
   IF NOT FOUND THEN
@@ -336,6 +340,8 @@ BEGIN
   /* Experience auxiliary values: same product + material, nearest dimensions. */
   IF p_width_mm IS NOT NULL AND p_height_mm IS NOT NULL AND p_depth_mm IS NOT NULL THEN
     SELECT e.*,
+           abs((e.width_mm + e.height_mm + e.depth_mm)
+             - (p_width_mm + p_height_mm + p_depth_mm)) AS perimeter_distance,
            power(e.width_mm - p_width_mm, 2)
              + power(e.height_mm - p_height_mm, 2)
              + power(e.depth_mm - p_depth_mm, 2) AS dimension_distance
@@ -346,7 +352,7 @@ BEGIN
       AND e.width_mm IS NOT NULL
       AND e.height_mm IS NOT NULL
       AND e.depth_mm IS NOT NULL
-    ORDER BY dimension_distance, e.auxiliary_experience_id DESC
+    ORDER BY perimeter_distance, dimension_distance, e.auxiliary_experience_id DESC
     LIMIT 1;
 
     IF FOUND THEN
@@ -405,6 +411,8 @@ BEGIN
   END IF;
 
   SELECT e.*,
+         abs((e.width_mm + e.height_mm + e.depth_mm)
+           - (p_width_mm + p_height_mm + p_depth_mm)) AS perimeter_distance,
          power(e.width_mm - p_width_mm, 2)
            + power(e.height_mm - p_height_mm, 2)
            + power(e.depth_mm - p_depth_mm, 2) AS dimension_distance
@@ -415,7 +423,7 @@ BEGIN
     AND e.width_mm IS NOT NULL
     AND e.height_mm IS NOT NULL
     AND e.depth_mm IS NOT NULL
-  ORDER BY dimension_distance, e.updated_at DESC, e.experience_spray_price_id DESC
+  ORDER BY perimeter_distance, dimension_distance, e.updated_at DESC, e.experience_spray_price_id DESC
   LIMIT 1;
 
   IF NOT FOUND THEN RETURN NULL; END IF;

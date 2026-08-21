@@ -16,10 +16,14 @@
 - `export_dual_quote_workbook.mjs`
 - `api/server.mjs`
 - `api/attachment_rules.mjs`
+- `api/attachment_catalog_rules.mjs`
+- `api/door_variant_rules.mjs`
 - `api/runtime_config.mjs`
 - `api/runtime_config.test.mjs`
 - `api/cloud_liveness.test.mjs`
 - `api/attachment_rules.quick_only.test.mjs`
+- `api/attachment_catalog_rules.test.mjs`
+- `api/door_variant_rules.test.mjs`
 - `api/README.md`
 
 ## 不得上传

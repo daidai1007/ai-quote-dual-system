@@ -17,7 +17,7 @@ The Excel exporter currently imports `@oai/artifact-tool`. That runtime is not d
 
 Migration files define schema and calculation behavior only. Real material prices, attachment prices, formula workbooks, customer history, drawings, and quick-quote experience data must be supplied separately with sanitized test data or local business data.
 
-## Quick-only configuration attachments
+## Door variant and attachment rules
 
 Run the source regression with:
 
@@ -25,7 +25,20 @@ Run the source regression with:
 npm test
 ```
 
-Build `2026-08-15-quick-only-attachment-v1` keeps the five configured cabinet transformations out of the formula quote and includes them in the quick quote. The production regression also covers quantity, `unit_price_override`, ordinary attachments, mixed selections, and idempotent application.
+Build `2026-08-21-door-variant-v1` validates the five door-count combinations,
+selects the matching single/double database product record and applies only the
+approved quick-price increments. Formula totals remain unchanged. Regression
+coverage also verifies compatibility with the legacy JS/JP quick-only attachment
+row so the same transformation cannot be charged twice.
+
+Manual attachment catalogue input is normalized and validated before the API
+generates an idempotent PostgreSQL insert. Automated tests do not connect to or
+modify Neon.
+
+Nearest-size SQL contracts select the same-product candidate by perimeter
+difference first and scale non-standard material, labor, spray, product-area
+inputs and quick face price by input perimeter / matched perimeter. BOM totals
+remain cabinet-level values and are deliberately not perimeter-scaled.
 
 ## v2026.8.18
 
