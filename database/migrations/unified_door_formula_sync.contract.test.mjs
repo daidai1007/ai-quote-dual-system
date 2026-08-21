@@ -23,6 +23,8 @@ test('unified door formula migration is complete and isolated', async () => {
   assert.ok(sql.includes("RAISE EXCEPTION 'Missing formula templates: %'"));
   assert.ok(sql.includes("RAISE EXCEPTION 'Missing formula mappings: %'"));
   assert.ok(sql.includes("RAISE EXCEPTION 'Post-migration mismatch: %'"));
+  assert.ok(sql.includes("part_name = COALESCE(d.part_name, '')"));
+  assert.ok(!sql.includes('part_name = d.part_name,'));
   assert.doesNotMatch(sql, /quick_quote_experience/i);
 
   const expectedRows = new Map([

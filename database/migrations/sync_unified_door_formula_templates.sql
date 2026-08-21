@@ -297,7 +297,10 @@ SET source_row_no = d.source_row_no,
     raw_rule = d.raw_rule,
     include_material_cost = d.include_material_cost,
     include_spray_area = d.include_spray_area,
-    part_name = d.part_name,
+    /* Formula workbooks contain intentional spacer rows with no part name,
+       while the production schema requires part_name to be non-null.  Keep
+       those rows semantically blank without weakening the table constraint. */
+    part_name = COALESCE(d.part_name, ''),
     length_formula = d.length_formula,
     width_formula = d.width_formula,
     thickness_formula = d.thickness_formula,

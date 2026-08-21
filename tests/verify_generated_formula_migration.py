@@ -20,6 +20,7 @@ def decoded_json(hex_text: str):
 
 
 sql = SQL_PATH.read_text(encoding="utf-8")
+assert "part_name = COALESCE(d.part_name, '')" in sql
 rule_pattern = re.compile(
     r"\('(?P<code>[A-Z_]+)',\s*(?P<ordinal>\d+),\s*(?P<row>\d+),\s*"
     r"convert_from\(decode\('(?P<hex>[0-9a-f]+)', 'hex'\), 'UTF8'\)::jsonb,\s*"
