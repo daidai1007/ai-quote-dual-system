@@ -52,6 +52,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from quote_defaults import (
+    DEFAULT_COATING_TYPE,
+    DEFAULT_MATERIAL_CODE,
+    apply_default_quote_inputs,
+)
+
 
 def application_root() -> Path:
     """Return the writable installation folder in source and packaged modes."""
@@ -2126,10 +2132,11 @@ class MainWindow(QMainWindow):
         for label, spin in (("宽", self.width_spin), ("高", self.height_spin), ("深", self.depth_spin)):
             w = QWidget(); row = QHBoxLayout(w); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(5); row.addWidget(QLabel(label)); row.addWidget(spin, 1); dims.addWidget(w, 1)
         form.addWidget(QLabel("尺寸（mm）"), 2, 0); form.addLayout(dims, 2, 1, 1, 3)
-        self.material_combo = QComboBox(); self.material_combo.addItem("碳钢 SECC", "SECC"); self.material_combo.addItem("不锈钢 SUS304", "SUS304"); self.material_combo.addItem("不锈钢 SUS316", "SUS316")
+        self.material_combo = QComboBox(); self.material_combo.addItem("碳钢 SECC", DEFAULT_MATERIAL_CODE); self.material_combo.addItem("不锈钢 SUS304", "SUS304"); self.material_combo.addItem("不锈钢 SUS316", "SUS316")
         self.material_combo.currentIndexChanged.connect(self.request_history_match); field(3, "材质", self.material_combo)
         self.coating_combo = QComboBox()
-        for x in ("橘纹", "平光", "无", "皱纹"): self.coating_combo.addItem(x, x)
+        for x in (DEFAULT_COATING_TYPE, "平光", "无", "皱纹"): self.coating_combo.addItem(x, x)
+        apply_default_quote_inputs(self)
         field(4, "喷塑方式", self.coating_combo)
         door_panel = QWidget()
         door_layout = QHBoxLayout(door_panel)
@@ -2749,7 +2756,7 @@ class MainWindow(QMainWindow):
         self.attachments = [dict(x) for x in item["attachments"]]; self.notes_text.setPlainText(item.get("final_remark", item.get("notes", ""))); self.formula_discount.setValue(item["formula_discount"]); self.quick_discount.setValue(item["quick_discount"]); self.labor_multiplier.setValue(item.get("labor_multiplier", 1.0)); self.update_attachment_view(); self._formula_base_result = dict(item.get("formula_base") or item["formula"]); self.current_result = {"formula": dict(item["formula"]), "quick": dict(item["quick"]), "risk_flags": []}; self.refresh_discounted_totals(); self.refresh_formula_inputs()
 
     def reset_current_cabinet(self, keep_company=False):
-        self.model_edit.clear(); self.width_spin.setValue(1000); self.height_spin.setValue(1800); self.depth_spin.setValue(600); self.quantity_spin.setValue(1); self.material_combo.setCurrentIndex(0); self.coating_combo.setCurrentIndex(0); self.labor_multiplier.setValue(1); self.formula_discount.setValue(1); self.quick_discount.setValue(1); self.attachments = []; self.notes_text.clear(); self.active_drawing = None; self.recommended_attachments = []; self.attachment_recommendation.setText("OCR 推荐附件：—"); self._formula_base_result = None; self.current_result = None; self.weight_edit.clear(); self.area_edit.clear(); self.update_attachment_view()
+        self.model_edit.clear(); self.width_spin.setValue(1000); self.height_spin.setValue(1800); self.depth_spin.setValue(600); self.quantity_spin.setValue(1); apply_default_quote_inputs(self); self.labor_multiplier.setValue(1); self.formula_discount.setValue(1); self.quick_discount.setValue(1); self.attachments = []; self.notes_text.clear(); self.active_drawing = None; self.recommended_attachments = []; self.attachment_recommendation.setText("OCR 推荐附件：—"); self._formula_base_result = None; self.current_result = None; self.weight_edit.clear(); self.area_edit.clear(); self.update_attachment_view()
         for label in self.formula_labels.values(): label.setText("—")
         for label in self.quick_labels.values(): label.setText("—")
         self.risk_label.setStyleSheet(""); self.risk_label.setText("尚未计算")

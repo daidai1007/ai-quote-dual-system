@@ -37,6 +37,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from quote_defaults import (
+    DEFAULT_COATING_TYPE,
+    DEFAULT_MATERIAL_CODE,
+    restore_combo_selection,
+)
+
 
 WIDGET_MAX = 16_777_215
 VALID_DOOR_COMBINATIONS = {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
@@ -594,8 +600,7 @@ def _apply_database_catalog_options(window, result: dict) -> None:
             code = str(item["code"])
             name = str(item.get("name") or code)
             material_combo.addItem(f"{name} ({code})" if name != code else code, code)
-        index = material_combo.findData(selected)
-        material_combo.setCurrentIndex(index if index >= 0 else 0)
+        restore_combo_selection(material_combo, selected, DEFAULT_MATERIAL_CODE)
         material_combo.blockSignals(False)
         material_combo.setToolTip("可选材质由数据库材料表提供")
 
@@ -607,8 +612,7 @@ def _apply_database_catalog_options(window, result: dict) -> None:
         coating_combo.clear()
         for coating in coatings:
             coating_combo.addItem(coating, coating)
-        index = coating_combo.findData(selected)
-        coating_combo.setCurrentIndex(index if index >= 0 else 0)
+        restore_combo_selection(coating_combo, selected, DEFAULT_COATING_TYPE)
         coating_combo.blockSignals(False)
         coating_combo.setToolTip("可选喷塑方式由数据库喷塑价格表提供")
     _refresh_model_suggestions(window)

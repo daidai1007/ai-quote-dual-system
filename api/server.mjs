@@ -16,6 +16,7 @@ const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
 const API_BUILD = '2026-08-17-auxiliary-bom-v1';
 const DEPLOYMENT_BUILD = '2026-08-21-unified-door-db-v3';
+const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -135,13 +136,13 @@ const buildSql = (input) => {
     sqlNumber(input.depth_mm, 'depth_mm', true),
     sqlNumber(input.base_material_weight_kg, 'base_material_weight_kg'),
     sqlNumber(input.product_area_m2, 'product_area_m2'),
-    sqlUnicodeText(input.coating_type || '平光'),
+    sqlUnicodeText(input.coating_type || DEFAULT_COATING_TYPE),
     sqlText(input.variant_code ?? null),
     sqlText(dateValue(input.quote_date)),
   ];
   // Override the source-file default with a Unicode-safe value. This keeps
   // older UTF-8/console-encoded sample files from changing the coating name.
-  args[9] = sqlUnicodeText(input.coating_type || '\u5E73\u5149');
+  args[9] = sqlUnicodeText(input.coating_type || DEFAULT_COATING_TYPE);
   const statements = attachmentStatements(input);
   const attachmentSql = statements.length ? `${statements.join('\n')}\n` : '';
   return `${attachmentSql}
@@ -691,7 +692,7 @@ const exportCostDetailSql = (payload) => {
       product_code: key.product_code,
       variant_code: key.variant_code,
       material_code: item.material_code || 'SECC',
-      coating_type: item.coating_type || '平光',
+      coating_type: item.coating_type || DEFAULT_COATING_TYPE,
       quote_date: item.quote_date || payload.quote_date || new Date().toISOString().slice(0, 10),
     };
   });
