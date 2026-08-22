@@ -490,6 +490,27 @@ def _set_default_door_combination(window) -> None:
             combo.setCurrentIndex(index)
 
 
+def _restore_quote_selections_after_product_change(
+    window,
+    material_selected,
+    coating_selected,
+) -> None:
+    """Keep manual quote selections, falling back only when they are blank."""
+
+    for name, selected, default in (
+        ("material_combo", material_selected, DEFAULT_MATERIAL_CODE),
+        ("coating_combo", coating_selected, DEFAULT_COATING_TYPE),
+    ):
+        combo = getattr(window, name, None)
+        if not isinstance(combo, QComboBox):
+            continue
+        signals_were_blocked = combo.blockSignals(True)
+        try:
+            restore_combo_selection(combo, selected, default)
+        finally:
+            combo.blockSignals(signals_were_blocked)
+
+
 def _enforce_product_door_combination(window, source: str) -> bool:
     count_getter = getattr(window, "door_counts", None)
     setter = getattr(window, "set_door_counts", None)
@@ -1397,7 +1418,20 @@ def install_layout_refresh(namespace: dict) -> None:
     main_window.refresh_summary = refresh_summary_with_action_state
     if callable(original_product_changed):
         def product_changed_with_default_door(self, *_signal_args, **_signal_kwargs):
+            material_combo = getattr(self, "material_combo", None)
+            coating_combo = getattr(self, "coating_combo", None)
+            material_selected = (
+                material_combo.currentData() if isinstance(material_combo, QComboBox) else None
+            )
+            coating_selected = (
+                coating_combo.currentData() if isinstance(coating_combo, QComboBox) else None
+            )
             result = original_product_changed(self)
+            _restore_quote_selections_after_product_change(
+                self,
+                material_selected,
+                coating_selected,
+            )
             _set_default_door_combination(self)
             _refresh_model_suggestions(self)
             return result

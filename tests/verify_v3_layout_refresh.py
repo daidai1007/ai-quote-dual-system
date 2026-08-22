@@ -128,6 +128,19 @@ window.product_changed()
 assert not window.single_door_combo.isEnabled()
 assert not window.double_door_combo.isEnabled()
 assert window.door_counts() == (1, 0), window.door_counts()
+material_index = window.material_combo.findData("SUS304")
+coating_index = window.coating_combo.findData("平光")
+assert material_index >= 0 and coating_index >= 0
+window.material_combo.setCurrentIndex(material_index)
+window.coating_combo.setCurrentIndex(coating_index)
+window.product_changed()
+assert window.material_combo.currentData() == "SUS304"
+assert window.coating_combo.currentData() == "平光"
+window.material_combo.setCurrentIndex(-1)
+window.coating_combo.setCurrentIndex(-1)
+window.product_changed()
+assert window.material_combo.currentData() == "SECC"
+assert window.coating_combo.currentData() == "橘纹"
 window.product_catalog = {"JA": {"codes": {"SINGLE": "JA_SINGLE"}, "method": "formula"}}
 window.product_combo.clear()
 window.product_combo.addItem("JA", "JA")
