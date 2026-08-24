@@ -10,8 +10,8 @@ const projectRoot = path.resolve(import.meta.dirname, "..");
 const fixturePath = path.join(projectRoot, "tests", "fixtures", "export_formula_cost_detail.json");
 const exporterPath = path.join(projectRoot, "export_dual_quote_workbook.mjs");
 
-const runExporter = (outputPath) => new Promise((resolve, reject) => {
-  const child = spawn(process.execPath, [exporterPath, fixturePath, outputPath], {
+const runExporter = (outputPath, inputPath = fixturePath) => new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, [exporterPath, inputPath, outputPath], {
     cwd: projectRoot,
     windowsHide: true,
   });
@@ -24,6 +24,52 @@ const runExporter = (outputPath) => new Promise((resolve, reject) => {
     if (code === 0) resolve();
     else reject(new Error(stderr.trim() || stdout.trim() || `exporter exited with code ${code}`));
   });
+});
+
+test("formal workbook replaces only the door phrase using current door counts", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-door-remark-"));
+  const inputPath = path.join(tempDir, "door-remark-input.json");
+  const outputPath = path.join(tempDir, "door-remark-output.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(fixturePath, "utf8"));
+    const base = payload.items[0];
+    const staleRemark = "手工录入，碳钢喷塑RAL7035橘纹，前双开门后背板，配风机1个。";
+    const cases = [
+      [1, 0, "前单开门"],
+      [0, 1, "前双开门"],
+      [2, 0, "前后单开门"],
+      [0, 2, "前后双开门"],
+      [1, 1, "前单开门后双开门"],
+    ];
+    payload.items = cases.map(([single, double], index) => ({
+      ...structuredClone(base),
+      source_pdf_name: `手工录入-${index + 1}.pdf`,
+      product_code: double > 0 && single === 0 ? "JS_DOUBLE" : "JS_SINGLE",
+      variant_code: double > 0 && single === 0 ? "DOUBLE" : "SINGLE",
+      variant_name: `单门${single} 双门${double}`,
+      single_door_count: single,
+      double_door_count: double,
+      final_remark: staleRemark,
+      notes: staleRemark,
+      source_ocr_remark: staleRemark,
+    }));
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    for (const sheetName of ["公式法报价单", "快速报价单"]) {
+      const sheet = workbook.getWorksheet(sheetName);
+      cases.forEach(([, , expected], index) => {
+        assert.equal(
+          sheet.getCell(11 + index, 8).text,
+          staleRemark.replace("前双开门后背板", expected),
+        );
+      });
+    }
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 const closeTo = (actual, expected, label) => {

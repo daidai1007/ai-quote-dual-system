@@ -376,13 +376,54 @@ const attachmentRemark = (item = {}) => {
   return name ? `配${name}${qty}件` : "";
 };
 
+const DOOR_PHRASE_PATTERN = /前(?:单|双)开门后(?:背板|单开门|双开门)|前后(?:单|双)开门|前(?:单|双)开门/u;
+const DOOR_PHRASES_BY_COUNTS = new Map([
+  ["1/0", "前单开门"],
+  ["0/1", "前双开门"],
+  ["2/0", "前后单开门"],
+  ["0/2", "前后双开门"],
+  ["1/1", "前单开门后双开门"],
+]);
+
+const doorPhraseForItem = (item = {}) => {
+  const hasCounts = ["single_door_count", "double_door_count"].every(
+    (key) => Object.hasOwn(item, key) && item[key] !== null && item[key] !== "",
+  );
+  if (hasCounts) {
+    const single = Number(item.single_door_count);
+    const double = Number(item.double_door_count);
+    if (Number.isInteger(single) && Number.isInteger(double)) {
+      const phrase = DOOR_PHRASES_BY_COUNTS.get(`${single}/${double}`);
+      if (phrase) return phrase;
+    }
+  }
+  const variant = String(item.variant_name || item.variant_code || "");
+  if (/双|DOUBLE/i.test(variant)) return "前双开门";
+  if (/单|SINGLE/i.test(variant)) return "前单开门";
+  return "";
+};
+
+const replaceDoorConfigurationPhrase = (remark, item = {}) => {
+  const text = String(remark || "");
+  const expected = doorPhraseForItem(item);
+  return expected && DOOR_PHRASE_PATTERN.test(text)
+    ? text.replace(DOOR_PHRASE_PATTERN, expected)
+    : text;
+};
+
 // Convert raw OCR technical requirements into the concise configuration
 // wording approved for the formal quotation.  This fallback also upgrades
 // draft rows created by older client builds at export time.
 const standardizedRemark = (item = {}) => {
-  const stored = String(item.final_remark ?? item.notes ?? "").trim();
+  const stored = replaceDoorConfigurationPhrase(
+    String(item.final_remark ?? item.notes ?? "").trim(),
+    item,
+  );
   if (isDrawingSourcedQuoteItem(item)) return stored;
-  const source = String(item.source_ocr_remark || stored).trim();
+  const source = replaceDoorConfigurationPhrase(
+    String(item.source_ocr_remark || stored).trim(),
+    item,
+  );
   const numbered = /(?:^|\n)\s*\d+[\.、)]/.test(source);
   if (stored && !stored.includes("技术要求") && !numbered) return stored;
   const family = String(item.product_family || item.product_code || "").trim();
@@ -411,10 +452,8 @@ const standardizedRemark = (item = {}) => {
     else parts[parts.length - 1] += finish;
   }
   parts.push(`柜体${body}`, `门板${door}`);
-  const doorPhrase = source.match(/前(?:单|双)开门后(?:背板|单开门|双开门)/)?.[0];
+  const doorPhrase = doorPhraseForItem(item) || source.match(DOOR_PHRASE_PATTERN)?.[0];
   if (doorPhrase) parts.push(doorPhrase);
-  else if (/双|DOUBLE/i.test(variant)) parts.push("前双开门后背板");
-  else if (/单|SINGLE/i.test(variant)) parts.push("前单开门后背板");
   const seen = new Set();
   for (const attachment of item.attachments || []) {
     const wording = attachmentRemark(attachment);

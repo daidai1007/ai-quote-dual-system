@@ -57,6 +57,7 @@ from quote_defaults import (
     DEFAULT_MATERIAL_CODE,
     apply_default_quote_inputs,
 )
+from quote_remark_rules import replace_door_configuration_phrase
 from attachment_category_browser import (
     category_options,
     category_path as attachment_category_path,
@@ -2838,7 +2839,10 @@ class MainWindow(QMainWindow):
         source_ocr_remark = self.notes_text.toPlainText().strip()
         single_count, double_count = self.door_counts()
         item = {"name": self.cabinet_name(), "model_code": self.model_edit.text().strip(), "product_code": self.selected_product_code(), "product_family": self.product_combo.currentText(), "variant_code": self.selected_variant_code(), "variant_name": self.selected_variant_name(), "single_door_count": single_count, "double_door_count": double_count, "material_code": self.material_combo.currentData(), "coating_type": self.coating_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "quantity": self.quantity_spin.value(), "attachments": [dict(x) for x in self.attachments], "source_ocr_remark": source_ocr_remark, "source_pdf_name": self.active_drawing.get("name") if self.active_drawing else None, "formula": dict(self.current_result["formula"]), "formula_base": dict(self._formula_base_result or self.current_result["formula"]), "quick": dict(self.current_result["quick"]), "formula_discount": self.formula_discount.value(), "quick_discount": self.quick_discount.value(), "labor_multiplier": self.labor_multiplier.value()}
-        final_remark = build_standardized_quote_remark(item, source_ocr_remark)
+        final_remark = replace_door_configuration_phrase(
+            build_standardized_quote_remark(item, source_ocr_remark),
+            item,
+        )
         item["notes"] = final_remark
         item["final_remark"] = final_remark
         self.draft_items.append(item); self.refresh_summary(); self.statusBar().showMessage("柜型已加入汇总清单"); self.reset_current_cabinet(keep_company=True); self.show_section(3)

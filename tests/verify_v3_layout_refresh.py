@@ -46,6 +46,21 @@ def buttons_with_text(root, captions: set[str]):
 
 namespace = v3_launcher.load_v3_namespace()
 
+remark_builder = namespace["build_standardized_quote_remark"]
+manual_remark = "手工录入，碳钢喷塑RAL7035橘纹，前双开门后背板，配风机1个。"
+for counts, expected in {
+    (1, 0): "前单开门",
+    (0, 1): "前双开门",
+    (2, 0): "前后单开门",
+    (0, 2): "前后双开门",
+    (1, 1): "前单开门后双开门",
+}.items():
+    updated = remark_builder(
+        {"single_door_count": counts[0], "double_door_count": counts[1]},
+        manual_remark,
+    )
+    assert updated == manual_remark.replace("前双开门后背板", expected), updated
+
 attachment_dialog_class = namespace["AttachmentDialog"]
 assert attachment_dialog_class._classification_filters_installed is True
 original_attachment_load = attachment_dialog_class.load_catalog

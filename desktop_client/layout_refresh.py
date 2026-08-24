@@ -43,6 +43,7 @@ from quote_defaults import (
     DEFAULT_MATERIAL_CODE,
     restore_combo_selection,
 )
+from quote_remark_rules import replace_door_configuration_phrase
 from attachment_category_browser import (
     category_options,
     category_path as attachment_category_path,
@@ -153,6 +154,21 @@ INSPECTION_GREEN = "#2F855A"
 INSPECTION_PALE = "#E8F5EE"
 WARNING_AMBER = "#C98113"
 WARNING_PALE = "#FFF5DF"
+
+
+def _install_door_remark_sync(namespace: dict) -> None:
+    """Make current door counts authoritative for the door wording only."""
+
+    original_builder = namespace.get("build_standardized_quote_remark")
+    if not callable(original_builder) or getattr(original_builder, "_door_remark_sync_installed", False):
+        return
+
+    def build_remark_with_current_door_counts(item, raw_remark):
+        remark = original_builder(item, raw_remark)
+        return replace_door_configuration_phrase(remark, item)
+
+    build_remark_with_current_door_counts._door_remark_sync_installed = True
+    namespace["build_standardized_quote_remark"] = build_remark_with_current_door_counts
 
 
 def _find(root: QWidget, widget_type, object_name: str):
@@ -1558,6 +1574,7 @@ def install_layout_refresh(namespace: dict) -> None:
     """Install the layout pass on an extracted or packaged V3 namespace."""
 
     _install_formula_cell_reference_guard(namespace)
+    _install_door_remark_sync(namespace)
     main_window = namespace["MainWindow"]
     if getattr(main_window, "_layout_refresh_installed", False):
         return

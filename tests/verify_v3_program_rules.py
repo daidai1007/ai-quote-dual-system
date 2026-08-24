@@ -102,6 +102,10 @@ assert spec.loader
 spec.loader.exec_module(layout_refresh)
 
 from attachment_category_browser import LEVEL1_ORDER, category_options  # noqa: E402
+from quote_remark_rules import (  # noqa: E402
+    DOOR_PHRASES_BY_COUNTS,
+    replace_door_configuration_phrase,
+)
 
 
 assert LEVEL1_ORDER[:10] == (
@@ -119,6 +123,24 @@ assert mixed_options == [
     {"value": "JK安装板", "label": "JK安装板", "count": 1},
     {"value": "", "label": "本级附件", "count": 1},
 ]
+assert DOOR_PHRASES_BY_COUNTS == {
+    (1, 0): "前单开门",
+    (0, 1): "前双开门",
+    (2, 0): "前后单开门",
+    (0, 2): "前后双开门",
+    (1, 1): "前单开门后双开门",
+}
+for counts, expected in DOOR_PHRASES_BY_COUNTS.items():
+    original = "手工录入，碳钢喷塑RAL7035橘纹，前双开门后背板，配风机1个。"
+    actual = replace_door_configuration_phrase(
+        original,
+        {"single_door_count": counts[0], "double_door_count": counts[1]},
+    )
+    assert actual == original.replace("前双开门后背板", expected)
+assert replace_door_configuration_phrase(
+    "手工录入，碳钢喷塑RAL7035橘纹，配风机1个。",
+    {"single_door_count": 1, "double_door_count": 0},
+) == "手工录入，碳钢喷塑RAL7035橘纹，配风机1个。"
 
 
 assert layout_refresh.VALID_DOOR_COMBINATIONS == {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
