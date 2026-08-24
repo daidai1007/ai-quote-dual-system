@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyQuickOnlyAttachmentRuleToQuoteRow } from './attachment_rules.mjs';
 import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
+import { attachmentCatalogSql, decodeAttachmentCatalog } from './attachment_catalog_query.mjs';
 import { applyDoorVariantQuickPrice, normalizeDoorVariantInput } from './door_variant_rules.mjs';
 import { buildPsqlArgs, resolveRuntimeConfig } from './runtime_config.mjs';
 
@@ -15,7 +16,7 @@ const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
 const API_BUILD = '2026-08-17-auxiliary-bom-v1';
-const DEPLOYMENT_BUILD = '2026-08-21-unified-door-db-v3';
+const DEPLOYMENT_BUILD = '2026-08-24-attachment-classification-v1';
 const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -229,73 +230,6 @@ const runPsql = (sql, clientEncoding = 'UTF8') => new Promise((resolve, reject) 
   // limit and makes spawn fail with ENAMETOOLONG.
   child.stdin.end(`${sql}\n`, 'utf8');
 });
-
-// Some legacy attachment rows were imported before the database text encoding
-// was standardised.  Do not let one non-UTF8 description make the entire
-// attachment catalogue unavailable.  The SQL below returns text as base64
-// bytes, then this function restores UTF-8 first and falls back to GB18030.
-const decodeStoredText = (value) => {
-  if (value === null || value === undefined || value === '') return value ?? '';
-  const bytes = Buffer.from(String(value), 'base64');
-  const utf8 = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-  if (!utf8.includes('\uFFFD')) return utf8;
-  try {
-    return new TextDecoder('gb18030', { fatal: false }).decode(bytes);
-  } catch {
-    return utf8;
-  }
-};
-
-const decodeAttachmentCatalog = (rows) => rows.map((row) => ({
-  item_name: decodeStoredText(row.item_name_b64),
-  model_code: decodeStoredText(row.model_code_b64),
-  variant: decodeStoredText(row.variant_b64),
-  width_mm: row.width_mm,
-  height_mm: row.height_mm,
-  depth_mm: row.depth_mm,
-  price: row.price,
-  price_text: decodeStoredText(row.price_text_b64),
-  unit: decodeStoredText(row.unit_b64),
-  price_source: decodeStoredText(row.price_source_b64),
-  notes: decodeStoredText(row.notes_b64),
-}));
-
-const attachmentCatalogSql = `
-SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.item_name_b64, x.width_mm NULLS LAST, x.height_mm NULLS LAST, x.depth_mm NULLS LAST), '[]'::jsonb)::text
-FROM (
-  -- Keep separate prices/sources for the same model.  A model may have
-  -- multiple valid prices.  The UI exposes these as separate price choices.
-  SELECT DISTINCT ON (
-    encode(item_name::bytea, 'base64'),
-    encode(COALESCE(model_code, '')::bytea, 'base64'),
-    encode(COALESCE(variant, '')::bytea, 'base64'),
-    width_mm, height_mm, depth_mm, price,
-    encode(COALESCE(price_text, '')::bytea, 'base64'),
-    encode(COALESCE(unit, '')::bytea, 'base64'),
-    encode(COALESCE(price_source, '')::bytea, 'base64'),
-    encode(COALESCE(notes, '')::bytea, 'base64')
-  )
-    encode(item_name::bytea, 'base64') AS item_name_b64,
-    encode(COALESCE(model_code, '')::bytea, 'base64') AS model_code_b64,
-    encode(COALESCE(variant, '')::bytea, 'base64') AS variant_b64,
-    width_mm, height_mm, depth_mm, price,
-    encode(COALESCE(price_text, '')::bytea, 'base64') AS price_text_b64,
-    encode(COALESCE(unit, '')::bytea, 'base64') AS unit_b64,
-    encode(COALESCE(price_source, '')::bytea, 'base64') AS price_source_b64,
-    encode(COALESCE(notes, '')::bytea, 'base64') AS notes_b64
-  FROM calc.attachment_price
-  WHERE is_active = TRUE
-  ORDER BY
-    encode(item_name::bytea, 'base64'),
-    encode(COALESCE(model_code, '')::bytea, 'base64'),
-    encode(COALESCE(variant, '')::bytea, 'base64'),
-    width_mm, height_mm, depth_mm, price,
-    encode(COALESCE(price_text, '')::bytea, 'base64'),
-    encode(COALESCE(unit, '')::bytea, 'base64'),
-    encode(COALESCE(price_source, '')::bytea, 'base64'),
-    encode(COALESCE(notes, '')::bytea, 'base64'),
-    attachment_price_id DESC
-) x;`;
 
 const addAttachmentCatalogSql = (input) => {
   const item = normalizeCatalogAttachment(input);
@@ -790,6 +724,7 @@ SELECT jsonb_build_object(
   'spray_ready', to_regclass('calc.spray_price') IS NOT NULL,
   'auxiliary_ready', to_regclass('calc.auxiliary_bom') IS NOT NULL,
   'attachment_ready', to_regclass('calc.attachment_price') IS NOT NULL,
+  'attachment_classification_ready', to_regclass('calc.attachment_classification') IS NOT NULL,
   'calculation_ready', EXISTS (
     SELECT 1
     FROM pg_proc p

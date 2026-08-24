@@ -703,8 +703,33 @@ class AttachmentDialog(QDialog):
 
         self.search_edit = QLineEdit()
         self.search_edit.setClearButtonEnabled(True)
-        self.search_edit.setPlaceholderText("搜索名称、尺寸/规格或价格方案")
+        self.search_edit.setPlaceholderText("搜索分类、名称、型号、尺寸或价格方案")
         self.search_edit.textChanged.connect(self.apply_filter)
+
+        category_panel = QFrame(self)
+        category_panel.setObjectName("attachmentCategoryBar")
+        category_layout = QGridLayout(category_panel)
+        category_layout.setContentsMargins(14, 10, 14, 10)
+        category_layout.setHorizontalSpacing(10)
+        category_layout.setVerticalSpacing(4)
+        category_title = QLabel("按附件分类定位", category_panel)
+        category_title.setObjectName("attachmentCategoryTitle")
+        category_layout.addWidget(category_title, 0, 0, 1, 3)
+        self.category_level1_combo = QComboBox(category_panel)
+        self.category_level2_combo = QComboBox(category_panel)
+        self.category_level3_combo = QComboBox(category_panel)
+        self.category_level1_combo.setMinimumWidth(180)
+        self.category_level2_combo.setMinimumWidth(210)
+        self.category_level3_combo.setMinimumWidth(250)
+        category_layout.addWidget(self.category_level1_combo, 1, 0)
+        category_layout.addWidget(self.category_level2_combo, 1, 1)
+        category_layout.addWidget(self.category_level3_combo, 1, 2)
+        category_layout.setColumnStretch(0, 1)
+        category_layout.setColumnStretch(1, 1)
+        category_layout.setColumnStretch(2, 2)
+        self.category_level1_combo.currentIndexChanged.connect(self._level1_category_changed)
+        self.category_level2_combo.currentIndexChanged.connect(self._level2_category_changed)
+        self.category_level3_combo.currentIndexChanged.connect(self._category_filter_changed)
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
@@ -742,6 +767,7 @@ class AttachmentDialog(QDialog):
             recommendation.setStyleSheet("color:#b45309;font-weight:600;")
             layout.addWidget(recommendation)
         layout.addLayout(catalog_row)
+        layout.addWidget(category_panel)
         layout.addWidget(self.search_edit)
         layout.addWidget(self.table, 1)
         layout.addWidget(self.selection_hint)
@@ -844,6 +870,77 @@ class AttachmentDialog(QDialog):
         return " · ".join(parts) or "默认"
 
     @staticmethod
+    def category_value(item: dict, key: str) -> str:
+        value = str(item.get(key) or "").strip()
+        if key == "category_level1" and not value:
+            return "未分类"
+        return value
+
+    @classmethod
+    def category_path(cls, item: dict) -> tuple[str, str, str]:
+        return tuple(
+            cls.category_value(item, key)
+            for key in ("category_level1", "category_level2", "category_level3")
+        )
+
+    @staticmethod
+    def _combo_value(combo: QComboBox) -> str:
+        return str(combo.currentData() or "").strip()
+
+    @staticmethod
+    def _set_combo_options(combo: QComboBox, values: set[str], all_label: str) -> None:
+        current = str(combo.currentData() or "").strip()
+        ordered = sorted((value for value in values if value), key=str.casefold)
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(all_label, "")
+        for value in ordered:
+            combo.addItem(value, value)
+        selected_index = combo.findData(current)
+        combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+        combo.setEnabled(bool(ordered))
+        combo.blockSignals(False)
+
+    def refresh_category_filters(self) -> None:
+        self._set_combo_options(
+            self.category_level1_combo,
+            {self.category_value(item, "category_level1") for item in self.catalog},
+            "全部一级分类",
+        )
+        self._level1_category_changed()
+
+    def _level1_category_changed(self, *_args) -> None:
+        selected_level1 = self._combo_value(self.category_level1_combo)
+        eligible = [
+            item for item in self.catalog
+            if not selected_level1 or self.category_value(item, "category_level1") == selected_level1
+        ]
+        self._set_combo_options(
+            self.category_level2_combo,
+            {self.category_value(item, "category_level2") for item in eligible},
+            "全部二级分类",
+        )
+        self._level2_category_changed()
+
+    def _level2_category_changed(self, *_args) -> None:
+        selected_level1 = self._combo_value(self.category_level1_combo)
+        selected_level2 = self._combo_value(self.category_level2_combo)
+        eligible = [
+            item for item in self.catalog
+            if (not selected_level1 or self.category_value(item, "category_level1") == selected_level1)
+            and (not selected_level2 or self.category_value(item, "category_level2") == selected_level2)
+        ]
+        self._set_combo_options(
+            self.category_level3_combo,
+            {self.category_value(item, "category_level3") for item in eligible},
+            "全部三级分类",
+        )
+        self._category_filter_changed()
+
+    def _category_filter_changed(self, *_args) -> None:
+        self.apply_filter(self.search_edit.text())
+
+    @staticmethod
     def _number(value) -> float | None:
         try:
             return float(value) if value is not None and str(value).strip() else None
@@ -934,7 +1031,13 @@ class AttachmentDialog(QDialog):
         def sort_key(item: dict):
             display = self.display_name(item)
             recommended = any(name in display or display in name for name in self.recommended_names)
-            return (0 if recommended else 1, display, self.specification_key(item), self.price_scheme(item))
+            return (
+                0 if recommended else 1,
+                *self.category_path(item),
+                display,
+                self.specification_key(item),
+                self.price_scheme(item),
+            )
 
         for catalog_item in sorted(self.catalog, key=sort_key):
             selected_index = next(
@@ -988,21 +1091,47 @@ class AttachmentDialog(QDialog):
             key = str(item["item_name"]).strip()
             item["item_name"] = key
             item["display_name"] = self.display_name(item)
+            for category_key in ("category_level1", "category_level2", "category_level3"):
+                item[category_key] = self.category_value(item, category_key)
+        self.refresh_category_filters()
         if self.catalog:
+            level1_count = len({item["category_level1"] for item in self.catalog})
             self.catalog_hint.setText(
-                f"已读取 {len(self.catalog)} 条附件价格。勾选需要的行，并在行内确认单价和数量。"
+                f"已读取 {len(self.catalog)} 条附件价格，覆盖 {level1_count} 个一级分类。"
+                "按分类定位后勾选所需行，并在行内确认单价和数量。"
             )
         self.rebuild_table()
 
     def apply_filter(self, text: str):
         needle = text.strip().casefold()
+        selected_categories = (
+            self._combo_value(self.category_level1_combo),
+            self._combo_value(self.category_level2_combo),
+            self._combo_value(self.category_level3_combo),
+        )
         for row in range(self.table.rowCount()):
+            check_item = self.table.item(row, self.COL_CHECK)
+            source = check_item.data(Qt.UserRole) if check_item else {}
+            source = source if isinstance(source, dict) else {}
+            category_path = self.category_path(source)
+            category_matches = all(
+                not selected or category_path[index] == selected
+                for index, selected in enumerate(selected_categories)
+            )
             haystack = " ".join(
-                self.table.item(row, column).text()
-                for column in (self.COL_NAME, self.COL_SPEC, self.COL_SCHEME, self.COL_PRICE)
-                if self.table.item(row, column)
+                [
+                    *category_path,
+                    str(source.get("item_name") or ""),
+                    str(source.get("model_code") or ""),
+                    str(source.get("variant") or ""),
+                    *(
+                        self.table.item(row, column).text()
+                        for column in (self.COL_NAME, self.COL_SPEC, self.COL_SCHEME, self.COL_PRICE)
+                        if self.table.item(row, column)
+                    ),
+                ]
             ).casefold()
-            self.table.setRowHidden(row, bool(needle and needle not in haystack))
+            self.table.setRowHidden(row, not category_matches or bool(needle and needle not in haystack))
 
     def table_item_changed(self, item: QTableWidgetItem):
         if item.column() == self.COL_CHECK:
@@ -3018,6 +3147,17 @@ def main() -> int:
         QLabel#attachmentStatus, QLabel#drawingStatus {
             color: #35516c;
             font-weight: 600;
+        }
+        QFrame#attachmentCategoryBar {
+            background: #eef5fb;
+            border: 1px solid #c8d9e8;
+            border-left: 4px solid #2c78c4;
+            border-radius: 8px;
+        }
+        QLabel#attachmentCategoryTitle {
+            color: #24476a;
+            font-size: 10pt;
+            font-weight: 700;
         }
         QTextEdit {
             background: #fbfdff;

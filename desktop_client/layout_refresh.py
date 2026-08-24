@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -1350,6 +1351,219 @@ def _install_attachment_catalog_addition(namespace: dict) -> None:
     dialog_class._catalog_addition_installed = True
 
 
+def _attachment_category_value(item: dict, key: str) -> str:
+    value = str(item.get(key) or "").strip()
+    if key == "category_level1" and not value:
+        return "未分类"
+    return value
+
+
+def _attachment_category_path(item: dict) -> tuple[str, str, str]:
+    return tuple(
+        _attachment_category_value(item, key)
+        for key in ("category_level1", "category_level2", "category_level3")
+    )
+
+
+def _attachment_combo_value(combo: QComboBox) -> str:
+    return str(combo.currentData() or "").strip()
+
+
+def _set_attachment_combo_options(
+    combo: QComboBox,
+    values: set[str],
+    all_label: str,
+) -> None:
+    current = _attachment_combo_value(combo)
+    ordered = sorted((value for value in values if value), key=str.casefold)
+    combo.blockSignals(True)
+    combo.clear()
+    combo.addItem(all_label, "")
+    for value in ordered:
+        combo.addItem(value, value)
+    selected_index = combo.findData(current)
+    combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+    combo.setEnabled(bool(ordered))
+    combo.blockSignals(False)
+
+
+def _install_attachment_classification_filters(namespace: dict) -> None:
+    """Add linked classification filters to the packaged V3 attachment dialog."""
+
+    dialog_class = namespace.get("AttachmentDialog")
+    if dialog_class is None or getattr(dialog_class, "_classification_filters_installed", False):
+        return
+
+    original_init = dialog_class.__init__
+    original_apply_filter = dialog_class.apply_filter
+    original_rebuild_table = dialog_class.rebuild_table
+
+    def selected_categories(self) -> tuple[str, str, str]:
+        combos = (
+            getattr(self, "category_level1_combo", None),
+            getattr(self, "category_level2_combo", None),
+            getattr(self, "category_level3_combo", None),
+        )
+        if not all(isinstance(combo, QComboBox) for combo in combos):
+            return ("", "", "")
+        return tuple(_attachment_combo_value(combo) for combo in combos)
+
+    def apply_classification_filter(self, text: str):
+        if not hasattr(self, "category_level1_combo"):
+            return original_apply_filter(self, text)
+        needle = str(text or "").strip().casefold()
+        selected = selected_categories(self)
+        table = getattr(self, "table", None)
+        if not isinstance(table, QTableWidget):
+            return original_apply_filter(self, text)
+        for row in range(table.rowCount()):
+            check_item = table.item(row, self.COL_CHECK)
+            source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else {}
+            source = source if isinstance(source, dict) else {}
+            category_path = _attachment_category_path(source)
+            category_matches = all(
+                not category or category_path[index] == category
+                for index, category in enumerate(selected)
+            )
+            table_text = []
+            for column in (self.COL_NAME, self.COL_SPEC, self.COL_SCHEME, self.COL_PRICE):
+                cell = table.item(row, column)
+                if cell is not None:
+                    table_text.append(cell.text())
+            haystack = " ".join(
+                [
+                    *category_path,
+                    str(source.get("item_name") or ""),
+                    str(source.get("model_code") or ""),
+                    str(source.get("variant") or ""),
+                    *table_text,
+                ]
+            ).casefold()
+            table.setRowHidden(
+                row,
+                not category_matches or bool(needle and needle not in haystack),
+            )
+
+    def category_filter_changed(self, *_args):
+        search = getattr(self, "search_edit", None)
+        apply_classification_filter(self, search.text() if isinstance(search, QLineEdit) else "")
+
+    def level2_category_changed(self, *_args):
+        level1 = _attachment_combo_value(self.category_level1_combo)
+        level2 = _attachment_combo_value(self.category_level2_combo)
+        eligible = [
+            item
+            for item in getattr(self, "catalog", [])
+            if (not level1 or _attachment_category_value(item, "category_level1") == level1)
+            and (not level2 or _attachment_category_value(item, "category_level2") == level2)
+        ]
+        _set_attachment_combo_options(
+            self.category_level3_combo,
+            {_attachment_category_value(item, "category_level3") for item in eligible},
+            "全部三级分类",
+        )
+        category_filter_changed(self)
+
+    def level1_category_changed(self, *_args):
+        level1 = _attachment_combo_value(self.category_level1_combo)
+        eligible = [
+            item
+            for item in getattr(self, "catalog", [])
+            if not level1 or _attachment_category_value(item, "category_level1") == level1
+        ]
+        _set_attachment_combo_options(
+            self.category_level2_combo,
+            {_attachment_category_value(item, "category_level2") for item in eligible},
+            "全部二级分类",
+        )
+        level2_category_changed(self)
+
+    def refresh_category_filters(self):
+        catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
+        for item in catalog:
+            for key in ("category_level1", "category_level2", "category_level3"):
+                item[key] = _attachment_category_value(item, key)
+        _set_attachment_combo_options(
+            self.category_level1_combo,
+            {_attachment_category_value(item, "category_level1") for item in catalog},
+            "全部一级分类",
+        )
+        level1_category_changed(self)
+        hint = getattr(self, "catalog_hint", None)
+        if catalog and isinstance(hint, QLabel):
+            level1_count = len({_attachment_category_value(item, "category_level1") for item in catalog})
+            hint.setText(
+                f"已读取 {len(catalog)} 条附件价格，覆盖 {level1_count} 个一级分类。"
+                "按分类定位后勾选所需行，并在行内确认单价和数量。"
+            )
+
+    def rebuild_table_with_classification(self):
+        result = original_rebuild_table(self)
+        if hasattr(self, "category_level1_combo"):
+            refresh_category_filters(self)
+        return result
+
+    def init_with_classification_filters(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        panel = QFrame(self)
+        panel.setObjectName("attachmentCategoryBar")
+        panel.setStyleSheet(
+            "QFrame#attachmentCategoryBar {"
+            "background:#edf5fb;border:1px solid #b9d4e8;border-radius:8px;"
+            "}"
+            "QLabel#attachmentCategoryTitle {color:#174a73;font-weight:700;}"
+        )
+        category_layout = QGridLayout(panel)
+        category_layout.setContentsMargins(14, 10, 14, 10)
+        category_layout.setHorizontalSpacing(10)
+        category_layout.setVerticalSpacing(5)
+        title = QLabel("按附件分类定位", panel)
+        title.setObjectName("attachmentCategoryTitle")
+        category_layout.addWidget(title, 0, 0, 1, 3)
+
+        combo_specs = (
+            ("category_level1_combo", "一级分类", "先选择附件大类", 180),
+            ("category_level2_combo", "二级分类", "再选择附件类型", 210),
+            ("category_level3_combo", "三级分类", "最后选择具体规格或型号", 250),
+        )
+        for column, (attribute, accessible_name, tooltip, minimum_width) in enumerate(combo_specs):
+            combo = QComboBox(panel)
+            combo.setAccessibleName(accessible_name)
+            combo.setToolTip(tooltip)
+            combo.setMinimumWidth(minimum_width)
+            setattr(self, attribute, combo)
+            category_layout.addWidget(combo, 1, column)
+            category_layout.setColumnStretch(column, 2 if column == 2 else 1)
+
+        self.category_level1_combo.currentIndexChanged.connect(
+            lambda *_: level1_category_changed(self)
+        )
+        self.category_level2_combo.currentIndexChanged.connect(
+            lambda *_: level2_category_changed(self)
+        )
+        self.category_level3_combo.currentIndexChanged.connect(
+            lambda *_: category_filter_changed(self)
+        )
+
+        layout = self.layout()
+        search = getattr(self, "search_edit", None)
+        if layout is not None and hasattr(layout, "insertWidget"):
+            search_index = layout.indexOf(search) if search is not None else -1
+            layout.insertWidget(search_index if search_index >= 0 else 1, panel)
+        elif layout is not None:
+            layout.addWidget(panel)
+        self.attachment_category_panel = panel
+        if isinstance(search, QLineEdit):
+            search.setPlaceholderText("搜索分类、名称、型号、尺寸或价格方案")
+        refresh_category_filters(self)
+
+    dialog_class.__init__ = init_with_classification_filters
+    dialog_class.rebuild_table = rebuild_table_with_classification
+    dialog_class.apply_filter = apply_classification_filter
+    dialog_class.refresh_category_filters = refresh_category_filters
+    dialog_class._classification_filters_installed = True
+
+
 def install_layout_refresh(namespace: dict) -> None:
     """Install the layout pass on an extracted or packaged V3 namespace."""
 
@@ -1360,6 +1574,7 @@ def install_layout_refresh(namespace: dict) -> None:
 
     _install_stable_preview(namespace)
     _install_attachment_catalog_addition(namespace)
+    _install_attachment_classification_filters(namespace)
     _patch_family_for_code(main_window)
     _patch_discounted_totals(namespace, main_window)
 

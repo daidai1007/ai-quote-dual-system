@@ -48,7 +48,9 @@ node .\api\server.mjs
 
 `GET /api/products/catalog` 返回产品、数据库型号、材质和喷塑选项。
 
-`GET /api/attachments/catalog` 读取附件库；`POST /api/attachments/catalog`
+`GET /api/attachments/catalog` 读取附件库，并返回独立的
+`category_level1`、`category_level2`、`category_level3` 分类字段；
+`POST /api/attachments/catalog`
 新增一条持久附件。新增请求至少包含 `item_name` 和非负 `price`。
 
 ## 快速检查

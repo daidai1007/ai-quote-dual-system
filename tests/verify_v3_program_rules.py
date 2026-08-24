@@ -85,7 +85,7 @@ qt_core.Qt = type("Qt", (), {})
 qt_widgets = types.ModuleType("PySide6.QtWidgets")
 for name in (
     "QAbstractButton", "QCompleter", "QDialog", "QDialogButtonBox", "QFormLayout",
-    "QFrame", "QHeaderView", "QHBoxLayout", "QMessageBox", "QPushButton",
+    "QFrame", "QGridLayout", "QHeaderView", "QHBoxLayout", "QMessageBox", "QPushButton",
     "QScrollArea", "QSizePolicy", "QSplitter", "QTableWidget", "QVBoxLayout", "QWidget",
 ):
     setattr(qt_widgets, name, type(name, (Widget,), {}))

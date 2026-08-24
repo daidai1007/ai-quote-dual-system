@@ -21,9 +21,11 @@ core_root = Path(os.environ.get("AI_QUOTE_V3_CORE_ROOT", ""))
 if not core_root.is_dir():
     raise RuntimeError("AI_QUOTE_V3_CORE_ROOT must point to the verified V3 core directory")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QAbstractButton,
+    QComboBox,
     QFrame,
     QPushButton,
     QSplitter,
@@ -44,6 +46,11 @@ def buttons_with_text(root, captions: set[str]):
 
 
 namespace = v3_launcher.load_v3_namespace()
+
+attachment_dialog_class = namespace["AttachmentDialog"]
+assert attachment_dialog_class._classification_filters_installed is True
+original_attachment_load = attachment_dialog_class.load_catalog
+attachment_dialog_class.load_catalog = lambda self, _api_url: None
 
 runtime_calculator = namespace["FormulaDatabaseCalculator"]()
 assert runtime_calculator.DETAIL_ROWS["JP_SINGLE"][:3] == (5, 26, 29)
@@ -66,6 +73,70 @@ namespace["MainWindow"].load_catalogs = lambda self: None
 
 app = QApplication.instance() or QApplication(sys.argv[:1])
 namespace["install_application_font"](app)
+
+attachment_dialog = attachment_dialog_class([], api_url="http://127.0.0.1:1")
+attachment_dialog.catalog = [
+    {
+        "item_name": "过滤网FU-9803A",
+        "model_code": "过滤网FU-9803A",
+        "variant": "7035色",
+        "price": 15,
+        "category_level1": "风机滤网",
+        "category_level2": "过滤网",
+        "category_level3": "过滤网FU-9803A",
+    },
+    {
+        "item_name": "安装板",
+        "model_code": "JK安装板",
+        "price": 80,
+        "category_level1": "柜体附件",
+        "category_level2": "安装板",
+        "category_level3": "JK安装板",
+    },
+    {
+        "item_name": "人工旧附件",
+        "price": 1,
+    },
+]
+attachment_dialog.rebuild_table()
+for attribute in (
+    "category_level1_combo",
+    "category_level2_combo",
+    "category_level3_combo",
+):
+    assert isinstance(getattr(attachment_dialog, attribute), QComboBox)
+assert attachment_dialog.category_level1_combo.findData("风机滤网") >= 0
+assert attachment_dialog.category_level1_combo.findData("柜体附件") >= 0
+assert attachment_dialog.category_level1_combo.findData("未分类") >= 0
+attachment_dialog.category_level1_combo.setCurrentIndex(
+    attachment_dialog.category_level1_combo.findData("风机滤网")
+)
+app.processEvents()
+visible_rows = [
+    row
+    for row in range(attachment_dialog.table.rowCount())
+    if not attachment_dialog.table.isRowHidden(row)
+]
+assert len(visible_rows) == 1, visible_rows
+visible_source = attachment_dialog.table.item(
+    visible_rows[0], attachment_dialog.COL_CHECK
+).data(Qt.ItemDataRole.UserRole)
+assert visible_source["model_code"] == "过滤网FU-9803A"
+assert attachment_dialog.table.item(
+    visible_rows[0], attachment_dialog.COL_PRICE
+).text() == "15"
+attachment_dialog.category_level1_combo.setCurrentIndex(0)
+attachment_dialog.search_edit.setText("JK安装板")
+app.processEvents()
+visible_rows = [
+    row
+    for row in range(attachment_dialog.table.rowCount())
+    if not attachment_dialog.table.isRowHidden(row)
+]
+assert len(visible_rows) == 1, visible_rows
+attachment_dialog.close()
+attachment_dialog_class.load_catalog = original_attachment_load
+
 window = namespace["MainWindow"]()
 window.resize(1519, 987)
 window.show()

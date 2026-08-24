@@ -30,7 +30,7 @@ OTHER_DOOR_COUNTS = ((1, 0), (0, 1))
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--expected-deployment", default="2026-08-21-unified-door-db-v3")
+    parser.add_argument("--expected-deployment", default="2026-08-24-attachment-classification-v1")
     return parser.parse_args()
 
 
