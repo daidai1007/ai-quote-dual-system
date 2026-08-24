@@ -1,0 +1,28 @@
+# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(2026, 8, 24, 7),
+    prodvers=(2026, 8, 24, 7),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'080404B0',
+        [StringStruct(u'CompanyName', u'AI 双报价系统'),
+         StringStruct(u'FileDescription', u'AI 智能报价 · 双报价工作台 V7'),
+         StringStruct(u'FileVersion', u'2026.08.24.7'),
+         StringStruct(u'InternalName', u'AIQuoteDualSystem_layout_v7'),
+         StringStruct(u'LegalCopyright', u'Copyright © 2026'),
+         StringStruct(u'OriginalFilename', u'AIQuoteDualSystem_layout_v7.exe'),
+         StringStruct(u'ProductName', u'AI 双报价系统'),
+         StringStruct(u'ProductVersion', u'2026.08.24.7')])
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [2052, 1200])])
+  ]
+)
