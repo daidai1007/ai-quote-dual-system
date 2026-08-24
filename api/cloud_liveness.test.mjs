@@ -1,11 +1,30 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+test('Docker image includes every local module imported by the API server', async () => {
+  const [serverSource, dockerfile, dockerignore] = await Promise.all([
+    fs.readFile(path.join(projectRoot, 'api', 'server.mjs'), 'utf8'),
+    fs.readFile(path.join(projectRoot, 'Dockerfile'), 'utf8'),
+    fs.readFile(path.join(projectRoot, '.dockerignore'), 'utf8'),
+  ]);
+  const localModules = [
+    ...serverSource.matchAll(/from '\.\/([^']+\.mjs)'/g),
+  ].map((match) => match[1]);
+
+  assert.ok(localModules.length > 0);
+  for (const moduleName of localModules) {
+    const modulePath = `api/${moduleName}`;
+    assert.match(dockerfile, new RegExp(`\\b${modulePath.replaceAll('.', '\\.')}\\b`));
+    assert.match(dockerignore, new RegExp(`^!${modulePath.replaceAll('.', '\\.')}\\s*$`, 'm'));
+  }
+});
 
 const reservePort = () => new Promise((resolve, reject) => {
   const probe = net.createServer();
