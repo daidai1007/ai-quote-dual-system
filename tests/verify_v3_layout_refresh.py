@@ -25,7 +25,6 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QAbstractButton,
-    QComboBox,
     QFrame,
     QPushButton,
     QSplitter,
@@ -74,8 +73,38 @@ namespace["MainWindow"].load_catalogs = lambda self: None
 app = QApplication.instance() or QApplication(sys.argv[:1])
 namespace["install_application_font"](app)
 
+artifact_dir_text = os.environ.get("AI_QUOTE_UI_ARTIFACT_DIR", "").strip()
+artifact_dir = Path(artifact_dir_text) if artifact_dir_text else None
+if artifact_dir is not None:
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
 attachment_dialog = attachment_dialog_class([], api_url="http://127.0.0.1:1")
 attachment_dialog.catalog = [
+    {
+        "item_name": "底座100",
+        "model_code": "BASE-100",
+        "price": 100,
+        "category_level1": "底座",
+    },
+    {
+        "item_name": "侧板100",
+        "model_code": "SIDE-100",
+        "price": 40,
+        "category_level1": "侧板",
+    },
+    {
+        "item_name": "三排纵梁",
+        "model_code": "BEAM-3",
+        "price": 25,
+        "category_level1": "三排纵梁",
+    },
+    {
+        "item_name": "JK安装板",
+        "model_code": "JK安装板",
+        "price": 80,
+        "category_level1": "安装板",
+        "category_level2": "JK安装板",
+    },
     {
         "item_name": "过滤网FU-9803A",
         "model_code": "过滤网FU-9803A",
@@ -86,32 +115,58 @@ attachment_dialog.catalog = [
         "category_level3": "过滤网FU-9803A",
     },
     {
-        "item_name": "安装板",
-        "model_code": "JK安装板",
-        "price": 80,
-        "category_level1": "柜体附件",
-        "category_level2": "安装板",
-        "category_level3": "JK安装板",
-    },
-    {
-        "item_name": "人工旧附件",
+        "item_name": "未来附件",
         "price": 1,
+        "category_level1": "未来分类",
     },
 ]
 attachment_dialog.rebuild_table()
-for attribute in (
-    "category_level1_combo",
-    "category_level2_combo",
-    "category_level3_combo",
-):
-    assert isinstance(getattr(attachment_dialog, attribute), QComboBox)
-assert attachment_dialog.category_level1_combo.findData("风机滤网") >= 0
-assert attachment_dialog.category_level1_combo.findData("柜体附件") >= 0
-assert attachment_dialog.category_level1_combo.findData("未分类") >= 0
-attachment_dialog.category_level1_combo.setCurrentIndex(
-    attachment_dialog.category_level1_combo.findData("风机滤网")
-)
+attachment_dialog.resize(1050, 680)
+attachment_dialog.show()
 app.processEvents()
+
+def attachment_category_buttons():
+    return [
+        button
+        for button in attachment_dialog.findChildren(QPushButton, "attachmentCategoryCard")
+        if button.isVisible()
+    ]
+
+
+def attachment_category_button(label: str):
+    return next(
+        button for button in attachment_category_buttons()
+        if button.text().splitlines()[0] == label
+    )
+
+
+level1_buttons = attachment_category_buttons()
+assert [button.text().splitlines()[0] for button in level1_buttons] == [
+    "底座", "侧板", "三排纵梁", "安装板", "风机滤网", "未来分类",
+]
+positions = [
+    attachment_dialog.category_grid.getItemPosition(
+        attachment_dialog.category_grid.indexOf(button)
+    )[:2]
+    for button in level1_buttons
+]
+assert positions[:5] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)], positions
+assert attachment_dialog.table.isHidden()
+if artifact_dir is not None:
+    assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_categories.png"))
+
+attachment_category_button("风机滤网").click()
+app.processEvents()
+assert [button.text().splitlines()[0] for button in attachment_category_buttons()] == ["过滤网"]
+attachment_category_button("过滤网").click()
+app.processEvents()
+assert [button.text().splitlines()[0] for button in attachment_category_buttons()] == [
+    "过滤网FU-9803A"
+]
+attachment_category_button("过滤网FU-9803A").click()
+app.processEvents()
+assert not attachment_dialog.table.isHidden()
+assert not attachment_dialog.search_edit.isHidden()
 visible_rows = [
     row
     for row in range(attachment_dialog.table.rowCount())
@@ -125,15 +180,18 @@ assert visible_source["model_code"] == "过滤网FU-9803A"
 assert attachment_dialog.table.item(
     visible_rows[0], attachment_dialog.COL_PRICE
 ).text() == "15"
-attachment_dialog.category_level1_combo.setCurrentIndex(0)
-attachment_dialog.search_edit.setText("JK安装板")
+if artifact_dir is not None:
+    assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_leaf_table.png"))
+
+while attachment_dialog.category_selection:
+    attachment_dialog.back_attachment_category()
 app.processEvents()
-visible_rows = [
-    row
-    for row in range(attachment_dialog.table.rowCount())
-    if not attachment_dialog.table.isRowHidden(row)
-]
+attachment_category_button("底座").click()
+app.processEvents()
+assert not attachment_dialog.table.isHidden()
+visible_rows = [row for row in range(attachment_dialog.table.rowCount()) if not attachment_dialog.table.isRowHidden(row)]
 assert len(visible_rows) == 1, visible_rows
+assert attachment_dialog.table.item(visible_rows[0], attachment_dialog.COL_NAME).text() == "底座100"
 attachment_dialog.close()
 attachment_dialog_class.load_catalog = original_attachment_load
 
@@ -240,10 +298,7 @@ app.processEvents()
 assert all(action.isEnabled() for action in list_actions)
 assert not empty_action.isVisible()
 
-artifact_dir_text = os.environ.get("AI_QUOTE_UI_ARTIFACT_DIR", "").strip()
-if artifact_dir_text:
-    artifact_dir = Path(artifact_dir_text)
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+if artifact_dir is not None:
     candidate_table.setRowCount(0)
     layout_refresh._sync_recognition_action_state(window)
     summary_table.setRowCount(0)

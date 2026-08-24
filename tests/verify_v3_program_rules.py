@@ -101,6 +101,25 @@ layout_refresh = importlib.util.module_from_spec(spec)
 assert spec.loader
 spec.loader.exec_module(layout_refresh)
 
+from attachment_category_browser import LEVEL1_ORDER, category_options  # noqa: E402
+
+
+assert LEVEL1_ORDER[:10] == (
+    "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
+    "门限位器", "门加强筋", "配置变形",
+)
+mixed_options = category_options(
+    [
+        {"category_level1": "安装板", "category_level2": "JK安装板"},
+        {"category_level1": "安装板", "category_level2": ""},
+    ],
+    ["安装板"],
+)
+assert mixed_options == [
+    {"value": "JK安装板", "label": "JK安装板", "count": 1},
+    {"value": "", "label": "本级附件", "count": 1},
+]
+
 
 assert layout_refresh.VALID_DOOR_COMBINATIONS == {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
 assert layout_refresh._parse_specification_dimensions("1000*600*1800") == (1000, 1800, 600)
