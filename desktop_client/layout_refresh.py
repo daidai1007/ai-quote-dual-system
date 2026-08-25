@@ -46,8 +46,10 @@ from quote_defaults import (
 from quote_remark_rules import replace_door_configuration_phrase
 from attachment_category_browser import (
     DEFAULT_A4_FOLDER,
+    DEFAULT_DOOR_REINFORCEMENT,
     DEFAULT_DOOR_LIMITER,
     DEFAULT_FIXED_BASE,
+    DEFAULT_GROUND_WIRE,
     DEFAULT_JP_SIDE_PANEL,
     DEFAULT_LIGHT_SWITCH,
     category_options,
@@ -57,7 +59,9 @@ from attachment_category_browser import (
     is_base_selection,
     is_jp_product,
     match_default_a4_folder,
+    match_default_door_reinforcement,
     match_default_door_limiter,
+    match_default_ground_wire,
     match_default_light_switch,
     match_fixed_base,
     match_jp_side_panel,
@@ -1706,6 +1710,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         "灯开关": DEFAULT_LIGHT_SWITCH,
         "文件夹": DEFAULT_A4_FOLDER,
         "门限位器": DEFAULT_DOOR_LIMITER,
+        "门加强筋": DEFAULT_DOOR_REINFORCEMENT,
+        "接地线": DEFAULT_GROUND_WIRE,
     }
 
     def specification_text(self) -> str:
@@ -1774,6 +1780,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             DEFAULT_LIGHT_SWITCH: match_default_light_switch(catalog),
             DEFAULT_A4_FOLDER: match_default_a4_folder(catalog),
             DEFAULT_DOOR_LIMITER: match_default_door_limiter(catalog),
+            DEFAULT_DOOR_REINFORCEMENT: match_default_door_reinforcement(catalog),
+            DEFAULT_GROUND_WIRE: match_default_ground_wire(catalog),
             DEFAULT_JP_SIDE_PANEL: side,
         }
         self.default_match_spec = parsed
@@ -1840,6 +1848,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             detail = "A4资料盒"
         elif rule == DEFAULT_DOOR_LIMITER:
             detail = "门限位器"
+        elif rule == DEFAULT_DOOR_REINFORCEMENT:
+            detail = "门加强筋"
+        elif rule == DEFAULT_GROUND_WIRE:
+            detail = "红绿线"
         elif rule == DEFAULT_JP_SIDE_PANEL:
             if not is_jp_product(product_code):
                 return "快速匹配\n仅 JP 默认匹配", "attachmentQuickMatch", "当前产品不是 JP，不自动选择侧板", rule, False

@@ -105,7 +105,9 @@ spec.loader.exec_module(layout_refresh)
 
 from attachment_category_browser import (  # noqa: E402
     DEFAULT_A4_FOLDER,
+    DEFAULT_DOOR_REINFORCEMENT,
     DEFAULT_DOOR_LIMITER,
+    DEFAULT_GROUND_WIRE,
     DEFAULT_JP_SIDE_PANEL,
     DEFAULT_LIGHT_SWITCH,
     LEVEL1_ORDER,
@@ -113,7 +115,9 @@ from attachment_category_browser import (  # noqa: E402
     default_rule_for_item,
     is_jp_product,
     match_default_a4_folder,
+    match_default_door_reinforcement,
     match_default_door_limiter,
+    match_default_ground_wire,
     match_default_light_switch,
     match_fixed_base,
     match_jp_side_panel,
@@ -196,17 +200,24 @@ default_catalog = [
     {"attachment_price_id": 4, "item_name": "A3资料盒", "category_level1": "文件夹"},
     {"attachment_price_id": 5, "item_name": "A4资料盒", "category_level1": "文件夹"},
     {"attachment_price_id": 6, "item_name": "门限位器", "category_level1": "门限位器"},
+    {"attachment_price_id": 9, "item_name": "门加强筋", "category_level1": "门加强筋"},
+    {"attachment_price_id": 10, "item_name": "接地线", "model_code": "红绿线", "category_level1": "接地线", "category_level2": "红绿线"},
+    {"attachment_price_id": 11, "item_name": "接地线", "model_code": "编织带", "category_level1": "接地线", "category_level2": "编织带"},
     {"attachment_price_id": 7, "item_name": "侧板", "model_code": "JP681960", "category_level1": "侧板", "height_mm": 1900, "depth_mm": 600},
     {"attachment_price_id": 8, "item_name": "侧板", "model_code": "JP682060", "category_level1": "侧板", "height_mm": 2000, "depth_mm": 600},
 ]
 assert match_default_light_switch(default_catalog)["attachment_price_id"] == 3
 assert match_default_a4_folder(default_catalog)["attachment_price_id"] == 5
 assert match_default_door_limiter(default_catalog)["attachment_price_id"] == 6
+assert match_default_door_reinforcement(default_catalog)["attachment_price_id"] == 9
+assert match_default_ground_wire(default_catalog)["attachment_price_id"] == 10
 assert match_jp_side_panel(default_catalog, 2000, 600)["attachment_price_id"] == 8
 assert match_jp_side_panel(default_catalog, 2000, 800) is None
 assert is_jp_product("JP") and is_jp_product("JP_SINGLE") and not is_jp_product("JS_SINGLE")
 assert default_rule_for_item({"item_name": "A4资料盒"}) == DEFAULT_A4_FOLDER
 assert default_rule_for_item({"item_name": "门限位器"}) == DEFAULT_DOOR_LIMITER
+assert default_rule_for_item({"item_name": "门加强筋"}) == DEFAULT_DOOR_REINFORCEMENT
+assert default_rule_for_item({"item_name": "接地线", "model_code": "红绿线"}) == DEFAULT_GROUND_WIRE
 assert default_rule_for_item({"item_name": "照明灯/行程开关"}) == DEFAULT_LIGHT_SWITCH
 assert default_rule_for_item({"item_name": "侧板", "model_code": "JP682060"}) == DEFAULT_JP_SIDE_PANEL
 

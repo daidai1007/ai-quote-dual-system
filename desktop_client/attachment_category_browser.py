@@ -35,6 +35,8 @@ DEFAULT_LIGHT_SWITCH = "light_switch"
 DEFAULT_A4_FOLDER = "a4_folder"
 DEFAULT_DOOR_LIMITER = "door_limiter"
 DEFAULT_JP_SIDE_PANEL = "jp_side_panel"
+DEFAULT_DOOR_REINFORCEMENT = "door_reinforcement"
+DEFAULT_GROUND_WIRE = "ground_wire"
 
 
 def parse_base_specification(text: str) -> tuple[float, float, float, float] | None:
@@ -123,6 +125,25 @@ def match_default_door_limiter(items: Iterable[dict]) -> dict | None:
     return _unique_match(items, lambda item: category_value(item, 0) == "门限位器")
 
 
+def match_default_door_reinforcement(items: Iterable[dict]) -> dict | None:
+    return _unique_match(items, lambda item: category_value(item, 0) == "门加强筋")
+
+
+def match_default_ground_wire(items: Iterable[dict]) -> dict | None:
+    def is_red_green_wire(item: dict) -> bool:
+        text = " ".join(
+            [
+                category_value(item, 1),
+                str(item.get("item_name") or ""),
+                str(item.get("model_code") or ""),
+                str(item.get("variant") or ""),
+            ]
+        )
+        return category_value(item, 0) == "接地线" and "红绿线" in text
+
+    return _unique_match(items, is_red_green_wire)
+
+
 def is_jp_product(value) -> bool:
     code = str(value or "").strip().upper()
     return code == "JP" or code.startswith("JP_")
@@ -165,6 +186,10 @@ def default_rule_for_item(item: dict) -> str | None:
         return DEFAULT_A4_FOLDER
     if category == "门限位器" or "门限位器" in name:
         return DEFAULT_DOOR_LIMITER
+    if category == "门加强筋" or "门加强筋" in name:
+        return DEFAULT_DOOR_REINFORCEMENT
+    if category == "接地线" or "接地线" in name:
+        return DEFAULT_GROUND_WIRE
     if category == "侧板" or name == "侧板" or model.startswith("JP68"):
         return DEFAULT_JP_SIDE_PANEL
     return None

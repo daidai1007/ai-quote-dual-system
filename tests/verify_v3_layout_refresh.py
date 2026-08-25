@@ -185,12 +185,34 @@ attachment_dialog.catalog = [
         "category_level1": "门限位器",
     },
     {
+        "attachment_price_id": 11,
+        "item_name": "门加强筋",
+        "price": 20,
+        "category_level1": "门加强筋",
+    },
+    {
+        "attachment_price_id": 12,
+        "item_name": "接地线",
+        "model_code": "红绿线",
+        "price": 6,
+        "category_level1": "接地线",
+        "category_level2": "红绿线",
+    },
+    {
+        "attachment_price_id": 13,
+        "item_name": "接地线",
+        "model_code": "编织带",
+        "price": 8,
+        "category_level1": "接地线",
+        "category_level2": "编织带",
+    },
+    {
         "item_name": "未来附件",
         "price": 1,
         "category_level1": "未来分类",
     },
 ]
-assert attachment_dialog.prepare_default_selections() == 5
+assert attachment_dialog.prepare_default_selections() == 7
 attachment_dialog.rebuild_table()
 attachment_dialog.resize(1050, 680)
 attachment_dialog.show()
@@ -214,7 +236,7 @@ def attachment_category_button(label: str):
 level1_buttons = attachment_category_buttons()
 assert [button.text().splitlines()[0] for button in level1_buttons] == [
     "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
-    "门限位器", "未来分类",
+    "门限位器", "门加强筋", "接地线", "未来分类",
 ]
 positions = [
     attachment_dialog.category_grid.getItemPosition(
@@ -225,9 +247,11 @@ positions = [
 assert positions[:5] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)], positions
 assert attachment_dialog.table.isHidden()
 quick_match_buttons = attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
-assert len(quick_match_buttons) == 5
+assert len(quick_match_buttons) == 7
 assert any(button.text() == "默认已选择\n类型：固定 · 高度：100 mm" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\nA4资料盒" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择\n门加强筋" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择\n红绿线" for button in quick_match_buttons)
 folder_default = next(button for button in quick_match_buttons if "A4资料盒" in button.text())
 folder_default.click()
 app.processEvents()
@@ -237,7 +261,7 @@ app.processEvents()
 assert len([
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
     if button.isVisible()
-]) == 4
+]) == 6
 folder_cancelled = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchCancelled")
     if button.isVisible() and "A4资料盒" in button.text()
@@ -250,7 +274,7 @@ assert "a4_folder" not in attachment_dialog.default_selection_opt_outs
 assert len([
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
     if button.isVisible()
-]) == 5
+]) == 7
 if artifact_dir is not None:
     assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_categories.png"))
 
@@ -346,7 +370,7 @@ plain_dialog = attachment_dialog_class(
     target_dimensions=(760, 960, 500),
 )
 plain_dialog.catalog = [dict(item) for item in attachment_dialog.catalog]
-assert plain_dialog.prepare_default_selections() == 3
+assert plain_dialog.prepare_default_selections() == 5
 plain_dialog.rebuild_table()
 plain_dialog.show()
 app.processEvents()
@@ -356,7 +380,7 @@ assert any(label.text() == "快速匹配\n仅 JP 默认匹配" for label in plai
 assert sum(
     plain_dialog.table.item(row, plain_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
     for row in range(plain_dialog.table.rowCount())
-) == 3
+) == 5
 plain_dialog.close()
 plain_parent.close()
 attachment_dialog_class.load_catalog = original_attachment_load
