@@ -437,6 +437,14 @@ quote_left, quote_right = quote_workspace.sizes()
 assert quote_left >= 570, quote_workspace.sizes()
 assert 520 <= quote_right <= 680, quote_workspace.sizes()
 assert window.findChild(QAbstractButton, "primaryQuoteAction").accessibleName() == "计算双报价"
+history_card = quote_page.findChild(QFrame, "historyPriceCard")
+history_table = quote_page.findChild(QTableWidget, "historyPriceTable")
+history_state = quote_page.findChild(QLabel, "historyPriceState")
+assert history_card is not None
+assert history_table is not None and history_table.columnCount() == 2
+assert history_table.horizontalHeaderItem(0).text() == "钉钉合同号"
+assert history_table.horizontalHeaderItem(1).text() == "价格"
+assert history_state is not None and history_state.text() == "等待完整输入"
 assert window.width_spin.specialValueText() == ""
 assert window.depth_spin.specialValueText() == ""
 assert window.height_spin.specialValueText() == ""
@@ -444,6 +452,35 @@ window.product_catalog = {"JM": {"codes": {"DEFAULT": "JM"}, "method": "quick"}}
 window.product_combo.clear()
 window.product_combo.addItem("JM", "JM")
 window.product_changed()
+for widget, value in (
+    (window.company_combo, "浙江万丰科技开发股份有限公司"),
+    (window.quote_spec_edit, "1000*600*(1800+200)"),
+):
+    blocked = widget.blockSignals(True)
+    if hasattr(widget, "setEditText"):
+        widget.setEditText(value)
+    else:
+        widget.setText(value)
+    widget.blockSignals(blocked)
+assert layout_refresh._history_price_match_payload(window) == {
+    "company_name": "浙江万丰科技开发股份有限公司",
+    "specification": "1000*600*(1800+200)",
+    "cabinet_type": "JM",
+}
+layout_refresh._render_history_price_matches(window, {
+    "matched": True,
+    "source_row_count": 2,
+    "unique_result_count": 1,
+    "items": [{
+        "dingtalk_contract_no": "ZJN/S-2606098",
+        "tax_included_unit_price": 2400,
+        "source_row_count": 2,
+    }],
+})
+assert history_table.rowCount() == 1
+assert history_table.item(0, 0).text() == "ZJN/S-2606098"
+assert history_table.item(0, 1).text() == "2,400.00 元"
+assert history_state.text() == "完全匹配 1 条（源表 2 行）"
 assert not window.single_door_combo.isEnabled()
 assert not window.double_door_combo.isEnabled()
 assert window.door_counts() == (1, 0), window.door_counts()

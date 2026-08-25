@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -739,6 +740,209 @@ def _apply_nonstandard_formula_ratio(window) -> bool:
     return True
 
 
+def _history_price_match_payload(window) -> dict | None:
+    """Return the three visible values used by the exact historical lookup."""
+
+    company = getattr(window, "company_combo", None)
+    specification = getattr(window, "quote_spec_edit", None)
+    product = getattr(window, "product_combo", None)
+    if not all(isinstance(widget, (QComboBox, QLineEdit)) for widget in (
+        company,
+        specification,
+        product,
+    )):
+        return None
+    company_name = company.currentText().strip()
+    specification_text = specification.text().strip()
+    cabinet_type = product.currentText().strip()
+    if not company_name or not specification_text or not cabinet_type or product.currentData() is None:
+        return None
+    return {
+        "company_name": company_name,
+        "specification": specification_text,
+        "cabinet_type": cabinet_type,
+    }
+
+
+def _set_history_price_state(window, text: str, tone: str = "muted", tooltip: str = "") -> None:
+    state = getattr(window, "history_price_state", None)
+    if not isinstance(state, QLabel):
+        return
+    state.setText(text)
+    state.setProperty("tone", tone)
+    state.setToolTip(tooltip)
+    state.style().unpolish(state)
+    state.style().polish(state)
+
+
+def _render_history_price_matches(window, result: dict) -> None:
+    table = getattr(window, "history_price_table", None)
+    if not isinstance(table, QTableWidget):
+        return
+    items = result.get("items") if isinstance(result, dict) else []
+    items = [item for item in (items or []) if isinstance(item, dict)]
+    table.setRowCount(len(items))
+    for row, item in enumerate(items):
+        contract = QTableWidgetItem(str(item.get("dingtalk_contract_no") or "—"))
+        try:
+            price_text = f"{float(item.get('tax_included_unit_price')):,.2f} 元"
+        except (TypeError, ValueError):
+            price_text = "—"
+        price = QTableWidgetItem(price_text)
+        price.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        table.setItem(row, 0, contract)
+        table.setItem(row, 1, price)
+        table.setRowHeight(row, 30)
+
+    if items:
+        source_rows = int(result.get("source_row_count") or len(items))
+        unique_results = int(result.get("unique_result_count") or len(items))
+        suffix = "" if source_rows == unique_results else f"（源表 {source_rows} 行）"
+        _set_history_price_state(
+            window,
+            f"完全匹配 {unique_results} 条{suffix}",
+            "matched",
+            "公司名称、规格型号和产品选型均与历史价格库完全一致。",
+        )
+    else:
+        _set_history_price_state(
+            window,
+            "未找到完全匹配记录",
+            "empty",
+            "需要公司名称、规格型号和产品选型三项完全一致。",
+        )
+
+
+def _history_price_match_failed(window, message: str, serial: int) -> None:
+    if serial != getattr(window, "_history_price_request_serial", 0):
+        return
+    table = getattr(window, "history_price_table", None)
+    if isinstance(table, QTableWidget):
+        table.setRowCount(0)
+    _set_history_price_state(window, "历史价格读取失败", "error", str(message or ""))
+
+
+def _request_history_price_match(window) -> None:
+    window._history_price_request_serial = getattr(window, "_history_price_request_serial", 0) + 1
+    serial = window._history_price_request_serial
+    table = getattr(window, "history_price_table", None)
+    payload = _history_price_match_payload(window)
+    if payload is None:
+        if isinstance(table, QTableWidget):
+            table.setRowCount(0)
+        _set_history_price_state(window, "等待完整输入", "muted", "请先选择公司和产品，并填写规格型号。")
+        return
+
+    worker_class = getattr(window, "_history_price_api_worker_class", None)
+    base_url = getattr(window, "base_url", None)
+    if not callable(worker_class) or not callable(base_url):
+        _set_history_price_state(window, "历史价格接口不可用", "error")
+        return
+
+    _set_history_price_state(window, "正在精确匹配…", "loading")
+    worker = worker_class(base_url() + "/api/history-prices/match", payload, window)
+    workers = getattr(window, "_history_price_workers", None)
+    if not isinstance(workers, dict):
+        workers = {}
+        window._history_price_workers = workers
+    workers[serial] = worker
+
+    def loaded(result, request_serial=serial):
+        if request_serial != getattr(window, "_history_price_request_serial", 0):
+            return
+        _render_history_price_matches(window, result if isinstance(result, dict) else {})
+
+    worker.succeeded.connect(loaded)
+    worker.failed.connect(lambda message, request_serial=serial: _history_price_match_failed(
+        window,
+        message,
+        request_serial,
+    ))
+    if hasattr(worker, "finished"):
+        worker.finished.connect(lambda request_serial=serial: workers.pop(request_serial, None))
+    worker.start()
+
+
+def _ensure_history_price_panel(window, worker_class=None) -> None:
+    if worker_class is not None:
+        window._history_price_api_worker_class = worker_class
+    if getattr(window, "history_price_table", None) is not None:
+        return
+    stack = getattr(window, "stack", None)
+    if stack is None or stack.count() <= 1:
+        return
+    page = stack.widget(1)
+    workspace = _find(page, QSplitter, "quoteWorkspace")
+    if workspace is None or workspace.count() < 2:
+        return
+    result_panel = workspace.widget(1)
+    result_layout = result_panel.layout()
+    if result_layout is None:
+        return
+
+    card = QFrame(result_panel)
+    card.setObjectName("historyPriceCard")
+    card.setMinimumHeight(150)
+    card.setMaximumHeight(210)
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(14, 10, 14, 12)
+    layout.setSpacing(7)
+
+    header = QHBoxLayout()
+    title = QLabel("历史价格", card)
+    title.setObjectName("historyPriceTitle")
+    state = QLabel("等待完整输入", card)
+    state.setObjectName("historyPriceState")
+    state.setProperty("tone", "muted")
+    state.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    header.addWidget(title)
+    header.addStretch(1)
+    header.addWidget(state)
+    layout.addLayout(header)
+
+    table = QTableWidget(0, 2, card)
+    table.setObjectName("historyPriceTable")
+    table.setHorizontalHeaderLabels(("钉钉合同号", "价格"))
+    table.verticalHeader().setVisible(False)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+    table.setAlternatingRowColors(True)
+    table.setMinimumHeight(92)
+    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+    layout.addWidget(table)
+
+    anchor = getattr(window, "risk_label", None)
+    direct_child = anchor if isinstance(anchor, QWidget) else None
+    while direct_child is not None and direct_child.parentWidget() is not result_panel:
+        direct_child = direct_child.parentWidget()
+    anchor_index = result_layout.indexOf(direct_child) if direct_child is not None else -1
+    insert_at = anchor_index + 1 if anchor_index >= 0 else max(0, result_layout.count() - 2)
+    result_layout.insertWidget(insert_at, card)
+
+    window.history_price_card = card
+    window.history_price_title = title
+    window.history_price_state = state
+    window.history_price_table = table
+    window._history_price_request_serial = 0
+    window._history_price_workers = {}
+
+    timer = QTimer(window)
+    timer.setSingleShot(True)
+    timer.setInterval(280)
+    timer.timeout.connect(lambda: _request_history_price_match(window))
+    window._history_price_timer = timer
+    for widget, signal_name in (
+        (getattr(window, "company_combo", None), "currentTextChanged"),
+        (getattr(window, "product_combo", None), "currentTextChanged"),
+        (getattr(window, "quote_spec_edit", None), "textChanged"),
+    ):
+        signal = getattr(widget, signal_name, None)
+        if signal is not None:
+            signal.connect(lambda *_args, match_timer=timer: match_timer.start())
+    QTimer.singleShot(0, lambda: _request_history_price_match(window))
+
+
 def _refresh_quote_page(window) -> None:
     page = window.stack.widget(1)
     workspace = _find(page, QSplitter, "quoteWorkspace")
@@ -954,6 +1158,19 @@ QFrame#formulaCard {{
 QFrame#quickCard {{
     background: {PAPER}; border: 1px solid {STEEL_LINE};
     border-left: 4px solid {INSPECTION_GREEN}; border-radius: 7px;
+}}
+QFrame#historyPriceCard {{
+    background: {PAPER}; border: 1px solid {STEEL_LINE};
+    border-left: 4px solid {BLUEPRINT}; border-radius: 7px;
+}}
+QLabel#historyPriceTitle {{ color: {GRAPHITE}; font-weight: 700; font-size: 11pt; }}
+QLabel#historyPriceState {{ color: {MUTED_INK}; font-size: 9pt; }}
+QLabel#historyPriceState[tone="matched"] {{ color: #246B49; font-weight: 600; }}
+QLabel#historyPriceState[tone="loading"] {{ color: #24577B; }}
+QLabel#historyPriceState[tone="error"] {{ color: #A33D32; }}
+QTableWidget#historyPriceTable {{
+    background: #FBFCFD; border: 1px solid #DDE3E8; border-radius: 4px;
+    gridline-color: #E2E6EA; alternate-background-color: #F5F8FA;
 }}
 QLabel#serviceStatusBadge[tone="success"] {{
     background: {INSPECTION_PALE}; color: #246B49;
@@ -2180,6 +2397,7 @@ def install_layout_refresh(namespace: dict) -> None:
     def build_ui_with_refresh(self):
         original_build_ui(self)
         apply_layout_refresh(self)
+        _ensure_history_price_panel(self, namespace.get("ApiWorker"))
         _configure_quote_rule_interactions(self, namespace.get("parse_review_specification"))
 
     def refresh_document_list_with_preview(self):

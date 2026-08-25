@@ -8,6 +8,7 @@ import { applyQuickOnlyAttachmentRuleToQuoteRow } from './attachment_rules.mjs';
 import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
 import { attachmentCatalogSql, decodeAttachmentCatalog } from './attachment_catalog_query.mjs';
 import { applyDoorVariantQuickPrice, normalizeDoorVariantInput } from './door_variant_rules.mjs';
+import { historyPriceMatchSql } from './history_price_query.mjs';
 import { buildPsqlArgs, resolveRuntimeConfig } from './runtime_config.mjs';
 
 const RUNTIME_CONFIG = resolveRuntimeConfig();
@@ -784,6 +785,18 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return json(res, error.message?.includes('required') || error.message?.includes('must be') ? 400 : 500, {
         error: 'company_history_match_failed',
+        message: error.message,
+      });
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/history-prices/match') {
+    try {
+      const input = await readBody(req);
+      const output = await runPsql(historyPriceMatchSql(input));
+      return json(res, 200, output ? JSON.parse(output) : { matched: false, items: [] });
+    } catch (error) {
+      return json(res, error.message?.includes('required') || error.message?.includes('too long') ? 400 : 500, {
+        error: 'history_price_match_failed',
         message: error.message,
       });
     }

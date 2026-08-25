@@ -7,6 +7,7 @@
 !api/attachment_catalog_rules.mjs
 !api/attachment_catalog_query.mjs
 !api/door_variant_rules.mjs
+!api/history_price_query.mjs
 !api/runtime_config.mjs
 !exceljs_range_adapter.mjs
 !quote_export_contract.mjs

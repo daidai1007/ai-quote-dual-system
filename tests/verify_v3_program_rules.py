@@ -88,7 +88,7 @@ qt_widgets = types.ModuleType("PySide6.QtWidgets")
 for name in (
     "QAbstractButton", "QCompleter", "QDialog", "QDialogButtonBox", "QFormLayout",
     "QFrame", "QGridLayout", "QHeaderView", "QHBoxLayout", "QMessageBox", "QPushButton",
-    "QScrollArea", "QSizePolicy", "QSplitter", "QTableWidget", "QVBoxLayout", "QWidget",
+    "QScrollArea", "QSizePolicy", "QSplitter", "QTableWidget", "QTableWidgetItem", "QVBoxLayout", "QWidget",
 ):
     setattr(qt_widgets, name, type(name, (Widget,), {}))
 qt_widgets.QComboBox = Combo
