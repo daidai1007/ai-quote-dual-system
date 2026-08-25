@@ -94,6 +94,54 @@ const xlsxEntryNames = (buffer) => {
   return names;
 };
 
+test("door limiter quantity reaches quote columns and cost-detail BOM", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-door-limiter-"));
+  const inputPath = path.join(tempDir, "door-limiter-input.json");
+  const outputPath = path.join(tempDir, "door-limiter-output.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(fixturePath, "utf8"));
+    payload.items = [payload.items[0]];
+    const item = payload.items[0];
+    item.attachments = [{
+      item_name: "门限位器",
+      quantity: 4,
+      unit_price: 25,
+      price_source: "测试附件价格",
+    }];
+    item.formula.attachment_fee = 100;
+    item.formula.total_cost = 889;
+    item.quick.attachment_fee = 100;
+    item.quick.total_cost = 3250;
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    const quickSheet = workbook.getWorksheet("快速报价单");
+    closeTo(formulaSheet.getCell("X11").value, 90, "formula limiter amount after discount");
+    closeTo(quickSheet.getCell("T11").value, 100, "quick limiter amount");
+    assert.deepEqual(
+      ["L11", "M11", "N11", "O11", "P11"].map((cell) => Number(formulaSheet.getCell(cell).value)),
+      [180, 90, 270, 135, 35.1],
+      "other formula components changed",
+    );
+    closeTo(quickSheet.getCell("L11").value, 3150, "quick cabinet amount excluding attachments");
+
+    const detailSheet = workbook.getWorksheet("成本明细");
+    let limiterRow = null;
+    detailSheet.eachRow((row) => {
+      if (row.getCell(5).text === "门限位器") limiterRow = row;
+    });
+    assert.ok(limiterRow, "door limiter BOM row is missing");
+    closeTo(limiterRow.getCell(8).value, 4, "door limiter BOM quantity");
+    closeTo(limiterRow.getCell(10).value, 25, "door limiter BOM unit price");
+    closeTo(limiterRow.getCell(11).value, 100, "door limiter BOM amount");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("formal workbook exports the revised presentation without changing quote detail", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-export-presentation-"));
   const outputPath = path.join(tempDir, "presentation-regression.xlsx");

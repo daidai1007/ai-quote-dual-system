@@ -38,6 +38,8 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(overlay, /attachmentQuickMatchCancelled/);
   assert.match(overlay, /def toggle_default_selection/);
   assert.match(overlay, /parent\.attachment_default_opt_outs/);
+  assert.match(overlay, /def _sync_door_limiter_default_quantity/);
+  assert.match(overlay, /attachment_default_quantity_overrides/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);
   assert.match(overlay, /_default_selection_filters_installed = True/);
   assert.doesNotMatch(overlay, /category_level1_combo/);
@@ -59,6 +61,8 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(hierarchy, /def match_default_light_switch/);
   assert.match(hierarchy, /def match_default_a4_folder/);
   assert.match(hierarchy, /def match_default_door_limiter/);
+  assert.match(hierarchy, /def door_limiter_default_quantity/);
+  assert.match(hierarchy, /\(1, 1\): 3/);
   assert.match(hierarchy, /def match_default_door_reinforcement/);
   assert.match(hierarchy, /def match_default_ground_wire/);
   assert.match(hierarchy, /def match_jp_side_panel/);

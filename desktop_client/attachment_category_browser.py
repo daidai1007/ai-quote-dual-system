@@ -37,6 +37,13 @@ DEFAULT_DOOR_LIMITER = "door_limiter"
 DEFAULT_JP_SIDE_PANEL = "jp_side_panel"
 DEFAULT_DOOR_REINFORCEMENT = "door_reinforcement"
 DEFAULT_GROUND_WIRE = "ground_wire"
+DOOR_LIMITER_DEFAULT_QUANTITIES = {
+    (1, 0): 1,
+    (2, 0): 2,
+    (0, 1): 2,
+    (0, 2): 4,
+    (1, 1): 3,
+}
 
 
 def parse_base_specification(text: str) -> tuple[float, float, float, float] | None:
@@ -123,6 +130,20 @@ def match_default_a4_folder(items: Iterable[dict]) -> dict | None:
 
 def match_default_door_limiter(items: Iterable[dict]) -> dict | None:
     return _unique_match(items, lambda item: category_value(item, 0) == "门限位器")
+
+
+def door_limiter_default_quantity(single_door_count, double_door_count) -> int | None:
+    """Return the approved limiter quantity for one valid door-count pair.
+
+    ``0/0`` and every other unsupported pair intentionally return ``None``;
+    callers must not invent a default for an invalid door configuration.
+    """
+
+    try:
+        counts = int(single_door_count), int(double_door_count)
+    except (TypeError, ValueError):
+        return None
+    return DOOR_LIMITER_DEFAULT_QUANTITIES.get(counts)
 
 
 def match_default_door_reinforcement(items: Iterable[dict]) -> dict | None:

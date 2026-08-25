@@ -110,9 +110,11 @@ from attachment_category_browser import (  # noqa: E402
     DEFAULT_GROUND_WIRE,
     DEFAULT_JP_SIDE_PANEL,
     DEFAULT_LIGHT_SWITCH,
+    DOOR_LIMITER_DEFAULT_QUANTITIES,
     LEVEL1_ORDER,
     category_options,
     default_rule_for_item,
+    door_limiter_default_quantity,
     is_jp_product,
     match_default_a4_folder,
     match_default_door_reinforcement,
@@ -165,6 +167,17 @@ assert replace_door_configuration_phrase(
 
 
 assert layout_refresh.VALID_DOOR_COMBINATIONS == {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
+assert DOOR_LIMITER_DEFAULT_QUANTITIES == {
+    (1, 0): 1,
+    (2, 0): 2,
+    (0, 1): 2,
+    (0, 2): 4,
+    (1, 1): 3,
+}
+for counts, quantity in DOOR_LIMITER_DEFAULT_QUANTITIES.items():
+    assert door_limiter_default_quantity(*counts) == quantity
+assert door_limiter_default_quantity(0, 0) is None
+assert door_limiter_default_quantity("invalid", 1) is None
 assert layout_refresh._parse_specification_dimensions("1000*600*1800") == (1000, 1800, 600)
 assert layout_refresh._parse_specification_dimensions("1000×600×1800") == (1000, 1800, 600)
 assert layout_refresh._parse_specification_dimensions("760*500*(960+100)") == (760, 960, 500)
@@ -370,5 +383,46 @@ assert layout_refresh._allowed_door_combinations(other_window) == {(1, 0), (0, 1
 assert layout_refresh._enforce_product_door_combination(other_window, "double")
 assert other_window.door_counts() == (0, 1)
 assert other_window.refreshed == 2
+
+
+class DoorLimiterWindow:
+    def __init__(self):
+        self._counts = (1, 0)
+        self._attachment_default_door_counts = (1, 0)
+        self.attachment_default_opt_outs = set()
+        self.attachment_default_quantity_overrides = set()
+        self.attachments = [
+            {"item_name": "门限位器", "category_level1": "门限位器", "quantity": 1},
+            {"item_name": "A4资料盒", "category_level1": "文件夹", "quantity": 9},
+        ]
+        self.view_refreshes = 0
+
+    def door_counts(self):
+        return self._counts
+
+    def update_attachment_view(self):
+        self.view_refreshes += 1
+
+
+limiter_window = DoorLimiterWindow()
+limiter_window._counts = (0, 2)
+assert layout_refresh._sync_door_limiter_default_quantity(limiter_window, (1, 0))
+assert limiter_window.attachments[0]["quantity"] == 4
+assert limiter_window.attachments[1]["quantity"] == 9
+assert limiter_window.view_refreshes == 1
+assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (0, 2))
+
+limiter_window.attachment_default_quantity_overrides = {DEFAULT_DOOR_LIMITER}
+limiter_window.attachments[0]["quantity"] = 7
+limiter_window._counts = (1, 1)
+assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (0, 2))
+assert limiter_window.attachments[0]["quantity"] == 7
+
+limiter_window.attachment_default_quantity_overrides.clear()
+limiter_window.attachment_default_opt_outs = {DEFAULT_DOOR_LIMITER}
+limiter_window.attachments = [limiter_window.attachments[1]]
+limiter_window._counts = (2, 0)
+assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (1, 1))
+assert all(item.get("item_name") != "门限位器" for item in limiter_window.attachments)
 
 print("V3 program rule contracts passed")

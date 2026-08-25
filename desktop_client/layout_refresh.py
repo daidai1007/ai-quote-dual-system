@@ -57,6 +57,7 @@ from attachment_category_browser import (
     category_path as attachment_category_path,
     category_value as attachment_category_value,
     default_rule_for_item,
+    door_limiter_default_quantity,
     is_base_selection,
     is_jp_product,
     match_default_a4_folder,
@@ -503,6 +504,63 @@ def _allowed_door_combinations(window) -> set[tuple[int, int]]:
     if "DOUBLE" in codes:
         allowed.add((0, 1))
     return allowed
+
+
+def _current_door_counts(window) -> tuple[int, int] | None:
+    getter = getattr(window, "door_counts", None)
+    if not callable(getter):
+        return None
+    try:
+        single, double = getter()
+        return int(single), int(double)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sync_door_limiter_default_quantity(
+    window,
+    previous_counts: tuple[int, int] | None = None,
+) -> bool:
+    """Update only a system-managed limiter after a real door-count change."""
+
+    current_counts = _current_door_counts(window)
+    if current_counts is None:
+        return False
+    if previous_counts is None:
+        previous_counts = getattr(window, "_attachment_default_door_counts", None)
+    window._attachment_default_door_counts = current_counts
+    if previous_counts is None or tuple(previous_counts) == current_counts:
+        return False
+
+    quantity = door_limiter_default_quantity(*current_counts)
+    if quantity is None:
+        return False
+    opt_outs = set(getattr(window, "attachment_default_opt_outs", set()))
+    quantity_overrides = set(
+        getattr(window, "attachment_default_quantity_overrides", set())
+    )
+    if DEFAULT_DOOR_LIMITER in opt_outs or DEFAULT_DOOR_LIMITER in quantity_overrides:
+        return False
+
+    attachments = getattr(window, "attachments", None)
+    if not isinstance(attachments, list):
+        return False
+    changed = False
+    for item in attachments:
+        if not isinstance(item, dict) or default_rule_for_item(item) != DEFAULT_DOOR_LIMITER:
+            continue
+        try:
+            old_quantity = int(item.get("quantity", 1))
+        except (TypeError, ValueError):
+            old_quantity = None
+        if old_quantity != quantity:
+            item["quantity"] = quantity
+            changed = True
+    if changed:
+        refresh = getattr(window, "update_attachment_view", None)
+        if callable(refresh):
+            refresh()
+    return changed
 
 
 def _set_default_door_combination(window) -> None:
@@ -1390,6 +1448,8 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             result = original_reset(self, *args, **kwargs)
             self._formula_base_result = None
             self.attachment_default_opt_outs = set()
+            self.attachment_default_quantity_overrides = set()
+            self._attachment_default_door_counts = _current_door_counts(self)
             return result
         main_window.reset_current_cabinet = reset_current_cabinet_without_labor_base
 
@@ -1436,6 +1496,10 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
         def add_current_to_summary_with_labor_state(self):
             self.refresh_discounted_totals()
             base = getattr(self, "_formula_base_result", None)
+            default_opt_outs = set(getattr(self, "attachment_default_opt_outs", set()))
+            quantity_overrides = set(
+                getattr(self, "attachment_default_quantity_overrides", set())
+            )
             multiplier_widget = getattr(self, "labor_multiplier", None)
             multiplier = _safe_float(getattr(multiplier_widget, "value", lambda: 1.0)()) or 1.0
             before = len(getattr(self, "draft_items", []))
@@ -1446,6 +1510,10 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
                 if isinstance(base, dict):
                     item["formula_base"] = dict(base)
                 item["labor_multiplier"] = multiplier
+                item["attachment_default_opt_outs"] = sorted(default_opt_outs)
+                item["attachment_default_quantity_overrides"] = sorted(
+                    quantity_overrides
+                )
                 self.refresh_summary()
             return result
         main_window.add_current_to_summary = add_current_to_summary_with_labor_state
@@ -1460,8 +1528,19 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             multiplier_widget = getattr(self, "labor_multiplier", None)
             if isinstance(multiplier_widget, QDoubleSpinBox):
                 multiplier_widget.setValue(float(item.get("labor_multiplier", 1.0)))
+            opt_outs = set(item.get("attachment_default_opt_outs", [])) if isinstance(item, dict) else set()
+            quantity_overrides = (
+                set(item.get("attachment_default_quantity_overrides", []))
+                if isinstance(item, dict)
+                else set()
+            )
+            self.attachment_default_opt_outs = opt_outs
+            self.attachment_default_quantity_overrides = quantity_overrides
             result = original_load(self, item)
             self._formula_base_result = dict(base) if isinstance(base, dict) else None
+            self.attachment_default_opt_outs = opt_outs
+            self.attachment_default_quantity_overrides = quantity_overrides
+            self._attachment_default_door_counts = _current_door_counts(self)
             self.refresh_discounted_totals()
             return result
         main_window.load_draft_item = load_draft_item_with_labor_state
@@ -1954,6 +2033,16 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             return str(combo.currentData() or combo.currentText() or "")
         return str(getattr(parent, "product_code", "") or "") if parent is not None else ""
 
+    def selected_door_counts(self) -> tuple[int, int]:
+        parent = self.parentWidget()
+        counts = _current_door_counts(parent) if parent is not None else None
+        # Compatibility for isolated dialogs without a quote window: the
+        # historical default was the ordinary 1/0 single-door case.
+        return counts if counts is not None else (1, 0)
+
+    def default_door_limiter_quantity(self) -> int | None:
+        return door_limiter_default_quantity(*selected_door_counts(self))
+
     def same_choice(self, left: dict, right: dict) -> bool:
         matcher = getattr(self, "_same_catalog_choice", None)
         if callable(matcher):
@@ -2004,6 +2093,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         self.default_match_spec = parsed
         self.default_match_dimensions = dimensions
         self.default_match_product_code = product_code
+        self.default_match_door_counts = selected_door_counts(self)
+        self.default_door_limiter_quantity = default_door_limiter_quantity(self)
         self.default_matches = matches
         return matches
 
@@ -2018,7 +2109,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if any(default_rule_for_item(item) == rule for item in selected_items):
                 continue
             selected = dict(candidate)
-            selected["quantity"] = 1
+            if rule == DEFAULT_DOOR_LIMITER:
+                quantity = default_door_limiter_quantity(self)
+                if quantity is None:
+                    continue
+                selected["quantity"] = quantity
+            else:
+                selected["quantity"] = 1
             self.attachments.append(selected)
             selected_items.append(selected)
             added += 1
@@ -2064,7 +2161,16 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         elif rule == DEFAULT_A4_FOLDER:
             detail = "A4资料盒"
         elif rule == DEFAULT_DOOR_LIMITER:
-            detail = "门限位器"
+            quantity = getattr(self, "default_door_limiter_quantity", None)
+            if quantity is None:
+                return (
+                    "默认选择未配置\n门限位器",
+                    "attachmentQuickMatchMissing",
+                    "当前门型组合没有门限位器默认数量规则",
+                    rule,
+                    False,
+                )
+            detail = f"门限位器 · 数量：{quantity} 个"
         elif rule == DEFAULT_DOOR_REINFORCEMENT:
             detail = "门加强筋"
         elif rule == DEFAULT_GROUND_WIRE:
@@ -2082,6 +2188,22 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             return f"默认选择未匹配\n{detail}", "attachmentQuickMatchMissing", missing_tip, rule, False
         selected = checked_sources(self, rule)
         if any(same_choice(self, item, candidate) for item in selected):
+            if rule in getattr(self, "default_quantity_manual_overrides", set()):
+                selected_attachment = next(
+                    (
+                        item for item in getattr(self, "attachments", [])
+                        if isinstance(item, dict) and default_rule_for_item(item) == rule
+                    ),
+                    {},
+                )
+                quantity = selected_attachment.get("quantity", 1)
+                return (
+                    f"人工数量\n门限位器 · 数量：{quantity} 个",
+                    "attachmentQuickMatchManual",
+                    "当前数量由人工修改；单击恢复系统默认",
+                    rule,
+                    True,
+                )
             return f"默认已选择\n{detail}", "attachmentQuickMatchSelected", "已默认选择；单击可取消", rule, True
         if selected:
             item_name = str(selected[0].get("item_name") or "人工选择")
@@ -2107,6 +2229,33 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             self._default_selection_guard = False
         self.update_selection_hint()
 
+    def set_default_quantity_for_rule(self, rule: str) -> None:
+        if rule != DEFAULT_DOOR_LIMITER:
+            return
+        quantity = default_door_limiter_quantity(self)
+        candidate = getattr(self, "default_matches", {}).get(rule)
+        table = getattr(self, "table", None)
+        if quantity is None or candidate is None or not isinstance(table, QTableWidget):
+            return
+        self._default_selection_guard = True
+        table.blockSignals(True)
+        try:
+            for row in range(table.rowCount()):
+                check_item = table.item(row, self.COL_CHECK)
+                source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else None
+                if (
+                    check_item is not None
+                    and check_item.checkState() == Qt.CheckState.Checked
+                    and isinstance(source, dict)
+                    and same_choice(self, source, candidate)
+                ):
+                    quantity_item = table.item(row, self.COL_QUANTITY)
+                    if quantity_item is not None:
+                        quantity_item.setText(str(quantity))
+        finally:
+            table.blockSignals(False)
+            self._default_selection_guard = False
+
     def sync_attachments_from_table(self) -> None:
         collector = getattr(self, "collect_attachments", None)
         if not callable(collector):
@@ -2121,12 +2270,22 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             return
         selected = checked_sources(self, rule)
         default_is_selected = any(same_choice(self, item, candidate) for item in selected)
-        if default_is_selected:
+        if (
+            default_is_selected
+            and rule in getattr(self, "default_quantity_manual_overrides", set())
+        ):
+            self.default_selection_opt_outs.discard(rule)
+            self.default_quantity_manual_overrides.discard(rule)
+            set_default_quantity_for_rule(self, rule)
+        elif default_is_selected:
             set_checked_for_rule(self, rule, None)
             self.default_selection_opt_outs.add(rule)
+            self.default_quantity_manual_overrides.discard(rule)
         else:
             set_checked_for_rule(self, rule, candidate)
             self.default_selection_opt_outs.discard(rule)
+            self.default_quantity_manual_overrides.discard(rule)
+            set_default_quantity_for_rule(self, rule)
         sync_attachments_from_table(self)
         refresh_category_browser(self)
 
@@ -2273,23 +2432,79 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 now_selected = checked_sources(self, rule)
                 if candidate is not None and any(same_choice(self, value, candidate) for value in now_selected):
                     self.default_selection_opt_outs.discard(rule)
+                    self.default_quantity_manual_overrides.discard(rule)
+                    set_default_quantity_for_rule(self, rule)
                 else:
                     self.default_selection_opt_outs.add(rule)
+                    self.default_quantity_manual_overrides.discard(rule)
                 sync_attachments_from_table(self)
+        elif item.column() == self.COL_QUANTITY:
+            check_item = self.table.item(item.row(), self.COL_CHECK)
+            source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else None
+            rule = default_rule_for_item(source) if isinstance(source, dict) else None
+            if (
+                rule == DEFAULT_DOOR_LIMITER
+                and check_item is not None
+                and check_item.checkState() == Qt.CheckState.Checked
+            ):
+                candidate = getattr(self, "default_matches", {}).get(rule)
+                expected = default_door_limiter_quantity(self)
+                try:
+                    actual = float(item.text().strip())
+                except (TypeError, ValueError):
+                    actual = None
+                if (
+                    candidate is not None
+                    and same_choice(self, source, candidate)
+                    and expected is not None
+                    and actual == float(expected)
+                ):
+                    self.default_quantity_manual_overrides.discard(rule)
+                else:
+                    self.default_quantity_manual_overrides.add(rule)
+                sync_attachments_from_table(self)
+                refresh_category_browser(self)
         return original_table_item_changed(self, item)
 
     def accept_selection_with_defaults(self):
         original_accept_selection(self)
         if self.result() == QDialog.DialogCode.Accepted:
+            candidate = getattr(self, "default_matches", {}).get(DEFAULT_DOOR_LIMITER)
+            expected = default_door_limiter_quantity(self)
+            selected = next(
+                (
+                    item for item in getattr(self, "attachments", [])
+                    if isinstance(item, dict)
+                    and default_rule_for_item(item) == DEFAULT_DOOR_LIMITER
+                ),
+                None,
+            )
+            if DEFAULT_DOOR_LIMITER in self.default_selection_opt_outs or selected is None:
+                self.default_quantity_manual_overrides.discard(DEFAULT_DOOR_LIMITER)
+            elif candidate is not None and same_choice(self, selected, candidate) and expected is not None:
+                try:
+                    selected_quantity = int(selected.get("quantity", 1))
+                except (TypeError, ValueError):
+                    selected_quantity = None
+                if selected_quantity == expected:
+                    self.default_quantity_manual_overrides.discard(DEFAULT_DOOR_LIMITER)
+                else:
+                    self.default_quantity_manual_overrides.add(DEFAULT_DOOR_LIMITER)
             parent = self.parentWidget()
             if parent is not None:
                 parent.attachment_default_opt_outs = set(self.default_selection_opt_outs)
+                parent.attachment_default_quantity_overrides = set(
+                    self.default_quantity_manual_overrides
+                )
 
     def init_with_default_filters(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
         self.category_selection = []
         parent = self.parentWidget()
         self.default_selection_opt_outs = set(getattr(parent, "attachment_default_opt_outs", set()))
+        self.default_quantity_manual_overrides = set(
+            getattr(parent, "attachment_default_quantity_overrides", set())
+        )
         self._default_selection_guard = False
         panel = QFrame(self)
         panel.setObjectName("attachmentCategoryBar")
@@ -2399,6 +2614,13 @@ def install_layout_refresh(namespace: dict) -> None:
         apply_layout_refresh(self)
         _ensure_history_price_panel(self, namespace.get("ApiWorker"))
         _configure_quote_rule_interactions(self, namespace.get("parse_review_specification"))
+        self.attachment_default_opt_outs = set(
+            getattr(self, "attachment_default_opt_outs", set())
+        )
+        self.attachment_default_quantity_overrides = set(
+            getattr(self, "attachment_default_quantity_overrides", set())
+        )
+        self._attachment_default_door_counts = _current_door_counts(self)
 
     def refresh_document_list_with_preview(self):
         original_refresh_document_list(self)
@@ -2439,6 +2661,11 @@ def install_layout_refresh(namespace: dict) -> None:
     main_window.refresh_summary = refresh_summary_with_action_state
     if callable(original_product_changed):
         def product_changed_with_default_door(self, *_signal_args, **_signal_kwargs):
+            previous_door_counts = getattr(
+                self,
+                "_attachment_default_door_counts",
+                _current_door_counts(self),
+            )
             material_combo = getattr(self, "material_combo", None)
             coating_combo = getattr(self, "coating_combo", None)
             material_selected = (
@@ -2454,14 +2681,23 @@ def install_layout_refresh(namespace: dict) -> None:
                 coating_selected,
             )
             _set_default_door_combination(self)
+            _sync_door_limiter_default_quantity(self, previous_door_counts)
             _refresh_model_suggestions(self)
             return result
         main_window.product_changed = product_changed_with_default_door
     if callable(original_door_counts_changed):
         def door_counts_changed_with_product_rules(self, source):
+            previous_door_counts = getattr(
+                self,
+                "_attachment_default_door_counts",
+                None,
+            )
             if _enforce_product_door_combination(self, source):
+                _sync_door_limiter_default_quantity(self, previous_door_counts)
                 return None
-            return original_door_counts_changed(self, source)
+            result = original_door_counts_changed(self, source)
+            _sync_door_limiter_default_quantity(self, previous_door_counts)
+            return result
         main_window.door_counts_changed = door_counts_changed_with_product_rules
     if callable(original_product_catalog_loaded):
         def product_catalog_loaded_with_database_options(self, result):

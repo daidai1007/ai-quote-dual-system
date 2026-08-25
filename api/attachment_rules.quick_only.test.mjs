@@ -50,6 +50,11 @@ assert.equal(split.formulaFee, 60);
 assert.equal(split.quickOnlyFee, 150);
 assert.equal(split.quickFee, 210);
 
+const doorLimiter = splitAttachmentFees([
+  { name: "门限位器", quantity: 4, unit_price: 25 },
+]);
+assert.deepEqual(doorLimiter, { formulaFee: 100, quickOnlyFee: 0, quickFee: 100 });
+
 const overridden = splitAttachmentFees([
   { name: "安装板", quantity: 3, unit_price_override: 20 },
   { name: "JS、JP单开门改为上下门", quantity: 2, unit_price_override: 77 },

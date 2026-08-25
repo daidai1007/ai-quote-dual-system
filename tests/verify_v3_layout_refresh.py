@@ -100,6 +100,8 @@ attachment_parent = QWidget()
 attachment_parent.quote_spec_edit = QLineEdit(attachment_parent)
 attachment_parent.quote_spec_edit.setText("760*500*(960+100)")
 attachment_parent.selected_product_code = lambda: "JP_SINGLE"
+attachment_parent._door_counts = (1, 0)
+attachment_parent.door_counts = lambda: attachment_parent._door_counts
 attachment_dialog = attachment_dialog_class(
     [],
     api_url="http://127.0.0.1:1",
@@ -213,6 +215,15 @@ attachment_dialog.catalog = [
     },
 ]
 assert attachment_dialog.prepare_default_selections() == 7
+limiter_attachment = next(
+    item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
+)
+assert limiter_attachment["quantity"] == 1
+assert all(
+    item.get("quantity") == 1
+    for item in attachment_dialog.attachments
+    if item.get("item_name") != "门限位器"
+)
 attachment_dialog.rebuild_table()
 attachment_dialog.resize(1050, 680)
 attachment_dialog.show()
@@ -252,7 +263,58 @@ assert any(button.text() == "默认已选择\n类型：固定 · 高度：100 mm
 assert any(button.text() == "默认已选择\nA4资料盒" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n门加强筋" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n红绿线" for button in quick_match_buttons)
-folder_default = next(button for button in quick_match_buttons if "A4资料盒" in button.text())
+assert any(button.text() == "默认已选择\n门限位器 · 数量：1 个" for button in quick_match_buttons)
+
+limiter_row = next(
+    row for row in range(attachment_dialog.table.rowCount())
+    if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "门限位器"
+)
+attachment_dialog.table.item(limiter_row, attachment_dialog.COL_QUANTITY).setText("7")
+app.processEvents()
+assert "door_limiter" in attachment_dialog.default_quantity_manual_overrides
+assert next(
+    item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
+)["quantity"] == 7
+attachment_dialog.rebuild_table()
+app.processEvents()
+assert next(
+    item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
+)["quantity"] == 7
+limiter_manual = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchManual")
+    if button.isVisible() and "门限位器" in button.text()
+)
+limiter_manual.click()
+app.processEvents()
+assert "door_limiter" not in attachment_dialog.default_quantity_manual_overrides
+assert next(
+    item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
+)["quantity"] == 1
+
+limiter_default = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
+    if button.isVisible() and "门限位器" in button.text()
+)
+limiter_default.click()
+app.processEvents()
+assert "door_limiter" in attachment_dialog.default_selection_opt_outs
+attachment_dialog.rebuild_table()
+app.processEvents()
+assert not any(item.get("item_name") == "门限位器" for item in attachment_dialog.attachments)
+limiter_cancelled = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchCancelled")
+    if button.isVisible() and "门限位器" in button.text()
+)
+limiter_cancelled.click()
+app.processEvents()
+assert "door_limiter" not in attachment_dialog.default_selection_opt_outs
+assert next(
+    item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
+)["quantity"] == 1
+folder_default = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
+    if button.isVisible() and "A4资料盒" in button.text()
+)
 folder_default.click()
 app.processEvents()
 assert "a4_folder" in attachment_dialog.default_selection_opt_outs
@@ -358,6 +420,7 @@ light_default = next(
 light_default.click()
 attachment_dialog.accept_selection()
 assert attachment_parent.attachment_default_opt_outs == {"light_switch"}
+assert attachment_parent.attachment_default_quantity_overrides == set()
 attachment_parent.close()
 
 plain_parent = QWidget()
@@ -505,6 +568,33 @@ window.double_door_combo.setEnabled(True)
 window.set_door_counts(0, 0)
 layout_refresh._set_default_door_combination(window)
 assert window.door_counts() == (1, 0), window.door_counts()
+
+window.attachments = [
+    {"item_name": "门限位器", "category_level1": "门限位器", "quantity": 1},
+    {"item_name": "A4资料盒", "category_level1": "文件夹", "quantity": 9},
+]
+window.attachment_default_opt_outs = set()
+window.attachment_default_quantity_overrides = set()
+window._attachment_default_door_counts = (1, 0)
+window.set_door_counts(0, 2)
+window.door_counts_changed("double")
+assert window.attachments[0]["quantity"] == 4
+assert window.attachments[1]["quantity"] == 9
+
+window.attachments[0]["quantity"] = 7
+window.attachment_default_quantity_overrides = {"door_limiter"}
+window._attachment_default_door_counts = (0, 2)
+window.set_door_counts(1, 1)
+window.door_counts_changed("single")
+assert window.attachments[0]["quantity"] == 7
+
+window.attachments = [window.attachments[1]]
+window.attachment_default_quantity_overrides = set()
+window.attachment_default_opt_outs = {"door_limiter"}
+window._attachment_default_door_counts = (1, 1)
+window.set_door_counts(2, 0)
+window.door_counts_changed("single")
+assert not any(item.get("item_name") == "门限位器" for item in window.attachments)
 assert "宽×深×高" in window.quote_spec_edit.toolTip()
 
 window.stack.setCurrentIndex(3)
