@@ -25,14 +25,19 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(source, /self\.table\.setVisible\(not at_category_level\)/);
   assert.doesNotMatch(source, /category_level1_combo/);
 
-  assert.match(overlay, /def _install_attachment_classification_filters/);
-  assert.match(overlay, /_install_attachment_classification_filters\(namespace\)/);
+  assert.match(overlay, /def _install_attachment_default_selection_filters/);
+  assert.match(overlay, /_install_attachment_default_selection_filters\(namespace\)/);
   assert.match(overlay, /self\.category_grid\.addWidget\(card, index \/\/ 4, index % 4\)/);
   assert.match(overlay, /parse_base_specification\(specification_text\(self\)\)/);
   assert.match(overlay, /match_fixed_base/);
-  assert.match(overlay, /attachmentQuickMatchMatched/);
+  assert.match(overlay, /match_jp_side_panel/);
+  assert.match(overlay, /match_default_a4_folder/);
+  assert.match(overlay, /attachmentQuickMatchSelected/);
+  assert.match(overlay, /attachmentQuickMatchCancelled/);
+  assert.match(overlay, /def toggle_default_selection/);
+  assert.match(overlay, /parent\.attachment_default_opt_outs/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);
-  assert.match(overlay, /_classification_filters_installed = True/);
+  assert.match(overlay, /_default_selection_filters_installed = True/);
   assert.doesNotMatch(overlay, /category_level1_combo/);
 
   const approvedOrder = [
@@ -49,6 +54,10 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(hierarchy, /options\.append\(\{"value": "", "label": DIRECT_ITEMS_LABEL/);
   assert.match(hierarchy, /def parse_base_specification/);
   assert.match(hierarchy, /def match_fixed_base/);
+  assert.match(hierarchy, /def match_default_light_switch/);
+  assert.match(hierarchy, /def match_default_a4_folder/);
+  assert.match(hierarchy, /def match_default_door_limiter/);
+  assert.match(hierarchy, /def match_jp_side_panel/);
 });
 
 test('attachment category filters keep price editing and selection collection intact', async () => {

@@ -45,11 +45,22 @@ from quote_defaults import (
 )
 from quote_remark_rules import replace_door_configuration_phrase
 from attachment_category_browser import (
+    DEFAULT_A4_FOLDER,
+    DEFAULT_DOOR_LIMITER,
+    DEFAULT_FIXED_BASE,
+    DEFAULT_JP_SIDE_PANEL,
+    DEFAULT_LIGHT_SWITCH,
     category_options,
     category_path as attachment_category_path,
     category_value as attachment_category_value,
+    default_rule_for_item,
     is_base_selection,
+    is_jp_product,
+    match_default_a4_folder,
+    match_default_door_limiter,
+    match_default_light_switch,
     match_fixed_base,
+    match_jp_side_panel,
     parse_base_specification,
     valid_selection_prefix,
 )
@@ -1157,6 +1168,7 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
         def reset_current_cabinet_without_labor_base(self, *args, **kwargs):
             result = original_reset(self, *args, **kwargs)
             self._formula_base_result = None
+            self.attachment_default_opt_outs = set()
             return result
         main_window.reset_current_cabinet = reset_current_cabinet_without_labor_base
 
@@ -1675,6 +1687,458 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
     dialog_class._classification_filters_installed = True
 
 
+def _install_attachment_default_selection_filters(namespace: dict) -> None:
+    """Add category drilling plus visible, reversible default selections."""
+
+    dialog_class = namespace.get("AttachmentDialog")
+    if dialog_class is None or getattr(dialog_class, "_default_selection_filters_installed", False):
+        return
+
+    original_init = dialog_class.__init__
+    original_apply_filter = dialog_class.apply_filter
+    original_rebuild_table = dialog_class.rebuild_table
+    original_table_item_changed = dialog_class.table_item_changed
+    original_accept_selection = dialog_class.accept_selection
+
+    category_rules = {
+        "底座": DEFAULT_FIXED_BASE,
+        "侧板": DEFAULT_JP_SIDE_PANEL,
+        "灯开关": DEFAULT_LIGHT_SWITCH,
+        "文件夹": DEFAULT_A4_FOLDER,
+        "门限位器": DEFAULT_DOOR_LIMITER,
+    }
+
+    def specification_text(self) -> str:
+        parent = self.parentWidget()
+        for name in ("quote_spec_edit", "model_edit"):
+            field = getattr(parent, name, None) if parent is not None else None
+            if isinstance(field, QLineEdit) and field.text().strip():
+                return field.text().strip()
+        return str(getattr(self, "default_match_specification", "") or "").strip()
+
+    def selected_product_code(self) -> str:
+        parent = self.parentWidget()
+        getter = getattr(parent, "selected_product_code", None) if parent is not None else None
+        if callable(getter):
+            try:
+                value = getter()
+                if value:
+                    return str(value)
+            except (AttributeError, TypeError, ValueError):
+                pass
+        combo = getattr(parent, "product_combo", None) if parent is not None else None
+        if isinstance(combo, QComboBox):
+            return str(combo.currentData() or combo.currentText() or "")
+        return str(getattr(parent, "product_code", "") or "") if parent is not None else ""
+
+    def same_choice(self, left: dict, right: dict) -> bool:
+        matcher = getattr(self, "_same_catalog_choice", None)
+        if callable(matcher):
+            return bool(matcher(left, right))
+        left_id = left.get("attachment_price_id")
+        right_id = right.get("attachment_price_id")
+        if left_id is not None and right_id is not None:
+            return str(left_id) == str(right_id)
+        return (
+            str(left.get("item_name") or "").strip() == str(right.get("item_name") or "").strip()
+            and str(left.get("model_code") or "").strip() == str(right.get("model_code") or "").strip()
+            and str(left.get("variant") or "").strip() == str(right.get("variant") or "").strip()
+        )
+
+    def target_dimensions(self) -> tuple[float, float, float] | None:
+        value = getattr(self, "target_dimensions", None)
+        if isinstance(value, (list, tuple)) and len(value) >= 3:
+            try:
+                return float(value[0]), float(value[1]), float(value[2])
+            except (TypeError, ValueError):
+                pass
+        parsed = parse_base_specification(specification_text(self))
+        if parsed is not None:
+            return parsed[0], parsed[1], parsed[2]
+        return None
+
+    def build_default_matches(self) -> dict[str, dict | None]:
+        catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
+        parsed = parse_base_specification(specification_text(self))
+        dimensions = target_dimensions(self)
+        base = None
+        if parsed is not None:
+            width, _height, depth = dimensions or parsed[:3]
+            base = match_fixed_base(catalog, width, depth, parsed[3])
+        side = None
+        product_code = selected_product_code(self)
+        if is_jp_product(product_code) and dimensions is not None:
+            side = match_jp_side_panel(catalog, dimensions[1], dimensions[2])
+        matches = {
+            DEFAULT_FIXED_BASE: base,
+            DEFAULT_LIGHT_SWITCH: match_default_light_switch(catalog),
+            DEFAULT_A4_FOLDER: match_default_a4_folder(catalog),
+            DEFAULT_DOOR_LIMITER: match_default_door_limiter(catalog),
+            DEFAULT_JP_SIDE_PANEL: side,
+        }
+        self.default_match_spec = parsed
+        self.default_match_dimensions = dimensions
+        self.default_match_product_code = product_code
+        self.default_matches = matches
+        return matches
+
+    def prepare_default_selections(self) -> int:
+        matches = build_default_matches(self)
+        opt_outs = getattr(self, "default_selection_opt_outs", set())
+        selected_items = [item for item in getattr(self, "attachments", []) if isinstance(item, dict)]
+        added = 0
+        for rule, candidate in matches.items():
+            if candidate is None or rule in opt_outs:
+                continue
+            if any(default_rule_for_item(item) == rule for item in selected_items):
+                continue
+            selected = dict(candidate)
+            selected["quantity"] = 1
+            self.attachments.append(selected)
+            selected_items.append(selected)
+            added += 1
+        return added
+
+    def checked_sources(self, rule: str) -> list[dict]:
+        table = getattr(self, "table", None)
+        if not isinstance(table, QTableWidget):
+            return [
+                item for item in getattr(self, "attachments", [])
+                if isinstance(item, dict) and default_rule_for_item(item) == rule
+            ]
+        result = []
+        for row in range(table.rowCount()):
+            check_item = table.item(row, self.COL_CHECK)
+            if check_item is None or check_item.checkState() != Qt.CheckState.Checked:
+                continue
+            source = check_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(source, dict) and default_rule_for_item(source) == rule:
+                result.append(source)
+        return result
+
+    def default_card_state(self, option: dict) -> tuple[str, str, str, str | None, bool]:
+        if getattr(self, "category_selection", []):
+            return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则", None, False
+        rule = category_rules.get(str(option.get("value") or ""))
+        if rule is None:
+            return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则", None, False
+
+        parsed = getattr(self, "default_match_spec", None)
+        dimensions = getattr(self, "default_match_dimensions", None)
+        product_code = getattr(self, "default_match_product_code", "")
+        candidate = getattr(self, "default_matches", {}).get(rule)
+        detail = ""
+        missing_tip = "附件库中没有唯一匹配项"
+        if rule == DEFAULT_FIXED_BASE:
+            if parsed is None:
+                return "快速匹配\n无需底座", "attachmentQuickMatch", "规格高度没有括号和 +，不自动选择底座", rule, False
+            detail = f"类型：固定 · 高度：{parsed[3]:g} mm"
+            missing_tip = "附件库中没有与当前宽度、深度和底座高度完全一致的固定底座"
+        elif rule == DEFAULT_LIGHT_SWITCH:
+            detail = "灯开关"
+        elif rule == DEFAULT_A4_FOLDER:
+            detail = "A4资料盒"
+        elif rule == DEFAULT_DOOR_LIMITER:
+            detail = "门限位器"
+        elif rule == DEFAULT_JP_SIDE_PANEL:
+            if not is_jp_product(product_code):
+                return "快速匹配\n仅 JP 默认匹配", "attachmentQuickMatch", "当前产品不是 JP，不自动选择侧板", rule, False
+            if dimensions is not None:
+                detail = f"JP侧板 · 高度：{dimensions[1]:g} · 深度：{dimensions[2]:g} mm"
+            else:
+                detail = "JP侧板 · 尺寸无效"
+            missing_tip = "附件库中没有与当前柜体高度、深度完全一致的唯一侧板"
+
+        if candidate is None:
+            return f"默认选择未匹配\n{detail}", "attachmentQuickMatchMissing", missing_tip, rule, False
+        selected = checked_sources(self, rule)
+        if any(same_choice(self, item, candidate) for item in selected):
+            return f"默认已选择\n{detail}", "attachmentQuickMatchSelected", "已默认选择；单击可取消", rule, True
+        if selected:
+            item_name = str(selected[0].get("item_name") or "人工选择")
+            return f"人工已选择\n{item_name}", "attachmentQuickMatchManual", "当前使用人工选择；单击恢复系统默认", rule, True
+        return f"默认选择已取消\n{detail}", "attachmentQuickMatchCancelled", "已取消默认选择；单击可恢复", rule, True
+
+    def set_checked_for_rule(self, rule: str, candidate: dict | None) -> None:
+        table = getattr(self, "table", None)
+        if not isinstance(table, QTableWidget):
+            return
+        self._default_selection_guard = True
+        table.blockSignals(True)
+        try:
+            for row in range(table.rowCount()):
+                check_item = table.item(row, self.COL_CHECK)
+                source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else None
+                if not isinstance(source, dict) or default_rule_for_item(source) != rule:
+                    continue
+                should_check = candidate is not None and same_choice(self, source, candidate)
+                check_item.setCheckState(Qt.CheckState.Checked if should_check else Qt.CheckState.Unchecked)
+        finally:
+            table.blockSignals(False)
+            self._default_selection_guard = False
+        self.update_selection_hint()
+
+    def sync_attachments_from_table(self) -> None:
+        collector = getattr(self, "collect_attachments", None)
+        if not callable(collector):
+            return
+        current = collector(show_errors=False)
+        if current is not None:
+            self.attachments = current
+
+    def toggle_default_selection(self, rule: str) -> None:
+        candidate = getattr(self, "default_matches", {}).get(rule)
+        if candidate is None:
+            return
+        selected = checked_sources(self, rule)
+        default_is_selected = any(same_choice(self, item, candidate) for item in selected)
+        if default_is_selected:
+            set_checked_for_rule(self, rule, None)
+            self.default_selection_opt_outs.add(rule)
+        else:
+            set_checked_for_rule(self, rule, candidate)
+            self.default_selection_opt_outs.discard(rule)
+        sync_attachments_from_table(self)
+        refresh_category_browser(self)
+
+    def apply_classification_filter(self, text: str):
+        if not hasattr(self, "category_selection"):
+            return original_apply_filter(self, text)
+        needle = str(text or "").strip().casefold()
+        selected = tuple(self.category_selection)
+        table = getattr(self, "table", None)
+        if not isinstance(table, QTableWidget):
+            return original_apply_filter(self, text)
+        for row in range(table.rowCount()):
+            check_item = table.item(row, self.COL_CHECK)
+            source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else {}
+            source = source if isinstance(source, dict) else {}
+            path = attachment_category_path(source)
+            category_matches = path[:len(selected)] == selected
+            table_text = [
+                table.item(row, column).text()
+                for column in (self.COL_NAME, self.COL_SPEC, self.COL_SCHEME, self.COL_PRICE)
+                if table.item(row, column) is not None
+            ]
+            haystack = " ".join([
+                *path,
+                str(source.get("item_name") or ""),
+                str(source.get("model_code") or ""),
+                str(source.get("variant") or ""),
+                *table_text,
+            ]).casefold()
+            table.setRowHidden(row, not category_matches or bool(needle and needle not in haystack))
+
+    def clear_category_cards(self):
+        grid = getattr(self, "category_grid", None)
+        if not isinstance(grid, QGridLayout):
+            return
+        while grid.count():
+            item = grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+
+    def refresh_category_browser(self):
+        catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
+        for item in catalog:
+            for level, key in enumerate(("category_level1", "category_level2", "category_level3")):
+                item[key] = attachment_category_value(item, level)
+        self.category_selection = valid_selection_prefix(catalog, getattr(self, "category_selection", []))
+        clear_category_cards(self)
+        options = category_options(catalog, self.category_selection)
+        labels = [value or "本级附件" for value in self.category_selection]
+        breadcrumb = "附件库"
+        if labels:
+            breadcrumb += "  ›  " + "  ›  ".join(labels)
+        breadcrumb += f"  /  选择{'一二三'[len(self.category_selection)]}级分类" if options else "  /  选择具体附件"
+        self.category_breadcrumb.setText(breadcrumb)
+        self.category_back_button.setVisible(bool(self.category_selection))
+        self.category_back_button.setEnabled(bool(self.category_selection))
+
+        for index, option in enumerate(options):
+            card = QFrame(self.category_scroll_content)
+            card.setObjectName("attachmentCategoryCardShell")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(0)
+            button = QPushButton(f"{option['label']}\n{option['count']} 项", card)
+            button.setObjectName("attachmentCategoryCard")
+            button.setAccessibleName(f"{option['label']}，{option['count']}项")
+            button.setToolTip(f"进入“{option['label']}”")
+            button.setMinimumHeight(64)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.clicked.connect(lambda _checked=False, value=option["value"]: open_attachment_category(self, value))
+
+            text, object_name, tooltip, rule, enabled = default_card_state(self, option)
+            quick_button = QPushButton(text, card)
+            quick_button.setObjectName(object_name)
+            quick_button.setAccessibleName(f"{option['label']}，{text.replace(chr(10), '，')}")
+            quick_button.setToolTip(tooltip)
+            quick_button.setEnabled(enabled)
+            quick_button.setMinimumHeight(54 if text.count("\n") == 1 else 70)
+            quick_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            if rule is not None and enabled:
+                quick_button.clicked.connect(lambda _checked=False, value=rule: toggle_default_selection(self, value))
+            card_layout.addWidget(button)
+            card_layout.addWidget(quick_button)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.category_grid.addWidget(card, index // 4, index % 4)
+
+        at_category_level = bool(options)
+        self.category_scroll.setVisible(at_category_level)
+        self.search_edit.setVisible(not at_category_level)
+        self.table.setVisible(not at_category_level)
+        if not at_category_level:
+            apply_classification_filter(self, self.search_edit.text())
+        hint = getattr(self, "catalog_hint", None)
+        if catalog and isinstance(hint, QLabel):
+            level1_count = len({attachment_category_value(item, 0) for item in catalog})
+            hint.setText(
+                f"已读取 {len(catalog)} 条附件价格，覆盖 {level1_count} 个一级分类。"
+                "绿色默认项已自动勾选；单击默认项可取消，进入分类可人工改选。"
+            )
+
+    def open_attachment_category(self, value: str):
+        self.category_selection.append(str(value))
+        self.search_edit.clear()
+        refresh_category_browser(self)
+
+    def back_attachment_category(self):
+        if self.category_selection:
+            self.category_selection.pop()
+        self.search_edit.clear()
+        refresh_category_browser(self)
+
+    def rebuild_table_with_defaults(self):
+        if hasattr(self, "category_selection"):
+            prepare_default_selections(self)
+        result = original_rebuild_table(self)
+        if hasattr(self, "category_selection"):
+            refresh_category_browser(self)
+        return result
+
+    def table_item_changed_with_defaults(self, item):
+        if getattr(self, "_default_selection_guard", False):
+            return original_table_item_changed(self, item)
+        if item.column() == self.COL_CHECK:
+            source = item.data(Qt.ItemDataRole.UserRole)
+            rule = default_rule_for_item(source) if isinstance(source, dict) else None
+            if rule is not None:
+                if item.checkState() == Qt.CheckState.Checked:
+                    self._default_selection_guard = True
+                    self.table.blockSignals(True)
+                    try:
+                        for row in range(self.table.rowCount()):
+                            other = self.table.item(row, self.COL_CHECK)
+                            other_source = other.data(Qt.ItemDataRole.UserRole) if other else None
+                            if other is item or not isinstance(other_source, dict):
+                                continue
+                            if default_rule_for_item(other_source) == rule:
+                                other.setCheckState(Qt.CheckState.Unchecked)
+                    finally:
+                        self.table.blockSignals(False)
+                        self._default_selection_guard = False
+                candidate = getattr(self, "default_matches", {}).get(rule)
+                now_selected = checked_sources(self, rule)
+                if candidate is not None and any(same_choice(self, value, candidate) for value in now_selected):
+                    self.default_selection_opt_outs.discard(rule)
+                else:
+                    self.default_selection_opt_outs.add(rule)
+                sync_attachments_from_table(self)
+        return original_table_item_changed(self, item)
+
+    def accept_selection_with_defaults(self):
+        original_accept_selection(self)
+        if self.result() == QDialog.DialogCode.Accepted:
+            parent = self.parentWidget()
+            if parent is not None:
+                parent.attachment_default_opt_outs = set(self.default_selection_opt_outs)
+
+    def init_with_default_filters(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.category_selection = []
+        parent = self.parentWidget()
+        self.default_selection_opt_outs = set(getattr(parent, "attachment_default_opt_outs", set()))
+        self._default_selection_guard = False
+        panel = QFrame(self)
+        panel.setObjectName("attachmentCategoryBar")
+        panel.setStyleSheet(
+            "QFrame#attachmentCategoryBar {background:#eef5fb;border:1px solid #c8d9e8;border-left:4px solid #2c78c4;border-radius:8px;}"
+            "QLabel#attachmentCategoryTitle {color:#174a73;font-weight:700;}"
+            "QScrollArea#attachmentCategoryScroll {background:transparent;border:0;}"
+            "QPushButton#attachmentCategoryBack {background:transparent;border:0;color:#2c6fa8;padding:4px 8px;font-weight:600;}"
+            "QFrame#attachmentCategoryCardShell {background:#fbfdff;border:1px solid #a9c5d9;border-left:5px solid #2c78c4;border-radius:7px;}"
+            "QPushButton#attachmentCategoryCard {background:transparent;border:0;border-bottom:1px solid #d8e5ef;border-radius:0;color:#173f67;font-weight:700;padding:10px 14px;text-align:left;}"
+            "QPushButton#attachmentCategoryCard:hover {background:#e4f1fb;border-bottom-color:#6da4cc;}"
+            "QPushButton#attachmentCategoryCard:pressed {background:#d5e8f6;}"
+            "QPushButton#attachmentQuickMatch,QPushButton#attachmentQuickMatchCancelled {background:#f1f4f6;color:#66727e;padding:7px 12px;border:0;text-align:left;}"
+            "QPushButton#attachmentQuickMatchSelected {background:#e3f3e9;color:#1f6841;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
+            "QPushButton#attachmentQuickMatchSelected:hover {background:#d4eadc;}"
+            "QPushButton#attachmentQuickMatchManual {background:#e7f1fb;color:#245f91;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
+            "QPushButton#attachmentQuickMatchManual:hover {background:#d8e9f7;}"
+            "QPushButton#attachmentQuickMatchCancelled:hover {background:#e4e9ed;color:#44515d;}"
+            "QPushButton#attachmentQuickMatchMissing {background:#fff5df;color:#9a620e;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
+        )
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(14, 10, 14, 12)
+        panel_layout.setSpacing(9)
+        header = QHBoxLayout()
+        self.category_back_button = QPushButton("← 返回上一级", panel)
+        self.category_back_button.setObjectName("attachmentCategoryBack")
+        self.category_back_button.clicked.connect(lambda: back_attachment_category(self))
+        self.category_breadcrumb = QLabel("附件库 / 一级分类", panel)
+        self.category_breadcrumb.setObjectName("attachmentCategoryTitle")
+        self.category_breadcrumb.setWordWrap(True)
+        header.addWidget(self.category_back_button)
+        header.addWidget(self.category_breadcrumb, 1)
+        panel_layout.addLayout(header)
+        self.category_scroll = QScrollArea(panel)
+        self.category_scroll.setObjectName("attachmentCategoryScroll")
+        self.category_scroll.setWidgetResizable(True)
+        self.category_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.category_scroll.setMinimumHeight(360)
+        self.category_scroll_content = QWidget(self.category_scroll)
+        self.category_grid = QGridLayout(self.category_scroll_content)
+        self.category_grid.setContentsMargins(0, 0, 0, 0)
+        self.category_grid.setHorizontalSpacing(10)
+        self.category_grid.setVerticalSpacing(10)
+        self.category_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        for column in range(4):
+            self.category_grid.setColumnStretch(column, 1)
+        self.category_scroll.setWidget(self.category_scroll_content)
+        panel_layout.addWidget(self.category_scroll)
+        layout = self.layout()
+        search = getattr(self, "search_edit", None)
+        if layout is not None and hasattr(layout, "insertWidget"):
+            index = layout.indexOf(search) if search is not None else -1
+            layout.insertWidget(index if index >= 0 else 1, panel)
+        elif layout is not None:
+            layout.addWidget(panel)
+        self.attachment_category_panel = panel
+        if isinstance(search, QLineEdit):
+            search.setPlaceholderText("搜索当前分类中的名称、型号、尺寸或价格方案")
+        self.default_match_specification = specification_text(self)
+        prepare_default_selections(self)
+        original_rebuild_table(self)
+        refresh_category_browser(self)
+
+    dialog_class.__init__ = init_with_default_filters
+    dialog_class.rebuild_table = rebuild_table_with_defaults
+    dialog_class.apply_filter = apply_classification_filter
+    dialog_class.table_item_changed = table_item_changed_with_defaults
+    dialog_class.accept_selection = accept_selection_with_defaults
+    dialog_class.refresh_category_browser = refresh_category_browser
+    dialog_class.open_attachment_category = open_attachment_category
+    dialog_class.back_attachment_category = back_attachment_category
+    dialog_class.prepare_default_selections = prepare_default_selections
+    dialog_class.build_default_matches = build_default_matches
+    dialog_class.toggle_default_selection = toggle_default_selection
+    dialog_class.default_card_state = default_card_state
+    dialog_class._default_selection_filters_installed = True
+
+
 def install_layout_refresh(namespace: dict) -> None:
     """Install the layout pass on an extracted or packaged V3 namespace."""
 
@@ -1686,7 +2150,7 @@ def install_layout_refresh(namespace: dict) -> None:
 
     _install_stable_preview(namespace)
     _install_attachment_catalog_addition(namespace)
-    _install_attachment_classification_filters(namespace)
+    _install_attachment_default_selection_filters(namespace)
     _patch_family_for_code(main_window)
     _patch_discounted_totals(namespace, main_window)
 

@@ -104,9 +104,19 @@ assert spec.loader
 spec.loader.exec_module(layout_refresh)
 
 from attachment_category_browser import (  # noqa: E402
+    DEFAULT_A4_FOLDER,
+    DEFAULT_DOOR_LIMITER,
+    DEFAULT_JP_SIDE_PANEL,
+    DEFAULT_LIGHT_SWITCH,
     LEVEL1_ORDER,
     category_options,
+    default_rule_for_item,
+    is_jp_product,
+    match_default_a4_folder,
+    match_default_door_limiter,
+    match_default_light_switch,
     match_fixed_base,
+    match_jp_side_panel,
     parse_base_specification,
 )
 from quote_remark_rules import (  # noqa: E402
@@ -181,6 +191,24 @@ base_catalog = [
 ]
 assert match_fixed_base(base_catalog, 760, 500, 100)["attachment_price_id"] == 1
 assert match_fixed_base(base_catalog, 760, 500, 200) is None
+default_catalog = [
+    {"attachment_price_id": 3, "item_name": "照明灯/行程开关", "category_level1": "灯开关"},
+    {"attachment_price_id": 4, "item_name": "A3资料盒", "category_level1": "文件夹"},
+    {"attachment_price_id": 5, "item_name": "A4资料盒", "category_level1": "文件夹"},
+    {"attachment_price_id": 6, "item_name": "门限位器", "category_level1": "门限位器"},
+    {"attachment_price_id": 7, "item_name": "侧板", "model_code": "JP681960", "category_level1": "侧板", "height_mm": 1900, "depth_mm": 600},
+    {"attachment_price_id": 8, "item_name": "侧板", "model_code": "JP682060", "category_level1": "侧板", "height_mm": 2000, "depth_mm": 600},
+]
+assert match_default_light_switch(default_catalog)["attachment_price_id"] == 3
+assert match_default_a4_folder(default_catalog)["attachment_price_id"] == 5
+assert match_default_door_limiter(default_catalog)["attachment_price_id"] == 6
+assert match_jp_side_panel(default_catalog, 2000, 600)["attachment_price_id"] == 8
+assert match_jp_side_panel(default_catalog, 2000, 800) is None
+assert is_jp_product("JP") and is_jp_product("JP_SINGLE") and not is_jp_product("JS_SINGLE")
+assert default_rule_for_item({"item_name": "A4资料盒"}) == DEFAULT_A4_FOLDER
+assert default_rule_for_item({"item_name": "门限位器"}) == DEFAULT_DOOR_LIMITER
+assert default_rule_for_item({"item_name": "照明灯/行程开关"}) == DEFAULT_LIGHT_SWITCH
+assert default_rule_for_item({"item_name": "侧板", "model_code": "JP682060"}) == DEFAULT_JP_SIDE_PANEL
 
 
 class ManualWindow:

@@ -30,6 +30,11 @@ UNGROUPED_LEVEL1 = "未分类"
 DIRECT_ITEMS_LABEL = "本级附件"
 FIXED_BASE_CATEGORY = "底座"
 FIXED_BASE_SUBCATEGORY = "固定底座"
+DEFAULT_FIXED_BASE = "fixed_base"
+DEFAULT_LIGHT_SWITCH = "light_switch"
+DEFAULT_A4_FOLDER = "a4_folder"
+DEFAULT_DOOR_LIMITER = "door_limiter"
+DEFAULT_JP_SIDE_PANEL = "jp_side_panel"
 
 
 def parse_base_specification(text: str) -> tuple[float, float, float, float] | None:
@@ -95,6 +100,74 @@ def match_fixed_base(
     if len(matches) != 1:
         return None
     return matches[0]
+
+
+def _unique_match(items: Iterable[dict], predicate) -> dict | None:
+    matches = [item for item in items if predicate(item)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def match_default_light_switch(items: Iterable[dict]) -> dict | None:
+    return _unique_match(items, lambda item: category_value(item, 0) == "灯开关")
+
+
+def match_default_a4_folder(items: Iterable[dict]) -> dict | None:
+    def is_a4(item: dict) -> bool:
+        text = " ".join(str(item.get(key) or "") for key in ("item_name", "model_code", "variant"))
+        return category_value(item, 0) == "文件夹" and "A4" in text.upper()
+
+    return _unique_match(items, is_a4)
+
+
+def match_default_door_limiter(items: Iterable[dict]) -> dict | None:
+    return _unique_match(items, lambda item: category_value(item, 0) == "门限位器")
+
+
+def is_jp_product(value) -> bool:
+    code = str(value or "").strip().upper()
+    return code == "JP" or code.startswith("JP_")
+
+
+def match_jp_side_panel(
+    items: Iterable[dict],
+    height_mm: float,
+    depth_mm: float,
+) -> dict | None:
+    target_height = float(height_mm)
+    target_depth = float(depth_mm)
+
+    def matches(item: dict) -> bool:
+        if category_value(item, 0) != "侧板":
+            return False
+        height = _number(item.get("height_mm"))
+        depth = _number(item.get("depth_mm"))
+        return (
+            height is not None
+            and depth is not None
+            and abs(height - target_height) <= 0.0001
+            and abs(depth - target_depth) <= 0.0001
+        )
+
+    return _unique_match(items, matches)
+
+
+def default_rule_for_item(item: dict) -> str | None:
+    """Map catalogue or collected selection data to its default rule group."""
+
+    category = category_value(item, 0)
+    name = str(item.get("item_name") or "").strip()
+    model = str(item.get("model_code") or "").strip().upper()
+    if category == "底座" or "底座" in name:
+        return DEFAULT_FIXED_BASE
+    if category == "灯开关" or "开关" in name:
+        return DEFAULT_LIGHT_SWITCH
+    if category == "文件夹" or "资料盒" in name:
+        return DEFAULT_A4_FOLDER
+    if category == "门限位器" or "门限位器" in name:
+        return DEFAULT_DOOR_LIMITER
+    if category == "侧板" or name == "侧板" or model.startswith("JP68"):
+        return DEFAULT_JP_SIDE_PANEL
+    return None
 
 
 def category_value(item: dict, level: int) -> str:

@@ -65,7 +65,7 @@ for counts, expected in {
     assert updated == manual_remark.replace("前双开门后背板", expected), updated
 
 attachment_dialog_class = namespace["AttachmentDialog"]
-assert attachment_dialog_class._classification_filters_installed is True
+assert attachment_dialog_class._default_selection_filters_installed is True
 original_attachment_load = attachment_dialog_class.load_catalog
 attachment_dialog_class.load_catalog = lambda self, _api_url: None
 
@@ -99,6 +99,7 @@ if artifact_dir is not None:
 attachment_parent = QWidget()
 attachment_parent.quote_spec_edit = QLineEdit(attachment_parent)
 attachment_parent.quote_spec_edit.setText("760*500*(960+100)")
+attachment_parent.selected_product_code = lambda: "JP_SINGLE"
 attachment_dialog = attachment_dialog_class(
     [],
     api_url="http://127.0.0.1:1",
@@ -129,10 +130,13 @@ attachment_dialog.catalog = [
         "depth_mm": 500,
     },
     {
-        "item_name": "侧板100",
-        "model_code": "SIDE-100",
+        "attachment_price_id": 3,
+        "item_name": "侧板",
+        "model_code": "JP680950",
         "price": 40,
         "category_level1": "侧板",
+        "height_mm": 960,
+        "depth_mm": 500,
     },
     {
         "item_name": "三排纵梁",
@@ -148,6 +152,24 @@ attachment_dialog.catalog = [
         "category_level2": "JK安装板",
     },
     {
+        "attachment_price_id": 7,
+        "item_name": "照明灯/行程开关",
+        "price": 50,
+        "category_level1": "灯开关",
+    },
+    {
+        "attachment_price_id": 8,
+        "item_name": "A3资料盒",
+        "price": 60,
+        "category_level1": "文件夹",
+    },
+    {
+        "attachment_price_id": 9,
+        "item_name": "A4资料盒",
+        "price": 30,
+        "category_level1": "文件夹",
+    },
+    {
         "item_name": "过滤网FU-9803A",
         "model_code": "过滤网FU-9803A",
         "variant": "7035色",
@@ -157,12 +179,18 @@ attachment_dialog.catalog = [
         "category_level3": "过滤网FU-9803A",
     },
     {
+        "attachment_price_id": 10,
+        "item_name": "门限位器",
+        "price": 25,
+        "category_level1": "门限位器",
+    },
+    {
         "item_name": "未来附件",
         "price": 1,
         "category_level1": "未来分类",
     },
 ]
-assert attachment_dialog.prepare_fixed_base_quick_match()
+assert attachment_dialog.prepare_default_selections() == 5
 attachment_dialog.rebuild_table()
 attachment_dialog.resize(1050, 680)
 attachment_dialog.show()
@@ -185,7 +213,8 @@ def attachment_category_button(label: str):
 
 level1_buttons = attachment_category_buttons()
 assert [button.text().splitlines()[0] for button in level1_buttons] == [
-    "底座", "侧板", "三排纵梁", "安装板", "风机滤网", "未来分类",
+    "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
+    "门限位器", "未来分类",
 ]
 positions = [
     attachment_dialog.category_grid.getItemPosition(
@@ -195,11 +224,60 @@ positions = [
 ]
 assert positions[:5] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)], positions
 assert attachment_dialog.table.isHidden()
-quick_match_labels = attachment_dialog.findChildren(QLabel, "attachmentQuickMatchMatched")
-assert len(quick_match_labels) == 1
-assert quick_match_labels[0].text() == "快速匹配\n类型：固定\n高度：100 mm"
+quick_match_buttons = attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
+assert len(quick_match_buttons) == 5
+assert any(button.text() == "默认已选择\n类型：固定 · 高度：100 mm" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择\nA4资料盒" for button in quick_match_buttons)
+folder_default = next(button for button in quick_match_buttons if "A4资料盒" in button.text())
+folder_default.click()
+app.processEvents()
+assert "a4_folder" in attachment_dialog.default_selection_opt_outs
+attachment_dialog.rebuild_table()
+app.processEvents()
+assert len([
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
+    if button.isVisible()
+]) == 4
+folder_cancelled = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchCancelled")
+    if button.isVisible() and "A4资料盒" in button.text()
+)
+if artifact_dir is not None:
+    assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_default_cancelled.png"))
+folder_cancelled.click()
+app.processEvents()
+assert "a4_folder" not in attachment_dialog.default_selection_opt_outs
+assert len([
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
+    if button.isVisible()
+]) == 5
 if artifact_dir is not None:
     assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_categories.png"))
+
+attachment_category_button("文件夹").click()
+app.processEvents()
+folder_rows = [
+    row for row in range(attachment_dialog.table.rowCount())
+    if not attachment_dialog.table.isRowHidden(row)
+]
+assert len(folder_rows) == 2
+a3_row = next(
+    row for row in folder_rows
+    if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "A3资料盒"
+)
+a4_row = next(row for row in folder_rows if row != a3_row)
+attachment_dialog.table.item(a3_row, attachment_dialog.COL_CHECK).setCheckState(Qt.CheckState.Checked)
+app.processEvents()
+assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Unchecked
+attachment_dialog.back_attachment_category()
+app.processEvents()
+folder_manual = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchManual")
+    if button.isVisible() and "A3资料盒" in button.text()
+)
+folder_manual.click()
+app.processEvents()
+assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
 
 attachment_category_button("风机滤网").click()
 app.processEvents()
@@ -246,7 +324,16 @@ assert attachment_dialog.table.item(visible_rows[0], attachment_dialog.COL_NAME)
 assert attachment_dialog.table.item(
     visible_rows[0], attachment_dialog.COL_CHECK
 ).checkState() == Qt.CheckState.Checked
-attachment_dialog.close()
+while attachment_dialog.category_selection:
+    attachment_dialog.back_attachment_category()
+app.processEvents()
+light_default = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
+    if button.isVisible() and "灯开关" in button.text()
+)
+light_default.click()
+attachment_dialog.accept_selection()
+assert attachment_parent.attachment_default_opt_outs == {"light_switch"}
 attachment_parent.close()
 
 plain_parent = QWidget()
@@ -259,16 +346,17 @@ plain_dialog = attachment_dialog_class(
     target_dimensions=(760, 960, 500),
 )
 plain_dialog.catalog = [dict(item) for item in attachment_dialog.catalog]
-assert not plain_dialog.prepare_fixed_base_quick_match()
+assert plain_dialog.prepare_default_selections() == 3
 plain_dialog.rebuild_table()
 plain_dialog.show()
 app.processEvents()
-plain_quick_labels = plain_dialog.findChildren(QLabel, "attachmentQuickMatch")
+plain_quick_labels = plain_dialog.findChildren(QPushButton, "attachmentQuickMatch")
 assert any(label.text() == "快速匹配\n无需底座" for label in plain_quick_labels)
-assert all(
-    plain_dialog.table.item(row, plain_dialog.COL_CHECK).checkState() == Qt.CheckState.Unchecked
+assert any(label.text() == "快速匹配\n仅 JP 默认匹配" for label in plain_quick_labels)
+assert sum(
+    plain_dialog.table.item(row, plain_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
     for row in range(plain_dialog.table.rowCount())
-)
+) == 3
 plain_dialog.close()
 plain_parent.close()
 attachment_dialog_class.load_catalog = original_attachment_load
