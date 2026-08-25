@@ -12,6 +12,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CLIENT_ROOT = ROOT / "desktop_client"
+sys.path.insert(0, str(CLIENT_ROOT))
 
 
 class Widget:
@@ -101,7 +103,12 @@ layout_refresh = importlib.util.module_from_spec(spec)
 assert spec.loader
 spec.loader.exec_module(layout_refresh)
 
-from attachment_category_browser import LEVEL1_ORDER, category_options  # noqa: E402
+from attachment_category_browser import (  # noqa: E402
+    LEVEL1_ORDER,
+    category_options,
+    match_fixed_base,
+    parse_base_specification,
+)
 from quote_remark_rules import (  # noqa: E402
     DOOR_PHRASES_BY_COUNTS,
     replace_door_configuration_phrase,
@@ -146,7 +153,34 @@ assert replace_door_configuration_phrase(
 assert layout_refresh.VALID_DOOR_COMBINATIONS == {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
 assert layout_refresh._parse_specification_dimensions("1000*600*1800") == (1000, 1800, 600)
 assert layout_refresh._parse_specification_dimensions("1000×600×1800") == (1000, 1800, 600)
+assert layout_refresh._parse_specification_dimensions("760*500*(960+100)") == (760, 960, 500)
 assert layout_refresh._parse_specification_dimensions("1000-600-1800") is None
+assert parse_base_specification("760*500*(960+100)") == (760, 960, 500, 100)
+assert parse_base_specification("760×500×（960＋200）") == (760, 960, 500, 200)
+assert parse_base_specification("760*500*960") is None
+assert parse_base_specification("760*500*960+100") is None
+base_catalog = [
+    {
+        "attachment_price_id": 1,
+        "item_name": "固定底座",
+        "category_level1": "底座",
+        "category_level2": "固定底座",
+        "width_mm": 760,
+        "height_mm": 100,
+        "depth_mm": 500,
+    },
+    {
+        "attachment_price_id": 2,
+        "item_name": "活动底座",
+        "category_level1": "底座",
+        "category_level2": "活动底座",
+        "width_mm": 760,
+        "height_mm": 100,
+        "depth_mm": 500,
+    },
+]
+assert match_fixed_base(base_catalog, 760, 500, 100)["attachment_price_id"] == 1
+assert match_fixed_base(base_catalog, 760, 500, 200) is None
 
 
 class ManualWindow:

@@ -48,6 +48,9 @@ from attachment_category_browser import (
     category_options,
     category_path as attachment_category_path,
     category_value as attachment_category_value,
+    is_base_selection,
+    match_fixed_base,
+    parse_base_specification,
     valid_selection_prefix,
 )
 
@@ -395,6 +398,10 @@ def _parse_specification_dimensions(text: str, parser=None) -> tuple[float, floa
     value = str(text or "").strip()
     if not value:
         return None
+    base_specification = parse_base_specification(value)
+    if base_specification is not None:
+        width, height, depth, _base_height = base_specification
+        return width, height, depth
     if callable(parser):
         try:
             parsed = parser(value)
@@ -582,7 +589,10 @@ def _configure_quote_rule_interactions(window, parser=None) -> None:
 
     specification = getattr(window, "quote_spec_edit", None)
     if isinstance(specification, QLineEdit):
-        specification.setToolTip("可输入宽×深×高，例如 1000×600×1800")
+        specification.setPlaceholderText("例如 760*500*(960+100)；无底座则不写括号和 +100")
+        specification.setToolTip(
+            "输入宽×深×高；需要底座时写成宽×深×(柜高+底座高)，例如 760×500×(960+100)"
+        )
         if not getattr(specification, "_manual_dimension_sync_connected", False):
             specification.textEdited.connect(
                 lambda value: _sync_manual_specification_to_dimensions(window, value, parser)
@@ -1384,6 +1394,70 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
     original_apply_filter = dialog_class.apply_filter
     original_rebuild_table = dialog_class.rebuild_table
 
+    def specification_text(self) -> str:
+        parent = self.parentWidget()
+        for name in ("quote_spec_edit", "model_edit"):
+            field = getattr(parent, name, None) if parent is not None else None
+            if isinstance(field, QLineEdit) and field.text().strip():
+                return field.text().strip()
+        return str(getattr(self, "base_quick_match_specification", "") or "").strip()
+
+    def prepare_fixed_base_quick_match(self) -> bool:
+        """Preselect one fixed base only for an explicit W*D*(H+base) spec."""
+
+        parsed = parse_base_specification(specification_text(self))
+        self.base_quick_match_spec = parsed
+        self.base_quick_match_item = None
+        self.base_quick_match_auto_selected = False
+        if parsed is None:
+            return False
+        parsed_width, _cabinet_height, parsed_depth, base_height = parsed
+        target = getattr(self, "target_dimensions", None)
+        width = parsed_width
+        depth = parsed_depth
+        if isinstance(target, (list, tuple)) and len(target) >= 3:
+            try:
+                width = float(target[0])
+                depth = float(target[2])
+            except (TypeError, ValueError):
+                width, depth = parsed_width, parsed_depth
+        matched = match_fixed_base(
+            getattr(self, "catalog", []),
+            width,
+            depth,
+            base_height,
+        )
+        self.base_quick_match_item = matched
+        if matched is None:
+            return False
+        if any(is_base_selection(item) for item in getattr(self, "attachments", [])):
+            return False
+        selected = dict(matched)
+        selected["quantity"] = 1
+        self.attachments.append(selected)
+        self.base_quick_match_auto_selected = True
+        return True
+
+    def quick_match_label(self, option: dict) -> tuple[str, str, str]:
+        if not getattr(self, "category_selection", []) and option.get("value") == "底座":
+            parsed = getattr(self, "base_quick_match_spec", None)
+            if parsed is None:
+                return "快速匹配\n无需底座", "attachmentQuickMatch", "规格高度没有括号和 +，不自动选择底座"
+            base_height = parsed[3]
+            height_text = f"{base_height:g}"
+            if getattr(self, "base_quick_match_item", None) is not None:
+                return (
+                    f"快速匹配\n类型：固定\n高度：{height_text} mm",
+                    "attachmentQuickMatchMatched",
+                    "已按柜体宽度、深度和底座高度自动选择固定底座",
+                )
+            return (
+                f"快速匹配\n类型：固定\n高度：{height_text} mm（未匹配）",
+                "attachmentQuickMatchMissing",
+                "附件库中没有与当前宽度、深度和底座高度完全一致的固定底座",
+            )
+        return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则"
+
     def apply_classification_filter(self, text: str):
         if not hasattr(self, "category_selection"):
             return original_apply_filter(self, text)
@@ -1452,19 +1526,34 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
         self.category_back_button.setEnabled(bool(self.category_selection))
 
         for index, option in enumerate(options):
+            card = QFrame(self.category_scroll_content)
+            card.setObjectName("attachmentCategoryCardShell")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(0)
             button = QPushButton(
                 f"{option['label']}\n{option['count']} 项",
-                self.category_scroll_content,
+                card,
             )
             button.setObjectName("attachmentCategoryCard")
             button.setAccessibleName(f"{option['label']}，{option['count']}项")
             button.setToolTip(f"进入“{option['label']}”")
-            button.setMinimumHeight(76)
+            button.setMinimumHeight(64)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(
                 lambda _checked=False, value=option["value"]: open_attachment_category(self, value)
             )
-            self.category_grid.addWidget(button, index // 4, index % 4)
+            quick_text, quick_object_name, quick_tooltip = quick_match_label(self, option)
+            quick_match = QLabel(quick_text, card)
+            quick_match.setObjectName(quick_object_name)
+            quick_match.setAccessibleName(f"{option['label']}，{quick_text.replace(chr(10), '，')}")
+            quick_match.setToolTip(quick_tooltip)
+            quick_match.setWordWrap(True)
+            quick_match.setMinimumHeight(48 if quick_text.count("\n") == 1 else 66)
+            card_layout.addWidget(button)
+            card_layout.addWidget(quick_match)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.category_grid.addWidget(card, index // 4, index % 4)
 
         at_category_level = bool(options)
         self.category_scroll.setVisible(at_category_level)
@@ -1492,6 +1581,8 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
         refresh_category_browser(self)
 
     def rebuild_table_with_classification(self):
+        if hasattr(self, "category_selection"):
+            prepare_fixed_base_quick_match(self)
         result = original_rebuild_table(self)
         if hasattr(self, "category_selection"):
             refresh_category_browser(self)
@@ -1511,13 +1602,22 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
             "QScrollArea#attachmentCategoryScroll {background:transparent;border:0;}"
             "QPushButton#attachmentCategoryBack {background:transparent;border:0;"
             "color:#2c6fa8;padding:4px 8px;font-weight:600;}"
-            "QPushButton#attachmentCategoryCard {background:#fbfdff;"
+            "QFrame#attachmentCategoryCardShell {background:#fbfdff;"
             "border:1px solid #a9c5d9;border-left:5px solid #2c78c4;"
-            "border-radius:7px;color:#173f67;font-weight:700;"
+            "border-radius:7px;}"
+            "QPushButton#attachmentCategoryCard {background:transparent;"
+            "border:0;border-bottom:1px solid #d8e5ef;border-radius:0;"
+            "color:#173f67;font-weight:700;"
             "padding:10px 14px;text-align:left;}"
             "QPushButton#attachmentCategoryCard:hover {background:#e4f1fb;"
-            "border-color:#6da4cc;}"
+            "border-bottom-color:#6da4cc;}"
             "QPushButton#attachmentCategoryCard:pressed {background:#d5e8f6;}"
+            "QLabel#attachmentQuickMatch {background:#f4f7fa;color:#66727e;"
+            "padding:7px 12px;border:0;}"
+            "QLabel#attachmentQuickMatchMatched {background:#e8f5ee;color:#216744;"
+            "font-weight:700;padding:7px 12px;border:0;}"
+            "QLabel#attachmentQuickMatchMissing {background:#fff5df;color:#9a620e;"
+            "font-weight:700;padding:7px 12px;border:0;}"
         )
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(14, 10, 14, 12)
@@ -1559,6 +1659,9 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
         self.attachment_category_panel = panel
         if isinstance(search, QLineEdit):
             search.setPlaceholderText("搜索当前分类中的名称、型号、尺寸或价格方案")
+        self.base_quick_match_specification = specification_text(self)
+        prepare_fixed_base_quick_match(self)
+        original_rebuild_table(self)
         refresh_category_browser(self)
 
     dialog_class.__init__ = init_with_classification_filters
@@ -1567,6 +1670,8 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
     dialog_class.refresh_category_browser = refresh_category_browser
     dialog_class.open_attachment_category = open_attachment_category
     dialog_class.back_attachment_category = back_attachment_category
+    dialog_class.prepare_fixed_base_quick_match = prepare_fixed_base_quick_match
+    dialog_class.quick_match_label = quick_match_label
     dialog_class._classification_filters_installed = True
 
 

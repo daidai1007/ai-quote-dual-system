@@ -62,6 +62,9 @@ from attachment_category_browser import (
     category_options,
     category_path as attachment_category_path,
     category_value as attachment_category_value,
+    is_base_selection,
+    match_fixed_base,
+    parse_base_specification,
     valid_selection_prefix,
 )
 
@@ -901,6 +904,56 @@ class AttachmentDialog(QDialog):
                 widget.hide()
                 widget.deleteLater()
 
+    def _specification_text(self) -> str:
+        parent = self.parentWidget()
+        for name in ("quote_spec_edit", "model_edit"):
+            field = getattr(parent, name, None) if parent is not None else None
+            if isinstance(field, QLineEdit) and field.text().strip():
+                return field.text().strip()
+        return str(getattr(self, "base_quick_match_specification", "") or "").strip()
+
+    def prepare_fixed_base_quick_match(self) -> bool:
+        parsed = parse_base_specification(self._specification_text())
+        self.base_quick_match_spec = parsed
+        self.base_quick_match_item = None
+        if parsed is None:
+            return False
+        parsed_width, _cabinet_height, parsed_depth, base_height = parsed
+        width, depth = parsed_width, parsed_depth
+        if isinstance(self.target_dimensions, (list, tuple)) and len(self.target_dimensions) >= 3:
+            try:
+                width = float(self.target_dimensions[0])
+                depth = float(self.target_dimensions[2])
+            except (TypeError, ValueError):
+                width, depth = parsed_width, parsed_depth
+        matched = match_fixed_base(self.catalog, width, depth, base_height)
+        self.base_quick_match_item = matched
+        if matched is None or any(is_base_selection(item) for item in self.attachments):
+            return False
+        selected = dict(matched)
+        selected["quantity"] = 1
+        self.attachments.append(selected)
+        return True
+
+    def quick_match_label(self, option: dict) -> tuple[str, str, str]:
+        if not self.category_selection and option.get("value") == "底座":
+            parsed = getattr(self, "base_quick_match_spec", None)
+            if parsed is None:
+                return "快速匹配\n无需底座", "attachmentQuickMatch", "规格高度没有括号和 +，不自动选择底座"
+            height_text = f"{parsed[3]:g}"
+            if getattr(self, "base_quick_match_item", None) is not None:
+                return (
+                    f"快速匹配\n类型：固定\n高度：{height_text} mm",
+                    "attachmentQuickMatchMatched",
+                    "已按柜体宽度、深度和底座高度自动选择固定底座",
+                )
+            return (
+                f"快速匹配\n类型：固定\n高度：{height_text} mm（未匹配）",
+                "attachmentQuickMatchMissing",
+                "附件库中没有与当前宽度、深度和底座高度完全一致的固定底座",
+            )
+        return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则"
+
     def refresh_category_browser(self) -> None:
         self.category_selection = valid_selection_prefix(self.catalog, self.category_selection)
         self._clear_category_cards()
@@ -918,19 +971,34 @@ class AttachmentDialog(QDialog):
         self.category_back_button.setEnabled(bool(self.category_selection))
 
         for index, option in enumerate(options):
+            card = QFrame(self.category_scroll_content)
+            card.setObjectName("attachmentCategoryCardShell")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(0)
             button = QPushButton(
                 f"{option['label']}\n{option['count']} 项",
-                self.category_scroll_content,
+                card,
             )
             button.setObjectName("attachmentCategoryCard")
             button.setAccessibleName(f"{option['label']}，{option['count']}项")
             button.setToolTip(f"进入“{option['label']}”")
-            button.setMinimumHeight(76)
+            button.setMinimumHeight(64)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.clicked.connect(
                 lambda _checked=False, value=option["value"]: self.open_attachment_category(value)
             )
-            self.category_grid.addWidget(button, index // 4, index % 4)
+            quick_text, quick_object_name, quick_tooltip = self.quick_match_label(option)
+            quick_match = QLabel(quick_text, card)
+            quick_match.setObjectName(quick_object_name)
+            quick_match.setAccessibleName(f"{option['label']}，{quick_text.replace(chr(10), '，')}")
+            quick_match.setToolTip(quick_tooltip)
+            quick_match.setWordWrap(True)
+            quick_match.setMinimumHeight(48 if quick_text.count("\n") == 1 else 66)
+            card_layout.addWidget(button)
+            card_layout.addWidget(quick_match)
+            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.category_grid.addWidget(card, index // 4, index % 4)
 
         at_category_level = bool(options)
         self.category_scroll.setVisible(at_category_level)
@@ -1109,6 +1177,8 @@ class AttachmentDialog(QDialog):
                 f"已读取 {len(self.catalog)} 条附件价格，覆盖 {level1_count} 个一级分类。"
                 "逐级进入分类，到达末级后勾选附件。"
             )
+        self.base_quick_match_specification = self._specification_text()
+        self.prepare_fixed_base_quick_match()
         self.rebuild_table()
         self.refresh_category_browser()
 
@@ -3180,11 +3250,17 @@ def main() -> int:
             color: #174a73;
             text-decoration: underline;
         }
-        QPushButton#attachmentCategoryCard {
+        QFrame#attachmentCategoryCardShell {
             background: #fbfdff;
             border: 1px solid #a9c5d9;
             border-left: 5px solid #2c78c4;
             border-radius: 7px;
+        }
+        QPushButton#attachmentCategoryCard {
+            background: transparent;
+            border: 0;
+            border-bottom: 1px solid #d8e5ef;
+            border-radius: 0;
             color: #173f67;
             font-weight: 700;
             padding: 10px 14px;
@@ -3192,10 +3268,30 @@ def main() -> int:
         }
         QPushButton#attachmentCategoryCard:hover {
             background: #e4f1fb;
-            border-color: #6da4cc;
+            border-bottom-color: #6da4cc;
         }
         QPushButton#attachmentCategoryCard:pressed {
             background: #d5e8f6;
+        }
+        QLabel#attachmentQuickMatch {
+            background: #f4f7fa;
+            color: #66727e;
+            padding: 7px 12px;
+            border: 0;
+        }
+        QLabel#attachmentQuickMatchMatched {
+            background: #e8f5ee;
+            color: #216744;
+            font-weight: 700;
+            padding: 7px 12px;
+            border: 0;
+        }
+        QLabel#attachmentQuickMatchMissing {
+            background: #fff5df;
+            color: #9a620e;
+            font-weight: 700;
+            padding: 7px 12px;
+            border: 0;
         }
         QTextEdit {
             background: #fbfdff;

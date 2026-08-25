@@ -15,7 +15,11 @@ test('attachment dialog drills through four-column category cards before showing
   );
 
   assert.match(source, /setObjectName\("attachmentCategoryCard"\)/);
-  assert.match(source, /self\.category_grid\.addWidget\(button, index \/\/ 4, index % 4\)/);
+  assert.match(source, /setObjectName\("attachmentCategoryCardShell"\)/);
+  assert.match(source, /self\.category_grid\.addWidget\(card, index \/\/ 4, index % 4\)/);
+  assert.match(source, /def prepare_fixed_base_quick_match/);
+  assert.match(source, /类型：固定/);
+  assert.match(source, /高度：\{height_text\} mm/);
   assert.match(source, /def open_attachment_category/);
   assert.match(source, /def back_attachment_category/);
   assert.match(source, /self\.table\.setVisible\(not at_category_level\)/);
@@ -23,7 +27,10 @@ test('attachment dialog drills through four-column category cards before showing
 
   assert.match(overlay, /def _install_attachment_classification_filters/);
   assert.match(overlay, /_install_attachment_classification_filters\(namespace\)/);
-  assert.match(overlay, /self\.category_grid\.addWidget\(button, index \/\/ 4, index % 4\)/);
+  assert.match(overlay, /self\.category_grid\.addWidget\(card, index \/\/ 4, index % 4\)/);
+  assert.match(overlay, /parse_base_specification\(specification_text\(self\)\)/);
+  assert.match(overlay, /match_fixed_base/);
+  assert.match(overlay, /attachmentQuickMatchMatched/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);
   assert.match(overlay, /_classification_filters_installed = True/);
   assert.doesNotMatch(overlay, /category_level1_combo/);
@@ -40,6 +47,8 @@ test('attachment dialog drills through four-column category cards before showing
     previousIndex = index;
   }
   assert.match(hierarchy, /options\.append\(\{"value": "", "label": DIRECT_ITEMS_LABEL/);
+  assert.match(hierarchy, /def parse_base_specification/);
+  assert.match(hierarchy, /def match_fixed_base/);
 });
 
 test('attachment category filters keep price editing and selection collection intact', async () => {

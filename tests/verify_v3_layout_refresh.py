@@ -26,10 +26,13 @@ from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QAbstractButton,
     QFrame,
+    QLabel,
+    QLineEdit,
     QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QWidget,
 )
 
 import layout_refresh  # noqa: E402
@@ -93,13 +96,37 @@ artifact_dir = Path(artifact_dir_text) if artifact_dir_text else None
 if artifact_dir is not None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-attachment_dialog = attachment_dialog_class([], api_url="http://127.0.0.1:1")
+attachment_parent = QWidget()
+attachment_parent.quote_spec_edit = QLineEdit(attachment_parent)
+attachment_parent.quote_spec_edit.setText("760*500*(960+100)")
+attachment_dialog = attachment_dialog_class(
+    [],
+    api_url="http://127.0.0.1:1",
+    parent=attachment_parent,
+    target_dimensions=(760, 960, 500),
+)
 attachment_dialog.catalog = [
     {
-        "item_name": "底座100",
-        "model_code": "BASE-100",
+        "attachment_price_id": 1,
+        "item_name": "固定底座",
+        "model_code": "BASE-FIXED-100",
         "price": 100,
         "category_level1": "底座",
+        "category_level2": "固定底座",
+        "width_mm": 760,
+        "height_mm": 100,
+        "depth_mm": 500,
+    },
+    {
+        "attachment_price_id": 2,
+        "item_name": "活动底座",
+        "model_code": "BASE-MOBILE-100",
+        "price": 110,
+        "category_level1": "底座",
+        "category_level2": "活动底座",
+        "width_mm": 760,
+        "height_mm": 100,
+        "depth_mm": 500,
     },
     {
         "item_name": "侧板100",
@@ -135,6 +162,7 @@ attachment_dialog.catalog = [
         "category_level1": "未来分类",
     },
 ]
+assert attachment_dialog.prepare_fixed_base_quick_match()
 attachment_dialog.rebuild_table()
 attachment_dialog.resize(1050, 680)
 attachment_dialog.show()
@@ -161,12 +189,15 @@ assert [button.text().splitlines()[0] for button in level1_buttons] == [
 ]
 positions = [
     attachment_dialog.category_grid.getItemPosition(
-        attachment_dialog.category_grid.indexOf(button)
+        attachment_dialog.category_grid.indexOf(button.parentWidget())
     )[:2]
     for button in level1_buttons
 ]
 assert positions[:5] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)], positions
 assert attachment_dialog.table.isHidden()
+quick_match_labels = attachment_dialog.findChildren(QLabel, "attachmentQuickMatchMatched")
+assert len(quick_match_labels) == 1
+assert quick_match_labels[0].text() == "快速匹配\n类型：固定\n高度：100 mm"
 if artifact_dir is not None:
     assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_categories.png"))
 
@@ -203,11 +234,43 @@ while attachment_dialog.category_selection:
 app.processEvents()
 attachment_category_button("底座").click()
 app.processEvents()
+assert [button.text().splitlines()[0] for button in attachment_category_buttons()] == [
+    "固定底座", "活动底座",
+]
+attachment_category_button("固定底座").click()
+app.processEvents()
 assert not attachment_dialog.table.isHidden()
 visible_rows = [row for row in range(attachment_dialog.table.rowCount()) if not attachment_dialog.table.isRowHidden(row)]
 assert len(visible_rows) == 1, visible_rows
-assert attachment_dialog.table.item(visible_rows[0], attachment_dialog.COL_NAME).text() == "底座100"
+assert attachment_dialog.table.item(visible_rows[0], attachment_dialog.COL_NAME).text() == "固定底座"
+assert attachment_dialog.table.item(
+    visible_rows[0], attachment_dialog.COL_CHECK
+).checkState() == Qt.CheckState.Checked
 attachment_dialog.close()
+attachment_parent.close()
+
+plain_parent = QWidget()
+plain_parent.quote_spec_edit = QLineEdit(plain_parent)
+plain_parent.quote_spec_edit.setText("760*500*960")
+plain_dialog = attachment_dialog_class(
+    [],
+    api_url="http://127.0.0.1:1",
+    parent=plain_parent,
+    target_dimensions=(760, 960, 500),
+)
+plain_dialog.catalog = [dict(item) for item in attachment_dialog.catalog]
+assert not plain_dialog.prepare_fixed_base_quick_match()
+plain_dialog.rebuild_table()
+plain_dialog.show()
+app.processEvents()
+plain_quick_labels = plain_dialog.findChildren(QLabel, "attachmentQuickMatch")
+assert any(label.text() == "快速匹配\n无需底座" for label in plain_quick_labels)
+assert all(
+    plain_dialog.table.item(row, plain_dialog.COL_CHECK).checkState() == Qt.CheckState.Unchecked
+    for row in range(plain_dialog.table.rowCount())
+)
+plain_dialog.close()
+plain_parent.close()
 attachment_dialog_class.load_catalog = original_attachment_load
 
 window = namespace["MainWindow"]()
