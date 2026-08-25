@@ -1,6 +1,6 @@
 {
   "name": "ai-quote-dual-system",
-  "version": "2026.8.18",
+  "version": "2026.8.25",
   "private": false,
   "type": "module",
   "description": "PostgreSQL-driven dual quotation API and Windows desktop client",
