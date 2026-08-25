@@ -20,6 +20,10 @@ import {
   isDrawingSourcedQuoteItem,
   validateConfirmedQuoteSnapshot,
 } from "./quote_export_contract.mjs";
+import {
+  quickDiscountBreakdown,
+  quickDiscountCategory,
+} from "./quick_discount_rules.mjs";
 
 const [inputPath, outputPath] = process.argv.slice(2);
 if (!inputPath || !outputPath) throw new Error("usage: export_dual_quote_workbook.mjs input.json output.xlsx");
@@ -68,6 +72,12 @@ const templateColumnWidths = {
   X: 10.1416666666667,
   Y: 9,
 };
+const quickCostHeaders = [
+  "成本计算公式", "柜体", "底座", "侧板", "三排纵梁", "安装板", "内门", "玻璃门",
+  "通风顶罩", "防雨顶", "分段板", "JK安装板", "灯/开关", "文件夹", "风机滤网",
+  "门限位器", "接地线", "双开门", "安装板单发", "运费", "其他附件/差额", "折扣",
+];
+const quickLastColumn = "AF";
 const templateRowHeights = {
   1: 20.1, 2: 20.1, 3: 22.5,
   4: 16.5, 5: 16.5, 6: 16.5, 7: 16.5, 8: 16.5,
@@ -210,6 +220,36 @@ quickSheet.views = [{ showGridLines: false }];
 quickSheet.getRange("A1:Y20").copyFrom(formulaSheet.getRange("A1:Y20"), "all");
 applyTemplateGeometry(quickSheet, true);
 
+// Expand only the quick-quote audit area.  K is the requested formula box,
+// directly to the left of the cabinet price in L.  The right-side columns
+// retain original prices; the selected factor is shown separately in AF.
+for (const targetLetter of ["Z", "AA", "AB", "AC", "AD", "AE", "AF"]) {
+  quickSheet.getRange(`${targetLetter}1:${targetLetter}28`).copyFrom(
+    quickSheet.getRange("Y1:Y28"),
+    "all",
+  );
+  quickSheet.getRange(`${targetLetter}1:${targetLetter}28`).format.columnWidth = 10.5;
+}
+quickSheet.getRange("K1:AF28").format.font = {
+  name: "Microsoft YaHei", size: 10, color: "#1F2937",
+};
+quickSheet.getRange("K10:AF18").clear({ applyTo: "contents" });
+quickSheet.getRange("K10:AF10").values = [quickCostHeaders];
+quickSheet.getRange("K10:AF10").format.fill = "#EEF3F8";
+quickSheet.getRange("K10:AF10").format.font = { bold: true, color: "#40566F" };
+quickSheet.getRange("K10:AF10").format.horizontalAlignment = "center";
+quickSheet.getRange("K10:AF10").format.verticalAlignment = "middle";
+quickSheet.getRange("K10:AF10").format.wrapText = true;
+quickSheet.getRange("K10:AF10").format.borders = {
+  preset: "all", style: "thin", color: "#CBD5E1",
+};
+quickSheet.getRange("K11:AF18").format.horizontalAlignment = "center";
+quickSheet.getRange("K11:AF18").format.verticalAlignment = "middle";
+quickSheet.getRange("K11:AF18").format.borders = {
+  preset: "all", style: "thin", color: "#CBD5E1",
+};
+quickSheet.getRange("K1:K28").format.columnWidth = 48;
+
 const col = (n) => {
   let text = "";
   for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) text = String.fromCharCode(65 + (x - 1) % 26) + text;
@@ -272,6 +312,36 @@ const attachmentColumn = (itemName = "") => {
   return null;
 };
 
+const quickAttachmentColumn = (item = {}) => {
+  const discountCategory = quickDiscountCategory(item);
+  const discountColumns = {
+    "底座": 13,
+    "侧板": 14,
+    "安装板": 16,
+    "内门": 17,
+    "玻璃门": 18,
+    "通风顶罩": 19,
+    "防雨顶": 20,
+    "分段板": 21,
+    "JK安装板": 22,
+  };
+  if (discountCategory) return discountColumns[discountCategory];
+  const name = String(item.item_name || item.model_code || "");
+  if (name.includes("三排") || name.includes("纵梁")) return 15;
+  if (
+    name.includes("照明灯") || name.includes("柜内灯") || name.includes("灯开关")
+    || name.includes("行程开关") || name.includes("限位开关") || name.includes("门开关")
+  ) return 23;
+  if (name.includes("文件夹") || name.includes("资料盒")) return 24;
+  if (name.includes("风机") || name.includes("过滤网") || name.includes("滤网")) return 25;
+  if (name.includes("门限位器") || name === "限位器") return 26;
+  if (name.includes("接地")) return 27;
+  if (name.includes("双开门")) return 28;
+  if (name.includes("安装板单发")) return 29;
+  if (name.includes("运费")) return 30;
+  return 31;
+};
+
 const asNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const fmt = (value) => String(asNumber(value)).replace(/\.0+$/, "");
 const quoteSpecification = (item = {}) => {
@@ -314,6 +384,14 @@ const attachmentAmounts = (attachments = [], discount = 1, method = "quick") => 
       else if (index >= 13) index += 4;
     }
     if (index) out[index] = (out[index] || 0) + attachmentLineAmount(item) * discount;
+  }
+  return out;
+};
+const quickAttachmentAmounts = (attachments = []) => {
+  const out = {};
+  for (const item of attachments) {
+    const index = quickAttachmentColumn(item);
+    out[index] = (out[index] || 0) + attachmentLineAmount(item);
   }
   return out;
 };
@@ -464,9 +542,9 @@ const standardizedRemark = (item = {}) => {
 
 function fillSheet(sheet, method) {
   const items = payload.items || [];
-  const lastColumn = method === "formula" ? "AC" : "Y";
-  const columnCount = method === "formula" ? 29 : 25;
-  const discountColumn = method === "formula" ? "AC" : "Y";
+  const lastColumn = method === "formula" ? "AC" : quickLastColumn;
+  const columnCount = method === "formula" ? 29 : 32;
+  const discountColumn = method === "formula" ? "AC" : quickLastColumn;
   const firstRow = 11;
   const dataEnd = firstRow + items.length - 1;
   const subtotalRow = firstRow + items.length;
@@ -513,7 +591,13 @@ function fillSheet(sheet, method) {
     const row = firstRow + index;
     const quote = method === "formula" ? item.formula : item.quick;
     const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
-    const unitCost = asNumber(quote?.total_cost) * discount;
+    const attachments = item.attachments || [];
+    const quickBreakdown = method === "quick"
+      ? quickDiscountBreakdown({ quote, attachments, discount })
+      : null;
+    const unitCost = method === "quick"
+      ? quickBreakdown.discountedTotal
+      : asNumber(quote?.total_cost) * discount;
     const qty = asNumber(item.quantity || 1);
     subtotal += unitCost * qty;
     // final_remark is the operator-confirmed wording shown on the Remarks page.
@@ -533,8 +617,9 @@ function fillSheet(sheet, method) {
     values[5] = unitCost;
     values[6] = unitCost * qty;
     values[7] = note;
-    const attachments = item.attachments || [];
-    const extras = attachmentAmounts(attachments, discount, method);
+    const extras = method === "quick"
+      ? quickAttachmentAmounts(attachments)
+      : attachmentAmounts(attachments, discount, method);
     for (const [columnIndex, amount] of Object.entries(extras)) values[Number(columnIndex) - 1] = amount;
     const attachmentFee = quote?.attachment_fee !== null
       && quote?.attachment_fee !== undefined
@@ -551,10 +636,18 @@ function fillSheet(sheet, method) {
       values[15] = asNumber(quote?.management_fee) * discount;
       values[28] = discount;
     } else {
-      // The quick sheet remains unchanged: “柜体” is the selected quote's
-      // final price excluding attachments.
-      values[11] = Math.max(0, (asNumber(quote?.total_cost) - attachmentFee) * discount);
-      values[24] = discount;
+      const listedAmount = attachmentTotalFromItems(attachments);
+      // All right-side audit columns show original prices.  Column AE absorbs
+      // both unmapped attachments and any authoritative attachment-fee delta.
+      values[30] = asNumber(values[30]) + attachmentFee - listedAmount;
+      values[11] = quickBreakdown.basePrice;
+      values[31] = discount;
+      const eligibleRange = `SUM(M${row}:N${row},P${row}:V${row})`;
+      const originalRange = `SUM(O${row},W${row}:AE${row})`;
+      const calculatedAmount = `(L${row}+${eligibleRange})*AF${row}+${originalRange}`;
+      const formula = `="(柜体 "&TEXT(L${row},"#,##0.00")&" + 可折扣附件 "&TEXT(${eligibleRange},"#,##0.00")&") × "&TEXT(AF${row},"0.00")&" + 原价附件 "&TEXT(${originalRange},"#,##0.00")&" = "&TEXT(${calculatedAmount},"#,##0.00")`;
+      const formulaText = `(柜体 ${quickBreakdown.basePrice.toFixed(2)} + 可折扣附件 ${quickBreakdown.eligibleAttachmentTotal.toFixed(2)}) × ${discount.toFixed(2)} + 原价附件 ${quickBreakdown.originalPriceAttachmentTotal.toFixed(2)} = ${quickBreakdown.discountedTotal.toFixed(2)}`;
+      values[10] = { formula, result: formulaText };
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];
     sheet.getRange(`H${row}`).format.wrapText = true;
@@ -565,6 +658,10 @@ function fillSheet(sheet, method) {
   sheet.getRange(`A${subtotalRow}:${lastColumn}${subtotalRow}`).format.font = { bold: true };
   sheet.getRange(`F${firstRow}:G${subtotalRow}`).format.numberFormat = "#,##0.00";
   sheet.getRange(`L${firstRow}:${col(columnCount - 1)}${dataEnd}`).format.numberFormat = "#,##0.00";
+  if (method === "quick") {
+    sheet.getRange(`K${firstRow}:K${dataEnd}`).format.wrapText = true;
+    sheet.getRange(`K${firstRow}:K${dataEnd}`).format.horizontalAlignment = "left";
+  }
   sheet.getRange(`${discountColumn}${firstRow}:${discountColumn}${dataEnd}`).format.numberFormat = "0.00";
 }
 
@@ -892,7 +989,13 @@ const verifyWorkbookContents = (candidateWorkbook) => {
       const row = 11 + index;
       const quote = method === "formula" ? item.formula : item.quick;
       const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
-      const unitCost = asNumber(quote?.total_cost) * discount;
+      const unitCost = method === "quick"
+        ? quickDiscountBreakdown({
+          quote,
+          attachments: item.attachments || [],
+          discount,
+        }).discountedTotal
+        : asNumber(quote?.total_cost) * discount;
       const quantity = asNumber(item.quantity || 1);
       subtotal += unitCost * quantity;
       const actual = rangePlainValues(sheet, `A${row}:H${row}`)[0];
@@ -932,8 +1035,14 @@ const verifyWorkbookContents = (candidateWorkbook) => {
   );
   assertRow(
     rangePlainValues(serializedFormulaSheet, "Q10:AC10")[0],
-    rangePlainValues(serializedQuickSheet, "M10:Y10")[0],
-    "shifted attachment headers",
+    ["底座", "侧板", "三排纵梁", "安装板", "灯/开关", "文件夹",
+      "风机滤网", "门限位器", "接地线", "双开门", "安装板单发", "运费", "折扣"],
+    "shifted formula attachment headers",
+  );
+  assertRow(
+    rangePlainValues(serializedQuickSheet, "K10:AF10")[0],
+    quickCostHeaders,
+    "quick cost headers",
   );
 
   const costSheet = attachRangeApi(candidateWorkbook.getWorksheet("成本明细"));

@@ -58,6 +58,7 @@ from quote_defaults import (
     apply_default_quote_inputs,
 )
 from quote_remark_rules import replace_door_configuration_phrase
+from quick_discount_rules import quick_discount_breakdown
 from attachment_category_browser import (
     category_options,
     category_path as attachment_category_path,
@@ -2873,7 +2874,11 @@ class MainWindow(QMainWindow):
         self.quick_labels["base_price"].setText(money(quick.get("base_price"))); self.quick_labels["attachment"].setText(money(quick.get("attachment_fee")))
         matched = quick.get("matched_experience") or {}; dims = [matched.get("reference_width_mm"), matched.get("reference_height_mm"), matched.get("reference_depth_mm")]
         self.quick_labels["matched_size"].setText(" × ".join(f"{float(x):g}" for x in dims) + " mm" if all(x is not None for x in dims) else "待补充经验值")
-        quick_total = quick.get("total_cost"); self.quick_labels["total"].setText(money(None if quick_total is None else float(quick_total) * self.quick_discount.value()))
+        quick_total = quick.get("total_cost")
+        discounted_quick = None if quick_total is None else quick_discount_breakdown(
+            quick, self.attachments, self.quick_discount.value()
+        )["discounted_total"]
+        self.quick_labels["total"].setText(money(discounted_quick))
 
     def show_error(self, message): self.risk_label.setStyleSheet("color:#b91c1c;"); self.risk_label.setText(message)
 
@@ -2920,7 +2925,10 @@ class MainWindow(QMainWindow):
     def refresh_summary(self):
         self.summary_table.setRowCount(len(self.draft_items)); formula_sum = quick_sum = 0.0
         for row, item in enumerate(self.draft_items):
-            formula_unit = float(item["formula"]["total_cost"]) * float(item["formula_discount"]); quick_unit = float(item["quick"]["total_cost"]) * float(item["quick_discount"])
+            formula_unit = float(item["formula"]["total_cost"]) * float(item["formula_discount"])
+            quick_unit = quick_discount_breakdown(
+                item["quick"], item.get("attachments", []), item["quick_discount"]
+            )["discounted_total"]
             formula_sum += formula_unit * item["quantity"]; quick_sum += quick_unit * item["quantity"]
             dimensions = f"{item['width_mm']:g}×{item['height_mm']:g}×{item['depth_mm']:g}"
             values = [row + 1, self.drawing_name_before_chinese(item["name"]), dimensions, dimensions, item["material_code"], item["quantity"], f"{formula_unit:,.2f}", f"{item['formula_discount']:.2f}", f"{quick_unit:,.2f}", f"{item['quick_discount']:.2f}", str(len(item["attachments"])), item["notes"]]

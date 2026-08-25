@@ -45,6 +45,7 @@ from quote_defaults import (
     restore_combo_selection,
 )
 from quote_remark_rules import replace_door_configuration_phrase
+from quick_discount_rules import quick_discount_breakdown
 from attachment_category_browser import (
     DEFAULT_A4_FOLDER,
     DEFAULT_DOOR_REINFORCEMENT,
@@ -1423,6 +1424,22 @@ def _install_stable_preview(namespace: dict) -> None:
     preview_class._stable_preview_installed = True
 
 
+def _refresh_quick_discount_total(window, money) -> None:
+    current = getattr(window, "current_result", {}) or {}
+    quick = current.get("quick")
+    labels = getattr(window, "quick_labels", {})
+    discount_widget = getattr(window, "quick_discount", None)
+    if not isinstance(quick, dict) or not isinstance(labels, dict) or "total" not in labels:
+        return
+    discount = _safe_float(getattr(discount_widget, "value", lambda: 1.0)())
+    amount = quick_discount_breakdown(
+        quick,
+        getattr(window, "attachments", []),
+        1.0 if discount is None else discount,
+    )["discounted_total"]
+    labels["total"].setText(money(amount))
+
+
 def _patch_discounted_totals(namespace: dict, main_window) -> None:
     original_refresh = getattr(main_window, "refresh_discounted_totals", None)
     original_show_result = getattr(main_window, "show_result", None)
@@ -1477,6 +1494,7 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
         base_total = _safe_float(base.get("total_cost"))
         if base_labor is None or base_management is None or base_total is None:
             original_refresh(self)
+            _refresh_quick_discount_total(self, money)
             return
 
         labor = base_labor * multiplier
@@ -1488,6 +1506,7 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
 
         self.current_result["formula"] = rendered
         original_refresh(self)
+        _refresh_quick_discount_total(self, money)
 
     main_window.refresh_discounted_totals = refresh_discounted_totals_with_labor
 
@@ -2650,6 +2669,31 @@ def install_layout_refresh(namespace: dict) -> None:
 
     def refresh_summary_with_action_state(self):
         result = original_refresh_summary(self)
+        quick_sum = 0.0
+        table = getattr(self, "summary_table", None)
+        quick_price_column = None
+        if isinstance(table, QTableWidget):
+            for column in range(table.columnCount()):
+                header = table.horizontalHeaderItem(column)
+                label = header.text() if header is not None else ""
+                if "快速" in label and "折扣" not in label:
+                    quick_price_column = column
+                    break
+            if quick_price_column is None and table.columnCount() > 8:
+                quick_price_column = 8
+        for row, item in enumerate(getattr(self, "draft_items", [])):
+            quick_unit = quick_discount_breakdown(
+                item.get("quick", {}),
+                item.get("attachments", []),
+                item.get("quick_discount", 1),
+            )["discounted_total"]
+            quantity = _safe_float(item.get("quantity") or 1)
+            quick_sum += quick_unit * (1.0 if quantity is None else quantity)
+            if quick_price_column is not None:
+                table.setItem(row, quick_price_column, QTableWidgetItem(f"{quick_unit:,.2f}"))
+        quick_total_label = getattr(self, "summary_quick_total", None)
+        if isinstance(quick_total_label, QLabel):
+            quick_total_label.setText(f"快速报价：{quick_sum:,.2f} 元")
         _sync_summary_action_state(self)
         return result
 

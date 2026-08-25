@@ -22,14 +22,26 @@
         "labor_cost": 500,
         "spray_cost": 165.81,
         "management_fee": 65,
-        "attachment_fee": 92,
-        "total_cost": 1822.81
+        "attachment_fee": 392,
+        "total_cost": 2122.81
       },
       "quick": {
-        "attachment_fee": 92,
-        "total_cost": 4106.29
+        "attachment_fee": 392,
+        "total_cost": 4406.29
       },
       "attachments": [
+        {
+          "item_name": "固定底座",
+          "category_level1": "底座",
+          "quantity": 1,
+          "unit_price": 100
+        },
+        {
+          "item_name": "内门",
+          "category_level1": "内门",
+          "quantity": 1,
+          "unit_price": 200
+        },
         {
           "item_name": "风机",
           "model_code": "KA2206HA2B",

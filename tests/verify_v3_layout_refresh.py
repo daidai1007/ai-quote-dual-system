@@ -457,6 +457,62 @@ assert window.stack.count() == 4
 nav = window.findChild(QFrame, "navPanel")
 assert nav is not None and nav.width() == 168
 
+# The recovered client must display and summarize the selective quick discount,
+# not the former blanket total_cost × discount result.
+window.attachments = [
+    {"item_name": "固定底座", "quantity": 1, "unit_price": 100},
+    {"item_name": "内门", "quantity": 1, "unit_price": 200},
+    {"item_name": "风机", "quantity": 1, "unit_price": 80},
+    {"item_name": "接地线", "quantity": 2, "unit_price": 6},
+]
+window._formula_base_result = {
+    "material_cost": 100,
+    "auxiliary_cost": 100,
+    "labor_cost": 100,
+    "attachment_fee": 392,
+    "spray_cost": 100,
+    "management_fee": 13,
+    "total_cost": 805,
+}
+window.current_result = {
+    "formula": dict(window._formula_base_result),
+    "quick": {"attachment_fee": 392, "total_cost": 4406.29},
+}
+window.quick_discount.setValue(0.95)
+window.refresh_discounted_totals()
+assert "4,190.58" in window.quick_labels["total"].text(), window.quick_labels["total"].text()
+
+window.draft_items = [{
+    "name": "折扣规则测试柜",
+    "width_mm": 1000,
+    "height_mm": 1800,
+    "depth_mm": 600,
+    "material_code": "SECC",
+    "quantity": 2,
+    "attachments": [dict(item) for item in window.attachments],
+    "formula": dict(window._formula_base_result),
+    "formula_discount": 1,
+    "quick": {"attachment_fee": 392, "total_cost": 4406.29},
+    "quick_discount": 0.95,
+    "notes": "选择性折扣测试",
+}]
+window.refresh_summary()
+quick_price_columns = [
+    column
+    for column in range(window.summary_table.columnCount())
+    if window.summary_table.horizontalHeaderItem(column) is not None
+    and "快速" in window.summary_table.horizontalHeaderItem(column).text()
+    and "折扣" not in window.summary_table.horizontalHeaderItem(column).text()
+]
+assert quick_price_columns, [
+    window.summary_table.horizontalHeaderItem(column).text()
+    for column in range(window.summary_table.columnCount())
+]
+assert window.summary_table.item(0, quick_price_columns[0]).text() == "4,190.58"
+assert "8,381.15" in window.summary_quick_total.text(), window.summary_quick_total.text()
+window.draft_items = []
+window.refresh_summary()
+
 style = window.styleSheet()
 for token in (
     layout_refresh.STEEL_CANVAS,

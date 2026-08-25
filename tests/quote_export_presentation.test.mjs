@@ -120,7 +120,7 @@ test("door limiter quantity reaches quote columns and cost-detail BOM", async ()
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     const quickSheet = workbook.getWorksheet("快速报价单");
     closeTo(formulaSheet.getCell("X11").value, 90, "formula limiter amount after discount");
-    closeTo(quickSheet.getCell("T11").value, 100, "quick limiter amount");
+    closeTo(quickSheet.getCell("Z11").value, 100, "quick limiter amount");
     assert.deepEqual(
       ["L11", "M11", "N11", "O11", "P11"].map((cell) => Number(formulaSheet.getCell(cell).value)),
       [180, 90, 270, 135, 35.1],

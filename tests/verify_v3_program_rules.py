@@ -129,6 +129,10 @@ from quote_remark_rules import (  # noqa: E402
     DOOR_PHRASES_BY_COUNTS,
     replace_door_configuration_phrase,
 )
+from quick_discount_rules import (  # noqa: E402
+    quick_discount_breakdown,
+    quick_discount_category,
+)
 
 
 assert LEVEL1_ORDER[:10] == (
@@ -424,5 +428,36 @@ limiter_window.attachments = [limiter_window.attachments[1]]
 limiter_window._counts = (2, 0)
 assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (1, 1))
 assert all(item.get("item_name") != "门限位器" for item in limiter_window.attachments)
+
+approved_quick_categories = {
+    "固定底座": "底座",
+    "JP侧板": "侧板",
+    "镀锌安装板": "安装板",
+    "内门": "内门",
+    "玻璃门": "玻璃门",
+    "通风顶罩": "通风顶罩",
+    "防雨顶": "防雨顶",
+    "分段板": "分段板",
+    "JK安装板": "JK安装板",
+}
+for item_name, category in approved_quick_categories.items():
+    assert quick_discount_category({"item_name": item_name}) == category
+for item_name in ("风机", "门限位器", "接地线", "文件夹", "三排纵梁", "安装板单发", "JK安装板单发", "运费"):
+    assert quick_discount_category({"item_name": item_name}) is None
+
+quick_breakdown = quick_discount_breakdown(
+    {"total_cost": 4406.29, "attachment_fee": 392},
+    [
+        {"item_name": "固定底座", "quantity": 1, "unit_price": 100},
+        {"item_name": "内门", "quantity": 1, "unit_price": 200},
+        {"item_name": "风机", "quantity": 1, "unit_price": 80},
+        {"item_name": "接地线", "quantity": 2, "unit_price": 6},
+    ],
+    0.95,
+)
+assert math.isclose(quick_breakdown["base_price"], 4014.29)
+assert math.isclose(quick_breakdown["eligible_attachment_total"], 300)
+assert math.isclose(quick_breakdown["original_price_attachment_total"], 92)
+assert math.isclose(quick_breakdown["discounted_total"], 4190.5755)
 
 print("V3 program rule contracts passed")
