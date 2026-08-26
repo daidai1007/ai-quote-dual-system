@@ -642,14 +642,33 @@ function fillSheet(sheet, method) {
       values[30] = asNumber(values[30]) + attachmentFee - listedAmount;
       values[11] = quickBreakdown.basePrice;
       values[31] = discount;
-      const discountedCells = ["L", "M", "N", "P", "Q", "R", "S", "T", "U", "V"]
-        .map((column) => `${column}${row}`);
-      const originalPriceCells = ["O", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE"]
-        .map((column) => `${column}${row}`);
+      const populatedCellReferences = (columns) => columns
+        .filter(([, valueIndex]) => {
+          const value = values[valueIndex];
+          return value !== "" && value !== null && value !== undefined
+            && Number.isFinite(Number(value)) && Number(value) !== 0;
+        })
+        .map(([column]) => `${column}${row}`);
+      const discountedCells = populatedCellReferences([
+        ["L", 11], ["M", 12], ["N", 13], ["P", 15], ["Q", 16],
+        ["R", 17], ["S", 18], ["T", 19], ["U", 20], ["V", 21],
+      ]);
+      const originalPriceCells = populatedCellReferences([
+        ["O", 14], ["W", 22], ["X", 23], ["Y", 24], ["Z", 25],
+        ["AA", 26], ["AB", 27], ["AC", 28], ["AD", 29], ["AE", 30],
+      ]);
       // K is a real, editable Excel formula. Every amount references its
       // corresponding price cell; changing any original price or AF discount
       // therefore recalculates the result in Excel/WPS automatically.
-      const formula = `(${discountedCells.join("+")})*AF${row}+${originalPriceCells.join("+")}`;
+      const formulaParts = [];
+      if (discountedCells.length) {
+        const discountedExpression = discountedCells.length === 1
+          ? discountedCells[0]
+          : `(${discountedCells.join("+")})`;
+        formulaParts.push(`${discountedExpression}*AF${row}`);
+      }
+      if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
+      const formula = formulaParts.join("+") || "0";
       values[10] = { formula, result: quickBreakdown.discountedTotal };
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];

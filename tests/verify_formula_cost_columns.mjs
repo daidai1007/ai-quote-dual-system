@@ -58,7 +58,7 @@ assertClose(formulaSheet.getRange("F11").values[0][0], 2122.81, "formula row 1 u
 assertClose(formulaSheet.getRange("F12").values[0][0], 3177.72, "formula row 2 unit price");
 
 const quickRow1 = quickSheet.getRange("K11:AF11").values[0];
-const expectedQuickFormula = "=(L11+M11+N11+P11+Q11+R11+S11+T11+U11+V11)*AF11+O11+W11+X11+Y11+Z11+AA11+AB11+AC11+AD11+AE11";
+const expectedQuickFormula = "=(L11+M11+Q11)*AF11+Y11+AA11";
 assert(
   quickSheet.getRange("K11").formulas[0][0] === expectedQuickFormula,
   `quick Excel formula changed: ${quickSheet.getRange("K11").formulas[0][0]}`,
@@ -71,6 +71,10 @@ assertClose(quickRow1[14], 80, "quick row 1 original fan price");
 assertClose(quickRow1[16], 12, "quick row 1 original grounding-wire price");
 assertClose(quickRow1[21], 0.95, "quick row 1 discount");
 assertClose(quickSheet.getRange("F11").values[0][0], 4190.5755, "selectively discounted quick unit price");
+assert(
+  quickSheet.getRange("K12").formulas[0][0] === "=L12*AF12+X12",
+  `quick row 2 should omit blank and zero cells: ${quickSheet.getRange("K12").formulas[0][0]}`,
+);
 
 const errors = workbook.inspect({
   kind: "match",
