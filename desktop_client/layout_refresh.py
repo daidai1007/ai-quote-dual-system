@@ -616,6 +616,31 @@ def _restore_quote_selections_after_product_change(
             combo.blockSignals(signals_were_blocked)
 
 
+def _current_product_selection(window):
+    combo = getattr(window, "product_combo", None)
+    if not isinstance(combo, QComboBox) or combo.currentIndex() < 0:
+        return None
+    return combo.currentData() or combo.currentText().strip() or None
+
+
+def _restore_product_selection(window, selection) -> bool:
+    """Restore a retained product without inventing a catalogue option."""
+
+    if selection in (None, ""):
+        return False
+    combo = getattr(window, "product_combo", None)
+    if not isinstance(combo, QComboBox):
+        return False
+    index = combo.findData(selection)
+    if index < 0:
+        index = combo.findText(str(selection))
+    if index < 0:
+        return False
+    if combo.currentIndex() != index:
+        combo.setCurrentIndex(index)
+    return True
+
+
 def _enforce_product_door_combination(window, source: str) -> bool:
     count_getter = getattr(window, "door_counts", None)
     setter = getattr(window, "set_door_counts", None)
@@ -1462,7 +1487,13 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
     original_reset = getattr(main_window, "reset_current_cabinet", None)
     if callable(original_reset):
         def reset_current_cabinet_without_labor_base(self, *args, **kwargs):
+            retained_product = getattr(
+                self,
+                "_persistent_product_selection",
+                None,
+            ) or _current_product_selection(self)
             result = original_reset(self, *args, **kwargs)
+            _restore_product_selection(self, retained_product)
             self._formula_base_result = None
             self.attachment_default_opt_outs = set()
             self.attachment_default_quantity_overrides = set()
@@ -2640,6 +2671,19 @@ def install_layout_refresh(namespace: dict) -> None:
             getattr(self, "attachment_default_quantity_overrides", set())
         )
         self._attachment_default_door_counts = _current_door_counts(self)
+        self._persistent_product_selection = getattr(
+            self,
+            "_persistent_product_selection",
+            None,
+        )
+        product_combo = getattr(self, "product_combo", None)
+        if isinstance(product_combo, QComboBox):
+            def remember_manual_product_selection(_index):
+                selected = _current_product_selection(self)
+                if selected not in (None, ""):
+                    self._persistent_product_selection = selected
+
+            product_combo.activated.connect(remember_manual_product_selection)
 
     def refresh_document_list_with_preview(self):
         original_refresh_document_list(self)
@@ -2745,8 +2789,14 @@ def install_layout_refresh(namespace: dict) -> None:
         main_window.door_counts_changed = door_counts_changed_with_product_rules
     if callable(original_product_catalog_loaded):
         def product_catalog_loaded_with_database_options(self, result):
+            retained_product = getattr(
+                self,
+                "_persistent_product_selection",
+                None,
+            ) or _current_product_selection(self)
             loaded = original_product_catalog_loaded(self, result)
             _apply_database_catalog_options(self, result)
+            _restore_product_selection(self, retained_product)
             return loaded
         main_window.product_catalog_loaded = product_catalog_loaded_with_database_options
     if callable(original_formula_template_loaded):

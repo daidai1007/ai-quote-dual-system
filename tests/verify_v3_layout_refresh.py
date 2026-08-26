@@ -556,6 +556,31 @@ quote_left, quote_right = quote_workspace.sizes()
 assert quote_left >= 570, quote_workspace.sizes()
 assert 520 <= quote_right <= 680, quote_workspace.sizes()
 assert window.findChild(QAbstractButton, "primaryQuoteAction").accessibleName() == "计算双报价"
+
+# A product selected by the operator remains sticky while a cabinet is reset,
+# added to the summary, or the user visits the summary page and comes back.
+# Only another operator activation replaces that retained selection.
+window.product_catalog = {
+    "JS": {"codes": {"SINGLE": "JS_SINGLE"}, "method": "formula"},
+    "JM": {"codes": {"DEFAULT": "JM"}, "method": "quick"},
+}
+window.product_combo.clear()
+window.product_combo.addItem("JS", "JS")
+window.product_combo.addItem("JM", "JM")
+jm_index = window.product_combo.findData("JM")
+window.product_combo.setCurrentIndex(jm_index)
+window.product_combo.activated.emit(jm_index)
+window.reset_current_cabinet(keep_company=True)
+assert window.product_combo.currentData() == "JM"
+window.show_section(3)
+window.show_section(1)
+assert window.product_combo.currentData() == "JM"
+js_index = window.product_combo.findData("JS")
+window.product_combo.setCurrentIndex(js_index)
+window.product_combo.activated.emit(js_index)
+window.reset_current_cabinet(keep_company=True)
+assert window.product_combo.currentData() == "JS"
+
 history_card = quote_page.findChild(QFrame, "historyPriceCard")
 history_table = quote_page.findChild(QTableWidget, "historyPriceTable")
 history_state = quote_page.findChild(QLabel, "historyPriceState")
