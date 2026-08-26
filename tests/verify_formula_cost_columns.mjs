@@ -58,10 +58,12 @@ assertClose(formulaSheet.getRange("F11").values[0][0], 2122.81, "formula row 1 u
 assertClose(formulaSheet.getRange("F12").values[0][0], 3177.72, "formula row 2 unit price");
 
 const quickRow1 = quickSheet.getRange("K11:AF11").values[0];
+const expectedQuickFormula = "=(L11+M11+N11+P11+Q11+R11+S11+T11+U11+V11)*AF11+O11+W11+X11+Y11+Z11+AA11+AB11+AC11+AD11+AE11";
 assert(
-  /柜体.*可折扣附件.*原价附件.*4190\.58/.test(String(quickRow1[0])),
-  `quick formula text is incomplete: ${quickRow1[0]}`,
+  quickSheet.getRange("K11").formulas[0][0] === expectedQuickFormula,
+  `quick Excel formula changed: ${quickSheet.getRange("K11").formulas[0][0]}`,
 );
+assertClose(quickRow1[0], 4190.5755, "quick row 1 Excel formula result");
 assertClose(quickRow1[1], 4014.29, "quick row 1 original cabinet price");
 assertClose(quickRow1[2], 100, "quick row 1 original base price");
 assertClose(quickRow1[6], 200, "quick row 1 original inner-door price");

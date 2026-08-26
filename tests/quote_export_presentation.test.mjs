@@ -181,6 +181,13 @@ test("formal workbook exports the revised presentation without changing quote de
       });
     }
 
+    const quickFormulaCell = workbook.getWorksheet("快速报价单").getCell("K11");
+    assert.equal(
+      quickFormulaCell.value.formula,
+      "(L11+M11+N11+P11+Q11+R11+S11+T11+U11+V11)*AF11+O11+W11+X11+Y11+Z11+AA11+AB11+AC11+AD11+AE11",
+    );
+    closeTo(quickFormulaCell.value.result, 3200, "quick Excel formula cached result");
+
     const detailSheet = workbook.getWorksheet("成本明细");
     assert.ok(detailSheet.model.merges.includes("A3:O3"), "cost-detail explanation merge was lost");
     assert.match(detailSheet.getCell("A3").text, /^说明：/, "cost-detail explanation was lost");

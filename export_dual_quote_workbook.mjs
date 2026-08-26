@@ -642,12 +642,15 @@ function fillSheet(sheet, method) {
       values[30] = asNumber(values[30]) + attachmentFee - listedAmount;
       values[11] = quickBreakdown.basePrice;
       values[31] = discount;
-      const eligibleRange = `SUM(M${row}:N${row},P${row}:V${row})`;
-      const originalRange = `SUM(O${row},W${row}:AE${row})`;
-      const calculatedAmount = `(L${row}+${eligibleRange})*AF${row}+${originalRange}`;
-      const formula = `="(柜体 "&TEXT(L${row},"#,##0.00")&" + 可折扣附件 "&TEXT(${eligibleRange},"#,##0.00")&") × "&TEXT(AF${row},"0.00")&" + 原价附件 "&TEXT(${originalRange},"#,##0.00")&" = "&TEXT(${calculatedAmount},"#,##0.00")`;
-      const formulaText = `(柜体 ${quickBreakdown.basePrice.toFixed(2)} + 可折扣附件 ${quickBreakdown.eligibleAttachmentTotal.toFixed(2)}) × ${discount.toFixed(2)} + 原价附件 ${quickBreakdown.originalPriceAttachmentTotal.toFixed(2)} = ${quickBreakdown.discountedTotal.toFixed(2)}`;
-      values[10] = { formula, result: formulaText };
+      const discountedCells = ["L", "M", "N", "P", "Q", "R", "S", "T", "U", "V"]
+        .map((column) => `${column}${row}`);
+      const originalPriceCells = ["O", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE"]
+        .map((column) => `${column}${row}`);
+      // K is a real, editable Excel formula. Every amount references its
+      // corresponding price cell; changing any original price or AF discount
+      // therefore recalculates the result in Excel/WPS automatically.
+      const formula = `(${discountedCells.join("+")})*AF${row}+${originalPriceCells.join("+")}`;
+      values[10] = { formula, result: quickBreakdown.discountedTotal };
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];
     sheet.getRange(`H${row}`).format.wrapText = true;
@@ -659,8 +662,8 @@ function fillSheet(sheet, method) {
   sheet.getRange(`F${firstRow}:G${subtotalRow}`).format.numberFormat = "#,##0.00";
   sheet.getRange(`L${firstRow}:${col(columnCount - 1)}${dataEnd}`).format.numberFormat = "#,##0.00";
   if (method === "quick") {
-    sheet.getRange(`K${firstRow}:K${dataEnd}`).format.wrapText = true;
-    sheet.getRange(`K${firstRow}:K${dataEnd}`).format.horizontalAlignment = "left";
+    sheet.getRange(`K${firstRow}:K${dataEnd}`).format.numberFormat = "#,##0.00";
+    sheet.getRange(`K${firstRow}:K${dataEnd}`).format.horizontalAlignment = "center";
   }
   sheet.getRange(`${discountColumn}${firstRow}:${discountColumn}${dataEnd}`).format.numberFormat = "0.00";
 }
