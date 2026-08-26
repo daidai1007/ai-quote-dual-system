@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -553,9 +554,76 @@ quote_page = window.stack.widget(1)
 quote_workspace = quote_page.findChild(QSplitter, "quoteWorkspace")
 assert quote_workspace is not None and quote_workspace.count() == 2
 quote_left, quote_right = quote_workspace.sizes()
-assert quote_left >= 570, quote_workspace.sizes()
-assert 520 <= quote_right <= 680, quote_workspace.sizes()
+assert quote_workspace.orientation() == Qt.Orientation.Horizontal
+assert quote_workspace.property("responsiveMode") == "wide"
+assert quote_left >= 620, quote_workspace.sizes()
+assert quote_right >= 560, quote_workspace.sizes()
+assert quote_workspace.widget(1).maximumWidth() == layout_refresh.WIDGET_MAX
 assert window.findChild(QAbstractButton, "primaryQuoteAction").accessibleName() == "计算双报价"
+
+main_scroll = window.findChild(QScrollArea, "mainScroll")
+quote_dock = window.findChild(QFrame, "quoteActionDock")
+assert main_scroll is not None
+assert main_scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+assert main_scroll.horizontalScrollBar().maximum() == 0
+assert quote_dock is not None and quote_dock.isVisible()
+assert quote_dock.parentWidget() is main_scroll
+assert main_scroll.viewportMargins().bottom() >= layout_refresh.QUOTE_ACTION_DOCK_HEIGHT
+assert quote_dock.geometry().bottom() <= main_scroll.height()
+assert window.findChild(QAbstractButton, "secondaryQuoteAction").parentWidget() is quote_dock
+assert window.findChild(QAbstractButton, "quietQuoteAction").parentWidget() is quote_dock
+
+# A normal 1366x768 office window keeps the two-column workbench, while a
+# 1180px logical window (for example a 1690px display at 150% scaling) stacks
+# the panels. Neither mode may expose horizontal scrolling or hide actions.
+window.resize(1366, 768)
+app.processEvents()
+app.processEvents()
+assert quote_workspace.property("responsiveMode") == "medium"
+assert quote_workspace.orientation() == Qt.Orientation.Horizontal
+medium_left, medium_right = quote_workspace.sizes()
+assert medium_left >= 520, quote_workspace.sizes()
+assert medium_right >= 500, quote_workspace.sizes()
+assert main_scroll.horizontalScrollBar().maximum() == 0
+assert quote_dock.isVisible()
+assert quote_dock.geometry().bottom() <= main_scroll.height()
+
+window.resize(1180, 720)
+app.processEvents()
+app.processEvents()
+assert window.size().width() == 1180
+assert quote_workspace.property("responsiveMode") == "stacked"
+assert quote_workspace.orientation() == Qt.Orientation.Vertical
+assert main_scroll.horizontalScrollBar().maximum() == 0
+assert main_scroll.verticalScrollBar().maximum() > 0
+stacked_input, stacked_result = quote_workspace.widget(0), quote_workspace.widget(1)
+assert stacked_input.geometry().bottom() < stacked_result.geometry().top()
+assert quote_dock.isVisible()
+assert quote_dock.width() == quote_workspace.width()
+assert quote_dock.geometry().bottom() <= main_scroll.height()
+
+window.resize(980, 700)
+app.processEvents()
+app.processEvents()
+assert window.size().width() == 980
+assert window.size().height() == 700
+assert quote_workspace.property("responsiveMode") == "stacked"
+assert quote_workspace.orientation() == Qt.Orientation.Vertical
+assert main_scroll.horizontalScrollBar().maximum() == 0
+assert main_scroll.verticalScrollBar().maximum() > 0
+assert quote_dock.isVisible()
+assert quote_dock.width() == quote_workspace.width()
+for action_name in ("primaryQuoteAction", "secondaryQuoteAction", "quietQuoteAction"):
+    action = window.findChild(QAbstractButton, action_name)
+    assert action is not None and action.isVisible()
+    assert quote_dock.rect().contains(action.geometry())
+
+window.resize(1519, 987)
+app.processEvents()
+app.processEvents()
+assert quote_workspace.property("responsiveMode") == "wide"
+assert quote_workspace.orientation() == Qt.Orientation.Horizontal
+assert main_scroll.horizontalScrollBar().maximum() == 0
 
 # A product selected by the operator remains sticky while a cabinet is reset,
 # added to the summary, or the user visits the summary page and comes back.
@@ -680,7 +748,10 @@ assert "宽×深×高" in window.quote_spec_edit.toolTip()
 
 window.stack.setCurrentIndex(3)
 app.processEvents()
+app.processEvents()
 summary_page = window.stack.widget(3)
+assert not quote_dock.isVisible()
+assert main_scroll.viewportMargins().bottom() == 0
 empty_action = summary_page.findChild(QPushButton, "emptyStateAction")
 assert empty_action is not None and empty_action.isVisible()
 list_actions = buttons_with_text(summary_page, {"编辑", "删除", "上移", "下移"})
@@ -705,6 +776,15 @@ if artifact_dir is not None:
         window.show_section(index)
         app.processEvents()
         assert window.grab().save(str(artifact_dir / f"v3_{name}_refresh.png"))
+    window.show_section(1)
+    window.resize(1366, 768)
+    app.processEvents()
+    app.processEvents()
+    assert window.grab().save(str(artifact_dir / "v3_quote_medium_1366x768.png"))
+    window.resize(980, 700)
+    app.processEvents()
+    app.processEvents()
+    assert window.grab().save(str(artifact_dir / "v3_quote_stacked_980x700.png"))
 
 window.close()
 app.processEvents()

@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
@@ -76,6 +76,9 @@ from attachment_category_browser import (
 WIDGET_MAX = 16_777_215
 VALID_DOOR_COMBINATIONS = {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
 FORMULA_MULTI_DOOR_FAMILIES = {"JS", "JP", "JA", "JE"}
+QUOTE_WIDE_BREAKPOINT = 1280
+QUOTE_STACK_BREAKPOINT = 1050
+QUOTE_ACTION_DOCK_HEIGHT = 62
 
 
 class _QuotedTextSafeCellPattern:
@@ -1027,30 +1030,235 @@ def _ensure_history_price_panel(window, worker_class=None) -> None:
     QTimer.singleShot(0, lambda: _request_history_price_match(window))
 
 
+def _quote_layout_mode(window, workspace: QSplitter) -> str:
+    page = window.stack.widget(1)
+    available_width = max(0, workspace.width())
+    if not window.isVisible() or not page.isVisible():
+        available_width = max(0, window.width() - 204)
+    if available_width >= QUOTE_WIDE_BREAKPOINT:
+        return "wide"
+    if available_width >= QUOTE_STACK_BREAKPOINT:
+        return "medium"
+    return "stacked"
+
+
+def _configure_quote_header(window, mode: str) -> None:
+    page = window.stack.widget(1)
+    company = _find(page, QComboBox, "baseCompanyCombo")
+    if company is not None:
+        company.setMinimumWidth({"wide": 220, "medium": 180, "stacked": 140}[mode])
+        company.setMaximumWidth(260 if mode == "wide" else 220)
+
+    status = _find(page, QLabel, "serviceStatusBadge")
+    if status is not None:
+        status.setMinimumWidth(112)
+        status.setMaximumWidth(140)
+
+
+def _position_quote_action_dock(window) -> None:
+    dock = getattr(window, "quote_action_dock", None)
+    main_scroll = _find(window, QScrollArea, "mainScroll")
+    stack = getattr(window, "stack", None)
+    if dock is None or main_scroll is None or stack is None:
+        return
+
+    visible = stack.currentIndex() == 1 and main_scroll.viewport().isVisible()
+    main_scroll.setViewportMargins(
+        0,
+        0,
+        0,
+        QUOTE_ACTION_DOCK_HEIGHT + 8 if visible else 0,
+    )
+    dock.setVisible(visible)
+    if not visible:
+        return
+
+    page = stack.widget(1)
+    workspace = _find(page, QSplitter, "quoteWorkspace")
+    if workspace is None or workspace.count() < 2:
+        dock.hide()
+        return
+
+    viewport = main_scroll.viewport()
+    target = workspace
+    origin = target.mapTo(main_scroll, QPoint(0, 0))
+    left = max(8, origin.x())
+    right_padding = 8
+    width = min(target.width(), main_scroll.width() - left - right_padding)
+    if width < 360:
+        left = 8
+        width = max(360, main_scroll.width() - 16)
+    top = max(8, main_scroll.height() - QUOTE_ACTION_DOCK_HEIGHT - 4)
+    dock.setGeometry(left, top, width, QUOTE_ACTION_DOCK_HEIGHT)
+    dock.raise_()
+
+
+def _ensure_quote_action_dock(window) -> None:
+    if getattr(window, "quote_action_dock", None) is not None:
+        _position_quote_action_dock(window)
+        return
+
+    main_scroll = _find(window, QScrollArea, "mainScroll")
+    if main_scroll is None:
+        return
+
+    page = window.stack.widget(1)
+    buttons = [
+        _find(window, QPushButton, "primaryQuoteAction"),
+        _find(window, QPushButton, "secondaryQuoteAction"),
+        _find(window, QPushButton, "quietQuoteAction"),
+    ]
+    if any(button is None for button in buttons):
+        return
+
+    dock = QFrame(main_scroll)
+    dock.setObjectName("quoteActionDock")
+    dock.setFixedHeight(QUOTE_ACTION_DOCK_HEIGHT)
+    layout = QHBoxLayout(dock)
+    layout.setContentsMargins(10, 9, 10, 9)
+    layout.setSpacing(8)
+
+    label = QLabel("当前柜型操作", dock)
+    label.setObjectName("quoteActionDockLabel")
+    layout.addWidget(label)
+    layout.addStretch(1)
+
+    for button, minimum, maximum in zip(
+        buttons,
+        (200, 160, 110),
+        (260, 210, 130),
+    ):
+        parent = button.parentWidget()
+        parent_layout = parent.layout() if parent is not None else None
+        if parent_layout is not None:
+            parent_layout.removeWidget(button)
+        button.setParent(dock)
+        button.setMinimumHeight(40)
+        button.setMaximumHeight(40)
+        button.setMinimumWidth(minimum)
+        button.setMaximumWidth(maximum)
+        layout.addWidget(button)
+
+    workspace = _find(page, QSplitter, "quoteWorkspace")
+    if workspace is not None and workspace.count() >= 2:
+        result_layout = workspace.widget(1).layout()
+        if result_layout is not None:
+            spacer = QWidget(workspace.widget(1))
+            spacer.setObjectName("quoteActionDockSpacer")
+            spacer.setFixedHeight(QUOTE_ACTION_DOCK_HEIGHT)
+            result_layout.addWidget(spacer)
+            window.quote_action_dock_spacer = spacer
+
+    window.quote_action_dock = dock
+    window.quote_action_dock_label = label
+    workspace = _find(page, QSplitter, "quoteWorkspace")
+    if workspace is not None:
+        workspace.splitterMoved.connect(lambda *_args: _position_quote_action_dock(window))
+    main_scroll.verticalScrollBar().valueChanged.connect(
+        lambda *_args: _position_quote_action_dock(window)
+    )
+    main_scroll.horizontalScrollBar().valueChanged.connect(
+        lambda *_args: _position_quote_action_dock(window)
+    )
+    window.stack.currentChanged.connect(
+        lambda *_args: QTimer.singleShot(
+            0,
+            lambda: (
+                _apply_quote_responsive_layout(window),
+                _position_quote_action_dock(window),
+            ),
+        )
+    )
+    _position_quote_action_dock(window)
+
+
+def _apply_quote_responsive_layout(window, *, force: bool = False) -> None:
+    page = window.stack.widget(1)
+    workspace = _find(page, QSplitter, "quoteWorkspace")
+    if workspace is None or workspace.count() < 2:
+        return
+
+    mode = _quote_layout_mode(window, workspace)
+    previous_mode = workspace.property("responsiveMode")
+    input_panel, result_panel = workspace.widget(0), workspace.widget(1)
+
+    workspace.setChildrenCollapsible(False)
+    workspace.setHandleWidth(8)
+    input_panel.setMaximumWidth(WIDGET_MAX)
+    result_panel.setMaximumWidth(WIDGET_MAX)
+    input_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    result_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+    if mode == "wide":
+        page.setMinimumHeight(0)
+        workspace.setOrientation(Qt.Orientation.Horizontal)
+        workspace.setMinimumHeight(0)
+        input_panel.setMinimumWidth(620)
+        result_panel.setMinimumWidth(560)
+        input_panel.setMinimumHeight(0)
+        result_panel.setMinimumHeight(0)
+        workspace.setStretchFactor(0, 11)
+        workspace.setStretchFactor(1, 9)
+        target_sizes = [704, 576]
+    elif mode == "medium":
+        page.setMinimumHeight(0)
+        workspace.setOrientation(Qt.Orientation.Horizontal)
+        workspace.setMinimumHeight(0)
+        input_panel.setMinimumWidth(520)
+        result_panel.setMinimumWidth(500)
+        input_panel.setMinimumHeight(0)
+        result_panel.setMinimumHeight(0)
+        workspace.setStretchFactor(0, 13)
+        workspace.setStretchFactor(1, 12)
+        target_sizes = [546, 504]
+    else:
+        page.setMinimumHeight(1220)
+        workspace.setOrientation(Qt.Orientation.Vertical)
+        workspace.setMinimumHeight(1118)
+        input_panel.setMinimumWidth(0)
+        result_panel.setMinimumWidth(0)
+        input_panel.setMinimumHeight(590)
+        result_panel.setMinimumHeight(520)
+        workspace.setStretchFactor(0, 1)
+        workspace.setStretchFactor(1, 1)
+        target_sizes = [590, 520]
+
+    if force or previous_mode != mode:
+        workspace.setSizes(target_sizes)
+    workspace.setProperty("responsiveMode", mode)
+    _configure_quote_header(window, mode)
+
+    main_scroll = _find(window, QScrollArea, "mainScroll")
+    if main_scroll is not None and main_scroll.widget() is not None:
+        quote_is_current = window.stack.currentIndex() == 1
+        window.stack.setMinimumHeight(
+            1220 if mode == "stacked" and quote_is_current else 0
+        )
+        main_scroll.widget().setMinimumHeight(
+            1250 if mode == "stacked" and quote_is_current else 0
+        )
+    QTimer.singleShot(0, lambda: _position_quote_action_dock(window))
+
+
 def _refresh_quote_page(window) -> None:
     page = window.stack.widget(1)
     workspace = _find(page, QSplitter, "quoteWorkspace")
     if workspace is None or workspace.count() < 2:
         return
 
-    workspace.setChildrenCollapsible(False)
-    workspace.setHandleWidth(8)
-    input_panel, result_panel = workspace.widget(0), workspace.widget(1)
-    input_panel.setMinimumWidth(570)
-    result_panel.setMinimumWidth(520)
-    result_panel.setMaximumWidth(680)
-    workspace.setStretchFactor(0, 11)
-    workspace.setStretchFactor(1, 9)
-    workspace.setSizes([720, 600])
-
     for card_name in ("formulaCard", "quickCard"):
         card = _find(page, QFrame, card_name)
         if card is not None:
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            for spin in card.findChildren(QDoubleSpinBox):
+                spin.setMinimumWidth(116)
 
     attachment_list = getattr(window, "attachment_list", None)
     if attachment_list is not None:
         attachment_list.setMaximumHeight(84)
+
+    _ensure_quote_action_dock(window)
+    _apply_quote_responsive_layout(window, force=True)
 
 
 def _refresh_summary_page(window) -> None:
@@ -1127,7 +1335,7 @@ def _ensure_labor_multiplier_field(window) -> None:
     if _safe_float(multiplier.value()) is None:
         multiplier.setValue(1.0)
     multiplier.setSuffix(" ×")
-    multiplier.setFixedWidth(104)
+    multiplier.setFixedWidth(116)
     multiplier.setToolTip("调整后，人工成本和管理费用会立即重新计算")
     multiplier.setAccessibleName("人工成本折扣系数")
     window.labor_multiplier = multiplier
@@ -1306,6 +1514,13 @@ QSplitter#workbenchSplitter::handle:horizontal,
 QSplitter#quoteWorkspace::handle:horizontal {{
     background: {STEEL_LINE}; margin: 8px 1px; border-radius: 2px;
 }}
+QSplitter#quoteWorkspace::handle:vertical {{
+    background: {STEEL_LINE}; margin: 1px 8px; border-radius: 2px;
+}}
+QFrame#quoteActionDock {{
+    background: {PAPER}; border: 1px solid #B8C7D3; border-radius: 8px;
+}}
+QLabel#quoteActionDockLabel {{ color: {MUTED_INK}; font-weight: 700; padding-left: 4px; }}
 QFrame#summaryListCard {{ border-top: 3px solid {BLUEPRINT}; }}
 QLabel#summaryEmptyState {{
     background: #FAFBFC; border: 1px dashed #B8C1CA;
@@ -1340,6 +1555,10 @@ QDoubleSpinBox#laborMultiplier {{ min-height: 28px; }}
 def apply_layout_refresh(window) -> None:
     """Apply the V3 workbench presentation without changing quote state."""
 
+    window.setMinimumSize(980, 700)
+    stack_host = window.stack.parentWidget()
+    if stack_host is not None and stack_host.layout() is not None:
+        stack_host.layout().setAlignment(window.stack, Qt.AlignmentFlag.AlignTop)
     nav = _find(window, QFrame, "navPanel")
     if nav is not None:
         nav.setFixedWidth(168)
@@ -1349,7 +1568,16 @@ def apply_layout_refresh(window) -> None:
 
     main_scroll = _find(window, QScrollArea, "mainScroll")
     if main_scroll is not None:
-        main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        canvas = main_scroll.widget()
+        if canvas is not None:
+            canvas.setMinimumWidth(0)
+            policy = canvas.sizePolicy()
+            policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+            canvas.setSizePolicy(policy)
+            shell_layout = canvas.layout()
+            if shell_layout is not None:
+                shell_layout.setAlignment(window.stack, Qt.AlignmentFlag.AlignTop)
 
     _refresh_recognition_page(window)
     _refresh_quote_page(window)
@@ -2649,6 +2877,7 @@ def install_layout_refresh(namespace: dict) -> None:
     _patch_discounted_totals(namespace, main_window)
 
     original_build_ui = main_window.build_ui
+    original_resize_event = main_window.resizeEvent
     original_refresh_document_list = main_window._refresh_document_list
     original_import_drawing_paths = main_window.import_drawing_paths
     original_recognition_progress = main_window.pdf_recognition_progress
@@ -2684,6 +2913,11 @@ def install_layout_refresh(namespace: dict) -> None:
                     self._persistent_product_selection = selected
 
             product_combo.activated.connect(remember_manual_product_selection)
+
+    def resize_event_with_responsive_quote(self, event):
+        original_resize_event(self, event)
+        if getattr(self, "stack", None) is not None:
+            QTimer.singleShot(0, lambda: _apply_quote_responsive_layout(self))
 
     def refresh_document_list_with_preview(self):
         original_refresh_document_list(self)
@@ -2742,6 +2976,7 @@ def install_layout_refresh(namespace: dict) -> None:
         return result
 
     main_window.build_ui = build_ui_with_refresh
+    main_window.resizeEvent = resize_event_with_responsive_quote
     main_window._refresh_document_list = refresh_document_list_with_preview
     main_window.import_drawing_paths = import_drawing_paths_without_progress_strip
     main_window.pdf_recognition_progress = recognition_progress_without_strip
