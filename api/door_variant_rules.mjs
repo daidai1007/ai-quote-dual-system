@@ -96,12 +96,8 @@ export function quickDoorVariantSurcharge(input = {}) {
   if (counts.single === 0 && counts.double === 0) return 0;
   const family = productFamily(input.product_code);
   const key = `${counts.single}/${counts.double}`;
-  if (key === '0/1') {
-    if (family === 'JS' || family === 'JP') return 150;
-    if (family === 'JA' || family === 'JE') return 60;
-  }
   if (key === '2/0' && (family === 'JS' || family === 'JP')) return 150;
-  if (key === '0/2' && (family === 'JS' || family === 'JP')) return 270;
+  if ((key === '0/2' || key === '1/1') && (family === 'JS' || family === 'JP')) return 270;
   return 0;
 }
 

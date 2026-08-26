@@ -30,7 +30,7 @@ OTHER_DOOR_COUNTS = ((1, 0), (0, 1))
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--expected-deployment", default="2026-08-24-attachment-classification-v1")
+    parser.add_argument("--expected-deployment", default="20260826-door-matrix-v2")
     return parser.parse_args()
 
 
@@ -90,11 +90,9 @@ def multi_template_code(family: str, codes: set[str], single: int, double: int) 
 
 
 def expected_surcharge(family: str, counts: tuple[int, int]) -> float:
-    if counts == (0, 1):
-        return 150.0 if family in {"JS", "JP"} else 60.0 if family in {"JA", "JE"} else 0.0
     if counts == (2, 0) and family in {"JS", "JP"}:
         return 150.0
-    if counts == (0, 2) and family in {"JS", "JP"}:
+    if counts in {(0, 2), (1, 1)} and family in {"JS", "JP"}:
         return 270.0
     return 0.0
 

@@ -85,7 +85,7 @@ test('Docker-compatible server starts and serves a database-free health check', 
   const health = await response.json();
   assert.equal(health.ok, true);
   assert.equal(health.build, '2026-08-17-auxiliary-bom-v1');
-  assert.equal(health.deployment, '20260826');
+  assert.equal(health.deployment, '20260826-door-matrix-v2');
   assert.equal(health.database_checked, false);
 
   const protectedResponse = await fetch(`http://127.0.0.1:${port}/api/health/database`);

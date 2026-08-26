@@ -67,15 +67,22 @@ test('quick-price door surcharge follows the approved product matrix', () => {
   const fee = (product_code, single_door_count, double_door_count) => quickDoorVariantSurcharge({
     product_code, single_door_count, double_door_count,
   });
-  assert.equal(fee('JS_DOUBLE', 0, 1), 150);
-  assert.equal(fee('JP_DOUBLE', 0, 1), 150);
-  assert.equal(fee('JA_SINGLE', 0, 1), 60);
-  assert.equal(fee('JE_DOUBLE', 0, 1), 60);
+  assert.equal(fee('JS_DOUBLE', 0, 1), 0);
+  assert.equal(fee('JP_DOUBLE', 0, 1), 0);
+  assert.equal(fee('JA_SINGLE', 0, 1), 0);
+  assert.equal(fee('JE_DOUBLE', 0, 1), 0);
   assert.equal(fee('JS_SINGLE', 2, 0), 150);
+  assert.equal(fee('JP_SINGLE', 2, 0), 150);
+  assert.equal(fee('JS_DOUBLE', 0, 2), 270);
   assert.equal(fee('JP_SINGLE', 0, 2), 270);
+  assert.equal(fee('JS_SINGLE', 1, 1), 270);
+  assert.equal(fee('JP_SINGLE', 1, 1), 270);
   assert.equal(fee('JA_SINGLE', 2, 0), 0);
+  assert.equal(fee('JA_SINGLE', 0, 2), 0);
+  assert.equal(fee('JA_SINGLE', 1, 1), 0);
+  assert.equal(fee('JE_DOUBLE', 0, 2), 0);
+  assert.equal(fee('JE_SINGLE', 1, 1), 0);
   assert.equal(fee('JS_SINGLE', 1, 0), 0);
-  assert.equal(fee('JS_SINGLE', 1, 1), 0);
 });
 
 test('automatic door surcharge changes quick base and total only and is idempotent', () => {
@@ -101,7 +108,7 @@ test('legacy JS/JP quick-only attachment fee is not charged twice', () => {
     attachment_billing_rules: { quick_only_attachment_fee: 150 },
   };
   const adjusted = applyDoorVariantQuickPrice(row, {
-    product_code: 'JS_DOUBLE', single_door_count: 0, double_door_count: 1,
+    product_code: 'JS_SINGLE', single_door_count: 2, double_door_count: 0,
   });
   assert.equal(adjusted.formula_cost.total_cost, 700);
   assert.equal(adjusted.quick_quote.base_price, 1150);
