@@ -11,4 +11,5 @@
 !api/runtime_config.mjs
 !exceljs_range_adapter.mjs
 !quote_export_contract.mjs
+!quick_discount_rules.mjs
 !export_dual_quote_workbook.mjs
