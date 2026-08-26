@@ -7,7 +7,9 @@ import {
   databaseVariantForDoorCounts,
   doorCountsFromInput,
   normalizeDoorVariantInput,
+  normalizeQuickDoorVariantInput,
   quickDoorVariantForCounts,
+  quickDoorVariantDescription,
   quickDoorVariantSurcharge,
 } from './door_variant_rules.mjs';
 
@@ -46,6 +48,14 @@ test('door counts choose the database product variant', () => {
     'JA must use its one formula template with door control cells',
   );
   assert.deepEqual(
+    normalizeQuickDoorVariantInput({ product_code: 'JE_DOUBLE', variant_code: 'DOUBLE', single_door_count: 0, double_door_count: 1 }),
+    { product_code: 'JE_SINGLE', variant_code: 'SINGLE', product_family: 'JE', single_door_count: 0, double_door_count: 1 },
+  );
+  assert.deepEqual(
+    normalizeQuickDoorVariantInput({ product_code: 'JP_DOUBLE', variant_code: 'DOUBLE', single_door_count: 0, double_door_count: 2 }),
+    { product_code: 'JP_SINGLE', variant_code: 'SINGLE', product_family: 'JP', single_door_count: 0, double_door_count: 2 },
+  );
+  assert.deepEqual(
     normalizeDoorVariantInput({ product_code: 'XX_SINGLE', variant_code: 'SINGLE', single_door_count: 0, double_door_count: 1 }),
     { product_code: 'XX_DOUBLE', variant_code: 'DOUBLE', single_door_count: 0, double_door_count: 1 },
   );
@@ -55,26 +65,27 @@ test('door counts choose the database product variant', () => {
   );
 });
 
-test('quick quote classifies the five combinations as single or double', () => {
-  assert.equal(quickDoorVariantForCounts({ single: 1, double: 0 }), 'SINGLE');
-  assert.equal(quickDoorVariantForCounts({ single: 0, double: 1 }), 'DOUBLE');
-  assert.equal(quickDoorVariantForCounts({ single: 0, double: 2 }), 'DOUBLE');
-  assert.equal(quickDoorVariantForCounts({ single: 2, double: 0 }), 'SINGLE');
-  assert.equal(quickDoorVariantForCounts({ single: 1, double: 1 }), 'SINGLE');
+test('quick quote classifies the five combinations with family-aware source rules', () => {
+  assert.equal(quickDoorVariantForCounts({ single: 1, double: 0 }, 'JS'), 'SINGLE');
+  assert.equal(quickDoorVariantForCounts({ single: 0, double: 1 }, 'JS'), 'SINGLE');
+  assert.equal(quickDoorVariantForCounts({ single: 0, double: 2 }, 'JP'), 'SINGLE');
+  assert.equal(quickDoorVariantForCounts({ single: 2, double: 0 }, 'JP'), 'SINGLE');
+  assert.equal(quickDoorVariantForCounts({ single: 1, double: 1 }, 'JA'), 'SINGLE');
+  assert.equal(quickDoorVariantForCounts({ single: 0, double: 2 }, 'JE'), 'DOUBLE');
 });
 
 test('quick-price door surcharge follows the approved product matrix', () => {
   const fee = (product_code, single_door_count, double_door_count) => quickDoorVariantSurcharge({
     product_code, single_door_count, double_door_count,
   });
-  assert.equal(fee('JS_DOUBLE', 0, 1), 0);
-  assert.equal(fee('JP_DOUBLE', 0, 1), 0);
-  assert.equal(fee('JA_SINGLE', 0, 1), 0);
-  assert.equal(fee('JE_DOUBLE', 0, 1), 0);
+  assert.equal(fee('JS_DOUBLE', 0, 1), 150);
+  assert.equal(fee('JP_DOUBLE', 0, 1), 150);
+  assert.equal(fee('JA_SINGLE', 0, 1), 60);
+  assert.equal(fee('JE_DOUBLE', 0, 1), 60);
   assert.equal(fee('JS_SINGLE', 2, 0), 150);
   assert.equal(fee('JP_SINGLE', 2, 0), 150);
-  assert.equal(fee('JS_DOUBLE', 0, 2), 270);
-  assert.equal(fee('JP_SINGLE', 0, 2), 270);
+  assert.equal(fee('JS_DOUBLE', 0, 2), 420);
+  assert.equal(fee('JP_SINGLE', 0, 2), 420);
   assert.equal(fee('JS_SINGLE', 1, 1), 270);
   assert.equal(fee('JP_SINGLE', 1, 1), 270);
   assert.equal(fee('JA_SINGLE', 2, 0), 0);
@@ -83,9 +94,11 @@ test('quick-price door surcharge follows the approved product matrix', () => {
   assert.equal(fee('JE_DOUBLE', 0, 2), 0);
   assert.equal(fee('JE_SINGLE', 1, 1), 0);
   assert.equal(fee('JS_SINGLE', 1, 0), 0);
+  assert.equal(quickDoorVariantDescription({ product_code: 'JS', single_door_count: 0, double_door_count: 2 }), '单开门/后背板均变为双开门+420');
+  assert.equal(quickDoorVariantDescription({ product_code: 'JA', single_door_count: 0, double_door_count: 1 }), '单开门变为双开门+60');
 });
 
-test('automatic door surcharge changes quick base and total only and is idempotent', () => {
+test('automatic door surcharge stays outside quick base and is idempotent', () => {
   const row = {
     formula_cost: { total_cost: 888, material_cost: 200 },
     quick_quote: { base_price: 1000, attachment_fee: 20, total_cost: 1020 },
@@ -93,10 +106,11 @@ test('automatic door surcharge changes quick base and total only and is idempote
   const input = { product_code: 'JP_DOUBLE', single_door_count: 0, double_door_count: 2 };
   const adjusted = applyDoorVariantQuickPrice(row, input);
   assert.deepEqual(adjusted.formula_cost, row.formula_cost);
-  assert.equal(adjusted.quick_quote.base_price, 1270);
+  assert.equal(adjusted.quick_quote.base_price, 1000);
   assert.equal(adjusted.quick_quote.attachment_fee, 20);
-  assert.equal(adjusted.quick_quote.total_cost, 1290);
-  assert.equal(adjusted.quick_quote.door_variant, 'DOUBLE');
+  assert.equal(adjusted.quick_quote.total_cost, 1440);
+  assert.equal(adjusted.quick_quote.door_variant, 'SINGLE');
+  assert.equal(adjusted.quick_quote.door_variant_surcharge, 420);
   assert.deepEqual(applyDoorVariantQuickPrice(adjusted, input), adjusted);
   assert.equal(row.quick_quote.base_price, 1000, 'input row must not be mutated');
 });
@@ -111,7 +125,7 @@ test('legacy JS/JP quick-only attachment fee is not charged twice', () => {
     product_code: 'JS_SINGLE', single_door_count: 2, double_door_count: 0,
   });
   assert.equal(adjusted.formula_cost.total_cost, 700);
-  assert.equal(adjusted.quick_quote.base_price, 1150);
+  assert.equal(adjusted.quick_quote.base_price, 1000);
   assert.equal(adjusted.quick_quote.attachment_fee, 0);
   assert.equal(adjusted.quick_quote.total_cost, 1150);
   assert.equal(adjusted.door_variant_billing_rule.migrated_legacy_attachment_fee, 150);

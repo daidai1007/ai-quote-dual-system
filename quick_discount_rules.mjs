@@ -67,9 +67,12 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
   const attachmentFee = Number.isFinite(Number(quote.attachment_fee))
     ? Number(quote.attachment_fee)
     : listedAttachmentTotal;
+  const doorVariantSurcharge = Number.isFinite(Number(quote.door_variant_surcharge))
+    ? Number(quote.door_variant_surcharge)
+    : 0;
   const basePrice = Number.isFinite(Number(quote.base_price))
     ? Number(quote.base_price)
-    : rawTotal - attachmentFee;
+    : rawTotal - attachmentFee - doorVariantSurcharge;
   const listedEligible = attachments.reduce(
     (sum, item) => sum + (quickDiscountCategory(item) ? quickAttachmentLineAmount(item) : 0),
     0,
@@ -78,7 +81,7 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
   const originalPriceAttachmentTotal = attachmentFee - eligibleAttachmentTotal;
   const factor = Number.isFinite(Number(discount)) ? Number(discount) : 1;
   const discountedTotal = (basePrice + eligibleAttachmentTotal) * factor
-    + originalPriceAttachmentTotal;
+    + originalPriceAttachmentTotal + doorVariantSurcharge;
   return {
     rawTotal,
     basePrice,
@@ -86,6 +89,7 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
     listedAttachmentTotal,
     eligibleAttachmentTotal,
     originalPriceAttachmentTotal,
+    doorVariantSurcharge,
     discount: factor,
     discountedTotal,
   };

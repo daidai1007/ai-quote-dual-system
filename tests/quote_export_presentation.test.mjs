@@ -8,6 +8,7 @@ import ExcelJS from "@excel.js/exceljs";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const fixturePath = path.join(projectRoot, "tests", "fixtures", "export_formula_cost_detail.json");
+const doorMatrixFixturePath = path.join(projectRoot, "tests", "fixtures", "export_quick_door_matrix.json");
 const exporterPath = path.join(projectRoot, "export_dual_quote_workbook.mjs");
 
 const runExporter = (outputPath, inputPath = fixturePath) => new Promise((resolve, reject) => {
@@ -94,7 +95,7 @@ const xlsxEntryNames = (buffer) => {
   return names;
 };
 
-test("door limiter quantity reaches quote columns and cost-detail BOM", async () => {
+test("door limiter and reinforcement quantities reach quick columns and cost-detail BOM", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-door-limiter-"));
   const inputPath = path.join(tempDir, "door-limiter-input.json");
   const outputPath = path.join(tempDir, "door-limiter-output.xlsx");
@@ -102,16 +103,24 @@ test("door limiter quantity reaches quote columns and cost-detail BOM", async ()
     const payload = JSON.parse(await fs.readFile(fixturePath, "utf8"));
     payload.items = [payload.items[0]];
     const item = payload.items[0];
-    item.attachments = [{
-      item_name: "门限位器",
-      quantity: 4,
-      unit_price: 25,
-      price_source: "测试附件价格",
-    }];
-    item.formula.attachment_fee = 100;
-    item.formula.total_cost = 889;
-    item.quick.attachment_fee = 100;
-    item.quick.total_cost = 3250;
+    item.attachments = [
+      {
+        item_name: "门限位器",
+        quantity: 4,
+        unit_price: 25,
+        price_source: "测试附件价格",
+      },
+      {
+        item_name: "门加强筋",
+        quantity: 4,
+        unit_price: 30,
+        price_source: "测试附件价格",
+      },
+    ];
+    item.formula.attachment_fee = 220;
+    item.formula.total_cost = 1009;
+    item.quick.attachment_fee = 220;
+    item.quick.total_cost = 3370;
     await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
     await runExporter(outputPath, inputPath);
 
@@ -120,7 +129,12 @@ test("door limiter quantity reaches quote columns and cost-detail BOM", async ()
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     const quickSheet = workbook.getWorksheet("快速报价单");
     closeTo(formulaSheet.getCell("X11").value, 90, "formula limiter amount after discount");
-    closeTo(quickSheet.getCell("Z11").value, 100, "quick limiter amount");
+    const limiterColumn = quickSheet.getRow(10).values.findIndex((value) => value === "门限位器");
+    assert.ok(limiterColumn > 0, "quick limiter name column is missing");
+    closeTo(quickSheet.getCell(11, limiterColumn).value, 100, "quick limiter amount");
+    const reinforcementColumn = quickSheet.getRow(10).values.findIndex((value) => value === "门加强筋");
+    assert.ok(reinforcementColumn > 0, "quick reinforcement name column is missing");
+    closeTo(quickSheet.getCell(11, reinforcementColumn).value, 120, "quick reinforcement amount");
     assert.deepEqual(
       ["L11", "M11", "N11", "O11", "P11"].map((cell) => Number(formulaSheet.getCell(cell).value)),
       [180, 90, 270, 135, 35.1],
@@ -130,13 +144,19 @@ test("door limiter quantity reaches quote columns and cost-detail BOM", async ()
 
     const detailSheet = workbook.getWorksheet("成本明细");
     let limiterRow = null;
+    let reinforcementRow = null;
     detailSheet.eachRow((row) => {
       if (row.getCell(5).text === "门限位器") limiterRow = row;
+      if (row.getCell(5).text === "门加强筋") reinforcementRow = row;
     });
     assert.ok(limiterRow, "door limiter BOM row is missing");
     closeTo(limiterRow.getCell(8).value, 4, "door limiter BOM quantity");
     closeTo(limiterRow.getCell(10).value, 25, "door limiter BOM unit price");
     closeTo(limiterRow.getCell(11).value, 100, "door limiter BOM amount");
+    assert.ok(reinforcementRow, "door reinforcement BOM row is missing");
+    closeTo(reinforcementRow.getCell(8).value, 4, "door reinforcement BOM quantity");
+    closeTo(reinforcementRow.getCell(10).value, 30, "door reinforcement BOM unit price");
+    closeTo(reinforcementRow.getCell(11).value, 120, "door reinforcement BOM amount");
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
@@ -184,7 +204,7 @@ test("formal workbook exports the revised presentation without changing quote de
     const quickFormulaCell = workbook.getWorksheet("快速报价单").getCell("K11");
     assert.equal(
       quickFormulaCell.value.formula,
-      "L11*AF11+X11+AA11",
+      "L11*R11+M11+N11",
     );
     closeTo(quickFormulaCell.value.result, 3200, "quick Excel formula cached result");
 
@@ -196,6 +216,70 @@ test("formal workbook exports the revised presentation without changing quote de
     assert.ok(detailRows.some((row) => row.includes("安装条")), "BOM row was lost");
     assert.ok(detailRows.some((row) => row.includes("A4资料盒")), "attachment row was lost");
     assert.ok(detailRows.some((row) => row.includes("接地线")), "second attachment row was lost");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("quick workbook uses stable selected-name columns and non-discounted door surcharges", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-door-matrix-export-"));
+  const outputPath = path.join(tempDir, "door-matrix.xlsx");
+  const reversedInputPath = path.join(tempDir, "door-matrix-reversed.json");
+  const reversedOutputPath = path.join(tempDir, "door-matrix-reversed.xlsx");
+  try {
+    await runExporter(outputPath, doorMatrixFixturePath);
+    const reversed = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8"));
+    reversed.items.reverse();
+    await fs.writeFile(reversedInputPath, JSON.stringify(reversed), "utf8");
+    await runExporter(reversedOutputPath, reversedInputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    const reversedWorkbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    await reversedWorkbook.xlsx.readFile(reversedOutputPath);
+    const sheet = workbook.getWorksheet("快速报价单");
+    const reversedSheet = reversedWorkbook.getWorksheet("快速报价单");
+    const headers = sheet.getRow(10).values.slice(11).filter((value) => value !== null && value !== undefined && value !== "");
+    const reversedHeaders = reversedSheet.getRow(10).values.slice(11).filter((value) => value !== null && value !== undefined && value !== "");
+    assert.deepEqual(headers, reversedHeaders, "dynamic attachment order changed with quote row order");
+    assert.deepEqual(headers.slice(0, 2), ["成本计算公式", "柜体"]);
+    assert.deepEqual(headers.slice(-4), ["其他附件/差额", "配置变形说明", "配置变形", "折扣"]);
+    const dynamicNames = headers.slice(2, -4);
+    assert.deepEqual(new Set(dynamicNames), new Set([
+      "固定底座100高", "红绿接地线", "JA内门板", "JP通风顶罩", "KA2206风机", "门限位器",
+    ]));
+    assert.ok(!dynamicNames.includes("侧板"), "unselected attachment produced a blank column");
+
+    const headerIndex = (label) => sheet.getRow(10).values.findIndex((value) => value === label);
+    const descriptionColumn = headerIndex("配置变形说明");
+    const surchargeColumn = headerIndex("配置变形");
+    const discountColumn = headerIndex("折扣");
+    assert.equal(surchargeColumn, descriptionColumn + 1, "configuration text is not immediately before its numeric cell");
+    const expected = [
+      ["", "", 990],
+      ["后背板变单开门+150", 150, 1070],
+      ["单开门变为双开门+60", 60, 1140],
+      ["单开门/后背板均变为双开门+420", 420, 1640],
+      ["单门和双门+270", 270, 1200],
+    ];
+    expected.forEach(([description, surcharge, total], index) => {
+      const row = 11 + index;
+      assert.equal(sheet.getCell(row, descriptionColumn).text, description);
+      assert.equal(sheet.getCell(row, surchargeColumn).value ?? "", surcharge);
+      closeTo(sheet.getCell(row, 6).value, total, `door matrix quick total row ${row}`);
+      const formula = sheet.getCell(row, 11).value.formula;
+      assert.match(formula, new RegExp(`${sheet.getColumn(discountColumn).letter}${row}`));
+      if (surcharge) assert.match(formula, new RegExp(`${sheet.getColumn(surchargeColumn).letter}${row}`));
+    });
+
+    for (let row = 11; row <= 15; row += 1) {
+      for (const name of dynamicNames) {
+        const column = headerIndex(name);
+        const selectedName = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8")).items[row - 11]
+          .attachments.map((item) => item.item_name);
+        if (!selectedName.includes(name)) assert.equal(sheet.getCell(row, column).value, null);
+      }
+    }
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

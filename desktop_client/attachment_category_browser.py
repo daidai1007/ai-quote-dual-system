@@ -37,13 +37,41 @@ DEFAULT_DOOR_LIMITER = "door_limiter"
 DEFAULT_JP_SIDE_PANEL = "jp_side_panel"
 DEFAULT_DOOR_REINFORCEMENT = "door_reinforcement"
 DEFAULT_GROUND_WIRE = "ground_wire"
-DOOR_LIMITER_DEFAULT_QUANTITIES = {
+DOOR_COUNT_DEFAULT_QUANTITIES = {
     (1, 0): 1,
     (2, 0): 2,
     (0, 1): 2,
     (0, 2): 4,
     (1, 1): 3,
 }
+# Backward-compatible public name used by the existing client contracts.
+DOOR_LIMITER_DEFAULT_QUANTITIES = DOOR_COUNT_DEFAULT_QUANTITIES
+SIZE_MATCH_ATTACHMENT_NAMES = (
+    "固定底座",
+    "活动底座",
+    "侧板",
+    "安装板",
+    "内门",
+    "玻璃门",
+    "通风顶罩",
+    "防雨顶",
+    "分段板",
+    "JK安装板",
+)
+SIZE_MATCH_METADATA_KEYS = (
+    "size_match_target_width_mm",
+    "size_match_target_height_mm",
+    "size_match_target_depth_mm",
+    "size_match_width_mm",
+    "size_match_height_mm",
+    "size_match_depth_mm",
+    "size_match_target_perimeter",
+    "size_match_perimeter",
+    "size_match_ratio",
+    "size_match_exact",
+    "size_match_original_price",
+    "size_match_warning",
+)
 
 
 def parse_base_specification(text: str) -> tuple[float, float, float, float] | None:
@@ -143,7 +171,13 @@ def door_limiter_default_quantity(single_door_count, double_door_count) -> int |
         counts = int(single_door_count), int(double_door_count)
     except (TypeError, ValueError):
         return None
-    return DOOR_LIMITER_DEFAULT_QUANTITIES.get(counts)
+    return DOOR_COUNT_DEFAULT_QUANTITIES.get(counts)
+
+
+def door_reinforcement_default_quantity(single_door_count, double_door_count) -> int | None:
+    """Door reinforcement follows the approved door-limiter quantity matrix."""
+
+    return door_limiter_default_quantity(single_door_count, double_door_count)
 
 
 def match_default_door_reinforcement(items: Iterable[dict]) -> dict | None:
@@ -214,6 +248,162 @@ def default_rule_for_item(item: dict) -> str | None:
     if category == "侧板" or name == "侧板" or model.startswith("JP68"):
         return DEFAULT_JP_SIDE_PANEL
     return None
+
+
+def size_match_attachment_name(item: dict) -> str | None:
+    """Return the approved size-match attachment name for one catalogue row."""
+
+    text = " ".join(
+        str(item.get(key) or "").strip()
+        for key in (
+            "category_level1", "category_level2", "category_level3",
+            "item_name", "model_code",
+        )
+    )
+    compact = re.sub(r"\s+", "", text)
+    if "安装板单发" in compact or "JK安装板单发" in compact:
+        return None
+    # Match the more specific names before their containing generic names.
+    for name in (
+        "固定底座", "活动底座", "通风顶罩", "玻璃门", "防雨顶",
+        "分段板", "JK安装板", "内门", "侧板", "安装板",
+    ):
+        if name in compact:
+            return name
+    return None
+
+
+def size_match_group_key(item: dict) -> tuple[str, str, str, str] | None:
+    """Keep nearest-size selection inside one attachment name/category path."""
+
+    name = size_match_attachment_name(item)
+    if name is None:
+        return None
+    return name, *category_path(item)
+
+
+def target_dimension_tuple(dimensions) -> tuple[float, float, float] | None:
+    """Validate the recognized/manual W/H/D target used for size matching."""
+
+    if not isinstance(dimensions, (list, tuple)) or len(dimensions) < 3:
+        return None
+    values = tuple(_number(value) for value in dimensions[:3])
+    if any(value is None or value <= 0 for value in values):
+        return None
+    return values  # type: ignore[return-value]
+
+
+def completed_size_dimensions(
+    item: dict,
+    target_dimensions,
+) -> tuple[float, float, float] | None:
+    """Fill missing catalogue W/H/D only for the matching calculation."""
+
+    target = target_dimension_tuple(target_dimensions)
+    if target is None:
+        return None
+    values = []
+    for index, key in enumerate(("width_mm", "height_mm", "depth_mm")):
+        candidate = _number(item.get(key))
+        values.append(target[index] if candidate is None else candidate)
+    return tuple(values)
+
+
+def _natural_text_key(value) -> tuple:
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"(\d+)", str(value or ""))
+    )
+
+
+def _matching_candidates(items: Iterable[dict], source: dict) -> list[dict]:
+    group = size_match_group_key(source)
+    if group is None:
+        return []
+    candidates = [item for item in items if size_match_group_key(item) == group]
+    # A manually selected price scheme/variant remains authoritative while its
+    # physical size is replaced by the nearest row from that same scheme.
+    for key in ("variant", "price_source"):
+        wanted = str(source.get(key) or "").strip()
+        if not wanted:
+            continue
+        restricted = [item for item in candidates if str(item.get(key) or "").strip() == wanted]
+        if restricted:
+            candidates = restricted
+    return candidates
+
+
+def match_attachment_size(
+    items: Iterable[dict],
+    source: dict,
+    target_dimensions,
+) -> dict | None:
+    """Select and price one exact/nearest approved attachment size.
+
+    Missing catalogue fields are completed from the corresponding recognized
+    or manually entered target field for matching only.  The selected row keeps
+    the original database dimensions so later database lookup still identifies
+    the source price record correctly.
+    """
+
+    target = target_dimension_tuple(target_dimensions)
+    candidates = _matching_candidates(items, source)
+    if target is None or not candidates:
+        return None
+    target_perimeter = sum(target)
+
+    def choice_key(item: dict):
+        completed = completed_size_dimensions(item, target)
+        if completed is None:
+            return (float("inf"), float("inf"), (), (), (), (), float("inf"))
+        perimeter = sum(completed)
+        squared_distance = sum((actual - expected) ** 2 for actual, expected in zip(completed, target))
+        price_id = _number(item.get("attachment_price_id"))
+        return (
+            abs(perimeter - target_perimeter),
+            squared_distance,
+            completed,
+            _natural_text_key(item.get("model_code")),
+            _natural_text_key(item.get("variant")),
+            _natural_text_key(item.get("price_source")),
+            float("inf") if price_id is None else price_id,
+        )
+
+    matched = min(candidates, key=choice_key)
+    completed = completed_size_dimensions(matched, target)
+    if completed is None:
+        return None
+    matched_perimeter = sum(completed)
+    if matched_perimeter <= 0:
+        return None
+    exact = all(abs(actual - expected) <= 0.0001 for actual, expected in zip(completed, target))
+    ratio = 1.0 if exact else target_perimeter / matched_perimeter
+    selected = dict(matched)
+    original_price = _number(matched.get("price"))
+    selected.update({
+        "size_match_target_width_mm": target[0],
+        "size_match_target_height_mm": target[1],
+        "size_match_target_depth_mm": target[2],
+        "size_match_width_mm": completed[0],
+        "size_match_height_mm": completed[1],
+        "size_match_depth_mm": completed[2],
+        "size_match_target_perimeter": target_perimeter,
+        "size_match_perimeter": matched_perimeter,
+        "size_match_ratio": ratio,
+        "size_match_exact": exact,
+    })
+    if original_price is None:
+        selected["size_match_warning"] = "原价格不是安全的单一数值，未执行比例折价"
+        return selected
+    selected["matched_price"] = original_price
+    selected["size_match_original_price"] = original_price
+    scaled_price = original_price if exact else round(original_price * ratio, 6)
+    if not exact:
+        selected["unit_price_override"] = scaled_price
+    else:
+        selected.pop("unit_price_override", None)
+    selected.pop("size_match_warning", None)
+    return selected
 
 
 def category_value(item: dict, level: int) -> str:

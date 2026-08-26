@@ -30,7 +30,7 @@ OTHER_DOOR_COUNTS = ((1, 0), (0, 1))
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--expected-deployment", default="20260826-door-matrix-v2")
+    parser.add_argument("--expected-deployment", default="20260826-door-matrix-v3")
     return parser.parse_args()
 
 
@@ -90,11 +90,19 @@ def multi_template_code(family: str, codes: set[str], single: int, double: int) 
 
 
 def expected_surcharge(family: str, counts: tuple[int, int]) -> float:
-    if counts == (2, 0) and family in {"JS", "JP"}:
-        return 150.0
-    if counts in {(0, 2), (1, 1)} and family in {"JS", "JP"}:
-        return 270.0
+    if family in {"JS", "JP"}:
+        return {(2, 0): 150.0, (0, 1): 150.0, (0, 2): 420.0, (1, 1): 270.0}.get(counts, 0.0)
+    if family in {"JA", "JE"} and counts == (0, 1):
+        return 60.0
     return 0.0
+
+
+def expected_quick_variant(family: str, counts: tuple[int, int]) -> str:
+    if family in {"JS", "JP", "JA", "JE"} and counts == (0, 1):
+        return "SINGLE"
+    if counts == (0, 2):
+        return "DOUBLE" if family == "JE" else "SINGLE"
+    return "SINGLE" if counts[0] > 0 else "DOUBLE"
 
 
 def main() -> int:
@@ -166,7 +174,7 @@ def main() -> int:
                     raise RuntimeError(f"invalid formula weight/area: {values}")
                 weight, area = map(float, values)
 
-            variant = "SINGLE" if single > 0 else "DOUBLE"
+            variant = "DOUBLE" if product_code.endswith("_DOUBLE") else "SINGLE"
             payload = {
                 "quote_id": f"REG-{uuid4().hex}",
                 "product_code": product_code,
@@ -196,6 +204,10 @@ def main() -> int:
                 actual = (quote.get("door_variant_billing_rule") or {}).get("quick_price_surcharge")
                 if not finite(actual) or float(actual) != expected:
                     result["errors"].append(f"quick surcharge {actual} != {expected}")
+                actual_variant = quick.get("door_variant")
+                wanted_variant = expected_quick_variant(family, (single, double))
+                if actual_variant != wanted_variant:
+                    result["errors"].append(f"quick variant {actual_variant} != {wanted_variant}")
             result.update({
                 "weight_kg": weight,
                 "area_m2": area,

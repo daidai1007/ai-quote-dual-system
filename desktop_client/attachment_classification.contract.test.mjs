@@ -40,6 +40,11 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(overlay, /parent\.attachment_default_opt_outs/);
   assert.match(overlay, /def _sync_door_limiter_default_quantity/);
   assert.match(overlay, /attachment_default_quantity_overrides/);
+  assert.match(overlay, /search\.setPlaceholderText\("搜索附件名称、型号、规格、尺寸或价格方案"\)/);
+  assert.match(overlay, /filter_path = \(\) if needle and not selected else selected/);
+  assert.match(overlay, /self\.search_edit\.setVisible\(True\)/);
+  assert.match(overlay, /match_attachment_size\(getattr\(self, "catalog", \[\]\), source, target\)/);
+  assert.match(overlay, /rule in \(DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT\)/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);
   assert.match(overlay, /_default_selection_filters_installed = True/);
   assert.doesNotMatch(overlay, /category_level1_combo/);
@@ -66,6 +71,10 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(hierarchy, /def match_default_door_reinforcement/);
   assert.match(hierarchy, /def match_default_ground_wire/);
   assert.match(hierarchy, /def match_jp_side_panel/);
+  assert.match(hierarchy, /def match_attachment_size/);
+  assert.match(hierarchy, /def completed_size_dimensions/);
+  assert.match(hierarchy, /selected = dict\(matched\)/);
+  assert.match(hierarchy, /def door_reinforcement_default_quantity/);
 });
 
 test('attachment category filters keep price editing and selection collection intact', async () => {

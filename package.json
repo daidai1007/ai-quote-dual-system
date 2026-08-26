@@ -9,7 +9,8 @@
     "start": "node api/server.mjs",
     "check": "node --check api/server.mjs && node --check api/runtime_config.mjs && node --check api/attachment_rules.mjs && node --check api/attachment_catalog_rules.mjs && node --check api/attachment_catalog_query.mjs && node --check api/door_variant_rules.mjs && node --check api/history_price_query.mjs && node --check exceljs_range_adapter.mjs && node --check quote_export_contract.mjs && node --check quick_discount_rules.mjs && node --check export_dual_quote_workbook.mjs",
     "test": "node --test api/runtime_config.test.mjs api/cloud_liveness.test.mjs api/attachment_rules.quick_only.test.mjs api/attachment_catalog_rules.test.mjs api/attachment_catalog_query.test.mjs api/door_variant_rules.test.mjs api/history_price_query.test.mjs database/migrations/program_rules.contract.test.mjs database/migrations/unified_door_formula_sync.contract.test.mjs desktop_client/quote_defaults.contract.test.mjs desktop_client/attachment_classification.contract.test.mjs quick_discount_rules.test.mjs tests/quote_export_presentation.test.mjs",
-    "verify": "npm run check && npm test"
+    "test:client": "python tests/verify_quote_defaults.py && python tests/verify_attachment_size_rules.py && python tests/verify_v3_program_rules.py",
+    "verify": "npm run check && npm test && npm run test:client"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

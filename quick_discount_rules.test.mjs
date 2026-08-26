@@ -43,3 +43,18 @@ test("quick quote keeps non-approved attachments at original price", () => {
   assert.equal(result.originalPriceAttachmentTotal, 92);
   assert.ok(Math.abs(result.discountedTotal - 4190.5755) < 1e-9);
 });
+
+test("door variant surcharge is added after discount exactly once", () => {
+  const result = quickDiscountBreakdown({
+    quote: {
+      total_cost: 1170,
+      base_price: 1000,
+      attachment_fee: 20,
+      door_variant_surcharge: 150,
+    },
+    attachments: [{ item_name: "接地线", quantity: 1, unit_price: 20 }],
+    discount: 0.9,
+  });
+  assert.equal(result.doorVariantSurcharge, 150);
+  assert.equal(result.discountedTotal, 1070);
+});

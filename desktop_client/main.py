@@ -1063,7 +1063,10 @@ class AttachmentDialog(QDialog):
         check_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
         check_item.setCheckState(Qt.Checked if selected else Qt.Unchecked)
         check_item.setTextAlignment(Qt.AlignCenter)
-        check_item.setData(Qt.UserRole, dict(catalog_item))
+        # Preserve selection-only audit metadata (size-match target, completed
+        # dimensions, ratio and original-price reference) while retaining the
+        # catalogue row's raw W/H/D fields.
+        check_item.setData(Qt.UserRole, dict(selected or catalog_item))
         self.table.setItem(row, self.COL_CHECK, check_item)
 
         display_name = self.display_name(catalog_item) or str(catalog_item.get("item_name") or "未命名附件")
@@ -1248,7 +1251,14 @@ class AttachmentDialog(QDialog):
 
             item = {"item_name": source.get("item_name") or self.table.item(row, self.COL_NAME).text()}
             item["quantity"] = int(quantity)
-            for key in ("model_code", "variant", "price_source", "price_text", "notes"):
+            for key in (
+                "attachment_price_id", "model_code", "variant", "price_source", "price_text", "notes",
+                "category_level1", "category_level2", "category_level3",
+                "size_match_target_width_mm", "size_match_target_height_mm", "size_match_target_depth_mm",
+                "size_match_width_mm", "size_match_height_mm", "size_match_depth_mm",
+                "size_match_target_perimeter", "size_match_perimeter", "size_match_ratio",
+                "size_match_exact", "size_match_original_price", "size_match_warning",
+            ):
                 if source.get(key) is not None:
                     item[key] = source[key]
             for key in ("width_mm", "height_mm", "depth_mm"):

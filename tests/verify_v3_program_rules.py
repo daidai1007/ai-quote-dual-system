@@ -82,6 +82,7 @@ class Combo(Widget):
 
 
 qt_core = types.ModuleType("PySide6.QtCore")
+qt_core.QPoint = type("QPoint", (), {})
 qt_core.QTimer = type("QTimer", (), {})
 qt_core.Qt = type("Qt", (), {})
 qt_widgets = types.ModuleType("PySide6.QtWidgets")
@@ -115,6 +116,7 @@ from attachment_category_browser import (  # noqa: E402
     category_options,
     default_rule_for_item,
     door_limiter_default_quantity,
+    door_reinforcement_default_quantity,
     is_jp_product,
     match_default_a4_folder,
     match_default_door_reinforcement,
@@ -180,6 +182,7 @@ assert DOOR_LIMITER_DEFAULT_QUANTITIES == {
 }
 for counts, quantity in DOOR_LIMITER_DEFAULT_QUANTITIES.items():
     assert door_limiter_default_quantity(*counts) == quantity
+    assert door_reinforcement_default_quantity(*counts) == quantity
 assert door_limiter_default_quantity(0, 0) is None
 assert door_limiter_default_quantity("invalid", 1) is None
 assert layout_refresh._parse_specification_dimensions("1000*600*1800") == (1000, 1800, 600)
@@ -397,6 +400,7 @@ class DoorLimiterWindow:
         self.attachment_default_quantity_overrides = set()
         self.attachments = [
             {"item_name": "门限位器", "category_level1": "门限位器", "quantity": 1},
+            {"item_name": "门加强筋", "category_level1": "门加强筋", "quantity": 1},
             {"item_name": "A4资料盒", "category_level1": "文件夹", "quantity": 9},
         ]
         self.view_refreshes = 0
@@ -412,22 +416,30 @@ limiter_window = DoorLimiterWindow()
 limiter_window._counts = (0, 2)
 assert layout_refresh._sync_door_limiter_default_quantity(limiter_window, (1, 0))
 assert limiter_window.attachments[0]["quantity"] == 4
-assert limiter_window.attachments[1]["quantity"] == 9
+assert limiter_window.attachments[1]["quantity"] == 4
+assert limiter_window.attachments[2]["quantity"] == 9
 assert limiter_window.view_refreshes == 1
 assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (0, 2))
 
-limiter_window.attachment_default_quantity_overrides = {DEFAULT_DOOR_LIMITER}
+limiter_window.attachment_default_quantity_overrides = {
+    DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT,
+}
 limiter_window.attachments[0]["quantity"] = 7
+limiter_window.attachments[1]["quantity"] = 8
 limiter_window._counts = (1, 1)
 assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (0, 2))
 assert limiter_window.attachments[0]["quantity"] == 7
+assert limiter_window.attachments[1]["quantity"] == 8
 
 limiter_window.attachment_default_quantity_overrides.clear()
-limiter_window.attachment_default_opt_outs = {DEFAULT_DOOR_LIMITER}
-limiter_window.attachments = [limiter_window.attachments[1]]
+limiter_window.attachment_default_opt_outs = {
+    DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT,
+}
+limiter_window.attachments = [limiter_window.attachments[2]]
 limiter_window._counts = (2, 0)
 assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (1, 1))
 assert all(item.get("item_name") != "门限位器" for item in limiter_window.attachments)
+assert all(item.get("item_name") != "门加强筋" for item in limiter_window.attachments)
 
 approved_quick_categories = {
     "固定底座": "底座",

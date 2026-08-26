@@ -72,12 +72,39 @@ const templateColumnWidths = {
   X: 10.1416666666667,
   Y: 9,
 };
-const quickCostHeaders = [
-  "成本计算公式", "柜体", "底座", "侧板", "三排纵梁", "安装板", "内门", "玻璃门",
-  "通风顶罩", "防雨顶", "分段板", "JK安装板", "灯/开关", "文件夹", "风机滤网",
-  "门限位器", "接地线", "双开门", "安装板单发", "运费", "其他附件/差额", "折扣",
+const QUICK_ATTACHMENT_CATEGORY_ORDER = [
+  "底座", "侧板", "安装板", "内门", "玻璃门", "通风顶罩", "防雨顶", "分段板", "JK安装板",
 ];
-const quickLastColumn = "AF";
+const quickAttachmentName = (item = {}) => String(item.item_name || item.model_code || "未命名附件").trim();
+const quickItemsByName = new Map();
+for (const item of payload.items.flatMap((quoteItem) => quoteItem.attachments || [])) {
+  const name = quickAttachmentName(item);
+  if (!name) continue;
+  if (!quickItemsByName.has(name)) quickItemsByName.set(name, []);
+  quickItemsByName.get(name).push(item);
+}
+const quickAttachmentNames = [...new Set(
+  payload.items.flatMap((item) => (item.attachments || []).map(quickAttachmentName)).filter(Boolean),
+)].sort((left, right) => {
+  const rankFor = (name) => Math.min(999, ...(quickItemsByName.get(name) || [])
+    .map(quickDiscountCategory)
+    .filter(Boolean)
+    .map((category) => QUICK_ATTACHMENT_CATEGORY_ORDER.indexOf(category)));
+  const leftRank = rankFor(left);
+  const rightRank = rankFor(right);
+  return leftRank - rightRank || left.localeCompare(right, "zh-CN", { numeric: true, sensitivity: "base" });
+});
+const quickCostHeaders = [
+  "成本计算公式", "柜体", ...quickAttachmentNames,
+  "其他附件/差额", "配置变形说明", "配置变形", "折扣",
+];
+const quickNameColumnByName = new Map(
+  quickAttachmentNames.map((name, index) => [name, 13 + index]),
+);
+const quickOtherColumnIndex = 13 + quickAttachmentNames.length;
+const quickDescriptionColumnIndex = quickOtherColumnIndex + 1;
+const quickSurchargeColumnIndex = quickOtherColumnIndex + 2;
+const quickDiscountColumnIndex = quickOtherColumnIndex + 3;
 const templateRowHeights = {
   1: 20.1, 2: 20.1, 3: 22.5,
   4: 16.5, 5: 16.5, 6: 16.5, 7: 16.5, 8: 16.5,
@@ -212,6 +239,15 @@ function buildQuotationTemplate(targetWorkbook) {
   return sheet;
 }
 
+const col = (n) => {
+  let text = "";
+  for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) text = String.fromCharCode(65 + (x - 1) % 26) + text;
+  return text;
+};
+
+const quickLastColumn = col(quickDiscountColumnIndex);
+const quickSetupEndColumn = col(Math.max(25, quickDiscountColumnIndex));
+
 const workbook = new ExcelJS.Workbook();
 const formulaSheet = buildQuotationTemplate(workbook);
 formulaSheet.name = "公式法报价单";
@@ -223,38 +259,41 @@ applyTemplateGeometry(quickSheet, true);
 // Expand only the quick-quote audit area.  K is the requested formula box,
 // directly to the left of the cabinet price in L.  The right-side columns
 // retain original prices; the selected factor is shown separately in AF.
-for (const targetLetter of ["Z", "AA", "AB", "AC", "AD", "AE", "AF"]) {
+for (let targetIndex = 26; targetIndex <= quickDiscountColumnIndex; targetIndex += 1) {
+  const targetLetter = col(targetIndex);
   quickSheet.getRange(`${targetLetter}1:${targetLetter}28`).copyFrom(
     quickSheet.getRange("Y1:Y28"),
     "all",
   );
   quickSheet.getRange(`${targetLetter}1:${targetLetter}28`).format.columnWidth = 10.5;
 }
-quickSheet.getRange("K1:AF28").format.font = {
+quickSheet.getRange(`K1:${quickLastColumn}28`).format.font = {
   name: "Microsoft YaHei", size: 10, color: "#1F2937",
 };
-quickSheet.getRange("K10:AF18").clear({ applyTo: "contents" });
-quickSheet.getRange("K10:AF10").values = [quickCostHeaders];
-quickSheet.getRange("K10:AF10").format.fill = "#EEF3F8";
-quickSheet.getRange("K10:AF10").format.font = { bold: true, color: "#40566F" };
-quickSheet.getRange("K10:AF10").format.horizontalAlignment = "center";
-quickSheet.getRange("K10:AF10").format.verticalAlignment = "middle";
-quickSheet.getRange("K10:AF10").format.wrapText = true;
-quickSheet.getRange("K10:AF10").format.borders = {
+quickSheet.getRange(`K10:${quickSetupEndColumn}18`).clear({ applyTo: "contents" });
+quickSheet.getRange(`K10:${quickLastColumn}10`).values = [quickCostHeaders];
+quickSheet.getRange(`K10:${quickLastColumn}10`).format.fill = "#EEF3F8";
+quickSheet.getRange(`K10:${quickLastColumn}10`).format.font = { bold: true, color: "#40566F" };
+quickSheet.getRange(`K10:${quickLastColumn}10`).format.horizontalAlignment = "center";
+quickSheet.getRange(`K10:${quickLastColumn}10`).format.verticalAlignment = "middle";
+quickSheet.getRange(`K10:${quickLastColumn}10`).format.wrapText = true;
+quickSheet.getRange(`K10:${quickLastColumn}10`).format.borders = {
   preset: "all", style: "thin", color: "#CBD5E1",
 };
-quickSheet.getRange("K11:AF18").format.horizontalAlignment = "center";
-quickSheet.getRange("K11:AF18").format.verticalAlignment = "middle";
-quickSheet.getRange("K11:AF18").format.borders = {
+quickSheet.getRange(`K11:${quickLastColumn}18`).format.horizontalAlignment = "center";
+quickSheet.getRange(`K11:${quickLastColumn}18`).format.verticalAlignment = "middle";
+quickSheet.getRange(`K11:${quickLastColumn}18`).format.borders = {
   preset: "all", style: "thin", color: "#CBD5E1",
 };
 quickSheet.getRange("K1:K28").format.columnWidth = 48;
-
-const col = (n) => {
-  let text = "";
-  for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) text = String.fromCharCode(65 + (x - 1) % 26) + text;
-  return text;
-};
+quickSheet.getRange("L1:L28").format.columnWidth = 12;
+for (let index = 13; index < quickOtherColumnIndex; index += 1) {
+  quickSheet.getRange(`${col(index)}1:${col(index)}28`).format.columnWidth = 14;
+}
+quickSheet.getRange(`${col(quickOtherColumnIndex)}1:${col(quickOtherColumnIndex)}28`).format.columnWidth = 13;
+quickSheet.getRange(`${col(quickDescriptionColumnIndex)}1:${col(quickDescriptionColumnIndex)}28`).format.columnWidth = 30;
+quickSheet.getRange(`${col(quickSurchargeColumnIndex)}1:${col(quickSurchargeColumnIndex)}28`).format.columnWidth = 12;
+quickSheet.getRange(`${col(quickDiscountColumnIndex)}1:${col(quickDiscountColumnIndex)}28`).format.columnWidth = 9;
 
 // The formula sheet exposes its five database cost components before the
 // attachment-price columns.  The quick sheet intentionally keeps the original
@@ -312,36 +351,6 @@ const attachmentColumn = (itemName = "") => {
   return null;
 };
 
-const quickAttachmentColumn = (item = {}) => {
-  const discountCategory = quickDiscountCategory(item);
-  const discountColumns = {
-    "底座": 13,
-    "侧板": 14,
-    "安装板": 16,
-    "内门": 17,
-    "玻璃门": 18,
-    "通风顶罩": 19,
-    "防雨顶": 20,
-    "分段板": 21,
-    "JK安装板": 22,
-  };
-  if (discountCategory) return discountColumns[discountCategory];
-  const name = String(item.item_name || item.model_code || "");
-  if (name.includes("三排") || name.includes("纵梁")) return 15;
-  if (
-    name.includes("照明灯") || name.includes("柜内灯") || name.includes("灯开关")
-    || name.includes("行程开关") || name.includes("限位开关") || name.includes("门开关")
-  ) return 23;
-  if (name.includes("文件夹") || name.includes("资料盒")) return 24;
-  if (name.includes("风机") || name.includes("过滤网") || name.includes("滤网")) return 25;
-  if (name.includes("门限位器") || name === "限位器") return 26;
-  if (name.includes("接地")) return 27;
-  if (name.includes("双开门")) return 28;
-  if (name.includes("安装板单发")) return 29;
-  if (name.includes("运费")) return 30;
-  return 31;
-};
-
 const asNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const fmt = (value) => String(asNumber(value)).replace(/\.0+$/, "");
 const quoteSpecification = (item = {}) => {
@@ -390,7 +399,8 @@ const attachmentAmounts = (attachments = [], discount = 1, method = "quick") => 
 const quickAttachmentAmounts = (attachments = []) => {
   const out = {};
   for (const item of attachments) {
-    const index = quickAttachmentColumn(item);
+    const index = quickNameColumnByName.get(quickAttachmentName(item));
+    if (!index) continue;
     out[index] = (out[index] || 0) + attachmentLineAmount(item);
   }
   return out;
@@ -543,7 +553,7 @@ const standardizedRemark = (item = {}) => {
 function fillSheet(sheet, method) {
   const items = payload.items || [];
   const lastColumn = method === "formula" ? "AC" : quickLastColumn;
-  const columnCount = method === "formula" ? 29 : 32;
+  const columnCount = method === "formula" ? 29 : quickDiscountColumnIndex;
   const discountColumn = method === "formula" ? "AC" : quickLastColumn;
   const firstRow = 11;
   const dataEnd = firstRow + items.length - 1;
@@ -592,8 +602,21 @@ function fillSheet(sheet, method) {
     const quote = method === "formula" ? item.formula : item.quick;
     const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
     const attachments = item.attachments || [];
+    const doorVariantSurcharge = asNumber(
+      quote?.door_variant_surcharge
+      ?? item.door_variant_billing_rule?.quick_price_surcharge,
+    );
+    const doorVariantDescription = String(
+      quote?.door_variant_description
+      ?? item.door_variant_billing_rule?.quick_price_description
+      ?? "",
+    ).trim();
     const quickBreakdown = method === "quick"
-      ? quickDiscountBreakdown({ quote, attachments, discount })
+      ? quickDiscountBreakdown({
+        quote: { ...(quote || {}), door_variant_surcharge: doorVariantSurcharge },
+        attachments,
+        discount,
+      })
       : null;
     const unitCost = method === "quick"
       ? quickBreakdown.discountedTotal
@@ -637,11 +660,13 @@ function fillSheet(sheet, method) {
       values[28] = discount;
     } else {
       const listedAmount = attachmentTotalFromItems(attachments);
-      // All right-side audit columns show original prices.  Column AE absorbs
-      // both unmapped attachments and any authoritative attachment-fee delta.
-      values[30] = asNumber(values[30]) + attachmentFee - listedAmount;
+      // Every selected attachment name has one original-price audit column.
+      // The fixed delta column reconciles authoritative attachment totals.
+      values[quickOtherColumnIndex - 1] = attachmentFee - listedAmount;
       values[11] = quickBreakdown.basePrice;
-      values[31] = discount;
+      values[quickDescriptionColumnIndex - 1] = doorVariantDescription;
+      values[quickSurchargeColumnIndex - 1] = doorVariantSurcharge || "";
+      values[quickDiscountColumnIndex - 1] = discount;
       const populatedCellReferences = (columns) => columns
         .filter(([, valueIndex]) => {
           const value = values[valueIndex];
@@ -649,14 +674,21 @@ function fillSheet(sheet, method) {
             && Number.isFinite(Number(value)) && Number(value) !== 0;
         })
         .map(([column]) => `${column}${row}`);
-      const discountedCells = populatedCellReferences([
-        ["L", 11], ["M", 12], ["N", 13], ["P", 15], ["Q", 16],
-        ["R", 17], ["S", 18], ["T", 19], ["U", 20], ["V", 21],
-      ]);
-      const originalPriceCells = populatedCellReferences([
-        ["O", 14], ["W", 22], ["X", 23], ["Y", 24], ["Z", 25],
-        ["AA", 26], ["AB", 27], ["AC", 28], ["AD", 29], ["AE", 30],
-      ]);
+      const discountedColumns = [["L", 11]];
+      const originalColumns = [];
+      for (const name of quickAttachmentNames) {
+        const index = quickNameColumnByName.get(name);
+        const sample = attachments.find((attachment) => quickAttachmentName(attachment) === name);
+        const target = [col(index), index - 1];
+        if (sample && quickDiscountCategory(sample)) discountedColumns.push(target);
+        else originalColumns.push(target);
+      }
+      originalColumns.push(
+        [col(quickOtherColumnIndex), quickOtherColumnIndex - 1],
+        [col(quickSurchargeColumnIndex), quickSurchargeColumnIndex - 1],
+      );
+      const discountedCells = populatedCellReferences(discountedColumns);
+      const originalPriceCells = populatedCellReferences(originalColumns);
       // K is a real, editable Excel formula. Every amount references its
       // corresponding price cell; changing any original price or AF discount
       // therefore recalculates the result in Excel/WPS automatically.
@@ -665,7 +697,7 @@ function fillSheet(sheet, method) {
         const discountedExpression = discountedCells.length === 1
           ? discountedCells[0]
           : `(${discountedCells.join("+")})`;
-        formulaParts.push(`${discountedExpression}*AF${row}`);
+        formulaParts.push(`${discountedExpression}*${col(quickDiscountColumnIndex)}${row}`);
       }
       if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
       const formula = formulaParts.join("+") || "0";
@@ -1013,7 +1045,13 @@ const verifyWorkbookContents = (candidateWorkbook) => {
       const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
       const unitCost = method === "quick"
         ? quickDiscountBreakdown({
-          quote,
+          quote: {
+            ...(quote || {}),
+            door_variant_surcharge: asNumber(
+              quote?.door_variant_surcharge
+              ?? item.door_variant_billing_rule?.quick_price_surcharge,
+            ),
+          },
           attachments: item.attachments || [],
           discount,
         }).discountedTotal
@@ -1062,7 +1100,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
     "shifted formula attachment headers",
   );
   assertRow(
-    rangePlainValues(serializedQuickSheet, "K10:AF10")[0],
+    rangePlainValues(serializedQuickSheet, `K10:${quickLastColumn}10`)[0],
     quickCostHeaders,
     "quick cost headers",
   );

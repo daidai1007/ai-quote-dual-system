@@ -7,7 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { applyQuickOnlyAttachmentRuleToQuoteRow } from './attachment_rules.mjs';
 import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
 import { attachmentCatalogSql, decodeAttachmentCatalog } from './attachment_catalog_query.mjs';
-import { applyDoorVariantQuickPrice, normalizeDoorVariantInput } from './door_variant_rules.mjs';
+import {
+  applyDoorVariantQuickPrice,
+  normalizeDoorVariantInput,
+  normalizeQuickDoorVariantInput,
+} from './door_variant_rules.mjs';
 import { historyPriceMatchSql } from './history_price_query.mjs';
 import { buildPsqlArgs, resolveRuntimeConfig } from './runtime_config.mjs';
 
@@ -17,7 +21,7 @@ const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
 const API_BUILD = '2026-08-17-auxiliary-bom-v1';
-const DEPLOYMENT_BUILD = '20260826-door-matrix-v2';
+const DEPLOYMENT_BUILD = '20260826-door-matrix-v3';
 const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -92,15 +96,30 @@ const validateRequest = (input) => {
 
 const normalizeProductVariant = (input = {}) => {
   const doorNormalized = normalizeDoorVariantInput(input);
+  const quickNormalized = normalizeQuickDoorVariantInput(input);
   const productCode = String(doorNormalized.product_code || '').trim();
   const variantCode = String(doorNormalized.variant_code || '').trim().toUpperCase();
   if (productCode === 'JP_WIDE_EXP' || productCode === 'JS_WIDE_EXP') {
-    return { ...doorNormalized, variant_code: 'WIDE' };
+    return {
+      ...doorNormalized,
+      variant_code: 'WIDE',
+      quick_product_code: quickNormalized.product_code,
+      quick_variant_code: 'WIDE',
+    };
   }
   if (productCode === 'JM' && (!variantCode || variantCode === 'DEFAULT')) {
-    return { ...doorNormalized, variant_code: 'SINGLE' };
+    return {
+      ...doorNormalized,
+      variant_code: 'SINGLE',
+      quick_product_code: quickNormalized.product_code,
+      quick_variant_code: quickNormalized.variant_code || 'SINGLE',
+    };
   }
-  return doorNormalized;
+  return {
+    ...doorNormalized,
+    quick_product_code: quickNormalized.product_code || doorNormalized.product_code,
+    quick_variant_code: quickNormalized.variant_code || doorNormalized.variant_code,
+  };
 };
 
 const attachmentStatements = (input) => (input.attachments || []).map((a, index) => {
@@ -161,14 +180,14 @@ SELECT jsonb_build_object(
     'total_cost', r.formula_total_cost
   ),
   'quick_quote', jsonb_build_object(
-    -- calculate_dual_quote returns the perimeter-adjusted quick base plus
-    -- attachment fee. Expose the adjusted base, not the raw matched price.
-    'base_price', CASE WHEN r.quick_rule_id IS NULL THEN NULL
-                       ELSE r.quick_total_cost - COALESCE(r.quick_attachment_fee, 0) END,
+    -- Formula calculation remains on the original product path.  Quick base
+    -- is independently matched on the approved family-aware door variant.
+    'base_price', CASE WHEN qm.quick_rule_id IS NULL THEN NULL ELSE qm.quick_total_cost END,
     'attachment_fee', r.quick_attachment_fee,
-    'total_cost', r.quick_total_cost,
-    'match_method', r.quick_match_method,
-    'dimension_distance', r.quick_match_distance,
+    'total_cost', CASE WHEN qm.quick_rule_id IS NULL THEN NULL
+                       ELSE qm.quick_total_cost + COALESCE(r.quick_attachment_fee, 0) END,
+    'match_method', qm.match_method,
+    'dimension_distance', qm.dimension_distance,
     'matched_experience', CASE WHEN q.quick_rule_id IS NULL THEN NULL ELSE jsonb_build_object(
       'quick_rule_id', q.quick_rule_id,
       'product_code', q.product_code,
@@ -183,12 +202,26 @@ SELECT jsonb_build_object(
       'source_row_no', q.source_row_no
     ) END
   ),
-  'risk_flags', COALESCE(r.risk_flags, '[]'::jsonb)
+  'risk_flags', CASE WHEN qm.quick_rule_id IS NULL THEN COALESCE(r.risk_flags, '[]'::jsonb)
+    ELSE COALESCE((
+      SELECT jsonb_agg(flag)
+      FROM jsonb_array_elements(COALESCE(r.risk_flags, '[]'::jsonb)) flag
+      WHERE flag->>'code' <> 'quick_quote_missing'
+    ), '[]'::jsonb) END
 )::text
 FROM (SELECT * FROM calc.calculate_dual_quote(${args.join(', ')})) r
+LEFT JOIN LATERAL calc.match_quick_quote(
+  ${sqlText(input.quick_product_code || input.product_code)},
+  ${sqlUnicodeText(input.model_code ?? '')},
+  ${sqlText(input.material_code)},
+  ${sqlNumber(input.width_mm, 'width_mm', true)},
+  ${sqlNumber(input.height_mm, 'height_mm', true)},
+  ${sqlNumber(input.depth_mm, 'depth_mm', true)},
+  ${sqlText(dateValue(input.quote_date))}
+) qm ON TRUE
 LEFT JOIN LATERAL (
   SELECT q0.* FROM calc.quick_quote_experience q0
-  WHERE q0.quick_rule_id = r.quick_rule_id
+  WHERE q0.quick_rule_id = qm.quick_rule_id
 ) q ON TRUE;`;
 };
 

@@ -59,8 +59,10 @@ from attachment_category_browser import (
     category_value as attachment_category_value,
     default_rule_for_item,
     door_limiter_default_quantity,
+    door_reinforcement_default_quantity,
     is_base_selection,
     is_jp_product,
+    match_attachment_size,
     match_default_a4_folder,
     match_default_door_reinforcement,
     match_default_door_limiter,
@@ -69,6 +71,8 @@ from attachment_category_browser import (
     match_fixed_base,
     match_jp_side_panel,
     parse_base_specification,
+    SIZE_MATCH_METADATA_KEYS,
+    size_match_group_key,
     valid_selection_prefix,
 )
 
@@ -521,11 +525,11 @@ def _current_door_counts(window) -> tuple[int, int] | None:
         return None
 
 
-def _sync_door_limiter_default_quantity(
+def _sync_door_count_default_quantities(
     window,
     previous_counts: tuple[int, int] | None = None,
 ) -> bool:
-    """Update only a system-managed limiter after a real door-count change."""
+    """Update system-managed limiter/reinforcement after real count changes."""
 
     current_counts = _current_door_counts(window)
     if current_counts is None:
@@ -536,35 +540,44 @@ def _sync_door_limiter_default_quantity(
     if previous_counts is None or tuple(previous_counts) == current_counts:
         return False
 
-    quantity = door_limiter_default_quantity(*current_counts)
-    if quantity is None:
-        return False
     opt_outs = set(getattr(window, "attachment_default_opt_outs", set()))
     quantity_overrides = set(
         getattr(window, "attachment_default_quantity_overrides", set())
     )
-    if DEFAULT_DOOR_LIMITER in opt_outs or DEFAULT_DOOR_LIMITER in quantity_overrides:
-        return False
-
     attachments = getattr(window, "attachments", None)
     if not isinstance(attachments, list):
         return False
     changed = False
-    for item in attachments:
-        if not isinstance(item, dict) or default_rule_for_item(item) != DEFAULT_DOOR_LIMITER:
+    for rule, quantity in (
+        (DEFAULT_DOOR_LIMITER, door_limiter_default_quantity(*current_counts)),
+        (DEFAULT_DOOR_REINFORCEMENT, door_reinforcement_default_quantity(*current_counts)),
+    ):
+        if quantity is None or rule in opt_outs or rule in quantity_overrides:
             continue
-        try:
-            old_quantity = int(item.get("quantity", 1))
-        except (TypeError, ValueError):
-            old_quantity = None
-        if old_quantity != quantity:
-            item["quantity"] = quantity
-            changed = True
+        for item in attachments:
+            if not isinstance(item, dict) or default_rule_for_item(item) != rule:
+                continue
+            try:
+                old_quantity = int(item.get("quantity", 1))
+            except (TypeError, ValueError):
+                old_quantity = None
+            if old_quantity != quantity:
+                item["quantity"] = quantity
+                changed = True
     if changed:
         refresh = getattr(window, "update_attachment_view", None)
         if callable(refresh):
             refresh()
     return changed
+
+
+def _sync_door_limiter_default_quantity(
+    window,
+    previous_counts: tuple[int, int] | None = None,
+) -> bool:
+    """Backward-compatible wrapper for the expanded door-count defaults."""
+
+    return _sync_door_count_default_quantities(window, previous_counts)
 
 
 def _set_default_door_combination(window) -> None:
@@ -2053,6 +2066,9 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
             return original_apply_filter(self, text)
         needle = str(text or "").strip().casefold()
         selected = tuple(self.category_selection)
+        # The first-level search is global. Deeper searches remain scoped to
+        # the currently browsed category path.
+        filter_path = () if needle and not selected else selected
         table = getattr(self, "table", None)
         if not isinstance(table, QTableWidget):
             return original_apply_filter(self, text)
@@ -2061,7 +2077,7 @@ def _install_attachment_classification_filters(namespace: dict) -> None:
             source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else {}
             source = source if isinstance(source, dict) else {}
             path = attachment_category_path(source)
-            category_matches = path[:len(selected)] == selected
+            category_matches = path[:len(filter_path)] == filter_path
             table_text = []
             for column in (self.COL_NAME, self.COL_SPEC, self.COL_SCHEME, self.COL_PRICE):
                 cell = table.item(row, column)
@@ -2277,6 +2293,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     original_rebuild_table = dialog_class.rebuild_table
     original_table_item_changed = dialog_class.table_item_changed
     original_accept_selection = dialog_class.accept_selection
+    original_collect_attachments = dialog_class.collect_attachments
 
     category_rules = {
         "底座": DEFAULT_FIXED_BASE,
@@ -2318,7 +2335,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         # historical default was the ordinary 1/0 single-door case.
         return counts if counts is not None else (1, 0)
 
-    def default_door_limiter_quantity(self) -> int | None:
+    def default_door_quantity(self, rule: str) -> int | None:
+        if rule == DEFAULT_DOOR_REINFORCEMENT:
+            return door_reinforcement_default_quantity(*selected_door_counts(self))
         return door_limiter_default_quantity(*selected_door_counts(self))
 
     def same_choice(self, left: dict, right: dict) -> bool:
@@ -2347,6 +2366,20 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             return parsed[0], parsed[1], parsed[2]
         return None
 
+    def size_target_for_source(self, source: dict) -> tuple[float, float, float] | None:
+        dimensions = target_dimensions(self)
+        if dimensions is None:
+            return None
+        if default_rule_for_item(source) == DEFAULT_FIXED_BASE:
+            parsed = parse_base_specification(specification_text(self))
+            if parsed is not None:
+                return parsed[0], parsed[3], parsed[2]
+        return dimensions
+
+    def quick_match_source(self, source: dict) -> dict | None:
+        target = size_target_for_source(self, source)
+        return match_attachment_size(getattr(self, "catalog", []), source, target)
+
     def build_default_matches(self) -> dict[str, dict | None]:
         catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
         parsed = parse_base_specification(specification_text(self))
@@ -2354,11 +2387,29 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         base = None
         if parsed is not None:
             width, _height, depth = dimensions or parsed[:3]
-            base = match_fixed_base(catalog, width, depth, parsed[3])
+            exact_base = match_fixed_base(catalog, width, depth, parsed[3])
+            base = (
+                match_attachment_size(catalog, exact_base, (width, parsed[3], depth))
+                if exact_base is not None
+                else None
+            )
+            if base is None:
+                base_source = next(
+                    (item for item in catalog if default_rule_for_item(item) == DEFAULT_FIXED_BASE),
+                    None,
+                )
+                if base_source is not None:
+                    base = match_attachment_size(catalog, base_source, (width, parsed[3], depth))
         side = None
         product_code = selected_product_code(self)
         if is_jp_product(product_code) and dimensions is not None:
-            side = match_jp_side_panel(catalog, dimensions[1], dimensions[2])
+            exact_side = match_jp_side_panel(catalog, dimensions[1], dimensions[2])
+            side_source = exact_side or next(
+                (item for item in catalog if default_rule_for_item(item) == DEFAULT_JP_SIDE_PANEL),
+                None,
+            )
+            if side_source is not None:
+                side = match_attachment_size(catalog, side_source, dimensions)
         matches = {
             DEFAULT_FIXED_BASE: base,
             DEFAULT_LIGHT_SWITCH: match_default_light_switch(catalog),
@@ -2372,7 +2423,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         self.default_match_dimensions = dimensions
         self.default_match_product_code = product_code
         self.default_match_door_counts = selected_door_counts(self)
-        self.default_door_limiter_quantity = default_door_limiter_quantity(self)
+        self.default_door_limiter_quantity = default_door_quantity(self, DEFAULT_DOOR_LIMITER)
+        self.default_door_reinforcement_quantity = default_door_quantity(
+            self, DEFAULT_DOOR_REINFORCEMENT
+        )
         self.default_matches = matches
         return matches
 
@@ -2387,8 +2441,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if any(default_rule_for_item(item) == rule for item in selected_items):
                 continue
             selected = dict(candidate)
-            if rule == DEFAULT_DOOR_LIMITER:
-                quantity = default_door_limiter_quantity(self)
+            if rule in (DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT):
+                quantity = default_door_quantity(self, rule)
                 if quantity is None:
                     continue
                 selected["quantity"] = quantity
@@ -2398,6 +2452,48 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             selected_items.append(selected)
             added += 1
         return added
+
+    def rematch_selected_for_dimensions(self) -> int:
+        """Re-match selected sized items only when the true W/H/D target changed."""
+
+        changed = 0
+        rematched = []
+        for selected in getattr(self, "attachments", []):
+            if not isinstance(selected, dict) or size_match_group_key(selected) is None:
+                rematched.append(selected)
+                continue
+            target = size_target_for_source(self, selected)
+            if target is None:
+                rematched.append(selected)
+                continue
+            stored_target = tuple(
+                selected.get(key)
+                for key in (
+                    "size_match_target_width_mm",
+                    "size_match_target_height_mm",
+                    "size_match_target_depth_mm",
+                )
+            )
+            try:
+                target_unchanged = all(
+                    value is not None and abs(float(value) - target[index]) <= 0.0001
+                    for index, value in enumerate(stored_target)
+                )
+            except (TypeError, ValueError):
+                target_unchanged = False
+            if target_unchanged:
+                rematched.append(selected)
+                continue
+            matched = match_attachment_size(getattr(self, "catalog", []), selected, target)
+            if matched is None:
+                rematched.append(selected)
+                continue
+            matched["quantity"] = selected.get("quantity", 1)
+            rematched.append(matched)
+            changed += 1
+        if changed:
+            self.attachments = rematched
+        return changed
 
     def checked_sources(self, rule: str) -> list[dict]:
         table = getattr(self, "table", None)
@@ -2450,7 +2546,16 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 )
             detail = f"门限位器 · 数量：{quantity} 个"
         elif rule == DEFAULT_DOOR_REINFORCEMENT:
-            detail = "门加强筋"
+            quantity = getattr(self, "default_door_reinforcement_quantity", None)
+            if quantity is None:
+                return (
+                    "默认选择未配置\n门加强筋",
+                    "attachmentQuickMatchMissing",
+                    "当前门型组合没有门加强筋默认数量规则",
+                    rule,
+                    False,
+                )
+            detail = f"门加强筋 · 数量：{quantity} 个"
         elif rule == DEFAULT_GROUND_WIRE:
             detail = "红绿线"
         elif rule == DEFAULT_JP_SIDE_PANEL:
@@ -2475,8 +2580,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                     {},
                 )
                 quantity = selected_attachment.get("quantity", 1)
+                label = "门加强筋" if rule == DEFAULT_DOOR_REINFORCEMENT else "门限位器"
                 return (
-                    f"人工数量\n门限位器 · 数量：{quantity} 个",
+                    f"人工数量\n{label} · 数量：{quantity} 个",
                     "attachmentQuickMatchManual",
                     "当前数量由人工修改；单击恢复系统默认",
                     rule,
@@ -2501,6 +2607,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 if not isinstance(source, dict) or default_rule_for_item(source) != rule:
                     continue
                 should_check = candidate is not None and same_choice(self, source, candidate)
+                if should_check:
+                    check_item.setData(Qt.ItemDataRole.UserRole, dict(candidate))
                 check_item.setCheckState(Qt.CheckState.Checked if should_check else Qt.CheckState.Unchecked)
         finally:
             table.blockSignals(False)
@@ -2508,9 +2616,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         self.update_selection_hint()
 
     def set_default_quantity_for_rule(self, rule: str) -> None:
-        if rule != DEFAULT_DOOR_LIMITER:
+        if rule not in (DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT):
             return
-        quantity = default_door_limiter_quantity(self)
+        quantity = default_door_quantity(self, rule)
         candidate = getattr(self, "default_matches", {}).get(rule)
         table = getattr(self, "table", None)
         if quantity is None or candidate is None or not isinstance(table, QTableWidget):
@@ -2594,6 +2702,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 *table_text,
             ]).casefold()
             table.setRowHidden(row, not category_matches or bool(needle and needle not in haystack))
+        options = category_options(getattr(self, "catalog", []), selected)
+        show_table = bool(needle) or not bool(options)
+        scroll = getattr(self, "category_scroll", None)
+        if isinstance(scroll, QScrollArea):
+            scroll.setVisible(not show_table)
+        table.setVisible(show_table)
 
     def clear_category_cards(self):
         grid = getattr(self, "category_grid", None)
@@ -2652,12 +2766,14 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.category_grid.addWidget(card, index // 4, index % 4)
 
+        needle = self.search_edit.text().strip()
         at_category_level = bool(options)
-        self.category_scroll.setVisible(at_category_level)
-        self.search_edit.setVisible(not at_category_level)
-        self.table.setVisible(not at_category_level)
-        if not at_category_level:
-            apply_classification_filter(self, self.search_edit.text())
+        show_table = bool(needle) or not at_category_level
+        self.category_scroll.setVisible(not show_table)
+        self.search_edit.setVisible(True)
+        self.table.setVisible(show_table)
+        if show_table:
+            apply_classification_filter(self, needle)
         hint = getattr(self, "catalog_hint", None)
         if catalog and isinstance(hint, QLabel):
             level1_count = len({attachment_category_value(item, 0) for item in catalog})
@@ -2679,6 +2795,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 
     def rebuild_table_with_defaults(self):
         if hasattr(self, "category_selection"):
+            rematch_selected_for_dimensions(self)
             prepare_default_selections(self)
         result = original_rebuild_table(self)
         if hasattr(self, "category_selection"):
@@ -2688,8 +2805,67 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     def table_item_changed_with_defaults(self, item):
         if getattr(self, "_default_selection_guard", False):
             return original_table_item_changed(self, item)
+        quick_match_notice = ""
         if item.column() == self.COL_CHECK:
             source = item.data(Qt.ItemDataRole.UserRole)
+            if (
+                item.checkState() == Qt.CheckState.Checked
+                and isinstance(source, dict)
+                and size_match_group_key(source) is not None
+            ):
+                matched = quick_match_source(self, source)
+                if matched is not None:
+                    target_item = item
+                    matched_id = matched.get("attachment_price_id")
+                    self._default_selection_guard = True
+                    self.table.blockSignals(True)
+                    try:
+                        for row in range(self.table.rowCount()):
+                            candidate_item = self.table.item(row, self.COL_CHECK)
+                            candidate_source = (
+                                candidate_item.data(Qt.ItemDataRole.UserRole)
+                                if candidate_item is not None else None
+                            )
+                            if not isinstance(candidate_source, dict):
+                                continue
+                            same_group = size_match_group_key(candidate_source) == size_match_group_key(source)
+                            same_record = (
+                                matched_id is not None
+                                and str(candidate_source.get("attachment_price_id")) == str(matched_id)
+                            ) or same_choice(self, matched, candidate_source)
+                            if same_record:
+                                target_item = candidate_item
+                            elif same_group:
+                                candidate_item.setCheckState(Qt.CheckState.Unchecked)
+                        target_item.setData(Qt.ItemDataRole.UserRole, dict(matched))
+                        target_item.setCheckState(Qt.CheckState.Checked)
+                        price_cell = self.table.item(target_item.row(), self.COL_PRICE)
+                        price = matched.get(
+                            "unit_price_override",
+                            matched.get("matched_price", matched.get("price")),
+                        )
+                        if price_cell is not None:
+                            if price is not None:
+                                price_cell.setText(f"{float(price):g}")
+                            else:
+                                price_cell.setText(str(matched.get("price_text") or matched.get("price") or ""))
+                            warning = str(matched.get("size_match_warning") or "")
+                            price_cell.setToolTip(warning)
+                        warning = str(matched.get("size_match_warning") or "")
+                        if warning:
+                            quick_match_notice = f"尺寸已匹配；{warning}。请人工填写安全的单一数值价格。"
+                        elif matched.get("size_match_exact"):
+                            quick_match_notice = "已精确匹配附件尺寸，保留数据库原价。"
+                        else:
+                            quick_match_notice = (
+                                "已按 W+H+D 最近周长快速匹配并比例折价："
+                                f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                            )
+                        item = target_item
+                        source = matched
+                    finally:
+                        self.table.blockSignals(False)
+                        self._default_selection_guard = False
             rule = default_rule_for_item(source) if isinstance(source, dict) else None
             if rule is not None:
                 if item.checkState() == Qt.CheckState.Checked:
@@ -2721,12 +2897,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else None
             rule = default_rule_for_item(source) if isinstance(source, dict) else None
             if (
-                rule == DEFAULT_DOOR_LIMITER
+                rule in (DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT)
                 and check_item is not None
                 and check_item.checkState() == Qt.CheckState.Checked
             ):
                 candidate = getattr(self, "default_matches", {}).get(rule)
-                expected = default_door_limiter_quantity(self)
+                expected = default_door_quantity(self, rule)
                 try:
                     actual = float(item.text().strip())
                 except (TypeError, ValueError):
@@ -2742,32 +2918,62 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                     self.default_quantity_manual_overrides.add(rule)
                 sync_attachments_from_table(self)
                 refresh_category_browser(self)
-        return original_table_item_changed(self, item)
+        result = original_table_item_changed(self, item)
+        if quick_match_notice:
+            hint = getattr(self, "catalog_hint", None)
+            if isinstance(hint, QLabel):
+                hint.setText(quick_match_notice)
+        return result
+
+    def collect_attachments_with_metadata(self, show_errors: bool = True):
+        selected = original_collect_attachments(self, show_errors=show_errors)
+        if selected is None:
+            return None
+        sources = []
+        for row in range(self.table.rowCount()):
+            check_item = self.table.item(row, self.COL_CHECK)
+            if check_item is None or check_item.checkState() != Qt.CheckState.Checked:
+                continue
+            source = check_item.data(Qt.ItemDataRole.UserRole)
+            sources.append(source if isinstance(source, dict) else {})
+        for output, source in zip(selected, sources):
+            for key in (
+                "attachment_price_id",
+                "category_level1", "category_level2", "category_level3",
+                *SIZE_MATCH_METADATA_KEYS,
+            ):
+                if source.get(key) is not None:
+                    output[key] = source[key]
+            if source.get("matched_price") is not None:
+                output["matched_price"] = source["matched_price"]
+            if source.get("unit_price_override") is not None:
+                output["unit_price_override"] = source["unit_price_override"]
+        return selected
 
     def accept_selection_with_defaults(self):
         original_accept_selection(self)
         if self.result() == QDialog.DialogCode.Accepted:
-            candidate = getattr(self, "default_matches", {}).get(DEFAULT_DOOR_LIMITER)
-            expected = default_door_limiter_quantity(self)
-            selected = next(
-                (
-                    item for item in getattr(self, "attachments", [])
-                    if isinstance(item, dict)
-                    and default_rule_for_item(item) == DEFAULT_DOOR_LIMITER
-                ),
-                None,
-            )
-            if DEFAULT_DOOR_LIMITER in self.default_selection_opt_outs or selected is None:
-                self.default_quantity_manual_overrides.discard(DEFAULT_DOOR_LIMITER)
-            elif candidate is not None and same_choice(self, selected, candidate) and expected is not None:
-                try:
-                    selected_quantity = int(selected.get("quantity", 1))
-                except (TypeError, ValueError):
-                    selected_quantity = None
-                if selected_quantity == expected:
-                    self.default_quantity_manual_overrides.discard(DEFAULT_DOOR_LIMITER)
-                else:
-                    self.default_quantity_manual_overrides.add(DEFAULT_DOOR_LIMITER)
+            for rule in (DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT):
+                candidate = getattr(self, "default_matches", {}).get(rule)
+                expected = default_door_quantity(self, rule)
+                selected = next(
+                    (
+                        item for item in getattr(self, "attachments", [])
+                        if isinstance(item, dict) and default_rule_for_item(item) == rule
+                    ),
+                    None,
+                )
+                if rule in self.default_selection_opt_outs or selected is None:
+                    self.default_quantity_manual_overrides.discard(rule)
+                elif candidate is not None and same_choice(self, selected, candidate) and expected is not None:
+                    try:
+                        selected_quantity = int(selected.get("quantity", 1))
+                    except (TypeError, ValueError):
+                        selected_quantity = None
+                    if selected_quantity == expected:
+                        self.default_quantity_manual_overrides.discard(rule)
+                    else:
+                        self.default_quantity_manual_overrides.add(rule)
             parent = self.parentWidget()
             if parent is not None:
                 parent.attachment_default_opt_outs = set(self.default_selection_opt_outs)
@@ -2840,7 +3046,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             layout.addWidget(panel)
         self.attachment_category_panel = panel
         if isinstance(search, QLineEdit):
-            search.setPlaceholderText("搜索当前分类中的名称、型号、尺寸或价格方案")
+            search.setPlaceholderText("搜索附件名称、型号、规格、尺寸或价格方案")
         self.default_match_specification = specification_text(self)
         prepare_default_selections(self)
         original_rebuild_table(self)
@@ -2849,12 +3055,14 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     dialog_class.__init__ = init_with_default_filters
     dialog_class.rebuild_table = rebuild_table_with_defaults
     dialog_class.apply_filter = apply_classification_filter
+    dialog_class.collect_attachments = collect_attachments_with_metadata
     dialog_class.table_item_changed = table_item_changed_with_defaults
     dialog_class.accept_selection = accept_selection_with_defaults
     dialog_class.refresh_category_browser = refresh_category_browser
     dialog_class.open_attachment_category = open_attachment_category
     dialog_class.back_attachment_category = back_attachment_category
     dialog_class.prepare_default_selections = prepare_default_selections
+    dialog_class.rematch_selected_for_dimensions = rematch_selected_for_dimensions
     dialog_class.build_default_matches = build_default_matches
     dialog_class.toggle_default_selection = toggle_default_selection
     dialog_class.default_card_state = default_card_state

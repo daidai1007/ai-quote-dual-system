@@ -87,10 +87,11 @@ def quick_discount_breakdown(
         if quote.get("attachment_fee") is not None
         else listed_attachment_total
     )
+    door_variant_surcharge = _number(quote.get("door_variant_surcharge"))
     base_price = (
         _number(quote.get("base_price"))
         if quote.get("base_price") is not None
-        else raw_total - attachment_fee
+        else raw_total - attachment_fee - door_variant_surcharge
     )
     listed_eligible = sum(
         quick_attachment_line_amount(item)
@@ -103,6 +104,7 @@ def quick_discount_breakdown(
     discounted_total = (
         (base_price + eligible_attachment_total) * factor
         + original_price_attachment_total
+        + door_variant_surcharge
     )
     return {
         "raw_total": raw_total,
@@ -111,6 +113,7 @@ def quick_discount_breakdown(
         "listed_attachment_total": listed_attachment_total,
         "eligible_attachment_total": eligible_attachment_total,
         "original_price_attachment_total": original_price_attachment_total,
+        "door_variant_surcharge": door_variant_surcharge,
         "discount": factor,
         "discounted_total": discounted_total,
     }
