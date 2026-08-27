@@ -656,6 +656,12 @@ def money(value) -> str:
     return f"{float(value):,.2f} 元"
 
 
+def formula_display_number(value) -> str:
+    """Format formula-workbook outputs with the workbook's one-decimal precision."""
+
+    return f"{float(value):.1f}"
+
+
 class ApiWorker(QThread):
     succeeded = Signal(dict)
     failed = Signal(str)
@@ -2842,8 +2848,12 @@ class MainWindow(QMainWindow):
             )
             if not values:
                 raise ValueError(f"数据库模板未返回 {code} 的重量和喷涂面积")
-            self.weight_edit.setText(f"{values[0]:.6f}".rstrip("0").rstrip("."))
-            self.area_edit.setText(f"{values[1]:.6f}".rstrip("0").rstrip("."))
+            # The authoritative material workbook displays and prices both
+            # outputs to one decimal place (for example 80.7 kg and 8.6 m²).
+            # Keep the editable quote inputs on that same precision so the
+            # downstream formula quote uses exactly what operators see.
+            self.weight_edit.setText(formula_display_number(values[0]))
+            self.area_edit.setText(formula_display_number(values[1]))
         except Exception as exc:
             self.weight_edit.clear(); self.area_edit.clear()
             self.risk_label.setStyleSheet("color:#b45309;")
@@ -2939,7 +2949,7 @@ class MainWindow(QMainWindow):
         quick = self.current_result["quick"]
         values = {"material": formula.get("material_cost"), "auxiliary": formula.get("auxiliary_cost"), "labor": formula.get("labor_cost"), "attachment": formula.get("attachment_fee"), "spray": formula.get("spray_cost"), "management": formula.get("management_fee")}
         for key, value in values.items(): self.formula_labels[key].setText(money(value))
-        area = formula.get("product_area_m2"); self.formula_labels["area"].setText("—" if area is None else f"{float(area):,.6f} m²")
+        area = formula.get("product_area_m2"); self.formula_labels["area"].setText("—" if area is None else f"{float(area):,.1f} m²")
         formula_total = formula.get("total_cost"); self.formula_labels["total"].setText(money(None if formula_total is None else float(formula_total) * self.formula_discount.value()))
         self.quick_labels["base_price"].setText(money(quick.get("base_price"))); self.quick_labels["attachment"].setText(money(quick.get("attachment_fee")))
         matched = quick.get("matched_experience") or {}; dims = [matched.get("reference_width_mm"), matched.get("reference_height_mm"), matched.get("reference_depth_mm")]

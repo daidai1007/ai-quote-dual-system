@@ -26,6 +26,7 @@ class DoubleSpin(Widget):
         self.special = None
         self.placeholder = None
         self.blocked = False
+        self.enabled = True
 
     def value(self):
         return self._value
@@ -39,6 +40,9 @@ class DoubleSpin(Widget):
 
     def setSpecialValueText(self, value):
         self.special = value
+
+    def setEnabled(self, value):
+        self.enabled = bool(value)
 
     def lineEdit(self):
         return self
@@ -124,6 +128,7 @@ spec.loader.exec_module(layout_refresh)
 
 from attachment_category_browser import (  # noqa: E402
     DEFAULT_A4_FOLDER,
+    DEFAULT_COPPER_BUSBAR,
     DEFAULT_DOOR_REINFORCEMENT,
     DEFAULT_DOOR_LIMITER,
     DEFAULT_GROUND_WIRE,
@@ -140,6 +145,7 @@ from attachment_category_browser import (  # noqa: E402
     final_attachment_quantity,
     is_jp_product,
     match_default_a4_folder,
+    match_default_copper_busbar,
     match_default_door_reinforcement,
     match_default_door_limiter,
     match_default_ground_wire,
@@ -170,6 +176,7 @@ assert LEVEL1_ORDER[:11] == (
     "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
     "门限位器", "门加强筋", "配置变形", "门变形",
 )
+assert LEVEL1_ORDER.index("接地线") < LEVEL1_ORDER.index("铜排") < LEVEL1_ORDER.index("孔承板")
 mixed_options = category_options(
     [
         {"category_level1": "安装板", "category_level2": "JK安装板"},
@@ -289,6 +296,12 @@ for separator in ("×", "x", "X", "*", "/"):
     assert compatible["height_mm"] == 800
     assert compatible["base_height_mm"] == 100
 assert parse_ganged_specification("(200+300)x600/(800+100)")["split_count"] == 2
+reported_ganged = parse_ganged_specification("(600+1800) *200* (2000+200)")
+assert reported_ganged is not None
+assert [subcabinet_specification(row) for row in reported_ganged["rows"]] == [
+    "600×200×（2000+200）",
+    "1800×200×（2000+200）",
+]
 assert parse_ganged_specification("200×600×600") is None
 assert parse_ganged_specification("(200＋200)×600×600") is None
 door_rows = [
@@ -331,6 +344,7 @@ default_catalog = [
     {"attachment_price_id": 9, "item_name": "门加强筋", "category_level1": "门加强筋"},
     {"attachment_price_id": 10, "item_name": "接地线", "model_code": "红绿线", "category_level1": "接地线", "category_level2": "红绿线"},
     {"attachment_price_id": 11, "item_name": "接地线", "model_code": "编织带", "category_level1": "接地线", "category_level2": "编织带"},
+    {"attachment_price_id": 12, "item_name": "铜排", "model_code": "所有型号", "category_level1": "铜排", "price": 50, "unit": "件"},
     {"attachment_price_id": 7, "item_name": "侧板", "model_code": "JP681960", "category_level1": "侧板", "height_mm": 1900, "depth_mm": 600},
     {"attachment_price_id": 8, "item_name": "侧板", "model_code": "JP682060", "category_level1": "侧板", "height_mm": 2000, "depth_mm": 600},
 ]
@@ -339,6 +353,10 @@ assert match_default_a4_folder(default_catalog)["attachment_price_id"] == 5
 assert match_default_door_limiter(default_catalog)["attachment_price_id"] == 6
 assert match_default_door_reinforcement(default_catalog)["attachment_price_id"] == 9
 assert match_default_ground_wire(default_catalog)["attachment_price_id"] == 10
+assert match_default_copper_busbar(default_catalog)["attachment_price_id"] == 12
+assert match_default_copper_busbar(default_catalog + [{
+    "attachment_price_id": 13, "item_name": "铜排", "category_level1": "铜排",
+}]) is None
 assert match_jp_side_panel(default_catalog, 2000, 600)["attachment_price_id"] == 8
 assert match_jp_side_panel(default_catalog, 2000, 800) is None
 assert is_jp_product("JP") and is_jp_product("JP_SINGLE") and not is_jp_product("JS_SINGLE")
@@ -346,8 +364,12 @@ assert default_rule_for_item({"item_name": "A4资料盒"}) == DEFAULT_A4_FOLDER
 assert default_rule_for_item({"item_name": "门限位器"}) == DEFAULT_DOOR_LIMITER
 assert default_rule_for_item({"item_name": "门加强筋"}) == DEFAULT_DOOR_REINFORCEMENT
 assert default_rule_for_item({"item_name": "接地线", "model_code": "红绿线"}) == DEFAULT_GROUND_WIRE
+assert default_rule_for_item({"item_name": "铜排", "category_level1": "铜排"}) == DEFAULT_COPPER_BUSBAR
 assert default_rule_for_item({"item_name": "照明灯/行程开关"}) == DEFAULT_LIGHT_SWITCH
 assert default_rule_for_item({"item_name": "侧板", "model_code": "JP682060"}) == DEFAULT_JP_SIDE_PANEL
+assert final_attachment_quantity(
+    {"item_name": "铜排", "category_level1": "铜排", "quantity": 2}, 3, 4
+) == 24
 
 
 class ManualWindow:
@@ -380,6 +402,25 @@ assert manual.calls == ["clear", "formula", "history", "ready"]
 manual.active_drawing = {"name": "drawing.pdf"}
 assert not layout_refresh._sync_manual_specification_to_dimensions(manual, "900*400*1400")
 assert manual.width_spin.value() == 1200
+
+ganged_manual = ManualWindow()
+ganged_manual.door_counts = lambda: (1, 0)
+ganged_manual.attachments = [
+    {"item_name": "门限位器", "category_level1": "门限位器", "quantity": 1},
+]
+ganged_manual.update_attachment_view = lambda: ganged_manual.calls.append("attachments")
+assert layout_refresh._sync_quote_specification(
+    ganged_manual, "(600+1800) *200* (2000+200)"
+)
+assert [subcabinet_specification(row) for row in ganged_manual.ganged_cabinets] == [
+    "600×200×（2000+200）",
+    "1800×200×（2000+200）",
+]
+assert (ganged_manual.width_spin.value(), ganged_manual.depth_spin.value(), ganged_manual.height_spin.value()) == (
+    600, 200, 2000,
+)
+assert final_attachment_quantity(ganged_manual.attachments[0], 1, len(ganged_manual.ganged_cabinets)) == 2
+assert "attachments" in ganged_manual.calls
 
 
 class Calculator:
@@ -421,9 +462,45 @@ class FormulaWindow:
 formula = FormulaWindow()
 assert layout_refresh._apply_nonstandard_formula_ratio(formula)
 expected_ratio = (1200 + 1800 + 600) / (1000 + 1800 + 600)
-assert abs(float(formula.weight_edit.value) - 100 * expected_ratio) < 1e-6
-assert abs(float(formula.area_edit.value) - 20 * expected_ratio) < 1e-6
+assert formula.weight_edit.value == f"{100 * expected_ratio:.1f}"
+assert formula.area_edit.value == f"{20 * expected_ratio:.1f}"
 assert abs(formula._nonstandard_perimeter_ratio - expected_ratio) < 1e-12
+
+
+class GangedPayloadCalculator:
+    @staticmethod
+    def calculate(_code, width, _height, _depth, _single, _double):
+        return (80.72750144609303, 8.557817499999016) if width == 800 else (
+            20.349, 0.949,
+        )
+
+
+class GangedPayloadWindow:
+    ganged_cabinets = [
+        {
+            "width_mm": 800, "depth_mm": 800, "height_mm": 800,
+            "single_door_count": 1, "double_door_count": 0,
+        },
+        {
+            "width_mm": 500, "depth_mm": 180, "height_mm": 500,
+            "single_door_count": 1, "double_door_count": 0,
+        },
+    ]
+    product_combo = Combo("JS")
+    product_catalog = {"JS": {"codes": {"SINGLE": "JS_SINGLE"}}}
+    material_combo = Combo("SECC")
+    coating_combo = Combo("orange")
+    quote_date = None
+    formula_calculator = GangedPayloadCalculator()
+
+
+ganged_payloads, ganged_weight, ganged_area = layout_refresh._build_ganged_quote_payloads(
+    GangedPayloadWindow()
+)
+assert [row["base_material_weight_kg"] for row in ganged_payloads] == [80.7, 20.3]
+assert [row["product_area_m2"] for row in ganged_payloads] == [8.6, 0.9]
+assert ganged_weight == 101.0
+assert ganged_area == 9.5
 
 
 source = (ROOT / "desktop_client" / "main.py").read_text(encoding="utf-8")
@@ -660,7 +737,7 @@ approved_quick_categories = {
 }
 for item_name, category in approved_quick_categories.items():
     assert quick_discount_category({"item_name": item_name}) == category
-for item_name in ("风机", "门限位器", "接地线", "文件夹", "三排纵梁", "安装板单发", "JK安装板单发", "运费"):
+for item_name in ("风机", "门限位器", "接地线", "铜排", "文件夹", "三排纵梁", "安装板单发", "JK安装板单发", "运费"):
     assert quick_discount_category({"item_name": item_name}) is None
 
 quick_breakdown = quick_discount_breakdown(

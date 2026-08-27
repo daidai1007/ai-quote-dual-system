@@ -73,6 +73,39 @@ attachment_dialog_class.load_catalog = lambda self, _api_url: None
 runtime_calculator = namespace["FormulaDatabaseCalculator"]()
 assert runtime_calculator.DETAIL_ROWS["JP_SINGLE"][:3] == (5, 26, 29)
 assert runtime_calculator.DOOR_CONTROL_CELLS["JE_SINGLE"] == ("B16", "B17")
+runtime_calculator.load_template({
+    "template": {
+        "template_code": "JS_SINGLE",
+        "option_cells": {"defaults": {"B14": 1.5}},
+        "rules": [{
+            "source_row_no": 5,
+            "raw_rule": {
+                "values": [],
+                "formulas": [
+                    "", "",
+                    '=IF(AND(B14=1.5,1000>=B8>=350,B7<1000),"1","2")',
+                ],
+            },
+            "include_material_cost": False,
+            "include_spray_area": False,
+        }],
+    }
+})
+assert "1000>=(B8>=350)" in runtime_calculator.sheets["JS_SINGLE"]["formulas"]["F5"]
+runtime_calculator.sheets["JS_SINGLE"] = {
+    "cells": {
+        "E5": "安装纵梁", "H5": 2, "M5": 1.07794944,
+        "N5": "镀锌板", "Y5": 0,
+    },
+    "formulas": {},
+}
+runtime_weight, runtime_area = runtime_calculator.calculate(
+    "JS_SINGLE", 800, 800, 800, 1, 0
+)
+assert abs(runtime_weight - 1.07794944) < 1e-10, runtime_weight
+assert runtime_area == 0, runtime_area
+assert layout_refresh._formula_workbook_value(80.72750144609303) == "80.7"
+assert layout_refresh._formula_workbook_value(8.557817499999016) == "8.6"
 runtime_calculator.sheets = {
     "JE_SINGLE": {
         "cells": {"H5": 7, "M5": 12, "N5": "", "Y5": 1},
@@ -213,6 +246,14 @@ attachment_dialog.catalog = [
         "category_level2": "编织带",
     },
     {
+        "attachment_price_id": 14,
+        "item_name": "铜排",
+        "model_code": "所有型号",
+        "price": 50,
+        "unit": "件",
+        "category_level1": "铜排",
+    },
+    {
         "item_name": "保留配置项",
         "price": 10,
         "category_level1": "配置变形",
@@ -230,7 +271,7 @@ attachment_dialog.catalog = [
         "category_level1": "未来分类",
     },
 ]
-assert attachment_dialog.prepare_default_selections() == 7
+assert attachment_dialog.prepare_default_selections() == 8
 limiter_attachment = next(
     item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
 )
@@ -265,7 +306,7 @@ def attachment_category_button(label: str):
 level1_buttons = attachment_category_buttons()
 assert [button.text().splitlines()[0] for button in level1_buttons] == [
     "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
-    "门限位器", "门加强筋", "配置变形", "门变形", "接地线", "未来分类",
+    "门限位器", "门加强筋", "配置变形", "门变形", "接地线", "铜排", "未来分类",
 ]
 positions = [
     attachment_dialog.category_grid.getItemPosition(
@@ -276,12 +317,13 @@ positions = [
 assert positions[:5] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)], positions
 assert attachment_dialog.table.isHidden()
 quick_match_buttons = attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
-assert len(quick_match_buttons) == 7
+assert len(quick_match_buttons) == 8
 assert any(button.text() == "默认已选择\n固定 · 高 100 mm" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\nA4资料盒" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n门加强筋 · 数量：1 个" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n红绿线" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n门限位器 · 数量：1 个" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择\n铜排 · 默认数量：1 件" for button in quick_match_buttons)
 
 # An installation board selected through category browsing is summarized back
 # on the first-level card.  Its circular sign toggle keeps the original price
@@ -390,7 +432,7 @@ app.processEvents()
 assert len([
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
     if button.isVisible()
-]) == 6
+]) == 7
 folder_cancelled = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchCancelled")
     if button.isVisible() and "A4资料盒" in button.text()
@@ -403,9 +445,43 @@ assert "a4_folder" not in attachment_dialog.default_selection_opt_outs
 assert len([
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
     if button.isVisible()
-]) == 7
+]) == 8
 if artifact_dir is not None:
     assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_categories.png"))
+
+copper_row = next(
+    row for row in range(attachment_dialog.table.rowCount())
+    if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "铜排"
+)
+attachment_dialog.table.item(copper_row, attachment_dialog.COL_QUANTITY).setText("3")
+app.processEvents()
+assert next(
+    item for item in attachment_dialog.attachments if item.get("item_name") == "铜排"
+)["quantity"] == 3
+attachment_dialog.rebuild_table()
+app.processEvents()
+assert attachment_dialog.table.item(copper_row, attachment_dialog.COL_QUANTITY).text() == "3"
+copper_manual = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchManual")
+    if button.isVisible() and "铜排" in button.text()
+)
+assert copper_manual.text() == "人工数量\n铜排 · 数量：3 件", copper_manual.text()
+copper_manual.click()
+app.processEvents()
+assert "copper_busbar" in attachment_dialog.default_selection_opt_outs
+attachment_dialog.rebuild_table()
+app.processEvents()
+assert not any(item.get("item_name") == "铜排" for item in attachment_dialog.attachments)
+copper_cancelled = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchCancelled")
+    if button.isVisible() and "铜排" in button.text()
+)
+copper_cancelled.click()
+app.processEvents()
+assert "copper_busbar" not in attachment_dialog.default_selection_opt_outs
+assert next(
+    item for item in attachment_dialog.attachments if item.get("item_name") == "铜排"
+)["quantity"] == 1
 
 attachment_category_button("文件夹").click()
 app.processEvents()
@@ -500,7 +576,7 @@ plain_dialog = attachment_dialog_class(
     target_dimensions=(760, 960, 500),
 )
 plain_dialog.catalog = [dict(item) for item in attachment_dialog.catalog]
-assert plain_dialog.prepare_default_selections() == 5
+assert plain_dialog.prepare_default_selections() == 6
 plain_dialog.rebuild_table()
 plain_dialog.show()
 app.processEvents()
@@ -510,7 +586,7 @@ assert any(label.text() == "快速匹配\n仅 JP 默认匹配" for label in plai
 assert sum(
     plain_dialog.table.item(row, plain_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
     for row in range(plain_dialog.table.rowCount())
-) == 5
+) == 6
 plain_dialog.close()
 plain_parent.close()
 attachment_dialog_class.load_catalog = original_attachment_load
@@ -519,6 +595,37 @@ window = namespace["MainWindow"]()
 window.resize(1519, 987)
 window.show()
 app.processEvents()
+
+window.attachments = [{
+    "item_name": "门限位器", "category_level1": "门限位器",
+    "quantity": 1, "unit_price": 25,
+}]
+window.quantity_spin.setValue(1)
+window.set_door_counts(1, 0)
+ganged_specification = "(600+1800) *200* (2000+200)"
+window.quote_spec_edit.setText(ganged_specification)
+window.quote_spec_edit.textEdited.emit(ganged_specification)
+app.processEvents()
+assert window.ganged_cabinet_table.rowCount() == 2
+assert [
+    window.ganged_cabinet_table.item(row, 1).text() for row in range(2)
+] == ["600×200×（2000+200）", "1800×200×（2000+200）"]
+assert not window.ganged_cabinet_panel.isHidden()
+ganged_door_rows = [
+    (
+        window.ganged_cabinet_table.cellWidget(row, 2).currentData(),
+        window.ganged_cabinet_table.cellWidget(row, 3).currentData(),
+    )
+    for row in range(2)
+]
+assert ganged_door_rows == [(1, 0), (1, 0)], ganged_door_rows
+assert "最终数量 2" in window.attachment_list.item(0).text(), window.attachment_list.item(0).text()
+plain_specification = "1000*600*1800"
+window.quote_spec_edit.setText(plain_specification)
+window.quote_spec_edit.textEdited.emit(plain_specification)
+app.processEvents()
+assert window.ganged_cabinet_table.rowCount() == 0
+assert window.ganged_cabinet_panel.isHidden()
 
 window.attachments = [{
     "item_name": "安装板", "quantity": 1, "matched_price": 100,
@@ -582,8 +689,10 @@ assert quick_price_columns, [
     window.summary_table.horizontalHeaderItem(column).text()
     for column in range(window.summary_table.columnCount())
 ]
-assert window.summary_table.item(0, quick_price_columns[0]).text() == "4,190.58"
-assert "8,381.15" in window.summary_quick_total.text(), window.summary_quick_total.text()
+assert window.summary_table.item(0, quick_price_columns[0]).text() == "4,150.58", (
+    window.summary_table.item(0, quick_price_columns[0]).text()
+)
+assert "8,301.15" in window.summary_quick_total.text(), window.summary_quick_total.text()
 window.draft_items = []
 window.refresh_summary()
 

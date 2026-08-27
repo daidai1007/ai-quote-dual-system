@@ -57,6 +57,7 @@ from attachment_category_browser import (
     DEFAULT_A4_FOLDER,
     DEFAULT_DOOR_REINFORCEMENT,
     DEFAULT_DOOR_LIMITER,
+    DEFAULT_COPPER_BUSBAR,
     DEFAULT_FIXED_BASE,
     DEFAULT_GROUND_WIRE,
     DEFAULT_JP_SIDE_PANEL,
@@ -75,6 +76,7 @@ from attachment_category_browser import (
     match_default_a4_folder,
     match_default_door_reinforcement,
     match_default_door_limiter,
+    match_default_copper_busbar,
     match_default_ground_wire,
     match_default_light_switch,
     match_door_transformation_defaults,
@@ -284,6 +286,21 @@ def _install_formula_cell_reference_guard(namespace: dict) -> None:
             formulas = sheet.get("formulas") if isinstance(sheet, dict) else None
             if not isinstance(formulas, dict):
                 return result
+            # Excel evaluates ``1000>=B8>=350`` as
+            # ``1000>=(B8>=350)``. Python treats it as a mathematical range
+            # comparison, which changes the JS side-panel branch for deep
+            # cabinets. Parenthesize the Excel right-hand comparison before
+            # the recovered V3 evaluator sees it.
+            chained_comparison = re.compile(
+                r"(?P<left>\d+(?:\.\d+)?)\s*(?P<left_op>>=|<=|>|<)\s*"
+                r"(?P<middle>\$?[A-Z]{1,3}\$?\d+)\s*"
+                r"(?P<right_op>>=|<=|>|<)\s*(?P<right>\d+(?:\.\d+)?)"
+            )
+            for ref, formula in list(formulas.items()):
+                formulas[ref] = chained_comparison.sub(
+                    r"\g<left>\g<left_op>(\g<middle>\g<right_op>\g<right>)",
+                    str(formula),
+                )
             for rule in template.get("rules") or []:
                 raw = rule.get("raw_rule") or {}
                 row = int(rule.get("source_row_no") or raw.get("source_row_no") or 0)
@@ -306,6 +323,72 @@ def _install_formula_cell_reference_guard(namespace: dict) -> None:
 
         calculator.load_template = load_template_with_dynamic_totals
         calculator._unified_formula_hydration_installed = True
+
+    if not getattr(calculator, "_workbook_weight_total_guard_installed", False):
+        original_evaluate_sheet = calculator._evaluate_sheet
+
+        def evaluate_sheet_with_workbook_weight_total(
+            self,
+            product_code,
+            width,
+            height,
+            depth,
+            single_door_count=1,
+            double_door_count=0,
+        ):
+            result = original_evaluate_sheet(
+                self,
+                product_code,
+                width,
+                height,
+                depth,
+                single_door_count,
+                double_door_count,
+            )
+            if not result:
+                return result
+            detail_values = getattr(self, "last_detail_values", None)
+            if not isinstance(detail_values, dict):
+                return result
+
+            weight = 0.0
+            is_jp = str(product_code).startswith("JP_")
+            for item_name, thickness, row_weight, treatment, _row_area in detail_values.values():
+                item_name = "" if item_name in (None, 0.0) else str(item_name)
+                treatment = "" if treatment in (None, 0.0) else str(treatment)
+                try:
+                    thickness_value = float(thickness or 0)
+                    row_weight_value = float(row_weight or 0)
+                except (TypeError, ValueError):
+                    continue
+                is_lock = "锁杆" in item_name
+                is_frame = "框架" in item_name
+                if treatment == "镀锌板":
+                    galvanized = (2.5,) if is_jp else (2, 2.5, 3)
+                    if any(abs(thickness_value - value) < 1e-6 for value in galvanized):
+                        weight += row_weight_value
+                elif is_lock:
+                    weight += row_weight_value
+                elif is_jp:
+                    if any(
+                        abs(thickness_value - value) < 1e-6
+                        for value in (1, 1.5, 2, 2.5, 3)
+                    ):
+                        weight += row_weight_value
+                elif (
+                    (abs(thickness_value - 1.5) < 1e-6 and not is_frame)
+                    or any(
+                        abs(thickness_value - value) < 1e-6
+                        for value in (2, 2.5, 3)
+                    )
+                ):
+                    weight += row_weight_value
+            if product_code == "JM":
+                weight *= 1.1
+            return max(weight, 0.0), result[1]
+
+        calculator._evaluate_sheet = evaluate_sheet_with_workbook_weight_total
+        calculator._workbook_weight_total_guard_installed = True
 
 # Cold-rolled sheet metal, drawing ink and inspection marks.  Keep the palette
 # compact so every state color has one stable meaning throughout the client.
@@ -349,6 +432,22 @@ def _safe_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _formula_workbook_value(value) -> str:
+    """Use the one-decimal precision displayed by the material workbook."""
+
+    return f"{float(value):.1f}"
+
+
+def _round_formula_workbook_fields(window) -> None:
+    for name in ("weight_edit", "area_edit"):
+        field = getattr(window, name, None)
+        if not isinstance(field, QLineEdit):
+            continue
+        value = _safe_float(field.text())
+        if value is not None:
+            field.setText(_formula_workbook_value(value))
 
 
 def _money_formatter(namespace: dict):
@@ -703,6 +802,13 @@ def _sync_manual_specification_to_dimensions(window, text: str, parser=None) -> 
     return True
 
 
+def _sync_quote_specification(window, text: str, parser=None) -> bool:
+    """Apply one specification edit to dimensions and horizontal-ganging state."""
+
+    _sync_manual_specification_to_dimensions(window, text, parser)
+    return _sync_ganged_specification(window, text)
+
+
 def _allowed_door_combinations(window) -> set[tuple[int, int]]:
     product_combo = getattr(window, "product_combo", None)
     if not isinstance(product_combo, QComboBox):
@@ -979,12 +1085,22 @@ def _enforce_product_door_combination(window, source: str) -> bool:
 def _ensure_ganged_cabinet_panel(window) -> None:
     if getattr(window, "ganged_cabinet_panel", None) is not None:
         return
+    specification = getattr(window, "quote_spec_edit", None)
     model_edit = getattr(window, "model_edit", None)
-    if not isinstance(model_edit, QLineEdit):
+    anchor = specification if isinstance(specification, QLineEdit) else model_edit
+    if not isinstance(anchor, QLineEdit):
         return
-    input_box = model_edit.parentWidget()
-    form = input_box.layout() if input_box is not None else None
+    anchor_parent = anchor.parentWidget()
+    form = anchor_parent.layout() if anchor_parent is not None else None
+    placement = "grid"
+    input_box = anchor_parent
+    anchor_block = None
     if not isinstance(form, QGridLayout):
+        anchor_block = anchor_parent
+        input_box = anchor_parent.parentWidget() if anchor_parent is not None else None
+        form = input_box.layout() if input_box is not None else None
+        placement = "vertical"
+    if not isinstance(form, (QGridLayout, QVBoxLayout)):
         return
 
     label = QLabel("并柜拆分", input_box)
@@ -1007,8 +1123,14 @@ def _ensure_ganged_cabinet_panel(window) -> None:
     table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
     layout.addWidget(hint)
     layout.addWidget(table)
-    form.addWidget(label, 11, 0)
-    form.addWidget(panel, 11, 1, 1, 3)
+    if placement == "grid":
+        form.addWidget(label, 11, 0)
+        form.addWidget(panel, 11, 1, 1, 3)
+    else:
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        insert_at = form.indexOf(anchor_block) + 1
+        form.insertWidget(insert_at, label)
+        form.insertWidget(insert_at + 1, panel)
     window.ganged_cabinet_label = label
     window.ganged_cabinet_panel = panel
     window.ganged_cabinet_hint = hint
@@ -1088,6 +1210,7 @@ def _sync_ganged_specification(window, text: str) -> bool:
         window.ganged_cabinets = []
         window.ganged_cabinet_count = 1
         window.ganged_cabinet_specification = ""
+        _render_ganged_cabinet_table(window)
         if panel is not None:
             panel.hide()
         if label is not None:
@@ -1197,8 +1320,17 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
                 double,
             )
         if local:
-            weights.append(float(local[0]))
-            areas.append(float(local[1]))
+            # Formula quotes use the one-decimal values displayed by the
+            # authoritative workbook.  Keep child-cabinet API inputs on the
+            # same precision as ordinary (non-ganged) quotes so identical
+            # cabinets cannot produce different costs solely because they
+            # travelled through the ganged path.
+            local = (
+                float(_formula_workbook_value(local[0])),
+                float(_formula_workbook_value(local[1])),
+            )
+            weights.append(local[0])
+            areas.append(local[1])
         else:
             local_complete = False
         payloads.append({
@@ -1212,8 +1344,8 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
             "width_mm": float(row["width_mm"]),
             "height_mm": float(row["height_mm"]),
             "depth_mm": float(row["depth_mm"]),
-            "base_material_weight_kg": float(local[0]) if local else None,
-            "product_area_m2": float(local[1]) if local else None,
+            "base_material_weight_kg": local[0] if local else None,
+            "product_area_m2": local[1] if local else None,
             "coating_type": coating_combo.currentData() if coating_combo is not None else None,
             "variant_code": variant,
             "single_door_count": single,
@@ -1263,12 +1395,12 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         if weight_total is None:
             window.weight_edit.clear()
         else:
-            window.weight_edit.setText(f"{weight_total:.6f}".rstrip("0").rstrip("."))
+            window.weight_edit.setText(_formula_workbook_value(weight_total))
         result_area = result.get("ganged_area_m2")
         if result_area is None:
             window.area_edit.clear()
         else:
-            window.area_edit.setText(f"{float(result_area):.6f}".rstrip("0").rstrip("."))
+            window.area_edit.setText(_formula_workbook_value(result_area))
         window.show_result(result)
 
     worker.succeeded.connect(show_ganged_result)
@@ -1323,7 +1455,7 @@ def _configure_quote_rule_interactions(window, parser=None) -> None:
         )
         if not getattr(specification, "_manual_dimension_sync_connected", False):
             specification.textEdited.connect(
-                lambda value: _sync_manual_specification_to_dimensions(window, value, parser)
+                lambda value: _sync_quote_specification(window, value, parser)
             )
             specification._manual_dimension_sync_connected = True
 
@@ -1440,8 +1572,8 @@ def _apply_nonstandard_formula_ratio(window) -> bool:
     if not values:
         return False
     ratio = (input_width + input_height + input_depth) / denominator
-    window.weight_edit.setText(f"{float(values[0]) * ratio:.6f}".rstrip("0").rstrip("."))
-    window.area_edit.setText(f"{float(values[1]) * ratio:.6f}".rstrip("0").rstrip("."))
+    window.weight_edit.setText(_formula_workbook_value(float(values[0]) * ratio))
+    window.area_edit.setText(_formula_workbook_value(float(values[1]) * ratio))
     source = getattr(window, "quote_parameter_source", None)
     if isinstance(source, QLabel):
         source.setText("来源：数据库标准尺寸·周长比例")
@@ -2409,6 +2541,9 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
 
         self.current_result["formula"] = rendered
         original_refresh(self)
+        area_value = _safe_float(rendered.get("product_area_m2"))
+        if area_value is not None and "area" in labels:
+            labels["area"].setText(f"{area_value:,.1f} m²")
         if _ganged_count(self) > 1:
             formula_line = _formula_order_line_breakdown({
                 "formula": rendered,
@@ -2984,6 +3119,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         "门限位器": DEFAULT_DOOR_LIMITER,
         "门加强筋": DEFAULT_DOOR_REINFORCEMENT,
         "接地线": DEFAULT_GROUND_WIRE,
+        "铜排": DEFAULT_COPPER_BUSBAR,
     }
 
     def specification_text(self) -> str:
@@ -3098,6 +3234,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             DEFAULT_DOOR_LIMITER: match_default_door_limiter(catalog),
             DEFAULT_DOOR_REINFORCEMENT: match_default_door_reinforcement(catalog),
             DEFAULT_GROUND_WIRE: match_default_ground_wire(catalog),
+            DEFAULT_COPPER_BUSBAR: match_default_copper_busbar(catalog),
             DEFAULT_JP_SIDE_PANEL: side,
         }
         door_counts = selected_door_counts(self)
@@ -3397,6 +3534,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             detail = f"门加强筋 · 数量：{quantity} 个"
         elif rule == DEFAULT_GROUND_WIRE:
             detail = "红绿线"
+        elif rule == DEFAULT_COPPER_BUSBAR:
+            detail = "铜排 · 默认数量：1 件"
         elif rule == DEFAULT_JP_SIDE_PANEL:
             if not is_jp_product(product_code):
                 return "快速匹配\n仅 JP 默认匹配", "attachmentQuickMatch", "当前产品不是 JP，不自动选择侧板", rule, False
@@ -3410,6 +3549,23 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             return f"默认选择未匹配\n{detail}", "attachmentQuickMatchMissing", missing_tip, rule, False
         selected = checked_sources(self, rule)
         if any(same_choice(self, item, candidate) for item in selected):
+            if rule == DEFAULT_COPPER_BUSBAR:
+                selected_attachment = next(
+                    (
+                        item for item in getattr(self, "attachments", [])
+                        if isinstance(item, dict) and default_rule_for_item(item) == rule
+                    ),
+                    {},
+                )
+                quantity = selected_attachment.get("quantity", 1)
+                if str(quantity) not in {"1", "1.0"}:
+                    return (
+                        f"人工数量\n铜排 · 数量：{quantity} 件",
+                        "attachmentQuickMatchManual",
+                        "当前数量由人工修改；进入分类可继续修改或取消",
+                        rule,
+                        True,
+                    )
             if rule in getattr(self, "default_quantity_manual_overrides", set()):
                 selected_attachment = next(
                     (
@@ -3771,6 +3927,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             check_item = self.table.item(item.row(), self.COL_CHECK)
             source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else None
             rule = default_rule_for_item(source) if isinstance(source, dict) else None
+            if check_item is not None and check_item.checkState() == Qt.CheckState.Checked:
+                # Persist every valid manual quantity before category/search/
+                # dimension refreshes rebuild the table. Door-derived defaults
+                # additionally track whether the operator overrode the matrix.
+                sync_attachments_from_table(self)
             if (
                 rule in (DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT)
                 and check_item is not None
@@ -4317,6 +4478,7 @@ def install_layout_refresh(namespace: dict) -> None:
             loaded = original_formula_template_loaded(self, *args, **kwargs)
             try:
                 _apply_nonstandard_formula_ratio(self)
+                _round_formula_workbook_fields(self)
             except Exception as error:
                 self.weight_edit.clear()
                 self.area_edit.clear()

@@ -23,9 +23,31 @@ test("quick quote discounts only the nine approved attachment categories", () =>
   for (const [itemName, metadata, expected] of approved) {
     assert.equal(quickDiscountCategory({ item_name: itemName, ...metadata }), expected);
   }
-  for (const itemName of ["风机", "门限位器", "接地线", "文件夹", "三排纵梁", "安装板单发", "JK安装板单发", "运费"]) {
+  for (const itemName of ["风机", "门限位器", "接地线", "铜排", "文件夹", "三排纵梁", "安装板单发", "JK安装板单发", "运费"]) {
     assert.equal(quickDiscountCategory({ item_name: itemName }), null, itemName);
   }
+});
+
+test("copper busbar stays at original price and scales with cabinet and ganged counts", () => {
+  const copper = {
+    item_name: "铜排",
+    category_level1: "铜排",
+    quantity: 1,
+    unit_price: 50,
+  };
+  assert.equal(quickDiscountCategory(copper), null);
+  assert.equal(effectiveAttachmentQuantity(copper, 2, 3), 6);
+  const result = quickOrderLineBreakdown({
+    quote: { base_price: 1000, attachment_fee: 50, total_cost: 1050 },
+    attachments: [copper],
+    discount: 0.9,
+    cabinetQuantity: 2,
+    gangedCabinetCount: 3,
+  });
+  assert.equal(result.eligibleAttachmentTotal, 0);
+  assert.equal(result.originalPriceAttachmentTotal, 300);
+  assert.equal(result.lineTotal, 2100);
+  assert.equal(result.equivalentUnitTotal, 1050);
 });
 
 test("quick quote keeps non-approved attachments at original price", () => {
@@ -71,6 +93,7 @@ test("negative installation board remains in the discount base", () => {
 test("cabinet quantity multiplies normal attachments but not the three manual categories", () => {
   assert.equal(effectiveAttachmentQuantity({ item_name: "门限位器", quantity: 2 }, 3), 6);
   assert.equal(effectiveAttachmentQuantity({ item_name: "安装板", quantity: 1 }, 3), 3);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "铜排", category_level1: "铜排", quantity: 2 }, 3), 6);
   assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3), 2);
   assert.equal(effectiveAttachmentQuantity({ item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1 }, 3), 1);
   assert.equal(effectiveAttachmentQuantity({ item_name: "KA2206风机", quantity: 2 }, 3), 2);
@@ -80,6 +103,7 @@ test("cabinet quantity multiplies normal attachments but not the three manual ca
 test("ganged cabinet count multiplies normal attachments in addition to order quantity", () => {
   assert.equal(effectiveAttachmentQuantity({ item_name: "门限位器", quantity: 2 }, 3, 4), 24);
   assert.equal(effectiveAttachmentQuantity({ item_name: "安装板", quantity: 1 }, 2, 3), 6);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "铜排", category_level1: "铜排", quantity: 2 }, 2, 3), 12);
   assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3, 4), 2);
   assert.equal(effectiveAttachmentQuantity({ item_name: "门变形", category_level1: "门变形", quantity: 1 }, 3, 4), 1);
   assert.equal(effectiveAttachmentQuantity({ item_name: "风机", category_level1: "风机滤网", quantity: 2 }, 3, 4), 2);

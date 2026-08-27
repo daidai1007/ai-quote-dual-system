@@ -34,6 +34,7 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(overlay, /match_default_a4_folder/);
   assert.match(overlay, /match_default_door_reinforcement/);
   assert.match(overlay, /match_default_ground_wire/);
+  assert.match(overlay, /match_default_copper_busbar/);
   assert.match(overlay, /attachmentQuickMatchSelected/);
   assert.match(overlay, /attachmentQuickMatchCancelled/);
   assert.match(overlay, /def toggle_default_selection/);
@@ -44,6 +45,8 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(overlay, /filter_path = \(\) if needle and not selected else selected/);
   assert.match(overlay, /self\.search_edit\.setVisible\(True\)/);
   assert.match(overlay, /panel_layout\.insertWidget\(0, search\)/);
+  assert.match(overlay, /def _sync_quote_specification\(window, text: str, parser=None\)/);
+  assert.match(overlay, /lambda value: _sync_quote_specification\(window, value, parser\)/);
   assert.match(overlay, /attachmentPriceSignPositive/);
   assert.match(overlay, /attachmentPriceSignNegative/);
   assert.match(overlay, /attachment_price_sign/);
@@ -56,7 +59,7 @@ test('attachment dialog drills through four-column category cards before showing
   const approvedOrder = [
     '底座', '侧板', '三排纵梁', '安装板', '灯开关', '文件夹', '风机滤网',
     '门限位器', '门加强筋', '配置变形', '门变形', '内门', '玻璃门', '安装条', '防雨顶',
-    '接地线', '孔承板', '控制柜附件',
+    '接地线', '铜排', '孔承板', '控制柜附件',
   ];
   let previousIndex = -1;
   for (const category of approvedOrder) {
@@ -74,6 +77,7 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(hierarchy, /\(1, 1\): 3/);
   assert.match(hierarchy, /def match_default_door_reinforcement/);
   assert.match(hierarchy, /def match_default_ground_wire/);
+  assert.match(hierarchy, /def match_default_copper_busbar/);
   assert.match(hierarchy, /def match_jp_side_panel/);
   assert.match(hierarchy, /def match_attachment_size/);
   assert.match(hierarchy, /def completed_size_dimensions/);

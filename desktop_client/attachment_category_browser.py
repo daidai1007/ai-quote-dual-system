@@ -26,6 +26,7 @@ LEVEL1_ORDER = (
     "安装条",
     "防雨顶",
     "接地线",
+    "铜排",
     "孔承板",
     "控制柜附件",
 )
@@ -40,6 +41,7 @@ DEFAULT_DOOR_LIMITER = "door_limiter"
 DEFAULT_JP_SIDE_PANEL = "jp_side_panel"
 DEFAULT_DOOR_REINFORCEMENT = "door_reinforcement"
 DEFAULT_GROUND_WIRE = "ground_wire"
+DEFAULT_COPPER_BUSBAR = "copper_busbar"
 DOOR_TRANSFORMATION_RULE_PREFIX = "door_transformation:"
 DOOR_TRANSFORMATION_NAMES = (
     "JS、JP后背板改为单开门",
@@ -219,6 +221,15 @@ def match_default_ground_wire(items: Iterable[dict]) -> dict | None:
     return _unique_match(items, is_red_green_wire)
 
 
+def match_default_copper_busbar(items: Iterable[dict]) -> dict | None:
+    """Return the sole active catalogue candidate in the copper-busbar category."""
+
+    return _unique_match(
+        items,
+        lambda item: category_value(item, 0) == "铜排",
+    )
+
+
 def is_jp_product(value) -> bool:
     code = str(value or "").strip().upper()
     return code == "JP" or code.startswith("JP_")
@@ -387,6 +398,8 @@ def default_rule_for_item(item: dict) -> str | None:
         return DEFAULT_DOOR_REINFORCEMENT
     if category == "接地线" or "接地线" in name:
         return DEFAULT_GROUND_WIRE
+    if category == "铜排" or name == "铜排":
+        return DEFAULT_COPPER_BUSBAR
     if category == "侧板" or name == "侧板" or model.startswith("JP68"):
         return DEFAULT_JP_SIDE_PANEL
     return None

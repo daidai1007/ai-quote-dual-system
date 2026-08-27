@@ -91,6 +91,7 @@ assert height_fallback["attachment_price_id"] == 33
 for name in ("固定底座", "活动底座", "侧板", "安装板", "内门", "玻璃门", "通风顶罩", "防雨顶", "分段板", "JK安装板"):
     assert size_match_attachment_name({"item_name": name}) == name
 assert size_match_attachment_name({"item_name": "门限位器"}) is None
+assert size_match_attachment_name({"item_name": "铜排", "category_level1": "铜排"}) is None
 assert size_match_attachment_name({"item_name": "安装板单发"}) is None
 
 expected_quantities = {(1, 0): 1, (2, 0): 2, (0, 1): 2, (0, 2): 4, (1, 1): 3}
