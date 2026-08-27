@@ -11,9 +11,10 @@ import json
 import re
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QTimer, Qt
+from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
@@ -45,8 +46,14 @@ from quote_defaults import (
     restore_combo_selection,
 )
 from quote_remark_rules import replace_door_configuration_phrase
-from quick_discount_rules import quick_discount_breakdown
+from quick_discount_rules import (
+    effective_attachment_line_amount,
+    quick_attachment_line_amount,
+    quick_discount_breakdown,
+    quick_order_line_breakdown,
+)
 from attachment_category_browser import (
+    DOOR_TRANSFORMATION_RULE_PREFIX,
     DEFAULT_A4_FOLDER,
     DEFAULT_DOOR_REINFORCEMENT,
     DEFAULT_DOOR_LIMITER,
@@ -60,6 +67,8 @@ from attachment_category_browser import (
     default_rule_for_item,
     door_limiter_default_quantity,
     door_reinforcement_default_quantity,
+    door_transformation_default_names,
+    final_attachment_quantity,
     is_base_selection,
     is_jp_product,
     match_attachment_size,
@@ -68,12 +77,19 @@ from attachment_category_browser import (
     match_default_door_limiter,
     match_default_ground_wire,
     match_default_light_switch,
+    match_door_transformation_defaults,
     match_fixed_base,
     match_jp_side_panel,
     parse_base_specification,
     SIZE_MATCH_METADATA_KEYS,
     size_match_group_key,
     valid_selection_prefix,
+)
+from ganged_cabinet_rules import (
+    cascade_door_counts,
+    ganged_split_count,
+    parse_ganged_specification,
+    subcabinet_specification,
 )
 
 
@@ -83,6 +99,129 @@ FORMULA_MULTI_DOOR_FAMILIES = {"JS", "JP", "JA", "JE"}
 QUOTE_WIDE_BREAKPOINT = 1280
 QUOTE_STACK_BREAKPOINT = 1050
 QUOTE_ACTION_DOCK_HEIGHT = 62
+
+
+class _GangedQuoteWorker(QThread):
+    """Call the existing single-cabinet endpoint once per split cabinet."""
+
+    succeeded = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        url: str,
+        payloads: list[dict],
+        attachment_total: float,
+        headers_factory,
+        weight_total: float | None,
+        area_total: float | None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.url = url
+        self.payloads = payloads
+        self.attachment_total = float(attachment_total)
+        self.headers_factory = headers_factory
+        self.weight_total = weight_total
+        self.area_total = area_total
+
+    @staticmethod
+    def _sum(results: list[dict], section: str, key: str) -> float | None:
+        values = []
+        for result in results:
+            value = (result.get(section) or {}).get(key)
+            if value is None:
+                return None
+            try:
+                values.append(float(value))
+            except (TypeError, ValueError):
+                return None
+        return sum(values)
+
+    def run(self) -> None:
+        try:
+            results = []
+            for payload in self.payloads:
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                headers = (
+                    self.headers_factory(True)
+                    if callable(self.headers_factory)
+                    else {"Content-Type": "application/json; charset=utf-8"}
+                )
+                request = urllib.request.Request(
+                    self.url,
+                    data=body,
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    results.append(json.loads(response.read().decode("utf-8")))
+
+            formula_keys = (
+                "material_cost", "auxiliary_cost", "labor_cost", "spray_cost",
+                "management_fee",
+            )
+            formula = {
+                key: self._sum(results, "formula_cost", key) for key in formula_keys
+            }
+            formula_base_total = self._sum(results, "formula_cost", "total_cost")
+            formula_existing_attachment = self._sum(
+                results, "formula_cost", "attachment_fee"
+            ) or 0.0
+            if formula_base_total is not None:
+                formula_base_total -= formula_existing_attachment
+            formula["attachment_fee"] = self.attachment_total
+            formula["product_area_m2"] = (
+                self.area_total
+                if self.area_total is not None
+                else self._sum(results, "formula_cost", "product_area_m2")
+            )
+            formula["total_cost"] = (
+                formula_base_total + self.attachment_total
+                if formula_base_total is not None else None
+            )
+
+            quick_base = self._sum(results, "quick_quote", "base_price")
+            quick = {
+                "base_price": quick_base,
+                "attachment_fee": self.attachment_total,
+                "total_cost": (
+                    quick_base + self.attachment_total
+                    if quick_base is not None else None
+                ),
+                "match_method": "ganged_cabinet_sum",
+                "dimension_distance": sum(
+                    float((result.get("quick_quote") or {}).get("dimension_distance") or 0)
+                    for result in results
+                ),
+                "matched_experience": {
+                    "ganged_cabinet_count": len(results),
+                    "items": [
+                        (result.get("quick_quote") or {}).get("matched_experience")
+                        for result in results
+                    ],
+                },
+            }
+            risks = []
+            for result in results:
+                risks.extend(result.get("risk_flags") or [])
+            self.succeeded.emit({
+                "quote_id": self.payloads[0].get("quote_id", "") if self.payloads else "",
+                "formula_cost": formula,
+                "quick_quote": quick,
+                "risk_flags": risks,
+                "ganged_cabinet_results": results,
+                "ganged_weight_kg": self.weight_total,
+                "ganged_area_m2": formula.get("product_area_m2"),
+            })
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8")
+            except Exception:
+                detail = str(exc)
+            self.failed.emit(detail or f"HTTP {exc.code}")
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class _QuotedTextSafeCellPattern:
@@ -453,6 +592,73 @@ def _parse_specification_dimensions(text: str, parser=None) -> tuple[float, floa
     return width, height, depth
 
 
+def _ganged_rows(window) -> list[dict]:
+    rows = getattr(window, "ganged_cabinets", [])
+    return [dict(row) for row in rows if isinstance(row, dict)]
+
+
+def _ganged_count(window) -> int:
+    rows = _ganged_rows(window)
+    return len(rows) if len(rows) > 1 else 1
+
+
+def _product_code_for_door_counts(window, single: int, double: int) -> tuple[str | None, str | None]:
+    entry = getattr(window, "product_catalog", {}).get(
+        getattr(getattr(window, "product_combo", None), "currentData", lambda: None)() or "",
+        {},
+    )
+    codes = entry.get("codes") or {}
+    wanted = "SINGLE" if int(single) > 0 else "DOUBLE"
+    for variant in (wanted, "DEFAULT", "SINGLE", "DOUBLE"):
+        code = codes.get(variant)
+        if code:
+            return str(code), variant
+    return None, None
+
+
+def _normalize_door_pair(single: int, double: int, source: str) -> tuple[int, int]:
+    single, double = int(single), int(double)
+    if (single, double) in VALID_DOOR_COMBINATIONS:
+        return single, double
+    if source == "single":
+        if single == 0:
+            double = double if double in (1, 2) else 1
+        elif single == 1:
+            double = double if double in (0, 1) else 0
+        else:
+            double = 0
+    else:
+        if double == 0:
+            single = single if single in (1, 2) else 1
+        elif double == 1:
+            single = single if single in (0, 1) else 0
+        else:
+            single = 0
+    return (single, double) if (single, double) in VALID_DOOR_COMBINATIONS else (1, 0)
+
+
+def _door_transform_matches_for_window(window, catalog: list[dict]) -> dict[str, dict]:
+    product_code = (_door_transform_context(window) or ("", ()))[0]
+    rows = _ganged_rows(window)
+    if len(rows) <= 1:
+        counts = _current_door_counts(window)
+        return (
+            match_door_transformation_defaults(catalog, product_code, *counts)
+            if counts is not None else {}
+        )
+    matches: dict[str, dict] = {}
+    for row in rows:
+        counts = (
+            int(row.get("single_door_count", 1)),
+            int(row.get("double_door_count", 0)),
+        )
+        for rule, candidate in match_door_transformation_defaults(
+            catalog, product_code, *counts
+        ).items():
+            matches.setdefault(rule, candidate)
+    return matches
+
+
 def _sync_manual_specification_to_dimensions(window, text: str, parser=None) -> bool:
     """Populate dimension fields from a manual specification without recursion."""
 
@@ -580,6 +786,96 @@ def _sync_door_limiter_default_quantity(
     return _sync_door_count_default_quantities(window, previous_counts)
 
 
+def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
+    """Return a formula-quote line total with attachment quantity exceptions."""
+
+    quote = item.get("formula") or {}
+    attachments = [row for row in item.get("attachments", []) if isinstance(row, dict)]
+    cabinets = _safe_float(item.get("quantity")) or 1.0
+    split_count = float(ganged_split_count(item))
+    discount = _safe_float(item.get("formula_discount")) or 1.0
+    listed = sum(quick_attachment_line_amount(row) for row in attachments)
+    attachment_fee = _safe_float(quote.get("attachment_fee"))
+    if attachment_fee is None:
+        attachment_fee = listed
+    base = (_safe_float(quote.get("total_cost")) or 0.0) - attachment_fee
+    effective = sum(
+        effective_attachment_line_amount(row, cabinets, split_count)
+        for row in attachments
+    )
+    effective += (attachment_fee - listed) * cabinets * split_count
+    line_total = (base * cabinets + effective) * discount
+    return {
+        "cabinet_quantity": cabinets,
+        "ganged_cabinet_count": split_count,
+        "attachment_total": effective,
+        "line_total": line_total,
+        "equivalent_unit_total": line_total / cabinets if cabinets else line_total,
+    }
+
+
+def _door_transform_context(window) -> tuple[str, tuple] | None:
+    counts = _current_door_counts(window)
+    if counts is None:
+        return None
+    getter = getattr(window, "selected_product_code", None)
+    product_code = getter() if callable(getter) else _current_product_selection(window)
+    rows = _ganged_rows(window)
+    if len(rows) > 1:
+        door_rows = tuple(
+            (
+                int(row.get("single_door_count", 1)),
+                int(row.get("double_door_count", 0)),
+            )
+            for row in rows
+        )
+        return str(product_code or "").strip().upper(), door_rows
+    return str(product_code or "").strip().upper(), counts
+
+
+def _sync_door_transform_defaults(window) -> bool:
+    """Reapply door transformations only after a real family/count change."""
+
+    current = _door_transform_context(window)
+    previous = getattr(window, "attachment_door_transform_context", None)
+    if current is None or previous is None or tuple(previous) == current:
+        return False
+    window.attachment_door_transform_context = current
+    opt_outs = {
+        rule for rule in set(getattr(window, "attachment_default_opt_outs", set()))
+        if not str(rule).startswith(DOOR_TRANSFORMATION_RULE_PREFIX)
+    }
+    window.attachment_default_opt_outs = opt_outs
+    attachments = [
+        item for item in getattr(window, "attachments", [])
+        if not (
+            isinstance(item, dict)
+            and (
+                attachment_category_value(item, 0) == "门变形"
+                or str(default_rule_for_item(item) or "").startswith(
+                    DOOR_TRANSFORMATION_RULE_PREFIX
+                )
+            )
+        )
+    ]
+    catalog = [
+        item for item in getattr(window, "attachment_door_transform_catalog", [])
+        if isinstance(item, dict)
+    ]
+    matches = _door_transform_matches_for_window(window, catalog)
+    for candidate in matches.values():
+        selected = dict(candidate)
+        selected["quantity"] = 1
+        attachments.append(selected)
+    changed = attachments != getattr(window, "attachments", [])
+    window.attachments = attachments
+    if changed:
+        refresh = getattr(window, "update_attachment_view", None)
+        if callable(refresh):
+            refresh()
+    return changed
+
+
 def _set_default_door_combination(window) -> None:
     single = getattr(window, "single_door_combo", None)
     double = getattr(window, "double_door_combo", None)
@@ -680,7 +976,310 @@ def _enforce_product_door_combination(window, source: str) -> bool:
     return True
 
 
+def _ensure_ganged_cabinet_panel(window) -> None:
+    if getattr(window, "ganged_cabinet_panel", None) is not None:
+        return
+    model_edit = getattr(window, "model_edit", None)
+    if not isinstance(model_edit, QLineEdit):
+        return
+    input_box = model_edit.parentWidget()
+    form = input_box.layout() if input_box is not None else None
+    if not isinstance(form, QGridLayout):
+        return
+
+    label = QLabel("并柜拆分", input_box)
+    label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+    panel = QFrame(input_box)
+    panel.setObjectName("gangedCabinetPanel")
+    layout = QVBoxLayout(panel)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+    hint = QLabel(panel)
+    hint.setObjectName("gangedCabinetHint")
+    hint.setWordWrap(True)
+    table = QTableWidget(0, 4, panel)
+    table.setObjectName("gangedCabinetTable")
+    table.setHorizontalHeaderLabels(["序号", "拆分尺寸（宽×深×高）", "单门", "双门"])
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+    table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+    layout.addWidget(hint)
+    layout.addWidget(table)
+    form.addWidget(label, 11, 0)
+    form.addWidget(panel, 11, 1, 1, 3)
+    window.ganged_cabinet_label = label
+    window.ganged_cabinet_panel = panel
+    window.ganged_cabinet_hint = hint
+    window.ganged_cabinet_table = table
+    label.hide()
+    panel.hide()
+
+
+def _render_ganged_cabinet_table(window) -> None:
+    table = getattr(window, "ganged_cabinet_table", None)
+    if not isinstance(table, QTableWidget):
+        return
+    rows = _ganged_rows(window)
+    table.blockSignals(True)
+    table.setRowCount(len(rows))
+    for row_index, row in enumerate(rows):
+        index_item = QTableWidgetItem(str(row_index + 1))
+        index_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        size_item = QTableWidgetItem(subcabinet_specification(row))
+        size_item.setToolTip("并柜仅拆分宽度；深度、柜高和底座高度在各子柜间共用")
+        table.setItem(row_index, 0, index_item)
+        table.setItem(row_index, 1, size_item)
+        for column, key, source in (
+            (2, "single_door_count", "single"),
+            (3, "double_door_count", "double"),
+        ):
+            combo = QComboBox(table)
+            for count in (0, 1, 2):
+                combo.addItem(str(count), count)
+            wanted = int(row.get(key, 1 if source == "single" else 0))
+            combo.setCurrentIndex(combo.findData(wanted))
+            combo.currentIndexChanged.connect(
+                lambda _index, r=row_index, s=source: _ganged_door_changed(window, r, s)
+            )
+            table.setCellWidget(row_index, column, combo)
+    table.blockSignals(False)
+    table.setFixedHeight(min(42 + 34 * len(rows), 246))
+    hint = getattr(window, "ganged_cabinet_hint", None)
+    if isinstance(hint, QLabel):
+        hint.setText(
+            f"已拆分为 {len(rows)} 个子柜；报价按子柜分别计算后合并，"
+            "下方柜型数量表示整套并柜的台数。"
+        )
+
+
+def _set_ganged_controls_enabled(window, ganged: bool) -> None:
+    for name in ("width_spin", "height_spin", "depth_spin"):
+        field = getattr(window, name, None)
+        if isinstance(field, QDoubleSpinBox):
+            field.setEnabled(not ganged)
+    single = getattr(window, "single_door_combo", None)
+    double = getattr(window, "double_door_combo", None)
+    if ganged:
+        if isinstance(single, QComboBox):
+            single.setEnabled(False)
+        if isinstance(double, QComboBox):
+            double.setEnabled(False)
+        return
+    entry = getattr(window, "product_catalog", {}).get(
+        getattr(getattr(window, "product_combo", None), "currentData", lambda: None)() or "",
+        {},
+    )
+    enabled = bool(set((entry.get("codes") or {}).keys()) & {"SINGLE", "DOUBLE"})
+    if isinstance(single, QComboBox):
+        single.setEnabled(enabled)
+    if isinstance(double, QComboBox):
+        double.setEnabled(enabled)
+
+
+def _sync_ganged_specification(window, text: str) -> bool:
+    parsed = parse_ganged_specification(text)
+    panel = getattr(window, "ganged_cabinet_panel", None)
+    label = getattr(window, "ganged_cabinet_label", None)
+    previous = _ganged_rows(window)
+    if parsed is None:
+        was_ganged = len(previous) > 1
+        window.ganged_cabinets = []
+        window.ganged_cabinet_count = 1
+        window.ganged_cabinet_specification = ""
+        if panel is not None:
+            panel.hide()
+        if label is not None:
+            label.hide()
+        _set_ganged_controls_enabled(window, False)
+        if was_ganged:
+            refresh = getattr(window, "update_attachment_view", None)
+            if callable(refresh):
+                refresh()
+        return False
+
+    default_counts = _current_door_counts(window) or (1, 0)
+    rows = []
+    for index, dimensions in enumerate(parsed["rows"]):
+        old = previous[index] if index < len(previous) else {}
+        row = dict(dimensions)
+        row["single_door_count"] = int(old.get("single_door_count", default_counts[0]))
+        row["double_door_count"] = int(old.get("double_door_count", default_counts[1]))
+        rows.append(row)
+    window.ganged_cabinets = rows
+    window.ganged_cabinet_count = len(rows)
+    window.ganged_cabinet_specification = parsed["specification"]
+    first = rows[0]
+    for name, value in (
+        ("width_spin", first["width_mm"]),
+        ("height_spin", first["height_mm"]),
+        ("depth_spin", first["depth_mm"]),
+    ):
+        field = getattr(window, name, None)
+        if isinstance(field, QDoubleSpinBox):
+            blocked = field.blockSignals(True)
+            field.setValue(float(value))
+            field.blockSignals(blocked)
+    setter = getattr(window, "set_door_counts", None)
+    if callable(setter):
+        setter(first["single_door_count"], first["double_door_count"])
+    _set_ganged_controls_enabled(window, True)
+    if panel is not None:
+        panel.show()
+    if label is not None:
+        label.show()
+    _render_ganged_cabinet_table(window)
+    _sync_door_transform_defaults(window)
+    refresh = getattr(window, "update_attachment_view", None)
+    if callable(refresh):
+        refresh()
+    return True
+
+
+def _ganged_door_changed(window, row_index: int, source: str) -> None:
+    table = getattr(window, "ganged_cabinet_table", None)
+    rows = _ganged_rows(window)
+    if not isinstance(table, QTableWidget) or not (0 <= row_index < len(rows)):
+        return
+    single_combo = table.cellWidget(row_index, 2)
+    double_combo = table.cellWidget(row_index, 3)
+    if not isinstance(single_combo, QComboBox) or not isinstance(double_combo, QComboBox):
+        return
+    single, double = _normalize_door_pair(
+        int(single_combo.currentData() or 0),
+        int(double_combo.currentData() or 0),
+        source,
+    )
+    window.ganged_cabinets = cascade_door_counts(rows, row_index, single, double)
+    if row_index == 0:
+        setter = getattr(window, "set_door_counts", None)
+        if callable(setter):
+            setter(single, double)
+    _render_ganged_cabinet_table(window)
+    _sync_door_transform_defaults(window)
+    for method_name in ("clear_quote_result", "refresh_formula_inputs", "request_history_match"):
+        method = getattr(window, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except TypeError:
+                pass
+
+
+def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, float | None]:
+    rows = _ganged_rows(window)
+    if len(rows) <= 1:
+        return [], None, None
+    material_combo = getattr(window, "material_combo", None)
+    coating_combo = getattr(window, "coating_combo", None)
+    quote_date = getattr(window, "quote_date", None)
+    calculator = getattr(window, "formula_calculator", None)
+    weights: list[float] = []
+    areas: list[float] = []
+    local_complete = True
+    payloads = []
+    quote_prefix = "TMP" + datetime.now().strftime("%Y%m%d%H%M%S%f")[-12:]
+    for index, row in enumerate(rows):
+        single = int(row.get("single_door_count", 1))
+        double = int(row.get("double_door_count", 0))
+        code, variant = _product_code_for_door_counts(window, single, double)
+        if not code:
+            raise ValueError(f"第 {index + 1} 个子柜没有可用的产品变体")
+        local = None
+        if calculator is not None:
+            local = calculator.calculate(
+                code,
+                float(row["width_mm"]),
+                float(row["height_mm"]),
+                float(row["depth_mm"]),
+                single,
+                double,
+            )
+        if local:
+            weights.append(float(local[0]))
+            areas.append(float(local[1]))
+        else:
+            local_complete = False
+        payloads.append({
+            "quote_id": f"{quote_prefix}-{index + 1}",
+            "product_code": code,
+            # Each existing API call must match the child cabinet rather than
+            # the combined customer-facing specification.  The original
+            # combined text is restored on the saved/exported quote item.
+            "model_code": subcabinet_specification(row),
+            "material_code": material_combo.currentData() if material_combo is not None else None,
+            "width_mm": float(row["width_mm"]),
+            "height_mm": float(row["height_mm"]),
+            "depth_mm": float(row["depth_mm"]),
+            "base_material_weight_kg": float(local[0]) if local else None,
+            "product_area_m2": float(local[1]) if local else None,
+            "coating_type": coating_combo.currentData() if coating_combo is not None else None,
+            "variant_code": variant,
+            "single_door_count": single,
+            "double_door_count": double,
+            "quote_date": quote_date.date().toString("yyyy-MM-dd") if quote_date is not None else None,
+            # Attachments are priced once in the aggregate result.  Sending
+            # them in every child request would duplicate the three manual
+            # quantity exceptions.
+            "attachments": [],
+        })
+    return (
+        payloads,
+        sum(weights) if local_complete else None,
+        sum(areas) if local_complete else None,
+    )
+
+
+def _start_ganged_calculation(window, headers_factory) -> bool:
+    if _ganged_count(window) <= 1:
+        return False
+    try:
+        payloads, weight_total, area_total = _build_ganged_quote_payloads(window)
+    except Exception as exc:
+        QMessageBox.warning(window, "并柜规格无法计算", str(exc))
+        return True
+    if not payloads:
+        return False
+    attachment_total = sum(
+        quick_attachment_line_amount(item)
+        for item in getattr(window, "attachments", [])
+        if isinstance(item, dict)
+    )
+    api_url = str(getattr(window, "api_url", None).text() or "").strip()
+    worker = _GangedQuoteWorker(
+        api_url,
+        payloads,
+        attachment_total,
+        headers_factory,
+        weight_total,
+        area_total,
+        window,
+    )
+    window.calculate_button.setEnabled(False)
+    window.worker = worker
+
+    def show_ganged_result(result):
+        if weight_total is None:
+            window.weight_edit.clear()
+        else:
+            window.weight_edit.setText(f"{weight_total:.6f}".rstrip("0").rstrip("."))
+        result_area = result.get("ganged_area_m2")
+        if result_area is None:
+            window.area_edit.clear()
+        else:
+            window.area_edit.setText(f"{float(result_area):.6f}".rstrip("0").rstrip("."))
+        window.show_result(result)
+
+    worker.succeeded.connect(show_ganged_result)
+    worker.failed.connect(window.show_error)
+    worker.finished.connect(lambda: window.calculate_button.setEnabled(True))
+    worker.start()
+    return True
+
+
 def _configure_quote_rule_interactions(window, parser=None) -> None:
+    _ensure_ganged_cabinet_panel(window)
     for name, label in (
         ("width_spin", "宽度（mm）"),
         ("depth_spin", "深度（mm）"),
@@ -700,8 +1299,21 @@ def _configure_quote_rule_interactions(window, parser=None) -> None:
         single.setToolTip("单门数量；JS/JP/JA/JE 支持五种组合，其他产品按数据库单/双门记录选择")
     if isinstance(double, QComboBox):
         double.setAccessibleName("双门数量")
-        double.setToolTip("双门数量；快速报价会将 0/1、0/2 视为双门，其余批准组合视为单门")
+        double.setToolTip("双门数量；JS/JP/JA/JE 的五种组合在快速报价中均读取 SINGLE 记录")
     _set_default_door_combination(window)
+
+    model_edit = getattr(window, "model_edit", None)
+    if isinstance(model_edit, QLineEdit):
+        model_edit.setPlaceholderText(
+            "规格型号；并柜示例：（200+200）×600×（600+200）"
+        )
+        if not getattr(model_edit, "_ganged_specification_connected", False):
+            def sync_model_specification(value):
+                _sync_manual_specification_to_dimensions(window, value, parser)
+                _sync_ganged_specification(window, value)
+
+            model_edit.textEdited.connect(sync_model_specification)
+            model_edit._ganged_specification_connected = True
 
     specification = getattr(window, "quote_spec_edit", None)
     if isinstance(specification, QLineEdit):
@@ -1698,12 +2310,20 @@ def _refresh_quick_discount_total(window, money) -> None:
     if not isinstance(quick, dict) or not isinstance(labels, dict) or "total" not in labels:
         return
     discount = _safe_float(getattr(discount_widget, "value", lambda: 1.0)())
-    amount = quick_discount_breakdown(
+    amount = quick_order_line_breakdown(
         quick,
         getattr(window, "attachments", []),
         1.0 if discount is None else discount,
-    )["discounted_total"]
+        1,
+        _ganged_count(window),
+    )["line_total"]
     labels["total"].setText(money(amount))
+    if "attachment" in labels:
+        attachment_total = sum(
+            effective_attachment_line_amount(item, 1, _ganged_count(window))
+            for item in getattr(window, "attachments", []) if isinstance(item, dict)
+        )
+        labels["attachment"].setText(money(attachment_total))
 
 
 def _patch_discounted_totals(namespace: dict, main_window) -> None:
@@ -1738,7 +2358,18 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             self._formula_base_result = None
             self.attachment_default_opt_outs = set()
             self.attachment_default_quantity_overrides = set()
+            self.attachment_door_transform_context = None
             self._attachment_default_door_counts = _current_door_counts(self)
+            self.ganged_cabinets = []
+            self.ganged_cabinet_count = 1
+            self.ganged_cabinet_specification = ""
+            panel = getattr(self, "ganged_cabinet_panel", None)
+            label = getattr(self, "ganged_cabinet_label", None)
+            if panel is not None:
+                panel.hide()
+            if label is not None:
+                label.hide()
+            _set_ganged_controls_enabled(self, False)
             return result
         main_window.reset_current_cabinet = reset_current_cabinet_without_labor_base
 
@@ -1778,6 +2409,18 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
 
         self.current_result["formula"] = rendered
         original_refresh(self)
+        if _ganged_count(self) > 1:
+            formula_line = _formula_order_line_breakdown({
+                "formula": rendered,
+                "attachments": getattr(self, "attachments", []),
+                "quantity": 1,
+                "formula_discount": getattr(self, "formula_discount", None).value(),
+                "ganged_cabinet_count": _ganged_count(self),
+            })
+            if "total" in labels:
+                labels["total"].setText(money(formula_line["line_total"]))
+            if "attachment" in labels:
+                labels["attachment"].setText(money(formula_line["attachment_total"]))
         _refresh_quick_discount_total(self, money)
 
     main_window.refresh_discounted_totals = refresh_discounted_totals_with_labor
@@ -1787,6 +2430,10 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
         def add_current_to_summary_with_labor_state(self):
             self.refresh_discounted_totals()
             base = getattr(self, "_formula_base_result", None)
+            ganged_rows = _ganged_rows(self)
+            ganged_specification = str(
+                getattr(self, "ganged_cabinet_specification", "") or ""
+            ).strip()
             default_opt_outs = set(getattr(self, "attachment_default_opt_outs", set()))
             quantity_overrides = set(
                 getattr(self, "attachment_default_quantity_overrides", set())
@@ -1805,6 +2452,16 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
                 item["attachment_default_quantity_overrides"] = sorted(
                     quantity_overrides
                 )
+                item["attachment_door_transform_context"] = getattr(
+                    self, "attachment_door_transform_context", None
+                )
+                if len(ganged_rows) > 1:
+                    item["specification"] = str(
+                        ganged_specification
+                        or item.get("model_code") or ""
+                    ).strip()
+                    item["ganged_cabinet_count"] = len(ganged_rows)
+                    item["ganged_cabinets"] = ganged_rows
                 self.refresh_summary()
             return result
         main_window.add_current_to_summary = add_current_to_summary_with_labor_state
@@ -1812,6 +2469,10 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
     original_load = getattr(main_window, "load_draft_item", None)
     if callable(original_load):
         def load_draft_item_with_labor_state(self, item):
+            restored_ganged_rows = [
+                dict(row) for row in item.get("ganged_cabinets", [])
+                if isinstance(row, dict)
+            ] if isinstance(item, dict) else []
             base = item.get("formula_base") if isinstance(item, dict) else None
             if not isinstance(base, dict) and isinstance(item, dict):
                 base = item.get("formula")
@@ -1827,10 +2488,30 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             )
             self.attachment_default_opt_outs = opt_outs
             self.attachment_default_quantity_overrides = quantity_overrides
+            self.attachment_door_transform_context = item.get(
+                "attachment_door_transform_context"
+            ) if isinstance(item, dict) else None
             result = original_load(self, item)
+            if len(restored_ganged_rows) > 1:
+                self.ganged_cabinets = restored_ganged_rows
+                self.ganged_cabinet_count = len(restored_ganged_rows)
+                self.ganged_cabinet_specification = str(
+                    item.get("specification") or item.get("model_code") or ""
+                ).strip()
+                _set_ganged_controls_enabled(self, True)
+                panel = getattr(self, "ganged_cabinet_panel", None)
+                label = getattr(self, "ganged_cabinet_label", None)
+                if panel is not None:
+                    panel.show()
+                if label is not None:
+                    label.show()
+                _render_ganged_cabinet_table(self)
             self._formula_base_result = dict(base) if isinstance(base, dict) else None
             self.attachment_default_opt_outs = opt_outs
             self.attachment_default_quantity_overrides = quantity_overrides
+            self.attachment_door_transform_context = item.get(
+                "attachment_door_transform_context"
+            ) if isinstance(item, dict) else None
             self._attachment_default_door_counts = _current_door_counts(self)
             self.refresh_discounted_totals()
             return result
@@ -2419,10 +3100,40 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             DEFAULT_GROUND_WIRE: match_default_ground_wire(catalog),
             DEFAULT_JP_SIDE_PANEL: side,
         }
+        door_counts = selected_door_counts(self)
+        parent = self.parentWidget()
+        ganged_rows = _ganged_rows(parent) if parent is not None else []
+        if len(ganged_rows) > 1:
+            transform_names = []
+            transform_matches = {}
+            door_context = []
+            for row in ganged_rows:
+                counts = (
+                    int(row.get("single_door_count", 1)),
+                    int(row.get("double_door_count", 0)),
+                )
+                door_context.append(counts)
+                for name in door_transformation_default_names(product_code, *counts):
+                    if name not in transform_names:
+                        transform_names.append(name)
+                for rule, candidate in match_door_transformation_defaults(
+                    catalog, product_code, *counts
+                ).items():
+                    transform_matches.setdefault(rule, candidate)
+            self.default_door_transformation_names = tuple(transform_names)
+            matches.update(transform_matches)
+            self.default_match_door_counts = tuple(door_context)
+        else:
+            self.default_door_transformation_names = door_transformation_default_names(
+                product_code, *door_counts
+            )
+            matches.update(match_door_transformation_defaults(
+                catalog, product_code, *door_counts
+            ))
+            self.default_match_door_counts = door_counts
         self.default_match_spec = parsed
         self.default_match_dimensions = dimensions
         self.default_match_product_code = product_code
-        self.default_match_door_counts = selected_door_counts(self)
         self.default_door_limiter_quantity = default_door_quantity(self, DEFAULT_DOOR_LIMITER)
         self.default_door_reinforcement_quantity = default_door_quantity(
             self, DEFAULT_DOOR_REINFORCEMENT
@@ -2512,11 +3223,139 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 result.append(source)
         return result
 
+    def is_installation_board(source: dict | None) -> bool:
+        item = source or {}
+        combined = " ".join(
+            str(item.get(key) or "")
+            for key in (
+                "category_level1", "category_level2", "category_level3",
+                "item_name", "model_code",
+            )
+        )
+        return "安装板" in combined and "安装板单发" not in combined
+
+    def checked_sources_for_category(self, category: str) -> list[dict]:
+        table = getattr(self, "table", None)
+        if not isinstance(table, QTableWidget):
+            return [
+                item for item in getattr(self, "attachments", [])
+                if isinstance(item, dict) and attachment_category_value(item, 0) == category
+            ]
+        result = []
+        for row in range(table.rowCount()):
+            check_item = table.item(row, self.COL_CHECK)
+            if check_item is None or check_item.checkState() != Qt.CheckState.Checked:
+                continue
+            source = check_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(source, dict) and attachment_category_value(source, 0) == category:
+                result.append(source)
+        return result
+
+    def selected_summary(items: list[dict]) -> str:
+        names = []
+        for item in items:
+            name = str(item.get("item_name") or item.get("model_code") or "未命名附件").strip()
+            if name and name not in names:
+                names.append(name)
+        if not names:
+            return ""
+        return names[0] if len(names) == 1 else f"{names[0]}等 {len(names)} 项"
+
+    def installation_board_price_sign(self) -> int:
+        try:
+            return -1 if int(getattr(self, "installation_board_sign", 1)) == -1 else 1
+        except (TypeError, ValueError):
+            return 1
+
+    def stored_attachment_price_sign(item: dict | None) -> int:
+        try:
+            return -1 if int((item or {}).get("attachment_price_sign", 1)) == -1 else 1
+        except (TypeError, ValueError):
+            return 1
+
+    def apply_installation_board_sign(self, source: dict, price_cell=None) -> dict:
+        signed = dict(source)
+        sign = installation_board_price_sign(self)
+        signed["attachment_price_sign"] = sign
+        if price_cell is not None:
+            try:
+                price = abs(float(price_cell.text().strip()))
+                price_cell.setText(f"{price * sign:g}")
+            except (AttributeError, TypeError, ValueError):
+                pass
+        return signed
+
+    def toggle_installation_board_sign(self) -> None:
+        self.installation_board_sign = -installation_board_price_sign(self)
+        table = getattr(self, "table", None)
+        if isinstance(table, QTableWidget):
+            self._default_selection_guard = True
+            table.blockSignals(True)
+            try:
+                for row in range(table.rowCount()):
+                    check_item = table.item(row, self.COL_CHECK)
+                    source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else None
+                    if (
+                        check_item is None
+                        or check_item.checkState() != Qt.CheckState.Checked
+                        or not isinstance(source, dict)
+                        or not is_installation_board(source)
+                    ):
+                        continue
+                    price_cell = table.item(row, self.COL_PRICE)
+                    check_item.setData(
+                        Qt.ItemDataRole.UserRole,
+                        apply_installation_board_sign(self, source, price_cell),
+                    )
+            finally:
+                table.blockSignals(False)
+                self._default_selection_guard = False
+        sync_attachments_from_table(self)
+        refresh_category_browser(self)
+
     def default_card_state(self, option: dict) -> tuple[str, str, str, str | None, bool]:
         if getattr(self, "category_selection", []):
             return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则", None, False
-        rule = category_rules.get(str(option.get("value") or ""))
+        category_name = str(option.get("value") or "")
+        if category_name == "门变形":
+            selected = checked_sources_for_category(self, category_name)
+            wanted = tuple(getattr(self, "default_door_transformation_names", ()))
+            if selected:
+                summary = selected_summary(selected)
+                return (
+                    f"快速匹配已选择\n{summary}",
+                    "attachmentQuickMatchSelected",
+                    "按当前产品家族和门数组合选择；进入分类可人工修改",
+                    None,
+                    True,
+                )
+            if not wanted:
+                return (
+                    "快速匹配\n无需门变形",
+                    "attachmentQuickMatch",
+                    "当前产品家族和门数组合不需要门变形附件",
+                    None,
+                    False,
+                )
+            return (
+                "默认选择未匹配\n" + "、".join(wanted),
+                "attachmentQuickMatchMissing",
+                "附件库中没有匹配当前门数组合的门变形附件，或已被人工取消",
+                None,
+                False,
+            )
+        rule = category_rules.get(category_name)
         if rule is None:
+            selected = checked_sources_for_category(self, str(option.get("value") or ""))
+            if selected:
+                summary = selected_summary(selected)
+                return (
+                    f"人工已选择\n{summary}",
+                    "attachmentQuickMatchManual",
+                    "当前附件由人工选择；返回分类可继续修改",
+                    None,
+                    True,
+                )
             return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则", None, False
 
         parsed = getattr(self, "default_match_spec", None)
@@ -2528,7 +3367,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         if rule == DEFAULT_FIXED_BASE:
             if parsed is None:
                 return "快速匹配\n无需底座", "attachmentQuickMatch", "规格高度没有括号和 +，不自动选择底座", rule, False
-            detail = f"类型：固定 · 高度：{parsed[3]:g} mm"
+            detail = f"固定 · 高 {parsed[3]:g} mm"
             missing_tip = "附件库中没有与当前宽度、深度和底座高度完全一致的固定底座"
         elif rule == DEFAULT_LIGHT_SWITCH:
             detail = "灯开关"
@@ -2562,7 +3401,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if not is_jp_product(product_code):
                 return "快速匹配\n仅 JP 默认匹配", "attachmentQuickMatch", "当前产品不是 JP，不自动选择侧板", rule, False
             if dimensions is not None:
-                detail = f"JP侧板 · 高度：{dimensions[1]:g} · 深度：{dimensions[2]:g} mm"
+                detail = f"JP侧板 · {dimensions[1]:g}×{dimensions[2]:g} mm"
             else:
                 detail = "JP侧板 · 尺寸无效"
             missing_tip = "附件库中没有与当前柜体高度、深度完全一致的唯一侧板"
@@ -2762,7 +3601,27 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if rule is not None and enabled:
                 quick_button.clicked.connect(lambda _checked=False, value=rule: toggle_default_selection(self, value))
             card_layout.addWidget(button)
-            card_layout.addWidget(quick_button)
+            if str(option.get("value") or "") == "安装板":
+                quick_row = QHBoxLayout()
+                quick_row.setContentsMargins(0, 0, 8, 0)
+                quick_row.setSpacing(6)
+                quick_row.addWidget(quick_button, 1)
+                sign = installation_board_price_sign(self)
+                sign_button = QPushButton("−" if sign < 0 else "+", card)
+                sign_button.setObjectName(
+                    "attachmentPriceSignNegative" if sign < 0 else "attachmentPriceSignPositive"
+                )
+                sign_button.setAccessibleName("安装板价格减项" if sign < 0 else "安装板价格加项")
+                sign_button.setToolTip(
+                    "当前安装板按负值计价；单击恢复加项"
+                    if sign < 0 else "当前安装板按正值计价；单击切换为减项"
+                )
+                sign_button.setFixedSize(34, 34)
+                sign_button.clicked.connect(lambda: toggle_installation_board_sign(self))
+                quick_row.addWidget(sign_button, 0, Qt.AlignmentFlag.AlignVCenter)
+                card_layout.addLayout(quick_row)
+            else:
+                card_layout.addWidget(quick_button)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.category_grid.addWidget(card, index // 4, index % 4)
 
@@ -2866,6 +3725,20 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                     finally:
                         self.table.blockSignals(False)
                         self._default_selection_guard = False
+            if (
+                item.checkState() == Qt.CheckState.Checked
+                and isinstance(source, dict)
+                and is_installation_board(source)
+            ):
+                self._default_selection_guard = True
+                self.table.blockSignals(True)
+                try:
+                    price_cell = self.table.item(item.row(), self.COL_PRICE)
+                    source = apply_installation_board_sign(self, source, price_cell)
+                    item.setData(Qt.ItemDataRole.UserRole, source)
+                finally:
+                    self.table.blockSignals(False)
+                    self._default_selection_guard = False
             rule = default_rule_for_item(source) if isinstance(source, dict) else None
             if rule is not None:
                 if item.checkState() == Qt.CheckState.Checked:
@@ -2891,6 +3764,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 else:
                     self.default_selection_opt_outs.add(rule)
                     self.default_quantity_manual_overrides.discard(rule)
+                sync_attachments_from_table(self)
+            elif isinstance(source, dict):
                 sync_attachments_from_table(self)
         elif item.column() == self.COL_QUANTITY:
             check_item = self.table.item(item.row(), self.COL_CHECK)
@@ -2926,7 +3801,35 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         return result
 
     def collect_attachments_with_metadata(self, show_errors: bool = True):
-        selected = original_collect_attachments(self, show_errors=show_errors)
+        # The recovered V3 collector predates signed attachment rows and
+        # validates every displayed price as non-negative.  Feed it the
+        # positive source snapshot, then restore the visible minus sign and
+        # attach ``attachment_price_sign`` separately.
+        signed_price_cells = []
+        self.table.blockSignals(True)
+        try:
+            for row in range(self.table.rowCount()):
+                check_item = self.table.item(row, self.COL_CHECK)
+                source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else None
+                price_cell = self.table.item(row, self.COL_PRICE)
+                if (
+                    check_item is not None
+                    and check_item.checkState() == Qt.CheckState.Checked
+                    and isinstance(source, dict)
+                    and is_installation_board(source)
+                    and price_cell is not None
+                ):
+                    try:
+                        current = price_cell.text()
+                        price_cell.setText(f"{abs(float(current)):g}")
+                        signed_price_cells.append((price_cell, current))
+                    except (TypeError, ValueError):
+                        pass
+            selected = original_collect_attachments(self, show_errors=show_errors)
+        finally:
+            for price_cell, text in signed_price_cells:
+                price_cell.setText(text)
+            self.table.blockSignals(False)
         if selected is None:
             return None
         sources = []
@@ -2940,6 +3843,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             for key in (
                 "attachment_price_id",
                 "category_level1", "category_level2", "category_level3",
+                "attachment_price_sign",
                 *SIZE_MATCH_METADATA_KEYS,
             ):
                 if source.get(key) is not None:
@@ -2948,6 +3852,23 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 output["matched_price"] = source["matched_price"]
             if source.get("unit_price_override") is not None:
                 output["unit_price_override"] = source["unit_price_override"]
+            if is_installation_board(source) or is_installation_board(output):
+                output["attachment_price_sign"] = installation_board_price_sign(self)
+                for price_key in ("matched_price", "unit_price_override"):
+                    if output.get(price_key) is not None:
+                        try:
+                            output[price_key] = abs(float(output[price_key]))
+                        except (TypeError, ValueError):
+                            pass
+        for output in selected:
+            if is_installation_board(output):
+                output["attachment_price_sign"] = installation_board_price_sign(self)
+                for price_key in ("matched_price", "unit_price_override"):
+                    if output.get(price_key) is not None:
+                        try:
+                            output[price_key] = abs(float(output[price_key]))
+                        except (TypeError, ValueError):
+                            pass
         return selected
 
     def accept_selection_with_defaults(self):
@@ -2980,9 +3901,19 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 parent.attachment_default_quantity_overrides = set(
                     self.default_quantity_manual_overrides
                 )
+                parent.attachment_door_transform_context = (
+                    str(getattr(self, "default_match_product_code", "") or "").strip().upper(),
+                    tuple(getattr(self, "default_match_door_counts", (1, 0))),
+                )
+                parent.attachment_door_transform_catalog = [
+                    dict(item) for item in getattr(self, "catalog", [])
+                    if isinstance(item, dict)
+                    and attachment_category_value(item, 0) == "门变形"
+                ]
 
     def init_with_default_filters(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
+        self.resize(900, 680)
         self.category_selection = []
         parent = self.parentWidget()
         self.default_selection_opt_outs = set(getattr(parent, "attachment_default_opt_outs", set()))
@@ -2990,6 +3921,43 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             getattr(parent, "attachment_default_quantity_overrides", set())
         )
         self._default_selection_guard = False
+        parent_rows = _ganged_rows(parent) if parent is not None else []
+        current_transform_context = (
+            selected_product_code(self).strip().upper(),
+            tuple(
+                (
+                    int(row.get("single_door_count", 1)),
+                    int(row.get("double_door_count", 0)),
+                )
+                for row in parent_rows
+            ) if len(parent_rows) > 1 else tuple(selected_door_counts(self)),
+        )
+        previous_transform_context = (
+            getattr(parent, "attachment_door_transform_context", None)
+            if parent is not None else None
+        )
+        if previous_transform_context is not None and tuple(previous_transform_context) != current_transform_context:
+            self.attachments = [
+                item for item in getattr(self, "attachments", [])
+                if not (
+                    isinstance(item, dict)
+                    and str(
+                        item.get("category_level1")
+                        or item.get("attachment_category")
+                        or ""
+                    ).strip() == "门变形"
+                )
+            ]
+            self.default_selection_opt_outs = {
+                rule for rule in self.default_selection_opt_outs
+                if not str(rule).startswith(DOOR_TRANSFORMATION_RULE_PREFIX)
+            }
+        self.installation_board_sign = -1 if any(
+            isinstance(item, dict)
+            and is_installation_board(item)
+            and stored_attachment_price_sign(item) == -1
+            for item in getattr(self, "attachments", [])
+        ) else 1
         panel = QFrame(self)
         panel.setObjectName("attachmentCategoryBar")
         panel.setStyleSheet(
@@ -3008,6 +3976,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             "QPushButton#attachmentQuickMatchManual:hover {background:#d8e9f7;}"
             "QPushButton#attachmentQuickMatchCancelled:hover {background:#e4e9ed;color:#44515d;}"
             "QPushButton#attachmentQuickMatchMissing {background:#fff5df;color:#9a620e;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
+            "QPushButton#attachmentPriceSignPositive,QPushButton#attachmentPriceSignNegative {border-radius:17px;font-size:20px;font-weight:800;padding:0;}"
+            "QPushButton#attachmentPriceSignPositive {background:#e7f1fb;color:#245f91;border:1px solid #7eafd3;}"
+            "QPushButton#attachmentPriceSignPositive:hover {background:#d8e9f7;}"
+            "QPushButton#attachmentPriceSignNegative {background:#fff0f0;color:#b42318;border:1px solid #e59a94;}"
+            "QPushButton#attachmentPriceSignNegative:hover {background:#ffe0e0;}"
         )
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(14, 10, 14, 12)
@@ -3041,6 +4014,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         search = getattr(self, "search_edit", None)
         if layout is not None and hasattr(layout, "insertWidget"):
             index = layout.indexOf(search) if search is not None else -1
+            if isinstance(search, QLineEdit):
+                layout.removeWidget(search)
+                panel_layout.insertWidget(0, search)
             layout.insertWidget(index if index >= 0 else 1, panel)
         elif layout is not None:
             layout.addWidget(panel)
@@ -3091,6 +4067,8 @@ def install_layout_refresh(namespace: dict) -> None:
     original_recognition_progress = main_window.pdf_recognition_progress
     original_recognition_finished = main_window.pdf_recognition_finished
     original_refresh_summary = main_window.refresh_summary
+    original_update_attachment_view = getattr(main_window, "update_attachment_view", None)
+    original_calculate = getattr(main_window, "calculate", None)
     original_product_changed = getattr(main_window, "product_changed", None)
     original_door_counts_changed = getattr(main_window, "door_counts_changed", None)
     original_product_catalog_loaded = getattr(main_window, "product_catalog_loaded", None)
@@ -3108,6 +4086,16 @@ def install_layout_refresh(namespace: dict) -> None:
             getattr(self, "attachment_default_quantity_overrides", set())
         )
         self._attachment_default_door_counts = _current_door_counts(self)
+        self.attachment_door_transform_context = getattr(
+            self, "attachment_door_transform_context", None
+        )
+        self.ganged_cabinets = list(getattr(self, "ganged_cabinets", []))
+        self.ganged_cabinet_count = ganged_split_count(
+            getattr(self, "ganged_cabinet_count", 1)
+        )
+        self.ganged_cabinet_specification = str(
+            getattr(self, "ganged_cabinet_specification", "") or ""
+        )
         self._persistent_product_selection = getattr(
             self,
             "_persistent_product_selection",
@@ -3121,6 +4109,12 @@ def install_layout_refresh(namespace: dict) -> None:
                     self._persistent_product_selection = selected
 
             product_combo.activated.connect(remember_manual_product_selection)
+        quantity_spin = getattr(self, "quantity_spin", None)
+        if quantity_spin is not None and not getattr(
+            quantity_spin, "_attachment_quantity_connected", False
+        ):
+            quantity_spin.valueChanged.connect(lambda _value: self.update_attachment_view())
+            quantity_spin._attachment_quantity_connected = True
 
     def resize_event_with_responsive_quote(self, event):
         original_resize_event(self, event)
@@ -3155,28 +4149,53 @@ def install_layout_refresh(namespace: dict) -> None:
 
     def refresh_summary_with_action_state(self):
         result = original_refresh_summary(self)
+        formula_sum = 0.0
         quick_sum = 0.0
         table = getattr(self, "summary_table", None)
+        formula_price_column = None
         quick_price_column = None
         if isinstance(table, QTableWidget):
             for column in range(table.columnCount()):
                 header = table.horizontalHeaderItem(column)
                 label = header.text() if header is not None else ""
+                if "公式" in label and "折扣" not in label:
+                    formula_price_column = column
                 if "快速" in label and "折扣" not in label:
                     quick_price_column = column
-                    break
             if quick_price_column is None and table.columnCount() > 8:
                 quick_price_column = 8
         for row, item in enumerate(getattr(self, "draft_items", [])):
-            quick_unit = quick_discount_breakdown(
-                item.get("quick", {}),
-                item.get("attachments", []),
-                item.get("quick_discount", 1),
-            )["discounted_total"]
             quantity = _safe_float(item.get("quantity") or 1)
-            quick_sum += quick_unit * (1.0 if quantity is None else quantity)
+            quantity = 1.0 if quantity is None else quantity
+            formula_line = _formula_order_line_breakdown(item)
+            quick_line = quick_order_line_breakdown(
+                item.get("quick", {}), item.get("attachments", []),
+                item.get("quick_discount", 1), quantity,
+                ganged_split_count(item),
+            )
+            formula_sum += formula_line["line_total"]
+            quick_sum += quick_line["line_total"]
+            if formula_price_column is not None:
+                table.setItem(
+                    row, formula_price_column,
+                    QTableWidgetItem(f"{formula_line['equivalent_unit_total']:,.2f}"),
+                )
             if quick_price_column is not None:
-                table.setItem(row, quick_price_column, QTableWidgetItem(f"{quick_unit:,.2f}"))
+                table.setItem(
+                    row, quick_price_column,
+                    QTableWidgetItem(f"{quick_line['equivalent_unit_total']:,.2f}"),
+                )
+            if isinstance(table, QTableWidget) and ganged_split_count(item) > 1:
+                specification = str(
+                    item.get("specification") or item.get("model_code") or ""
+                ).strip()
+                if table.columnCount() > 2:
+                    table.setItem(row, 2, QTableWidgetItem(specification))
+                if table.columnCount() > 3:
+                    table.setItem(row, 3, QTableWidgetItem(specification))
+        formula_total_label = getattr(self, "summary_formula_total", None)
+        if isinstance(formula_total_label, QLabel):
+            formula_total_label.setText(f"公式法：{formula_sum:,.2f} 元")
         quick_total_label = getattr(self, "summary_quick_total", None)
         if isinstance(quick_total_label, QLabel):
             quick_total_label.setText(f"快速报价：{quick_sum:,.2f} 元")
@@ -3190,6 +4209,38 @@ def install_layout_refresh(namespace: dict) -> None:
     main_window.pdf_recognition_progress = recognition_progress_without_strip
     main_window.pdf_recognition_finished = recognition_finished_without_strip
     main_window.refresh_summary = refresh_summary_with_action_state
+    if callable(original_update_attachment_view):
+        def update_attachment_view_with_signed_prices(self):
+            original_update_attachment_view(self)
+            attachment_list = getattr(self, "attachment_list", None)
+            if attachment_list is None:
+                return
+            for row, attachment in enumerate(getattr(self, "attachments", [])):
+                if not isinstance(attachment, dict):
+                    continue
+                try:
+                    sign = -1 if int(attachment.get("attachment_price_sign", 1)) == -1 else 1
+                except (TypeError, ValueError):
+                    sign = 1
+                list_item = attachment_list.item(row)
+                if list_item is None:
+                    continue
+                text = list_item.text()
+                if sign == -1:
+                    price = _safe_float(
+                        attachment.get("unit_price_override", attachment.get("matched_price"))
+                    )
+                    if price is not None:
+                        positive_text = f"{abs(price):,.2f} 元"
+                        negative_text = f"{-abs(price):,.2f} 元"
+                        text = text.replace(positive_text, negative_text)
+                quantity_spin = getattr(self, "quantity_spin", None)
+                cabinets = quantity_spin.value() if quantity_spin is not None else 1
+                final_quantity = final_attachment_quantity(
+                    attachment, cabinets, _ganged_count(self)
+                )
+                list_item.setText(f"{text} · 最终数量 {final_quantity:g}")
+        main_window.update_attachment_view = update_attachment_view_with_signed_prices
     if callable(original_product_changed):
         def product_changed_with_default_door(self, *_signal_args, **_signal_kwargs):
             previous_door_counts = getattr(
@@ -3213,7 +4264,13 @@ def install_layout_refresh(namespace: dict) -> None:
             )
             _set_default_door_combination(self)
             _sync_door_limiter_default_quantity(self, previous_door_counts)
+            _sync_door_transform_defaults(self)
             _refresh_model_suggestions(self)
+            if _ganged_count(self) > 1:
+                _sync_ganged_specification(
+                    self,
+                    str(getattr(self, "ganged_cabinet_specification", "") or ""),
+                )
             return result
         main_window.product_changed = product_changed_with_default_door
     if callable(original_door_counts_changed):
@@ -3225,11 +4282,24 @@ def install_layout_refresh(namespace: dict) -> None:
             )
             if _enforce_product_door_combination(self, source):
                 _sync_door_limiter_default_quantity(self, previous_door_counts)
+                _sync_door_transform_defaults(self)
                 return None
             result = original_door_counts_changed(self, source)
+            if _ganged_count(self) > 1:
+                rows = _ganged_rows(self)
+                current = _current_door_counts(self) or (1, 0)
+                self.ganged_cabinets = cascade_door_counts(rows, 0, *current)
+                _render_ganged_cabinet_table(self)
             _sync_door_limiter_default_quantity(self, previous_door_counts)
+            _sync_door_transform_defaults(self)
             return result
         main_window.door_counts_changed = door_counts_changed_with_product_rules
+    if callable(original_calculate):
+        def calculate_with_ganged_cabinets(self):
+            if _start_ganged_calculation(self, namespace.get("api_headers")):
+                return None
+            return original_calculate(self)
+        main_window.calculate = calculate_with_ganged_cabinets
     if callable(original_product_catalog_loaded):
         def product_catalog_loaded_with_database_options(self, result):
             retained_product = getattr(

@@ -43,6 +43,10 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(overlay, /search\.setPlaceholderText\("搜索附件名称、型号、规格、尺寸或价格方案"\)/);
   assert.match(overlay, /filter_path = \(\) if needle and not selected else selected/);
   assert.match(overlay, /self\.search_edit\.setVisible\(True\)/);
+  assert.match(overlay, /panel_layout\.insertWidget\(0, search\)/);
+  assert.match(overlay, /attachmentPriceSignPositive/);
+  assert.match(overlay, /attachmentPriceSignNegative/);
+  assert.match(overlay, /attachment_price_sign/);
   assert.match(overlay, /match_attachment_size\(getattr\(self, "catalog", \[\]\), source, target\)/);
   assert.match(overlay, /rule in \(DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT\)/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);
@@ -51,7 +55,7 @@ test('attachment dialog drills through four-column category cards before showing
 
   const approvedOrder = [
     '底座', '侧板', '三排纵梁', '安装板', '灯开关', '文件夹', '风机滤网',
-    '门限位器', '门加强筋', '配置变形', '内门', '玻璃门', '安装条', '防雨顶',
+    '门限位器', '门加强筋', '配置变形', '门变形', '内门', '玻璃门', '安装条', '防雨顶',
     '接地线', '孔承板', '控制柜附件',
   ];
   let previousIndex = -1;
@@ -84,7 +88,8 @@ test('attachment category filters keep price editing and selection collection in
   assert.match(source, /price_item\.setFlags\([^\n]*Qt\.ItemIsEditable/);
   assert.match(source, /quantity_item\.setFlags\([^\n]*Qt\.ItemIsEditable/);
   assert.match(source, /def collect_attachments/);
-  assert.match(source, /item\["unit_price_override"\] = price/);
+  assert.match(source, /item\["unit_price_override"\] = absolute_price/);
+  assert.match(source, /item\["attachment_price_sign"\] = price_sign/);
   assert.doesNotMatch(overlay, /COL_PRICE[^\n]*setFlags/);
   assert.doesNotMatch(overlay, /COL_QUANTITY[^\n]*setFlags/);
   assert.match(overlay, /original_rebuild_table\(self\)/);

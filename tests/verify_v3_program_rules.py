@@ -81,10 +81,28 @@ class Combo(Widget):
         return self._value
 
 
+class Thread(Widget):
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class SignalStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def connect(self, *_args, **_kwargs):
+        pass
+
+    def emit(self, *_args, **_kwargs):
+        pass
+
+
 qt_core = types.ModuleType("PySide6.QtCore")
 qt_core.QPoint = type("QPoint", (), {})
 qt_core.QTimer = type("QTimer", (), {})
 qt_core.Qt = type("Qt", (), {})
+qt_core.QThread = Thread
+qt_core.Signal = SignalStub
 qt_widgets = types.ModuleType("PySide6.QtWidgets")
 for name in (
     "QAbstractButton", "QCompleter", "QDialog", "QDialogButtonBox", "QFormLayout",
@@ -112,17 +130,21 @@ from attachment_category_browser import (  # noqa: E402
     DEFAULT_JP_SIDE_PANEL,
     DEFAULT_LIGHT_SWITCH,
     DOOR_LIMITER_DEFAULT_QUANTITIES,
+    DOOR_TRANSFORMATION_RULE_PREFIX,
     LEVEL1_ORDER,
     category_options,
     default_rule_for_item,
     door_limiter_default_quantity,
     door_reinforcement_default_quantity,
+    door_transformation_default_names,
+    final_attachment_quantity,
     is_jp_product,
     match_default_a4_folder,
     match_default_door_reinforcement,
     match_default_door_limiter,
     match_default_ground_wire,
     match_default_light_switch,
+    match_door_transformation_defaults,
     match_fixed_base,
     match_jp_side_panel,
     parse_base_specification,
@@ -131,15 +153,22 @@ from quote_remark_rules import (  # noqa: E402
     DOOR_PHRASES_BY_COUNTS,
     replace_door_configuration_phrase,
 )
+from ganged_cabinet_rules import (  # noqa: E402
+    cascade_door_counts,
+    ganged_split_count,
+    parse_ganged_specification,
+    subcabinet_specification,
+)
 from quick_discount_rules import (  # noqa: E402
+    quick_order_line_breakdown,
     quick_discount_breakdown,
     quick_discount_category,
 )
 
 
-assert LEVEL1_ORDER[:10] == (
+assert LEVEL1_ORDER[:11] == (
     "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
-    "门限位器", "门加强筋", "配置变形",
+    "门限位器", "门加强筋", "配置变形", "门变形",
 )
 mixed_options = category_options(
     [
@@ -159,6 +188,51 @@ assert DOOR_PHRASES_BY_COUNTS == {
     (0, 2): "前后双开门",
     (1, 1): "前单开门后双开门",
 }
+
+expected_door_transformations = {
+    ("JS", 1, 0): (),
+    ("JS", 2, 0): ("JS、JP后背板改为单开门",),
+    ("JP", 0, 1): ("JS、JP单开门改为双开门",),
+    ("JS", 0, 2): ("JS、JP单开门改为双开门", "JS、JP后背板改为双开门"),
+    ("JP", 1, 1): ("JS、JP后背板改为双开门",),
+    ("JA", 1, 0): (),
+    ("JA", 0, 1): ("JA、JE单开门改为双开门",),
+    ("JE", 0, 2): (),
+    ("JE", 2, 0): (),
+    ("JE", 1, 1): (),
+}
+for (family, single, double), expected in expected_door_transformations.items():
+    assert door_transformation_default_names(family, single, double) == expected
+
+door_catalog = [
+    {"attachment_price_id": 9, "category_level1": "门变形", "item_name": "JS、JP后背板改为双开门"},
+    {"attachment_price_id": 3, "category_level1": "门变形", "item_name": "JS、JP单开门改为双开门"},
+    {"attachment_price_id": 2, "category_level1": "门变形", "item_name": "JS、JP单开门改为双开门"},
+]
+door_matches = match_door_transformation_defaults(door_catalog, "JS_SINGLE", 0, 2)
+assert set(door_matches) == {
+    DOOR_TRANSFORMATION_RULE_PREFIX + "JS、JP单开门改为双开门",
+    DOOR_TRANSFORMATION_RULE_PREFIX + "JS、JP后背板改为双开门",
+}
+assert door_matches[DOOR_TRANSFORMATION_RULE_PREFIX + "JS、JP单开门改为双开门"]["attachment_price_id"] == 2
+
+for attachment, cabinets, expected in (
+    ({"item_name": "安装板", "quantity": 2}, 3, 6),
+    ({"item_name": "侧板", "quantity": 2}, 3, 2),
+    ({"category_level1": "门变形", "item_name": "JS、JP后背板改为单开门", "quantity": 1}, 3, 1),
+    ({"item_name": "KA2206风机", "quantity": 2}, 3, 2),
+    ({"item_name": "FU滤网", "quantity": 2}, 3, 2),
+):
+    assert final_attachment_quantity(attachment, cabinets) == expected
+
+assert final_attachment_quantity({"item_name": "安装板", "quantity": 2}, 3, 4) == 24
+assert final_attachment_quantity({"item_name": "侧板", "quantity": 2}, 3, 4) == 2
+assert final_attachment_quantity(
+    {"category_level1": "门变形", "item_name": "JS、JP单开门改为双开门", "quantity": 1},
+    3,
+    4,
+) == 1
+assert final_attachment_quantity({"item_name": "FU滤网", "quantity": 2}, 3, 4) == 2
 for counts, expected in DOOR_PHRASES_BY_COUNTS.items():
     original = "手工录入，碳钢喷塑RAL7035橘纹，前双开门后背板，配风机1个。"
     actual = replace_door_configuration_phrase(
@@ -193,6 +267,40 @@ assert parse_base_specification("760*500*(960+100)") == (760, 960, 500, 100)
 assert parse_base_specification("760×500×（960＋200）") == (760, 960, 500, 200)
 assert parse_base_specification("760*500*960") is None
 assert parse_base_specification("760*500*960+100") is None
+
+ganged = parse_ganged_specification("（200+200）×600×（600+200）")
+assert ganged is not None
+assert ganged["split_count"] == 2
+assert ganged["rows"] == [
+    {"width_mm": 200.0, "depth_mm": 600.0, "height_mm": 600.0, "base_height_mm": 200.0},
+    {"width_mm": 200.0, "depth_mm": 600.0, "height_mm": 600.0, "base_height_mm": 200.0},
+]
+assert subcabinet_specification(ganged["rows"][0]) == "200×600×（600+200）"
+assert parse_base_specification("（200+200）×600×（600+200）") == (200, 600, 600, 200)
+assert parse_base_specification("(200+200)/600/(600+200)") == (200, 600, 600, 200)
+assert parse_ganged_specification("(200+300+400)×600×800")["split_count"] == 3
+for separator in ("×", "x", "X", "*", "/"):
+    compatible = parse_ganged_specification(
+        f"(200+300){separator}600{separator}(800+100)"
+    )
+    assert compatible is not None
+    assert compatible["widths_mm"] == [200, 300]
+    assert compatible["depth_mm"] == 600
+    assert compatible["height_mm"] == 800
+    assert compatible["base_height_mm"] == 100
+assert parse_ganged_specification("(200+300)x600/(800+100)")["split_count"] == 2
+assert parse_ganged_specification("200×600×600") is None
+assert parse_ganged_specification("(200＋200)×600×600") is None
+door_rows = [
+    {"single_door_count": 1, "double_door_count": 0},
+    {"single_door_count": 1, "double_door_count": 0},
+    {"single_door_count": 1, "double_door_count": 0},
+]
+door_rows = cascade_door_counts(door_rows, 1, 0, 2)
+assert [(row["single_door_count"], row["double_door_count"]) for row in door_rows] == [
+    (1, 0), (0, 2), (0, 2),
+]
+assert ganged_split_count({"ganged_cabinets": door_rows}) == 3
 base_catalog = [
     {
         "attachment_price_id": 1,
@@ -335,7 +443,7 @@ for product_code in ("JS_SINGLE", "JP_SINGLE", "JA_SINGLE", "JE_SINGLE"):
     single_cell, double_cell = formula_calculator.DOOR_CONTROL_CELLS[product_code]
     formula_calculator.sheets = {
         product_code: {
-            "cells": {"E5": "后背板", "H5": 1, "N5": ""},
+            "cells": {"E5": "后背板", "H5": 2, "N5": ""},
             "formulas": {
                 "M5": f"{single_cell}*10+{double_cell}*20",
                 "Y5": f"{single_cell}*2+{double_cell}*3",
@@ -347,6 +455,41 @@ for product_code in ("JS_SINGLE", "JP_SINGLE", "JA_SINGLE", "JE_SINGLE"):
         weight, area = formula_calculator.calculate(product_code, 1000, 1800, 600, *counts)
         assert weight == expected_weight, (product_code, counts, weight)
         assert area == (counts[0] * 2 + counts[1] * 3) / area_divisor
+
+# Weight buckets must follow each source workbook instead of using a single
+# cross-family thickness list.  JE includes 2.0 mm galvanized sheet; JP alone
+# includes ordinary 1.0 mm and 1.5 mm frame rows.
+for product_code, cells, expected_weight in (
+    ("JE_SINGLE", {"E5": "绑线条", "H5": 2, "M5": 6.25, "N5": "镀锌板", "Y5": 0}, 6.25),
+    ("JS_SINGLE", {"E5": "普通板", "H5": 1, "M5": 8, "N5": "", "Y5": 0}, 0),
+    ("JP_SINGLE", {"E5": "普通板", "H5": 1, "M5": 8, "N5": "", "Y5": 0}, 8),
+    ("JP_SINGLE", {"E5": "框架", "H5": 1.5, "M5": 9, "N5": "", "Y5": 0}, 9),
+):
+    formula_calculator.sheets = {product_code: {"cells": cells, "formulas": {}}}
+    weight, _area = formula_calculator.calculate(product_code, 500, 500, 180, 1, 0)
+    assert weight == expected_weight, (product_code, cells, weight)
+
+# Excel does not interpret its imported chained comparison as Python's range
+# syntax.  At depth 200 the real JS workbook returns K5=1, not K5=2.
+formula_calculator.sheets = {
+    "JS_SINGLE": {
+        "cells": {
+            "E5": "左右侧板_1", "H5": 1.5, "I5": 0.000001,
+            "J5": 7.85, "N5": "", "B14": 1.5,
+        },
+        "formulas": {
+            "F5": "B7+53-2.5",
+            "G5": "B8+64",
+            "K5": 'IF(AND(B14=1.5,1000>=B8>=350,B7<1000),"1","2")',
+            "L5": "K5*B9",
+            "M5": "L5*J5*I5*H5*G5*F5*1.2",
+            "Y5": "(F5/1000)*(G5/1000)*2*L5",
+        },
+    }
+}
+weight, area = formula_calculator.calculate("JS_SINGLE", 200, 200, 200, 1, 0)
+assert abs(weight - 0.93444516) < 1e-9, weight
+assert abs(area - 0.132264) < 1e-9, area
 
 # Quoted model names that resemble Excel addresses must remain text.  The JE
 # template uses MS828 in lock-rod branches; treating it as a cell reference
@@ -441,6 +584,69 @@ assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (1
 assert all(item.get("item_name") != "门限位器" for item in limiter_window.attachments)
 assert all(item.get("item_name") != "门加强筋" for item in limiter_window.attachments)
 
+
+class DoorTransformWindow:
+    def __init__(self):
+        self._counts = (1, 0)
+        self._product = "JS_SINGLE"
+        self.attachment_door_transform_context = ("JS_SINGLE", (1, 0))
+        self.attachment_default_opt_outs = {
+            DOOR_TRANSFORMATION_RULE_PREFIX + "JS、JP后背板改为单开门",
+        }
+        self.attachments = [{"item_name": "侧板", "category_level1": "侧板", "quantity": 2}]
+        self.attachment_door_transform_catalog = [
+            {"attachment_price_id": 1, "item_name": "JS、JP后背板改为单开门", "category_level1": "门变形"},
+            {"attachment_price_id": 2, "item_name": "JS、JP后背板改为双开门", "category_level1": "门变形"},
+            {"attachment_price_id": 3, "item_name": "JS、JP单开门改为双开门", "category_level1": "门变形"},
+            {"attachment_price_id": 4, "item_name": "JA、JE单开门改为双开门", "category_level1": "门变形"},
+        ]
+        self.refreshes = 0
+
+    def door_counts(self):
+        return self._counts
+
+    def selected_product_code(self):
+        return self._product
+
+    def update_attachment_view(self):
+        self.refreshes += 1
+
+
+transform_window = DoorTransformWindow()
+transform_window._counts = (0, 2)
+assert layout_refresh._sync_door_transform_defaults(transform_window)
+assert [item["item_name"] for item in transform_window.attachments] == [
+    "侧板", "JS、JP单开门改为双开门", "JS、JP后背板改为双开门",
+]
+assert not any(
+    str(rule).startswith(DOOR_TRANSFORMATION_RULE_PREFIX)
+    for rule in transform_window.attachment_default_opt_outs
+)
+assert transform_window.refreshes == 1
+assert not layout_refresh._sync_door_transform_defaults(transform_window)
+transform_window._product = "JE_SINGLE"
+transform_window._counts = (0, 1)
+assert layout_refresh._sync_door_transform_defaults(transform_window)
+assert [item["item_name"] for item in transform_window.attachments] == [
+    "侧板", "JA、JE单开门改为双开门",
+]
+
+ganged_transform_window = DoorTransformWindow()
+ganged_transform_window.ganged_cabinets = [
+    {"width_mm": 200, "depth_mm": 600, "height_mm": 600,
+     "single_door_count": 2, "double_door_count": 0},
+    {"width_mm": 200, "depth_mm": 600, "height_mm": 600,
+     "single_door_count": 0, "double_door_count": 2},
+]
+ganged_transform_window.attachment_door_transform_context = ("JS_SINGLE", ((1, 0), (1, 0)))
+assert layout_refresh._sync_door_transform_defaults(ganged_transform_window)
+assert [item["item_name"] for item in ganged_transform_window.attachments] == [
+    "侧板",
+    "JS、JP后背板改为单开门",
+    "JS、JP单开门改为双开门",
+    "JS、JP后背板改为双开门",
+]
+
 approved_quick_categories = {
     "固定底座": "底座",
     "JP侧板": "侧板",
@@ -471,5 +677,17 @@ assert math.isclose(quick_breakdown["base_price"], 4014.29)
 assert math.isclose(quick_breakdown["eligible_attachment_total"], 300)
 assert math.isclose(quick_breakdown["original_price_attachment_total"], 92)
 assert math.isclose(quick_breakdown["discounted_total"], 4190.5755)
+
+negative_board = quick_discount_breakdown(
+    {"total_cost": 900, "base_price": 1000, "attachment_fee": -100},
+    [{
+        "item_name": "安装板", "category_level1": "安装板",
+        "quantity": 1, "unit_price": 100, "attachment_price_sign": -1,
+    }],
+    0.9,
+)
+assert math.isclose(negative_board["listed_attachment_total"], -100)
+assert math.isclose(negative_board["eligible_attachment_total"], -100)
+assert math.isclose(negative_board["discounted_total"], 810)
 
 print("V3 program rule contracts passed")

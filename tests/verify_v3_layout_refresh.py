@@ -153,6 +153,9 @@ attachment_dialog.catalog = [
         "price": 80,
         "category_level1": "安装板",
         "category_level2": "JK安装板",
+        "width_mm": 760,
+        "height_mm": 960,
+        "depth_mm": 500,
     },
     {
         "attachment_price_id": 7,
@@ -210,6 +213,18 @@ attachment_dialog.catalog = [
         "category_level2": "编织带",
     },
     {
+        "item_name": "保留配置项",
+        "price": 10,
+        "category_level1": "配置变形",
+    },
+    {
+        "item_name": "JS、JP后背板改为单开门",
+        "model_code": "所有型号",
+        "price": 150,
+        "category_level1": "门变形",
+        "category_level2": "JS、JP后背板改为单开门",
+    },
+    {
         "item_name": "未来附件",
         "price": 1,
         "category_level1": "未来分类",
@@ -226,9 +241,11 @@ assert all(
     if item.get("item_name") != "门限位器"
 )
 attachment_dialog.rebuild_table()
-attachment_dialog.resize(1050, 680)
+attachment_dialog.resize(900, 680)
 attachment_dialog.show()
 app.processEvents()
+assert attachment_dialog.width() == 900
+assert attachment_dialog.search_edit.geometry().top() < attachment_dialog.category_breadcrumb.geometry().top()
 
 def attachment_category_buttons():
     return [
@@ -248,7 +265,7 @@ def attachment_category_button(label: str):
 level1_buttons = attachment_category_buttons()
 assert [button.text().splitlines()[0] for button in level1_buttons] == [
     "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
-    "门限位器", "门加强筋", "接地线", "未来分类",
+    "门限位器", "门加强筋", "配置变形", "门变形", "接地线", "未来分类",
 ]
 positions = [
     attachment_dialog.category_grid.getItemPosition(
@@ -260,11 +277,60 @@ assert positions[:5] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)], positions
 assert attachment_dialog.table.isHidden()
 quick_match_buttons = attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
 assert len(quick_match_buttons) == 7
-assert any(button.text() == "默认已选择\n类型：固定 · 高度：100 mm" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择\n固定 · 高 100 mm" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\nA4资料盒" for button in quick_match_buttons)
-assert any(button.text() == "默认已选择\n门加强筋" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择\n门加强筋 · 数量：1 个" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n红绿线" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n门限位器 · 数量：1 个" for button in quick_match_buttons)
+
+# An installation board selected through category browsing is summarized back
+# on the first-level card.  Its circular sign toggle keeps the original price
+# positive in metadata and stores subtraction separately.
+attachment_category_button("安装板").click()
+app.processEvents()
+attachment_category_button("JK安装板").click()
+app.processEvents()
+board_row = next(
+    row for row in range(attachment_dialog.table.rowCount())
+    if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "JK安装板"
+)
+attachment_dialog.table.item(board_row, attachment_dialog.COL_CHECK).setCheckState(Qt.CheckState.Checked)
+app.processEvents()
+while attachment_dialog.category_selection:
+    attachment_dialog.back_attachment_category()
+app.processEvents()
+board_summary = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchManual")
+    if button.isVisible() and "JK安装板" in button.text()
+)
+assert board_summary.text() == "人工已选择\nJK安装板"
+board_sign = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentPriceSignPositive")
+    if button.isVisible()
+)
+assert board_sign.text() == "+"
+board_sign.click()
+app.processEvents()
+negative_sign = next(
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentPriceSignNegative")
+    if button.isVisible()
+)
+assert negative_sign.text() == "−"
+board_source = attachment_dialog.table.item(
+    board_row, attachment_dialog.COL_CHECK
+).data(Qt.ItemDataRole.UserRole)
+assert board_source["attachment_price_sign"] == -1
+assert attachment_dialog.table.item(board_row, attachment_dialog.COL_PRICE).text() == "-80"
+selected_board = next(
+    item for item in attachment_dialog.attachments if item.get("item_name") == "JK安装板"
+)
+fresh_board = next(
+    item for item in attachment_dialog.collect_attachments(False)
+    if item.get("item_name") == "JK安装板"
+)
+assert fresh_board["attachment_price_sign"] == -1, fresh_board
+assert selected_board["attachment_price_sign"] == -1, attachment_dialog.attachments
+assert selected_board["matched_price"] == 80
 
 limiter_row = next(
     row for row in range(attachment_dialog.table.rowCount())
@@ -453,6 +519,13 @@ window = namespace["MainWindow"]()
 window.resize(1519, 987)
 window.show()
 app.processEvents()
+
+window.attachments = [{
+    "item_name": "安装板", "quantity": 1, "matched_price": 100,
+    "attachment_price_sign": -1,
+}]
+window.update_attachment_view()
+assert "-100.00 元" in window.attachment_list.item(0).text()
 
 assert window.stack.count() == 4
 nav = window.findChild(QFrame, "navPanel")

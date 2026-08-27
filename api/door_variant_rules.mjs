@@ -1,6 +1,6 @@
 // Door-count business rules shared by the dual-quote API response layer.
 // Product availability remains database-driven; this module only validates
-// the operator's two door counts and applies the approved quick-price delta.
+// the operator's two door counts and selects the approved quote source.
 
 export const VALID_DOOR_COMBINATIONS = Object.freeze([
   Object.freeze([1, 0]),
@@ -51,13 +51,10 @@ export function databaseVariantForDoorCounts(counts) {
 export function quickDoorVariantForCounts(counts, productCode = '') {
   if (!counts) return null;
   const family = productFamily(productCode);
-  const key = `${counts.single}/${counts.double}`;
-  // Quick-quote source selection is family-aware.  JA keeps its single
-  // formula template; JE 0/2 keeps the existing DOUBLE rule.  The previously
-  // unspecified 0/2 and 1/1 JA/JE behavior is therefore unchanged.
+  // Quick quote reads the SINGLE record for every approved combination in
+  // JS/JP/JA/JE.  Door counts remain in the payload for quantity/BOM rules;
+  // they do not switch the quick-price source or add an automatic surcharge.
   if (FORMULA_MULTI_DOOR_FAMILY_SET.has(family)) {
-    if (key === '0/1') return 'SINGLE';
-    if (key === '0/2') return family === 'JE' ? 'DOUBLE' : 'SINGLE';
     return 'SINGLE';
   }
   return databaseVariantForDoorCounts(counts);
@@ -118,120 +115,4 @@ export function normalizeQuickDoorVariantInput(input = {}) {
     variant_code: variant,
     product_family: family,
   };
-}
-
-export function quickDoorVariantSurcharge(input = {}) {
-  const counts = doorCountsFromInput(input, { allowZeroPair: true });
-  if (!counts) return 0;
-  if (counts.single === 0 && counts.double === 0) return 0;
-  const family = productFamily(input.product_code);
-  const key = `${counts.single}/${counts.double}`;
-  if (family === 'JS' || family === 'JP') {
-    if (key === '2/0' || key === '0/1') return 150;
-    if (key === '0/2') return 420;
-    if (key === '1/1') return 270;
-  }
-  if ((family === 'JA' || family === 'JE') && key === '0/1') return 60;
-  return 0;
-}
-
-export function quickDoorVariantDescription(input = {}) {
-  const counts = doorCountsFromInput(input, { allowZeroPair: true });
-  if (!counts || (counts.single === 0 && counts.double === 0)) return '';
-  const family = productFamily(input.product_code);
-  const key = `${counts.single}/${counts.double}`;
-  if (family === 'JS' || family === 'JP') {
-    if (key === '2/0') return '后背板变单开门+150';
-    if (key === '0/1') return '单开门变为双开门+150';
-    if (key === '0/2') return '单开门/后背板均变为双开门+420';
-    if (key === '1/1') return '单门和双门+270';
-  }
-  if ((family === 'JA' || family === 'JE') && key === '0/1') {
-    return '单开门变为双开门+60';
-  }
-  return '';
-}
-
-const numberOrNull = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-};
-
-const rounded = (value) => Number(Number(value).toFixed(6));
-
-const clone = (value) => {
-  if (Array.isArray(value)) return value.map(clone);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, clone(child)]));
-  }
-  return value;
-};
-
-export function applyDoorVariantQuickPrice(row, input = {}) {
-  const result = clone(row ?? {});
-  const counts = doorCountsFromInput(input, { allowMissing: true, allowZeroPair: true });
-  const quickVariant = counts && (counts.single !== 0 || counts.double !== 0)
-    ? quickDoorVariantForCounts(counts, input.product_code) : null;
-  if (quickVariant && result.quick_quote && typeof result.quick_quote === 'object') {
-    result.quick_quote.door_variant = quickVariant;
-  }
-  const surcharge = quickDoorVariantSurcharge(input);
-  const description = quickDoorVariantDescription(input);
-  const quick = result.quick_quote;
-  if (quick && typeof quick === 'object') {
-    quick.door_variant_surcharge = surcharge;
-    quick.door_variant_description = description;
-  }
-  if (surcharge <= 0) {
-    if (quickVariant) {
-      result.door_variant_billing_rule = {
-        version: 'door-count-quick-v3',
-        product_family: productFamily(input.product_code),
-        quick_door_variant: quickVariant,
-        single_door_count: counts.single,
-        double_door_count: counts.double,
-        quick_price_surcharge: 0,
-        quick_price_description: '',
-        migrated_legacy_attachment_fee: 0,
-        formula_unchanged: true,
-      };
-    }
-    return result;
-  }
-
-  const existingRule = result.door_variant_billing_rule;
-  if (existingRule?.version === 'door-count-quick-v3'
-      && Number(existingRule.quick_price_surcharge) === surcharge
-      && Number(existingRule.single_door_count) === counts.single
-      && Number(existingRule.double_door_count) === counts.double) return result;
-
-  if (!quick || typeof quick !== 'object') return result;
-  const basePrice = numberOrNull(quick.base_price);
-  const totalCost = numberOrNull(quick.total_cost);
-  if (basePrice === null || totalCost === null) return result;
-
-  // Older clients may still send the legacy quick-only transformation row.
-  // Move its overlapping amount out of attachment_fee before applying the
-  // automatic door surcharge so the final price is never charged twice.
-  const legacyFee = Math.max(0, numberOrNull(result.attachment_billing_rules?.quick_only_attachment_fee) || 0);
-  const migratedLegacyFee = Math.min(legacyFee, surcharge);
-  const attachmentFee = numberOrNull(quick.attachment_fee);
-  quick.base_price = rounded(basePrice);
-  quick.total_cost = rounded(totalCost - migratedLegacyFee + surcharge);
-  if (attachmentFee !== null && migratedLegacyFee > 0) {
-    quick.attachment_fee = rounded(Math.max(0, attachmentFee - migratedLegacyFee));
-  }
-
-  result.door_variant_billing_rule = {
-    version: 'door-count-quick-v3',
-    product_family: productFamily(input.product_code),
-    quick_door_variant: quickVariant,
-    single_door_count: counts.single,
-    double_door_count: counts.double,
-    quick_price_surcharge: surcharge,
-    quick_price_description: description,
-    migrated_legacy_attachment_fee: migratedLegacyFee,
-    formula_unchanged: true,
-  };
-  return result;
 }

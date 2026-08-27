@@ -73,6 +73,21 @@ assert unsafe_match is not None
 assert "unit_price_override" not in unsafe_match
 assert "未执行比例折价" in unsafe_match["size_match_warning"]
 
+# Fixed bases first keep the entered/recognized height.  Perimeter distance is
+# only compared inside that height group; if no same-height row exists, normal
+# nearest-perimeter matching remains available.
+same_height = row(30, "固定底座", 800, 100, 500, 100)
+closer_wrong_height = row(31, "固定底座", 990, 80, 590, 120)
+height_first = match_attachment_size(
+    [closer_wrong_height, same_height], same_height, (1000, 100, 600)
+)
+assert height_first["attachment_price_id"] == 30
+
+fallback_a = row(32, "固定底座", 900, 80, 500, 100)
+fallback_b = row(33, "固定底座", 980, 120, 580, 120)
+height_fallback = match_attachment_size([fallback_a, fallback_b], fallback_a, (1000, 100, 600))
+assert height_fallback["attachment_price_id"] == 33
+
 for name in ("固定底座", "活动底座", "侧板", "安装板", "内门", "玻璃门", "通风顶罩", "防雨顶", "分段板", "JK安装板"):
     assert size_match_attachment_name({"item_name": name}) == name
 assert size_match_attachment_name({"item_name": "门限位器"}) is None

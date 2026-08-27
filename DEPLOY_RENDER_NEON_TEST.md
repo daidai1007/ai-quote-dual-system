@@ -34,7 +34,7 @@
 
 1. 打开 `https://你的服务.onrender.com/health`，确认：
    - `ok` 为 `true`
-   - `build` 为 `2026-08-17-auxiliary-bom-v1`
+   - `build` 为 `2026-08-26-signed-attachments-v1`
    - `deployment` 为 `2026-08-24-attachment-classification-v1`
 2. 使用 API 密钥请求 `/api/health/database`，确认 `ready` 为 `true`，且所有检查项均为 `true`。
 3. 再依次验证产品目录、附件目录、公式报价、快速报价、配置变形、辅材明细、报价确认和 Excel 导出。

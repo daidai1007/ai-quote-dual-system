@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 import re
 
+from ganged_cabinet_rules import parse_ganged_specification
+
 
 CATEGORY_KEYS = ("category_level1", "category_level2", "category_level3")
 LEVEL1_ORDER = (
@@ -18,6 +20,7 @@ LEVEL1_ORDER = (
     "门限位器",
     "门加强筋",
     "配置变形",
+    "门变形",
     "内门",
     "玻璃门",
     "安装条",
@@ -37,6 +40,14 @@ DEFAULT_DOOR_LIMITER = "door_limiter"
 DEFAULT_JP_SIDE_PANEL = "jp_side_panel"
 DEFAULT_DOOR_REINFORCEMENT = "door_reinforcement"
 DEFAULT_GROUND_WIRE = "ground_wire"
+DOOR_TRANSFORMATION_RULE_PREFIX = "door_transformation:"
+DOOR_TRANSFORMATION_NAMES = (
+    "JS、JP后背板改为单开门",
+    "JS、JP后背板改为双开门",
+    "JS、JP单开门改为双开门",
+    "JA、JE单开门改为双开门",
+)
+ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = ("侧板", "门变形", "风机滤网")
 DOOR_COUNT_DEFAULT_QUANTITIES = {
     (1, 0): 1,
     (2, 0): 2,
@@ -83,6 +94,15 @@ def parse_base_specification(text: str) -> tuple[float, float, float, float] | N
     """
 
     value = str(text or "").strip()
+    ganged = parse_ganged_specification(value)
+    if ganged is not None and ganged.get("base_height_mm") is not None:
+        first = ganged["rows"][0]
+        return (
+            float(first["width_mm"]),
+            float(first["height_mm"]),
+            float(first["depth_mm"]),
+            float(first["base_height_mm"]),
+        )
     match = re.fullmatch(
         r"\s*(\d+(?:\.\d+)?)\s*[xX×＊*]\s*"
         r"(\d+(?:\.\d+)?)\s*[xX×＊*]\s*"
@@ -204,6 +224,125 @@ def is_jp_product(value) -> bool:
     return code == "JP" or code.startswith("JP_")
 
 
+def _product_family(value) -> str:
+    code = str(value or "").strip().upper()
+    for family in ("JS", "JP", "JA", "JE"):
+        if code == family or code.startswith(f"{family}_"):
+            return family
+    return code
+
+
+def _compact_attachment_name(value) -> str:
+    return re.sub(r"[\s,，]+", "、", str(value or "").strip()).strip("、")
+
+
+def door_transformation_rule_for_item(item: dict) -> str | None:
+    """Return a stable default-rule key for the four approved door changes."""
+
+    name = _compact_attachment_name(item.get("item_name"))
+    known = {_compact_attachment_name(value) for value in DOOR_TRANSFORMATION_NAMES}
+    if category_value(item, 0) == "门变形" and name in known:
+        return f"{DOOR_TRANSFORMATION_RULE_PREFIX}{name}"
+    return None
+
+
+def door_transformation_default_names(
+    product_code,
+    single_door_count,
+    double_door_count,
+) -> tuple[str, ...]:
+    """Map product family and door counts to manually priced transform rows."""
+
+    try:
+        counts = int(single_door_count), int(double_door_count)
+    except (TypeError, ValueError):
+        return ()
+    family = _product_family(product_code)
+    if family in {"JS", "JP"}:
+        return {
+            (1, 0): (),
+            (2, 0): ("JS、JP后背板改为单开门",),
+            (0, 1): ("JS、JP单开门改为双开门",),
+            (0, 2): (
+                "JS、JP单开门改为双开门",
+                "JS、JP后背板改为双开门",
+            ),
+            (1, 1): ("JS、JP后背板改为双开门",),
+        }.get(counts, ())
+    if family in {"JA", "JE"} and counts == (0, 1):
+        return ("JA、JE单开门改为双开门",)
+    return ()
+
+
+def match_door_transformation_defaults(
+    items: Iterable[dict],
+    product_code,
+    single_door_count,
+    double_door_count,
+) -> dict[str, dict]:
+    """Select one deterministic catalogue row for every required transform."""
+
+    wanted = tuple(
+        _compact_attachment_name(name)
+        for name in door_transformation_default_names(
+            product_code, single_door_count, double_door_count
+        )
+    )
+    matches: dict[str, dict] = {}
+    ordered = sorted(
+        (item for item in items if isinstance(item, dict)),
+        key=lambda item: (
+            _number(item.get("attachment_price_id")) is None,
+            _number(item.get("attachment_price_id")) or float("inf"),
+            _natural_text_key(item.get("model_code")),
+        ),
+    )
+    for wanted_name in wanted:
+        candidate = next(
+            (
+                item for item in ordered
+                if category_value(item, 0) == "门变形"
+                and _compact_attachment_name(item.get("item_name")) == wanted_name
+            ),
+            None,
+        )
+        if candidate is not None:
+            matches[f"{DOOR_TRANSFORMATION_RULE_PREFIX}{wanted_name}"] = candidate
+    return matches
+
+
+def attachment_uses_cabinet_quantity(item: dict) -> bool:
+    """Whether an attachment's chosen quantity is specified per cabinet."""
+
+    values = [category_value(item, level) for level in range(3)]
+    combined = " ".join(
+        [*values, str(item.get("attachment_category") or ""), str(item.get("item_name") or "")]
+    )
+    if "风机" in combined or "滤网" in combined:
+        return False
+    return not any(category in combined for category in ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES)
+
+
+def final_attachment_quantity(
+    item: dict,
+    cabinet_quantity,
+    ganged_cabinet_count=1,
+) -> float:
+    """Return the quote-line quantity without mutating the manual selection."""
+
+    quantity = _number(item.get("quantity"))
+    quantity = 1.0 if quantity is None else quantity
+    cabinets = _number(cabinet_quantity)
+    cabinets = 1.0 if cabinets is None else cabinets
+    split_count = _number(ganged_cabinet_count)
+    split_count = 1.0 if split_count is None else split_count
+    return (
+        quantity * cabinets * split_count
+        if attachment_uses_cabinet_quantity(item)
+        else quantity
+    )
+
+
 def match_jp_side_panel(
     items: Iterable[dict],
     height_mm: float,
@@ -230,6 +369,9 @@ def match_jp_side_panel(
 def default_rule_for_item(item: dict) -> str | None:
     """Map catalogue or collected selection data to its default rule group."""
 
+    door_rule = door_transformation_rule_for_item(item)
+    if door_rule is not None:
+        return door_rule
     category = category_value(item, 0)
     name = str(item.get("item_name") or "").strip()
     model = str(item.get("model_code") or "").strip().upper()
@@ -355,11 +497,20 @@ def match_attachment_size(
     def choice_key(item: dict):
         completed = completed_size_dimensions(item, target)
         if completed is None:
-            return (float("inf"), float("inf"), (), (), (), (), float("inf"))
+            return (float("inf"), float("inf"), float("inf"), (), (), (), (), float("inf"))
         perimeter = sum(completed)
         squared_distance = sum((actual - expected) ** 2 for actual, expected in zip(completed, target))
         price_id = _number(item.get("attachment_price_id"))
+        # A fixed base's explicitly entered/recognized height is the primary
+        # engineering constraint.  Exact W/H/D still wins; otherwise prefer
+        # every height-equal row before comparing perimeter proximity.  When
+        # no height-equal row exists, all candidates share rank 1 and the
+        # normal nearest-perimeter ordering applies unchanged.
+        height_rank = 0
+        if size_match_attachment_name(source) == "固定底座":
+            height_rank = 0 if abs(completed[1] - target[1]) <= 0.0001 else 1
         return (
+            height_rank,
             abs(perimeter - target_perimeter),
             squared_distance,
             completed,

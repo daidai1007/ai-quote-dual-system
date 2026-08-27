@@ -30,7 +30,7 @@ OTHER_DOOR_COUNTS = ((1, 0), (0, 1))
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--expected-deployment", default="20260826-door-matrix-v3")
+    parser.add_argument("--expected-deployment", default="20260826-signed-attachments-v4")
     return parser.parse_args()
 
 
@@ -89,19 +89,9 @@ def multi_template_code(family: str, codes: set[str], single: int, double: int) 
     raise RuntimeError(f"{family} has no usable formula template in the database catalogue")
 
 
-def expected_surcharge(family: str, counts: tuple[int, int]) -> float:
-    if family in {"JS", "JP"}:
-        return {(2, 0): 150.0, (0, 1): 150.0, (0, 2): 420.0, (1, 1): 270.0}.get(counts, 0.0)
-    if family in {"JA", "JE"} and counts == (0, 1):
-        return 60.0
-    return 0.0
-
-
 def expected_quick_variant(family: str, counts: tuple[int, int]) -> str:
-    if family in {"JS", "JP", "JA", "JE"} and counts == (0, 1):
+    if family in {"JS", "JP", "JA", "JE"}:
         return "SINGLE"
-    if counts == (0, 2):
-        return "DOUBLE" if family == "JE" else "SINGLE"
     return "SINGLE" if counts[0] > 0 else "DOUBLE"
 
 
@@ -200,14 +190,12 @@ def main() -> int:
             if not finite(quick_total):
                 result["errors"].append(f"quick total missing: {quick_total}")
             if family in MULTI_DOOR_FAMILIES:
-                expected = expected_surcharge(family, (single, double))
-                actual = (quote.get("door_variant_billing_rule") or {}).get("quick_price_surcharge")
-                if not finite(actual) or float(actual) != expected:
-                    result["errors"].append(f"quick surcharge {actual} != {expected}")
                 actual_variant = quick.get("door_variant")
                 wanted_variant = expected_quick_variant(family, (single, double))
                 if actual_variant != wanted_variant:
                     result["errors"].append(f"quick variant {actual_variant} != {wanted_variant}")
+            if "door_variant_billing_rule" in quote:
+                result["errors"].append("obsolete automatic door surcharge metadata is still present")
             result.update({
                 "weight_kg": weight,
                 "area_m2": area,

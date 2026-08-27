@@ -12,6 +12,9 @@ export const QUICK_DISCOUNT_ATTACHMENT_CATEGORIES = Object.freeze([
   "分段板",
   "JK安装板",
 ]);
+export const ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = Object.freeze([
+  "侧板", "门变形", "风机滤网",
+]);
 
 const categoryCandidates = (item = {}) => [
   item.category_level3,
@@ -37,9 +40,10 @@ export function quickDiscountCategory(item = {}) {
 }
 
 export function quickAttachmentLineAmount(item = {}) {
+  const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
   for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
     if (item[key] !== null && item[key] !== undefined && Number.isFinite(Number(item[key]))) {
-      return Number(item[key]);
+      return Math.abs(Number(item[key])) * sign;
     }
   }
   let unitPrice = 0;
@@ -50,7 +54,32 @@ export function quickAttachmentLineAmount(item = {}) {
     }
   }
   const quantity = asFiniteNumber(item.quantity, 1);
-  return unitPrice * quantity;
+  return Math.abs(unitPrice) * quantity * sign;
+}
+
+export function attachmentUsesCabinetQuantity(item = {}) {
+  const combined = categoryCandidates(item).join(" ");
+  if (combined.includes("风机") || combined.includes("滤网")) return false;
+  return !ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES.some((category) => combined.includes(category));
+}
+
+export function effectiveAttachmentQuantity(
+  item = {}, cabinetQuantity = 1, gangedCabinetCount = 1,
+) {
+  const selected = asFiniteNumber(item.quantity, 1);
+  const cabinets = asFiniteNumber(cabinetQuantity, 1);
+  const splitCount = asFiniteNumber(gangedCabinetCount, 1);
+  return selected * (attachmentUsesCabinetQuantity(item) ? cabinets * splitCount : 1);
+}
+
+export function effectiveAttachmentLineAmount(
+  item = {}, cabinetQuantity = 1, gangedCabinetCount = 1,
+) {
+  const selected = asFiniteNumber(item.quantity, 1) || 1;
+  const lineAmount = quickAttachmentLineAmount(item);
+  return lineAmount * effectiveAttachmentQuantity(
+    item, cabinetQuantity, gangedCabinetCount,
+  ) / selected;
 }
 
 /**
@@ -67,12 +96,9 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
   const attachmentFee = Number.isFinite(Number(quote.attachment_fee))
     ? Number(quote.attachment_fee)
     : listedAttachmentTotal;
-  const doorVariantSurcharge = Number.isFinite(Number(quote.door_variant_surcharge))
-    ? Number(quote.door_variant_surcharge)
-    : 0;
   const basePrice = Number.isFinite(Number(quote.base_price))
     ? Number(quote.base_price)
-    : rawTotal - attachmentFee - doorVariantSurcharge;
+    : rawTotal - attachmentFee;
   const listedEligible = attachments.reduce(
     (sum, item) => sum + (quickDiscountCategory(item) ? quickAttachmentLineAmount(item) : 0),
     0,
@@ -81,7 +107,7 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
   const originalPriceAttachmentTotal = attachmentFee - eligibleAttachmentTotal;
   const factor = Number.isFinite(Number(discount)) ? Number(discount) : 1;
   const discountedTotal = (basePrice + eligibleAttachmentTotal) * factor
-    + originalPriceAttachmentTotal + doorVariantSurcharge;
+    + originalPriceAttachmentTotal;
   return {
     rawTotal,
     basePrice,
@@ -89,8 +115,43 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
     listedAttachmentTotal,
     eligibleAttachmentTotal,
     originalPriceAttachmentTotal,
-    doorVariantSurcharge,
     discount: factor,
     discountedTotal,
+  };
+}
+
+/** Compute one complete quote-line total with attachment quantity exceptions. */
+export function quickOrderLineBreakdown({
+  quote = {}, attachments = [], discount = 1, cabinetQuantity = 1,
+  gangedCabinetCount = 1,
+} = {}) {
+  const unit = quickDiscountBreakdown({ quote, attachments, discount });
+  const cabinets = asFiniteNumber(cabinetQuantity, 1);
+  const splitCount = asFiniteNumber(gangedCabinetCount, 1);
+  const eligibleAttachmentTotal = attachments.reduce(
+    (sum, item) => sum + (quickDiscountCategory(item)
+      ? effectiveAttachmentLineAmount(item, cabinets, splitCount) : 0),
+    0,
+  );
+  const listedOriginalTotal = attachments.reduce(
+    (sum, item) => sum + (quickDiscountCategory(item)
+      ? 0 : effectiveAttachmentLineAmount(item, cabinets, splitCount)),
+    0,
+  );
+  const unlistedDifference = unit.attachmentFee - unit.listedAttachmentTotal;
+  const originalPriceAttachmentTotal = listedOriginalTotal
+    + unlistedDifference * cabinets * splitCount;
+  const factor = asFiniteNumber(discount, 1);
+  const lineTotal = (unit.basePrice * cabinets + eligibleAttachmentTotal) * factor
+    + originalPriceAttachmentTotal;
+  return {
+    ...unit,
+    cabinetQuantity: cabinets,
+    gangedCabinetCount: splitCount,
+    eligibleAttachmentTotal,
+    originalPriceAttachmentTotal,
+    unlistedDifference,
+    lineTotal,
+    equivalentUnitTotal: cabinets ? lineTotal / cabinets : lineTotal,
   };
 }

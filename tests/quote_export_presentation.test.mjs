@@ -128,19 +128,19 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
     await workbook.xlsx.readFile(outputPath);
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     const quickSheet = workbook.getWorksheet("快速报价单");
-    closeTo(formulaSheet.getCell("X11").value, 90, "formula limiter amount after discount");
+    closeTo(formulaSheet.getCell("X11").value, 180, "formula limiter amount after discount");
     const limiterColumn = quickSheet.getRow(10).values.findIndex((value) => value === "门限位器");
     assert.ok(limiterColumn > 0, "quick limiter name column is missing");
-    closeTo(quickSheet.getCell(11, limiterColumn).value, 100, "quick limiter amount");
+    closeTo(quickSheet.getCell(11, limiterColumn).value, 200, "quick limiter amount");
     const reinforcementColumn = quickSheet.getRow(10).values.findIndex((value) => value === "门加强筋");
     assert.ok(reinforcementColumn > 0, "quick reinforcement name column is missing");
-    closeTo(quickSheet.getCell(11, reinforcementColumn).value, 120, "quick reinforcement amount");
+    closeTo(quickSheet.getCell(11, reinforcementColumn).value, 240, "quick reinforcement amount");
     assert.deepEqual(
       ["L11", "M11", "N11", "O11", "P11"].map((cell) => Number(formulaSheet.getCell(cell).value)),
       [180, 90, 270, 135, 35.1],
       "other formula components changed",
     );
-    closeTo(quickSheet.getCell("L11").value, 3150, "quick cabinet amount excluding attachments");
+    closeTo(quickSheet.getCell("L11").value, 6300, "quick cabinet line amount excluding attachments");
 
     const detailSheet = workbook.getWorksheet("成本明细");
     let limiterRow = null;
@@ -150,13 +150,13 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
       if (row.getCell(5).text === "门加强筋") reinforcementRow = row;
     });
     assert.ok(limiterRow, "door limiter BOM row is missing");
-    closeTo(limiterRow.getCell(8).value, 4, "door limiter BOM quantity");
+    closeTo(limiterRow.getCell(8).value, 8, "door limiter BOM final quantity");
     closeTo(limiterRow.getCell(10).value, 25, "door limiter BOM unit price");
-    closeTo(limiterRow.getCell(11).value, 100, "door limiter BOM amount");
+    closeTo(limiterRow.getCell(11).value, 200, "door limiter BOM amount");
     assert.ok(reinforcementRow, "door reinforcement BOM row is missing");
-    closeTo(reinforcementRow.getCell(8).value, 4, "door reinforcement BOM quantity");
+    closeTo(reinforcementRow.getCell(8).value, 8, "door reinforcement BOM final quantity");
     closeTo(reinforcementRow.getCell(10).value, 30, "door reinforcement BOM unit price");
-    closeTo(reinforcementRow.getCell(11).value, 120, "door reinforcement BOM amount");
+    closeTo(reinforcementRow.getCell(11).value, 240, "door reinforcement BOM amount");
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
@@ -204,9 +204,9 @@ test("formal workbook exports the revised presentation without changing quote de
     const quickFormulaCell = workbook.getWorksheet("快速报价单").getCell("K11");
     assert.equal(
       quickFormulaCell.value.formula,
-      "L11*R11+M11+N11",
+      "L11*O11+M11+N11",
     );
-    closeTo(quickFormulaCell.value.result, 3200, "quick Excel formula cached result");
+    closeTo(quickFormulaCell.value.result, 6400, "quick Excel line formula cached result");
 
     const detailSheet = workbook.getWorksheet("成本明细");
     assert.ok(detailSheet.model.merges.includes("A3:O3"), "cost-detail explanation merge was lost");
@@ -221,7 +221,7 @@ test("formal workbook exports the revised presentation without changing quote de
   }
 });
 
-test("quick workbook uses stable selected-name columns and non-discounted door surcharges", async () => {
+test("quick workbook uses stable selected-name columns without obsolete configuration columns", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-door-matrix-export-"));
   const outputPath = path.join(tempDir, "door-matrix.xlsx");
   const reversedInputPath = path.join(tempDir, "door-matrix-reversed.json");
@@ -239,40 +239,49 @@ test("quick workbook uses stable selected-name columns and non-discounted door s
     await reversedWorkbook.xlsx.readFile(reversedOutputPath);
     const sheet = workbook.getWorksheet("快速报价单");
     const reversedSheet = reversedWorkbook.getWorksheet("快速报价单");
+    const formulaSheet = workbook.getWorksheet("公式法报价单");
     const headers = sheet.getRow(10).values.slice(11).filter((value) => value !== null && value !== undefined && value !== "");
     const reversedHeaders = reversedSheet.getRow(10).values.slice(11).filter((value) => value !== null && value !== undefined && value !== "");
     assert.deepEqual(headers, reversedHeaders, "dynamic attachment order changed with quote row order");
     assert.deepEqual(headers.slice(0, 2), ["成本计算公式", "柜体"]);
-    assert.deepEqual(headers.slice(-4), ["其他附件/差额", "配置变形说明", "配置变形", "折扣"]);
-    const dynamicNames = headers.slice(2, -4);
+    assert.deepEqual(headers.slice(-1), ["折扣"]);
+    assert.ok(!headers.includes("其他附件/差额"));
+    assert.ok(!headers.includes("配置变形说明"));
+    assert.ok(!headers.includes("配置变形"));
+    const trailingColumn = sheet.getColumn(sheet.getRow(10).values.length).letter;
+    if (trailingColumn !== "Y") {
+      assert.equal(sheet.getCell("Y10").border, undefined, "unused template columns still look like attachment columns");
+      assert.equal(sheet.getCell("Y10").fill, undefined);
+    }
+    const dynamicNames = headers.slice(2, -1);
     assert.deepEqual(new Set(dynamicNames), new Set([
-      "固定底座100高", "红绿接地线", "JA内门板", "JP通风顶罩", "KA2206风机", "门限位器",
+      "固定底座100高", "标准安装板", "JA内门板", "JP通风顶罩", "KA2206风机", "门限位器",
+      "侧板",
+      "JS、JP后背板改为单开门", "JS、JP单开门改为双开门",
+      "JS、JP后背板改为双开门", "JA、JE单开门改为双开门",
     ]));
-    assert.ok(!dynamicNames.includes("侧板"), "unselected attachment produced a blank column");
 
     const headerIndex = (label) => sheet.getRow(10).values.findIndex((value) => value === label);
-    const descriptionColumn = headerIndex("配置变形说明");
-    const surchargeColumn = headerIndex("配置变形");
     const discountColumn = headerIndex("折扣");
-    assert.equal(surchargeColumn, descriptionColumn + 1, "configuration text is not immediately before its numeric cell");
     const expected = [
-      ["", "", 990],
-      ["后背板变单开门+150", 150, 1070],
-      ["单开门变为双开门+60", 60, 1140],
-      ["单开门/后背板均变为双开门+420", 420, 1640],
-      ["单门和双门+270", 270, 1200],
+      [990, 990], [960, 960], [1140, 1140], [3980 / 3, 3980], [1110, 2220],
+      [1665, 3330],
     ];
-    expected.forEach(([description, surcharge, total], index) => {
+    expected.forEach(([unitTotal, lineTotal], index) => {
       const row = 11 + index;
-      assert.equal(sheet.getCell(row, descriptionColumn).text, description);
-      assert.equal(sheet.getCell(row, surchargeColumn).value ?? "", surcharge);
-      closeTo(sheet.getCell(row, 6).value, total, `door matrix quick total row ${row}`);
+      closeTo(sheet.getCell(row, 6).value, unitTotal, `door matrix quick unit total row ${row}`);
+      closeTo(sheet.getCell(row, 7).value, lineTotal, `door matrix quick line total row ${row}`);
       const formula = sheet.getCell(row, 11).value.formula;
       assert.match(formula, new RegExp(`${sheet.getColumn(discountColumn).letter}${row}`));
-      if (surcharge) assert.match(formula, new RegExp(`${sheet.getColumn(surchargeColumn).letter}${row}`));
     });
+    const boardColumn = headerIndex("标准安装板");
+    assert.equal(sheet.getCell(12, boardColumn).value, -100);
+    assert.match(sheet.getCell(12, 11).value.formula, new RegExp(`${sheet.getColumn(boardColumn).letter}12`));
+    const formulaBoardColumn = formulaSheet.getRow(10).values.findIndex((value) => value === "安装板");
+    assert.ok(formulaBoardColumn > 0);
+    assert.equal(formulaSheet.getCell(12, formulaBoardColumn).value, -90);
 
-    for (let row = 11; row <= 15; row += 1) {
+    for (let row = 11; row <= 16; row += 1) {
       for (const name of dynamicNames) {
         const column = headerIndex(name);
         const selectedName = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8")).items[row - 11]
@@ -280,6 +289,163 @@ test("quick workbook uses stable selected-name columns and non-discounted door s
         if (!selectedName.includes(name)) assert.equal(sheet.getCell(row, column).value, null);
       }
     }
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("quick workbook creates the other-attachment column only for a real unlisted delta", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-other-delta-export-"));
+  const inputPath = path.join(tempDir, "other-delta.json");
+  const outputPath = path.join(tempDir, "other-delta.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8"));
+    payload.items = [payload.items[0]];
+    payload.items[0].quick.attachment_fee = 125;
+    payload.items[0].quick.total_cost = 1125;
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    const sheet = workbook.getWorksheet("快速报价单");
+    const headers = sheet.getRow(10).values;
+    const otherColumn = headers.findIndex((value) => value === "其他附件/差额");
+    const discountColumn = headers.findIndex((value) => value === "折扣");
+    assert.ok(otherColumn > 0);
+    assert.equal(headers.includes("配置变形说明"), false);
+    assert.equal(headers.includes("配置变形"), false);
+    assert.equal(sheet.getCell(11, otherColumn).value, 25);
+    assert.equal(sheet.getCell(11, 11).value.formula, `(L11+M11)*${sheet.getColumn(discountColumn).letter}11+${sheet.getColumn(otherColumn).letter}11`);
+    closeTo(sheet.getCell(11, 6).value, 1015, "quick delta row total");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("workbook uses final attachment quantities with the three manual exceptions", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-attachment-quantity-"));
+  const inputPath = path.join(tempDir, "attachment-quantity.json");
+  const outputPath = path.join(tempDir, "attachment-quantity.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8"));
+    const item = structuredClone(payload.items[0]);
+    item.quantity = 3;
+    item.formula_discount = 0.9;
+    item.quick_discount = 0.9;
+    item.attachments = [
+      { item_name: "标准安装板", category_level1: "安装板", quantity: 1, unit_price: 100, attachment_price_sign: -1 },
+      { item_name: "侧板", category_level1: "侧板", quantity: 2, unit_price: 50 },
+      { item_name: "KA2206风机", category_level1: "风机滤网", quantity: 1, unit_price: 30 },
+      { item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1, unit_price: 150 },
+    ];
+    item.quick = { base_price: 1000, attachment_fee: 180, total_cost: 1180 };
+    item.formula = {
+      material_cost: 400, auxiliary_cost: 100, labor_cost: 200,
+      spray_cost: 80, management_fee: 26, attachment_fee: 180, total_cost: 986,
+    };
+    payload.items = [item];
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    const quickSheet = workbook.getWorksheet("快速报价单");
+    const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
+    closeTo(quickSheet.getCell("F11").value, 900, "quick equivalent unit total");
+    closeTo(quickSheet.getCell("G11").value, 2700, "quick quote line total");
+    closeTo(quickSheet.getCell("K11").value.result, 2700, "quick cost formula result");
+    closeTo(quickSheet.getCell(11, headerIndex("标准安装板")).value, -300, "negative board final amount");
+    closeTo(quickSheet.getCell(11, headerIndex("侧板")).value, 100, "side-panel manual amount");
+    closeTo(quickSheet.getCell(11, headerIndex("KA2206风机")).value, 30, "fan manual amount");
+    closeTo(quickSheet.getCell(11, headerIndex("JS、JP后背板改为单开门")).value, 150, "door-transform manual amount");
+
+    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    closeTo(formulaSheet.getCell("F11").value, 719.4, "formula equivalent unit total");
+    closeTo(formulaSheet.getCell("G11").value, 2158.2, "formula quote line total");
+
+    const detailSheet = workbook.getWorksheet("成本明细");
+    const quantityByName = new Map();
+    detailSheet.eachRow((row) => {
+      const name = row.getCell(5).text;
+      if (name) quantityByName.set(name, Number(row.getCell(8).value));
+    });
+    assert.equal(quantityByName.get("标准安装板"), 3);
+    assert.equal(quantityByName.get("侧板"), 2);
+    assert.equal(quantityByName.get("KA2206风机"), 1);
+    assert.equal(quantityByName.get("JS、JP后背板改为单开门"), 1);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ganged cabinet stays on one quote row and applies split and order multipliers", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-ganged-cabinet-"));
+  const inputPath = path.join(tempDir, "ganged-cabinet.json");
+  const outputPath = path.join(tempDir, "ganged-cabinet.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8"));
+    const item = structuredClone(payload.items[0]);
+    item.model_code = "（200+200+200）×600×（600+200）";
+    item.specification = item.model_code;
+    item.width_mm = 200;
+    item.depth_mm = 600;
+    item.height_mm = 600;
+    item.quantity = 2;
+    item.ganged_cabinet_count = 3;
+    item.ganged_cabinets = [0, 1, 2].map((index) => ({
+      width_mm: 200, depth_mm: 600, height_mm: 600, base_height_mm: 200,
+      single_door_count: index === 0 ? 1 : 0,
+      double_door_count: index === 0 ? 0 : 1,
+    }));
+    item.formula_discount = 0.9;
+    item.quick_discount = 0.9;
+    item.attachments = [
+      { item_name: "标准安装板", category_level1: "安装板", quantity: 1, unit_price: 100, attachment_price_sign: -1 },
+      { item_name: "侧板", category_level1: "侧板", quantity: 2, unit_price: 50 },
+      { item_name: "KA2206风机", category_level1: "风机滤网", quantity: 1, unit_price: 30 },
+      { item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1, unit_price: 150 },
+    ];
+    item.quick = { base_price: 2000, attachment_fee: 180, total_cost: 2180 };
+    item.formula = {
+      material_cost: 400, auxiliary_cost: 100, labor_cost: 200,
+      spray_cost: 80, management_fee: 26, attachment_fee: 180, total_cost: 986,
+    };
+    payload.items = [item];
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    for (const sheetName of ["公式法报价单", "快速报价单"]) {
+      const sheet = workbook.getWorksheet(sheetName);
+      assert.equal(sheet.getCell("C11").text, item.specification);
+      assert.equal(sheet.getCell("D11").value, 2);
+      assert.equal(sheet.getCell("A12").value, null, `${sheetName} split into extra public rows`);
+    }
+    const quickSheet = workbook.getWorksheet("快速报价单");
+    const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
+    closeTo(quickSheet.getCell("F11").value, 1665, "ganged quick equivalent unit total");
+    closeTo(quickSheet.getCell("G11").value, 3330, "ganged quick line total");
+    closeTo(quickSheet.getCell(11, headerIndex("标准安装板")).value, -600, "ganged board amount");
+    closeTo(quickSheet.getCell(11, headerIndex("侧板")).value, 100, "ganged side amount");
+    closeTo(quickSheet.getCell(11, headerIndex("KA2206风机")).value, 30, "ganged fan amount");
+    closeTo(quickSheet.getCell(11, headerIndex("JS、JP后背板改为单开门")).value, 150, "ganged transform amount");
+
+    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    closeTo(formulaSheet.getCell("F11").value, 581.4, "ganged formula equivalent unit total");
+    closeTo(formulaSheet.getCell("G11").value, 1162.8, "ganged formula line total");
+
+    const detailSheet = workbook.getWorksheet("成本明细");
+    const quantityByName = new Map();
+    detailSheet.eachRow((row) => {
+      const name = row.getCell(5).text;
+      if (name) quantityByName.set(name, Number(row.getCell(8).value));
+    });
+    assert.equal(quantityByName.get("标准安装板"), 6);
+    assert.equal(quantityByName.get("侧板"), 2);
+    assert.equal(quantityByName.get("KA2206风机"), 1);
+    assert.equal(quantityByName.get("JS、JP后背板改为单开门"), 1);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

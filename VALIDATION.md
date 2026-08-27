@@ -28,11 +28,11 @@ npm test
 Build `2026-08-21-door-formula-v2` validates all five JS/JP/JA/JE formula
 door-count combinations and verifies that the two counts drive formula weight
 and area. Other door products accept only 1/0 and 0/1 and select the matching
-database single/double record. Quick quote classifies 0/1 and 0/2 as DOUBLE,
-and 1/0, 2/0 and 1/1 as SINGLE, then applies only the approved increments.
-Formula totals remain unchanged by the quick surcharge. Regression
-coverage also verifies compatibility with the legacy JS/JP quick-only attachment
-row so the same transformation cannot be charged twice.
+database single/double record. Quick quote reads SINGLE for all five approved
+JS/JP/JA/JE combinations. Door counts still drive attachment quantities and
+BOM output, but do not add an automatic surcharge. Formula totals and their
+database template selection remain unchanged. Regression coverage also verifies
+that the former JS/JP transformation is an ordinary manually selected attachment.
 
 Manual attachment catalogue input is normalized and validated before the API
 generates an idempotent PostgreSQL insert. Automated tests do not connect to or
@@ -45,7 +45,7 @@ remain cabinet-level values and are deliberately not perimeter-scaled.
 
 ## v2026.8.18
 
-- API build `2026-08-17-auxiliary-bom-v1` normalizes wide-experience and JM variants before auxiliary-cost lookup while retaining cloud-safe `psql` path configuration.
+- API build `2026-08-26-signed-attachments-v1` retains the existing variant normalization and adds signed installation-board selections with positive source-price snapshots.
 - The formula quote card exposes an `人工成本折扣系数` control. Changing it immediately recalculates labor cost, the linked 13% management fee, and the formula total from the unmodified database result.
 - Draft items persist both the original formula result and the selected labor multiplier, preventing repeated edits from applying the multiplier more than once.
 - Client typography and quotation-card sizing were increased for clearer presentation.

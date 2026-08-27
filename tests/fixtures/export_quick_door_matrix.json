@@ -18,7 +18,7 @@
       "formula_discount": 1,
       "quick_discount": 0.9,
       "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 100, "total_cost": 906 },
-      "quick": { "base_price": 1000, "attachment_fee": 100, "door_variant_surcharge": 0, "door_variant_description": "", "total_cost": 1100 },
+      "quick": { "base_price": 1000, "attachment_fee": 100, "total_cost": 1100 },
       "attachments": [{ "item_name": "固定底座100高", "category_level1": "底座", "quantity": 1, "unit_price": 100 }],
       "final_remark": "1/0 快速报价回归。"
     },
@@ -33,11 +33,14 @@
       "height_mm": 2000,
       "depth_mm": 600,
       "quantity": 1,
-      "formula_discount": 1,
+      "formula_discount": 0.9,
       "quick_discount": 0.9,
-      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 20, "total_cost": 826 },
-      "quick": { "base_price": 1000, "attachment_fee": 20, "door_variant_surcharge": 150, "door_variant_description": "后背板变单开门+150", "total_cost": 1170 },
-      "attachments": [{ "item_name": "红绿接地线", "quantity": 2, "unit_price": 10 }],
+      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 50, "total_cost": 856 },
+      "quick": { "base_price": 1000, "attachment_fee": 50, "total_cost": 1050 },
+      "attachments": [
+        { "item_name": "标准安装板", "category_level1": "安装板", "quantity": 1, "unit_price": 100, "attachment_price_sign": -1 },
+        { "item_name": "JS、JP后背板改为单开门", "category_level1": "门变形", "quantity": 1, "unit_price": 150 }
+      ],
       "final_remark": "2/0 快速报价回归。"
     },
     {
@@ -53,9 +56,12 @@
       "quantity": 1,
       "formula_discount": 1,
       "quick_discount": 0.9,
-      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 200, "total_cost": 1006 },
-      "quick": { "base_price": 1000, "attachment_fee": 200, "door_variant_surcharge": 60, "door_variant_description": "单开门变为双开门+60", "total_cost": 1260 },
-      "attachments": [{ "item_name": "JA内门板", "category_level1": "内门", "quantity": 1, "unit_price": 200 }],
+      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 260, "total_cost": 1066 },
+      "quick": { "base_price": 1000, "attachment_fee": 260, "total_cost": 1260 },
+      "attachments": [
+        { "item_name": "JA内门板", "category_level1": "内门", "quantity": 1, "unit_price": 200 },
+        { "item_name": "JA、JE单开门改为双开门", "category_level1": "门变形", "quantity": 1, "unit_price": 60 }
+      ],
       "final_remark": "0/1 JA 快速报价回归。"
     },
     {
@@ -68,14 +74,16 @@
       "width_mm": 1000,
       "height_mm": 2000,
       "depth_mm": 600,
-      "quantity": 1,
+      "quantity": 3,
       "formula_discount": 1,
       "quick_discount": 0.9,
-      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 350, "total_cost": 1156 },
-      "quick": { "base_price": 1000, "attachment_fee": 350, "door_variant_surcharge": 420, "door_variant_description": "单开门/后背板均变为双开门+420", "total_cost": 1770 },
+      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 770, "total_cost": 1576 },
+      "quick": { "base_price": 1000, "attachment_fee": 770, "total_cost": 1770 },
       "attachments": [
         { "item_name": "JP通风顶罩", "category_level1": "通风顶罩", "quantity": 1, "unit_price": 300 },
-        { "item_name": "KA2206风机", "quantity": 1, "unit_price": 50 }
+        { "item_name": "KA2206风机", "category_level1": "风机滤网", "quantity": 1, "unit_price": 50 },
+        { "item_name": "JS、JP单开门改为双开门", "category_level1": "门变形", "quantity": 1, "unit_price": 150 },
+        { "item_name": "JS、JP后背板改为双开门", "category_level1": "门变形", "quantity": 1, "unit_price": 270 }
       ],
       "final_remark": "0/2 JP 快速报价回归。"
     },
@@ -89,13 +97,48 @@
       "width_mm": 1000,
       "height_mm": 2000,
       "depth_mm": 600,
-      "quantity": 1,
+      "quantity": 2,
       "formula_discount": 1,
       "quick_discount": 0.9,
-      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 30, "total_cost": 836 },
-      "quick": { "base_price": 1000, "attachment_fee": 30, "door_variant_surcharge": 270, "door_variant_description": "单门和双门+270", "total_cost": 1300 },
-      "attachments": [{ "item_name": "门限位器", "quantity": 3, "unit_price": 10 }],
+      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 400, "total_cost": 1206 },
+      "quick": { "base_price": 1000, "attachment_fee": 400, "total_cost": 1400 },
+      "attachments": [
+        { "item_name": "门限位器", "quantity": 3, "unit_price": 10 },
+        { "item_name": "JS、JP后背板改为双开门", "category_level1": "门变形", "quantity": 1, "unit_price": 270 },
+        { "item_name": "侧板", "category_level1": "侧板", "quantity": 2, "unit_price": 50 }
+      ],
       "final_remark": "1/1 JP 快速报价回归。"
+    },
+    {
+      "name": "GANGED-JS",
+      "product_family": "JS",
+      "product_code": "JS_SINGLE",
+      "model_code": "（200+200+200）×600×（600+200）",
+      "specification": "（200+200+200）×600×（600+200）",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "material_code": "SECC",
+      "width_mm": 200,
+      "height_mm": 600,
+      "depth_mm": 600,
+      "quantity": 2,
+      "ganged_cabinet_count": 3,
+      "ganged_cabinets": [
+        { "width_mm": 200, "depth_mm": 600, "height_mm": 600, "base_height_mm": 200, "single_door_count": 1, "double_door_count": 0 },
+        { "width_mm": 200, "depth_mm": 600, "height_mm": 600, "base_height_mm": 200, "single_door_count": 0, "double_door_count": 1 },
+        { "width_mm": 200, "depth_mm": 600, "height_mm": 600, "base_height_mm": 200, "single_door_count": 0, "double_door_count": 1 }
+      ],
+      "formula_discount": 0.9,
+      "quick_discount": 0.9,
+      "formula": { "material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 180, "total_cost": 986 },
+      "quick": { "base_price": 2000, "attachment_fee": 180, "total_cost": 2180 },
+      "attachments": [
+        { "item_name": "标准安装板", "category_level1": "安装板", "quantity": 1, "unit_price": 100, "attachment_price_sign": -1 },
+        { "item_name": "侧板", "category_level1": "侧板", "quantity": 2, "unit_price": 50 },
+        { "item_name": "KA2206风机", "category_level1": "风机滤网", "quantity": 1, "unit_price": 30 },
+        { "item_name": "JS、JP后背板改为单开门", "category_level1": "门变形", "quantity": 1, "unit_price": 150 }
+      ],
+      "final_remark": "三联并柜快速报价回归。"
     }
   ]
 }

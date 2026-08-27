@@ -29,10 +29,9 @@ assert(
   `formula headers changed: ${JSON.stringify(formulaHeaders)}`,
 );
 
-const quickHeaders = quickSheet.getRange("K10:U10").values[0].map(normalize);
+const quickHeaders = quickSheet.getRange("K10:R10").values[0].map(normalize);
 const expectedQuickHeaders = [
-  "成本计算公式", "柜体", "固定底座", "内门", "风机", "接地线", "文件夹",
-  "其他附件/差额", "配置变形说明", "配置变形", "折扣",
+  "成本计算公式", "柜体", "固定底座", "内门", "风机", "接地线", "文件夹", "折扣",
 ];
 assert(
   JSON.stringify(quickHeaders) === JSON.stringify(expectedQuickHeaders.map(normalize)),
@@ -56,8 +55,8 @@ assertClose(formulaRow2[17], 0.9, "formula row 2 discount");
 assertClose(formulaSheet.getRange("F11").values[0][0], 2122.81, "formula row 1 unit price");
 assertClose(formulaSheet.getRange("F12").values[0][0], 3177.72, "formula row 2 unit price");
 
-const quickRow1 = quickSheet.getRange("K11:U11").values[0];
-const expectedQuickFormula = "=(L11+M11+N11)*U11+O11+P11";
+const quickRow1 = quickSheet.getRange("K11:R11").values[0];
+const expectedQuickFormula = "=(L11+M11+N11)*R11+O11+P11";
 assert(
   quickSheet.getRange("K11").formulas[0][0] === expectedQuickFormula,
   `quick Excel formula changed: ${quickSheet.getRange("K11").formulas[0][0]}`,
@@ -68,10 +67,10 @@ assertClose(quickRow1[2], 100, "quick row 1 original base price");
 assertClose(quickRow1[3], 200, "quick row 1 original inner-door price");
 assertClose(quickRow1[4], 80, "quick row 1 original fan price");
 assertClose(quickRow1[5], 12, "quick row 1 original grounding-wire price");
-assertClose(quickRow1[10], 0.95, "quick row 1 discount");
+assertClose(quickRow1[7], 0.95, "quick row 1 discount");
 assertClose(quickSheet.getRange("F11").values[0][0], 4190.5755, "selectively discounted quick unit price");
 assert(
-  quickSheet.getRange("K12").formulas[0][0] === "=L12*U12+Q12",
+  quickSheet.getRange("K12").formulas[0][0] === "=L12*R12+Q12",
   `quick row 2 should omit blank and zero cells: ${quickSheet.getRange("K12").formulas[0][0]}`,
 );
 

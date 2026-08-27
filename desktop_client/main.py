@@ -113,7 +113,7 @@ API_URL = str(
     or "http://127.0.0.1:8080/api/quotes/calculate-dual"
 ).strip()
 API_KEY = str(os.getenv("AI_QUOTE_API_KEY") or CLIENT_CONFIG.get("api_key") or "").strip()
-REQUIRED_EXPORT_API_BUILD = "2026-08-15-quick-only-attachment-v1"
+REQUIRED_EXPORT_API_BUILD = "2026-08-26-signed-attachments-v1"
 
 
 def api_headers(has_json_body: bool = False) -> dict[str, str]:
@@ -461,6 +461,24 @@ class FormulaDatabaseCalculator:
     def _excel_text(value, _format=""):
         return str(value)
 
+    @staticmethod
+    def _rewrite_excel_chained_comparisons(expression: str) -> str:
+        """Preserve Excel's comparison evaluation for imported formulas.
+
+        Excel evaluates the source workbook expression ``1000>=B8>=350`` as
+        ``1000>=(B8>=350)``.  Python instead treats the same text as a range
+        test (``1000>=B8 and B8>=350``), which doubled JS row 5 when depth was
+        below 350 mm.  The workbook contains one such numeric/cell/numeric
+        chain, so parenthesize its right comparison before Python evaluation.
+        """
+        return re.sub(
+            r"(?P<left>\d+(?:\.\d+)?)\s*(?P<left_op>>=|<=|>|<)\s*"
+            r"(?P<middle>\$?[A-Z]{1,3}\$?\d+)\s*"
+            r"(?P<right_op>>=|<=|>|<)\s*(?P<right>\d+(?:\.\d+)?)",
+            r"\g<left>\g<left_op>(\g<middle>\g<right_op>\g<right>)",
+            expression,
+        )
+
     def _evaluate_sheet(
         self,
         product_code: str,
@@ -515,6 +533,7 @@ class FormulaDatabaseCalculator:
                     value = cells.get(ref, "")
                     cache[ref] = value
                     return value
+                expression = self._rewrite_excel_chained_comparisons(expression)
                 expression = expression.replace("<>", "!=")
                 expression = re.sub(r"(?<![<>=!])=(?!=)", "==", expression)
                 expression = expression.replace("^", "**")
@@ -577,16 +596,30 @@ class FormulaDatabaseCalculator:
                 item_name = "" if item_name in (None, 0.0) else str(item_name)
                 is_lock = "锁杆" in item_name
                 is_frame = "框架" in item_name
+                thickness_value = float(thickness)
+                is_jp = product_code.startswith("JP_")
                 if treatment == "镀锌板":
-                    if abs(float(thickness) - 2.5) < 1e-6 or abs(float(thickness) - 3) < 1e-6:
+                    # JP has only the 2.5 mm galvanized SUMPRODUCT bucket.
+                    # The other formula sheets have independent 2/2.5/3 mm
+                    # buckets and all three must enter the workbook total.
+                    galvanized_thicknesses = (2.5,) if is_jp else (2, 2.5, 3)
+                    if any(abs(thickness_value - value) < 1e-6 for value in galvanized_thicknesses):
                         weight += float(row_weight)
                 elif is_lock:
+                    # Workbook lock-rod buckets are restricted to rows whose
+                    # treatment is not galvanized.
                     weight += float(row_weight)
-                elif not is_lock and float(thickness) in (1, 1.5, 2, 2.5, 3):
-                    # The workbook excludes frame rows only from the 1.5 mm
-                    # category; its 2/2.5/3 mm SUMPRODUCT categories include
-                    # frames and therefore must retain that behavior.
-                    if float(thickness) != 1.5 or not is_frame:
+                elif not is_lock:
+                    if is_jp:
+                        # JP separately sums 1.5 mm frame and non-frame rows,
+                        # so their combined contribution includes both.
+                        included = (1, 1.5, 2, 2.5, 3)
+                        if any(abs(thickness_value - value) < 1e-6 for value in included):
+                            weight += float(row_weight)
+                    elif (
+                        (abs(thickness_value - 1.5) < 1e-6 and not is_frame)
+                        or any(abs(thickness_value - value) < 1e-6 for value in (2, 2.5, 3))
+                    ):
                         weight += float(row_weight)
             if product_code == "JM":
                 weight *= 1.1
@@ -697,7 +730,7 @@ class AttachmentDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("附件选择")
-        self.resize(1050, 680)
+        self.resize(900, 680)
         self.attachments = [dict(item) for item in attachments]
         self.catalog: list[dict] = []
         self.api_url = api_url
@@ -786,8 +819,8 @@ class AttachmentDialog(QDialog):
             recommendation.setStyleSheet("color:#b45309;font-weight:600;")
             layout.addWidget(recommendation)
         layout.addLayout(catalog_row)
-        layout.addWidget(self.category_panel)
         layout.addWidget(self.search_edit)
+        layout.addWidget(self.category_panel)
         layout.addWidget(self.table, 1)
         layout.addWidget(self.selection_hint)
         layout.addWidget(buttons)
@@ -1026,6 +1059,22 @@ class AttachmentDialog(QDialog):
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _price_sign(item: dict | None) -> int:
+        try:
+            return -1 if int((item or {}).get("attachment_price_sign", 1)) == -1 else 1
+        except (TypeError, ValueError):
+            return 1
+
+    @classmethod
+    def _is_installation_board(cls, item: dict | None) -> bool:
+        source = item or {}
+        combined = " ".join(
+            str(source.get(key) or "")
+            for key in ("category_level1", "category_level2", "category_level3", "item_name", "model_code")
+        )
+        return "安装板" in combined and "安装板单发" not in combined
+
     @classmethod
     def _same_catalog_choice(cls, selected: dict, catalog_item: dict) -> bool:
         """Match an existing selection back to one exact catalogue row."""
@@ -1042,6 +1091,8 @@ class AttachmentDialog(QDialog):
             if left is not None and (right is None or abs(left - right) > 0.0001):
                 return False
         selected_price = cls._number(selected.get("unit_price_override", selected.get("matched_price")))
+        if selected_price is not None:
+            selected_price = abs(selected_price)
         catalog_price = cls._number(catalog_item.get("price"))
         if selected_price is not None and catalog_price is not None and abs(selected_price - catalog_price) > 0.0001:
             # A manually overridden price still belongs to this catalogue row.
@@ -1082,6 +1133,8 @@ class AttachmentDialog(QDialog):
             price = self._number(selected.get("unit_price_override", selected.get("matched_price")))
         if price is None:
             price = self._number(catalog_item.get("price"))
+        if price is not None:
+            price = abs(price) * self._price_sign(selected)
         price_item = QTableWidgetItem("" if price is None else f"{price:g}")
         price_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         price_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -1242,13 +1295,15 @@ class AttachmentDialog(QDialog):
                 return None
             try:
                 price = float(self.table.item(row, self.COL_PRICE).text().strip())
-                if price < 0:
+                if price < 0 and not self._is_installation_board(source):
                     raise ValueError
             except (AttributeError, TypeError, ValueError):
                 if show_errors:
                     QMessageBox.warning(self, "单价格式错误", f"第 {row + 1} 行尚无有效数字单价，请填写后再确认。")
                 return None
 
+            price_sign = -1 if price < 0 else self._price_sign(source)
+            absolute_price = abs(price)
             item = {"item_name": source.get("item_name") or self.table.item(row, self.COL_NAME).text()}
             item["quantity"] = int(quantity)
             for key in (
@@ -1258,6 +1313,7 @@ class AttachmentDialog(QDialog):
                 "size_match_width_mm", "size_match_height_mm", "size_match_depth_mm",
                 "size_match_target_perimeter", "size_match_perimeter", "size_match_ratio",
                 "size_match_exact", "size_match_original_price", "size_match_warning",
+                "attachment_price_sign",
             ):
                 if source.get(key) is not None:
                     item[key] = source[key]
@@ -1267,8 +1323,10 @@ class AttachmentDialog(QDialog):
             catalog_price = self._number(source.get("price"))
             if catalog_price is not None:
                 item["matched_price"] = catalog_price
-            if catalog_price is None or abs(price - catalog_price) > 0.0001:
-                item["unit_price_override"] = price
+            if self._is_installation_board(source):
+                item["attachment_price_sign"] = price_sign
+            if catalog_price is None or abs(absolute_price - catalog_price) > 0.0001:
+                item["unit_price_override"] = absolute_price
             selected_rows.append(item)
         return selected_rows
 
@@ -2825,7 +2883,9 @@ class MainWindow(QMainWindow):
         for item in self.attachments:
             price = item.get("unit_price_override", item.get("matched_price")); size = AttachmentDialog.format_size(item)
             text = f"{item.get('item_name', '附件')} · {size} · 数量 {item.get('quantity', 1)}"
-            if price is not None: text += f" · {float(price):,.2f} 元"
+            if price is not None:
+                price = abs(float(price)) * AttachmentDialog._price_sign(item)
+                text += f" · {price:,.2f} 元"
             self.attachment_list.addItem(text)
 
     def open_attachment_dialog(self):

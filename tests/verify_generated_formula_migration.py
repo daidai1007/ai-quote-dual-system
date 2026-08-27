@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import ast
 from collections import defaultdict
 import json
-import os
+import math
 from pathlib import Path
 import re
-import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "database" / "migrations" / "sync_unified_door_formula_templates.sql"
+COMPLETION_SQL_PATH = ROOT / "database" / "migrations" / "complete_formula_shared_cells_from_workbooks.sql"
 DOORS = ((1, 0), (0, 1), (0, 2), (2, 0), (1, 1))
 
 
@@ -51,6 +52,33 @@ mappings = {
     for match in mapping_pattern.finditer(sql)
 }
 
+completion_sql = COMPLETION_SQL_PATH.read_text(encoding="utf-8")
+completion_pattern = re.compile(
+    r"\('(?P<code>[A-Z_]+)',\s*(?P<row>\d+),\s*(?P<index>\d+),\s*"
+    r"convert_from\(decode\('(?P<hex>[0-9a-f]+)', 'hex'\), 'UTF8'\),\s*'(?P<cell>[A-Z]+\d+)'\)"
+)
+completion_patches = defaultdict(list)
+for match in completion_pattern.finditer(completion_sql):
+    completion_patches[match.group("code")].append({
+        "source_row_no": int(match.group("row")),
+        "formula_index": int(match.group("index")),
+        "formula": bytes.fromhex(match.group("hex")).decode("utf-8"),
+        "cell": match.group("cell"),
+    })
+
+assert sum(map(len, completion_patches.values())) == 479
+for code, patches in completion_patches.items():
+    if code not in rules:
+        continue
+    rows_by_number = {row["source_row_no"]: row for row in rules[code]}
+    for patch in patches:
+        row = rows_by_number[patch["source_row_no"]]
+        formulas = row["raw_rule"].setdefault("formulas", [])
+        formulas.extend([""] * (23 - len(formulas)))
+        old_formula = formulas[patch["formula_index"]]
+        assert old_formula in ("", patch["formula"]), (code, patch["cell"], old_formula)
+        formulas[patch["formula_index"]] = patch["formula"]
+
 expected_codes = {
     "JS_SINGLE", "JS_DOUBLE", "JP_SINGLE", "JP_DOUBLE",
     "JA_SINGLE", "JE_SINGLE", "JE_DOUBLE",
@@ -58,12 +86,16 @@ expected_codes = {
 assert set(rules) == expected_codes, set(rules)
 assert set(mappings) == expected_codes, set(mappings)
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, str(ROOT / "desktop_client"))
-import v3_launcher  # noqa: E402
-
-namespace = v3_launcher.load_v3_namespace()
-calculator = namespace["FormulaDatabaseCalculator"]()
+source = (ROOT / "desktop_client" / "main.py").read_text(encoding="utf-8")
+tree = ast.parse(source)
+calculator_node = next(
+    node for node in tree.body
+    if isinstance(node, ast.ClassDef) and node.name == "FormulaDatabaseCalculator"
+)
+calculator_module = ast.fix_missing_locations(ast.Module(body=[calculator_node], type_ignores=[]))
+calculator_namespace = {"math": math, "re": re}
+exec(compile(calculator_module, "FormulaDatabaseCalculator", "exec"), calculator_namespace)
+calculator = calculator_namespace["FormulaDatabaseCalculator"]()
 for code in sorted(expected_codes):
     calculator.load_template({
         "template": {
@@ -72,6 +104,10 @@ for code in sorted(expected_codes):
             "rules": sorted(rules[code], key=lambda row: row["source_row_no"]),
         }
     })
+
+je_weight, je_area = calculator.calculate("JE_SINGLE", 500, 500, 180, 1, 0)
+assert round(float(je_weight), 1) == 20.3, je_weight
+assert round(float(je_area), 1) == 0.9, je_area
 
 family_measurements = {}
 for family in ("JS", "JP", "JA", "JE"):

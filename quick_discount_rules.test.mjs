@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  effectiveAttachmentQuantity,
   quickDiscountBreakdown,
   quickDiscountCategory,
+  quickOrderLineBreakdown,
 } from "./quick_discount_rules.mjs";
 
 test("quick quote discounts only the nine approved attachment categories", () => {
@@ -44,17 +46,82 @@ test("quick quote keeps non-approved attachments at original price", () => {
   assert.ok(Math.abs(result.discountedTotal - 4190.5755) < 1e-9);
 });
 
-test("door variant surcharge is added after discount exactly once", () => {
+test("negative installation board remains in the discount base", () => {
   const result = quickDiscountBreakdown({
     quote: {
-      total_cost: 1170,
+      total_cost: 900,
       base_price: 1000,
-      attachment_fee: 20,
-      door_variant_surcharge: 150,
+      attachment_fee: -100,
     },
-    attachments: [{ item_name: "接地线", quantity: 1, unit_price: 20 }],
+    attachments: [{
+      item_name: "安装板",
+      category_level1: "安装板",
+      quantity: 1,
+      unit_price: 100,
+      attachment_price_sign: -1,
+    }],
     discount: 0.9,
   });
-  assert.equal(result.doorVariantSurcharge, 150);
-  assert.equal(result.discountedTotal, 1070);
+  assert.equal(result.listedAttachmentTotal, -100);
+  assert.equal(result.eligibleAttachmentTotal, -100);
+  assert.equal(result.originalPriceAttachmentTotal, 0);
+  assert.equal(result.discountedTotal, 810);
+});
+
+test("cabinet quantity multiplies normal attachments but not the three manual categories", () => {
+  assert.equal(effectiveAttachmentQuantity({ item_name: "门限位器", quantity: 2 }, 3), 6);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "安装板", quantity: 1 }, 3), 3);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3), 2);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1 }, 3), 1);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "KA2206风机", quantity: 2 }, 3), 2);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "FU滤网", quantity: 2 }, 3), 2);
+});
+
+test("ganged cabinet count multiplies normal attachments in addition to order quantity", () => {
+  assert.equal(effectiveAttachmentQuantity({ item_name: "门限位器", quantity: 2 }, 3, 4), 24);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "安装板", quantity: 1 }, 2, 3), 6);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3, 4), 2);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "门变形", category_level1: "门变形", quantity: 1 }, 3, 4), 1);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "风机", category_level1: "风机滤网", quantity: 2 }, 3, 4), 2);
+});
+
+test("quick order line applies quantity exceptions and scales negative boards once", () => {
+  const attachments = [
+    { item_name: "安装板", category_level1: "安装板", quantity: 1, unit_price: 100, attachment_price_sign: -1 },
+    { item_name: "侧板", category_level1: "侧板", quantity: 2, unit_price: 50 },
+    { item_name: "KA2206风机", category_level1: "风机滤网", quantity: 1, unit_price: 30 },
+    { item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1, unit_price: 150 },
+  ];
+  const result = quickOrderLineBreakdown({
+    quote: { base_price: 1000, attachment_fee: 180, total_cost: 1180 },
+    attachments,
+    discount: 0.9,
+    cabinetQuantity: 3,
+  });
+  // Discounted: cabinet 3000 - installation board 300 + side panels 100.
+  // Original price: fan 30 + door transformation 150.
+  assert.equal(result.eligibleAttachmentTotal, -200);
+  assert.equal(result.originalPriceAttachmentTotal, 180);
+  assert.equal(result.lineTotal, 2700);
+  assert.equal(result.equivalentUnitTotal, 900);
+});
+
+test("quick order line combines ganged and order multipliers without scaling exceptions", () => {
+  const attachments = [
+    { item_name: "安装板", category_level1: "安装板", quantity: 1, unit_price: 100, attachment_price_sign: -1 },
+    { item_name: "侧板", category_level1: "侧板", quantity: 2, unit_price: 50 },
+    { item_name: "风机", category_level1: "风机滤网", quantity: 1, unit_price: 30 },
+    { item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1, unit_price: 150 },
+  ];
+  const result = quickOrderLineBreakdown({
+    quote: { base_price: 2000, attachment_fee: 180, total_cost: 2180 },
+    attachments,
+    discount: 0.9,
+    cabinetQuantity: 2,
+    gangedCabinetCount: 3,
+  });
+  assert.equal(result.eligibleAttachmentTotal, -500);
+  assert.equal(result.originalPriceAttachmentTotal, 180);
+  assert.equal(result.lineTotal, 3330);
+  assert.equal(result.equivalentUnitTotal, 1665);
 });

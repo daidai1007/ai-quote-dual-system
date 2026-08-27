@@ -4,14 +4,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyQuickOnlyAttachmentRuleToQuoteRow } from './attachment_rules.mjs';
 import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
 import { attachmentCatalogSql, decodeAttachmentCatalog } from './attachment_catalog_query.mjs';
-import {
-  applyDoorVariantQuickPrice,
-  normalizeDoorVariantInput,
-  normalizeQuickDoorVariantInput,
-} from './door_variant_rules.mjs';
+import { normalizeDoorVariantInput, normalizeQuickDoorVariantInput } from './door_variant_rules.mjs';
 import { historyPriceMatchSql } from './history_price_query.mjs';
 import { buildPsqlArgs, resolveRuntimeConfig } from './runtime_config.mjs';
 
@@ -20,8 +15,8 @@ const PORT = RUNTIME_CONFIG.port;
 const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
-const API_BUILD = '2026-08-17-auxiliary-bom-v1';
-const DEPLOYMENT_BUILD = '20260826-door-matrix-v3';
+const API_BUILD = '2026-08-26-signed-attachments-v1';
+const DEPLOYMENT_BUILD = '20260826-signed-attachments-v4';
 const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -127,6 +122,16 @@ const attachmentStatements = (input) => (input.attachments || []).map((a, index)
   if (!a.model_code && !a.item_name) {
     throw new Error(`attachments[${index}] requires model_code or item_name`);
   }
+  const priceSign = Number(a.attachment_price_sign ?? 1);
+  if (![1, -1].includes(priceSign)) {
+    throw new Error(`attachments[${index}].attachment_price_sign must be 1 or -1`);
+  }
+  const attachmentText = [
+    a.category_level1, a.category_level2, a.category_level3, a.item_name, a.model_code,
+  ].map((value) => String(value || '')).join(' ');
+  if (priceSign === -1 && (!attachmentText.includes('安装板') || attachmentText.includes('安装板单发'))) {
+    throw new Error(`attachments[${index}] can use a negative price sign only for an installation board`);
+  }
   return `SELECT calc.add_attachment_selection(${[
     sqlText(input.quote_id),
     sqlText(a.product_code || input.product_code),
@@ -140,6 +145,7 @@ const attachmentStatements = (input) => (input.attachments || []).map((a, index)
     sqlUnicodeText(a.price_source ?? null),
     a.unit_price_override == null ? 'NULL' : sqlNumber(a.unit_price_override, `attachments[${index}].unit_price_override`),
     sqlUnicodeText(a.notes ?? null),
+    `${sqlNumber(priceSign, `attachments[${index}].attachment_price_sign`, true)}::SMALLINT`,
   ].join(', ')});`;
 });
 
@@ -949,9 +955,7 @@ const server = http.createServer(async (req, res) => {
     // Parse the final non-empty line so both empty-attachment and selected-
     // attachment requests use the same response path.
     const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
-    const attachmentAdjusted = applyQuickOnlyAttachmentRuleToQuoteRow(JSON.parse(jsonLine), input.attachments);
-    const quote = applyDoorVariantQuickPrice(attachmentAdjusted, input);
-    json(res, 200, quote);
+    json(res, 200, JSON.parse(jsonLine));
   } catch (error) {
     json(res, error.message?.includes('required') || error.message?.includes('must be') ? 400 : 500, {
       error: 'dual_quote_failed',

@@ -21,8 +21,11 @@ import {
   validateConfirmedQuoteSnapshot,
 } from "./quote_export_contract.mjs";
 import {
-  quickDiscountBreakdown,
+  attachmentUsesCabinetQuantity,
+  effectiveAttachmentLineAmount,
+  effectiveAttachmentQuantity,
   quickDiscountCategory,
+  quickOrderLineBreakdown,
 } from "./quick_discount_rules.mjs";
 
 const [inputPath, outputPath] = process.argv.slice(2);
@@ -76,6 +79,23 @@ const QUICK_ATTACHMENT_CATEGORY_ORDER = [
   "底座", "侧板", "安装板", "内门", "玻璃门", "通风顶罩", "防雨顶", "分段板", "JK安装板",
 ];
 const quickAttachmentName = (item = {}) => String(item.item_name || item.model_code || "未命名附件").trim();
+const earlyAttachmentLineAmount = (item = {}) => {
+  const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
+  for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
+    if (item[key] !== null && item[key] !== undefined && Number.isFinite(Number(item[key]))) {
+      return Math.abs(Number(item[key])) * sign;
+    }
+  }
+  let unitPrice = 0;
+  for (const key of ["unit_price_override", "matched_price", "unit_price", "price"]) {
+    if (item[key] !== null && item[key] !== undefined && Number.isFinite(Number(item[key]))) {
+      unitPrice = Math.abs(Number(item[key]));
+      break;
+    }
+  }
+  const quantity = Number.isFinite(Number(item.quantity)) ? Number(item.quantity) : 1;
+  return unitPrice * quantity * sign;
+};
 const quickItemsByName = new Map();
 for (const item of payload.items.flatMap((quoteItem) => quoteItem.attachments || [])) {
   const name = quickAttachmentName(item);
@@ -94,17 +114,25 @@ const quickAttachmentNames = [...new Set(
   const rightRank = rankFor(right);
   return leftRank - rightRank || left.localeCompare(right, "zh-CN", { numeric: true, sensitivity: "base" });
 });
+const hasQuickOtherColumn = payload.items.some((item) => {
+  const attachments = item.attachments || [];
+  const listed = attachments.reduce((sum, attachment) => sum + earlyAttachmentLineAmount(attachment), 0);
+  const fee = item.quick?.attachment_fee !== null
+    && item.quick?.attachment_fee !== undefined
+    && Number.isFinite(Number(item.quick.attachment_fee))
+    ? Number(item.quick.attachment_fee)
+    : listed;
+  return Math.abs(fee - listed) > 0.000001;
+});
 const quickCostHeaders = [
   "成本计算公式", "柜体", ...quickAttachmentNames,
-  "其他附件/差额", "配置变形说明", "配置变形", "折扣",
+  ...(hasQuickOtherColumn ? ["其他附件/差额"] : []), "折扣",
 ];
 const quickNameColumnByName = new Map(
   quickAttachmentNames.map((name, index) => [name, 13 + index]),
 );
-const quickOtherColumnIndex = 13 + quickAttachmentNames.length;
-const quickDescriptionColumnIndex = quickOtherColumnIndex + 1;
-const quickSurchargeColumnIndex = quickOtherColumnIndex + 2;
-const quickDiscountColumnIndex = quickOtherColumnIndex + 3;
+const quickOtherColumnIndex = hasQuickOtherColumn ? 13 + quickAttachmentNames.length : null;
+const quickDiscountColumnIndex = 13 + quickAttachmentNames.length + (hasQuickOtherColumn ? 1 : 0);
 const templateRowHeights = {
   1: 20.1, 2: 20.1, 3: 22.5,
   4: 16.5, 5: 16.5, 6: 16.5, 7: 16.5, 8: 16.5,
@@ -271,6 +299,9 @@ quickSheet.getRange(`K1:${quickLastColumn}28`).format.font = {
   name: "Microsoft YaHei", size: 10, color: "#1F2937",
 };
 quickSheet.getRange(`K10:${quickSetupEndColumn}18`).clear({ applyTo: "contents" });
+if (quickDiscountColumnIndex < 25) {
+  quickSheet.getRange(`${col(quickDiscountColumnIndex + 1)}10:Y18`).clear({ applyTo: "all" });
+}
 quickSheet.getRange(`K10:${quickLastColumn}10`).values = [quickCostHeaders];
 quickSheet.getRange(`K10:${quickLastColumn}10`).format.fill = "#EEF3F8";
 quickSheet.getRange(`K10:${quickLastColumn}10`).format.font = { bold: true, color: "#40566F" };
@@ -287,12 +318,12 @@ quickSheet.getRange(`K11:${quickLastColumn}18`).format.borders = {
 };
 quickSheet.getRange("K1:K28").format.columnWidth = 48;
 quickSheet.getRange("L1:L28").format.columnWidth = 12;
-for (let index = 13; index < quickOtherColumnIndex; index += 1) {
+for (let index = 13; index < 13 + quickAttachmentNames.length; index += 1) {
   quickSheet.getRange(`${col(index)}1:${col(index)}28`).format.columnWidth = 14;
 }
-quickSheet.getRange(`${col(quickOtherColumnIndex)}1:${col(quickOtherColumnIndex)}28`).format.columnWidth = 13;
-quickSheet.getRange(`${col(quickDescriptionColumnIndex)}1:${col(quickDescriptionColumnIndex)}28`).format.columnWidth = 30;
-quickSheet.getRange(`${col(quickSurchargeColumnIndex)}1:${col(quickSurchargeColumnIndex)}28`).format.columnWidth = 12;
+if (quickOtherColumnIndex) {
+  quickSheet.getRange(`${col(quickOtherColumnIndex)}1:${col(quickOtherColumnIndex)}28`).format.columnWidth = 13;
+}
 quickSheet.getRange(`${col(quickDiscountColumnIndex)}1:${col(quickDiscountColumnIndex)}28`).format.columnWidth = 9;
 
 // The formula sheet exposes its five database cost components before the
@@ -352,6 +383,14 @@ const attachmentColumn = (itemName = "") => {
 };
 
 const asNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+const gangedCabinetCount = (item = {}) => {
+  const stored = Number(item.ganged_cabinet_count);
+  if (Number.isInteger(stored) && stored > 1) return stored;
+  if (Array.isArray(item.ganged_cabinets) && item.ganged_cabinets.length > 1) {
+    return item.ganged_cabinets.length;
+  }
+  return 1;
+};
 const fmt = (value) => String(asNumber(value)).replace(/\.0+$/, "");
 const quoteSpecification = (item = {}) => {
   const explicit = String(item.specification || "").trim();
@@ -375,14 +414,18 @@ const attachmentUnitPrice = (item = {}) => {
   return 0;
 };
 const attachmentLineAmount = (item = {}) => {
+  const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
   for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
     if (item[key] !== null && item[key] !== undefined && Number.isFinite(Number(item[key]))) {
-      return Number(item[key]);
+      return Math.abs(Number(item[key])) * sign;
     }
   }
-  return attachmentUnitPrice(item) * (asNumber(item.quantity) || 1);
+  return Math.abs(attachmentUnitPrice(item)) * (asNumber(item.quantity) || 1) * sign;
 };
-const attachmentAmounts = (attachments = [], discount = 1, method = "quick") => {
+const attachmentAmounts = (
+  attachments = [], discount = 1, method = "quick", cabinetQuantity = 1,
+  gangedCount = 1,
+) => {
   const out = {};
   for (const item of attachments) {
     let index = attachmentColumn(item.item_name || item.model_code);
@@ -392,21 +435,59 @@ const attachmentAmounts = (attachments = [], discount = 1, method = "quick") => 
       if (index === 12) index = null;
       else if (index >= 13) index += 4;
     }
-    if (index) out[index] = (out[index] || 0) + attachmentLineAmount(item) * discount;
+    if (index) out[index] = (out[index] || 0)
+      + effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount) * discount;
   }
   return out;
 };
-const quickAttachmentAmounts = (attachments = []) => {
+const quickAttachmentAmounts = (attachments = [], cabinetQuantity = 1, gangedCount = 1) => {
   const out = {};
   for (const item of attachments) {
     const index = quickNameColumnByName.get(quickAttachmentName(item));
     if (!index) continue;
-    out[index] = (out[index] || 0) + attachmentLineAmount(item);
+    out[index] = (out[index] || 0)
+      + effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount);
   }
   return out;
 };
 const attachmentTotalFromItems = (attachments = []) =>
   attachments.reduce((sum, item) => sum + attachmentLineAmount(item), 0);
+
+const effectiveAttachmentTotalFromItems = (
+  attachments = [], cabinetQuantity = 1, gangedCount = 1,
+) =>
+  attachments.reduce(
+    (sum, item) => sum
+      + effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount),
+    0,
+  );
+
+const formulaOrderLineBreakdown = (item = {}) => {
+  const quote = item.formula || {};
+  const attachments = item.attachments || [];
+  const cabinetQuantity = asNumber(item.quantity || 1);
+  const gangedCount = gangedCabinetCount(item);
+  const discount = asNumber(item.formula_discount) || 1;
+  const listedAttachmentTotal = attachmentTotalFromItems(attachments);
+  const attachmentFee = Number.isFinite(Number(quote.attachment_fee))
+    ? Number(quote.attachment_fee) : listedAttachmentTotal;
+  const basePrice = asNumber(quote.total_cost) - attachmentFee;
+  const effectiveAttachmentTotal = effectiveAttachmentTotalFromItems(
+    attachments, cabinetQuantity, gangedCount,
+  ) + (attachmentFee - listedAttachmentTotal) * cabinetQuantity * gangedCount;
+  const lineTotal = (basePrice * cabinetQuantity + effectiveAttachmentTotal) * discount;
+  return {
+    basePrice,
+    attachmentFee,
+    listedAttachmentTotal,
+    effectiveAttachmentTotal,
+    cabinetQuantity,
+    gangedCabinetCount: gangedCount,
+    discount,
+    lineTotal,
+    equivalentUnitTotal: cabinetQuantity ? lineTotal / cabinetQuantity : lineTotal,
+  };
+};
 
 const quantityText = (value) => {
   const number = Number(value ?? 1);
@@ -544,7 +625,12 @@ const standardizedRemark = (item = {}) => {
   if (doorPhrase) parts.push(doorPhrase);
   const seen = new Set();
   for (const attachment of item.attachments || []) {
-    const wording = attachmentRemark(attachment);
+    const wording = attachmentRemark({
+      ...attachment,
+      quantity: effectiveAttachmentQuantity(
+        attachment, item.quantity || 1, gangedCabinetCount(item),
+      ),
+    });
     if (wording && !seen.has(wording)) { parts.push(wording); seen.add(wording); }
   }
   return `${parts.filter(Boolean).join("，").replace(/[，。；;\s]+$/u, "")}。`;
@@ -602,27 +688,23 @@ function fillSheet(sheet, method) {
     const quote = method === "formula" ? item.formula : item.quick;
     const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
     const attachments = item.attachments || [];
-    const doorVariantSurcharge = asNumber(
-      quote?.door_variant_surcharge
-      ?? item.door_variant_billing_rule?.quick_price_surcharge,
-    );
-    const doorVariantDescription = String(
-      quote?.door_variant_description
-      ?? item.door_variant_billing_rule?.quick_price_description
-      ?? "",
-    ).trim();
+    const qty = asNumber(item.quantity || 1);
+    const gangedCount = gangedCabinetCount(item);
     const quickBreakdown = method === "quick"
-      ? quickDiscountBreakdown({
-        quote: { ...(quote || {}), door_variant_surcharge: doorVariantSurcharge },
+      ? quickOrderLineBreakdown({
+        quote: quote || {},
         attachments,
         discount,
+        cabinetQuantity: qty,
+        gangedCabinetCount: gangedCount,
       })
       : null;
+    const formulaBreakdown = method === "formula" ? formulaOrderLineBreakdown(item) : null;
     const unitCost = method === "quick"
-      ? quickBreakdown.discountedTotal
-      : asNumber(quote?.total_cost) * discount;
-    const qty = asNumber(item.quantity || 1);
-    subtotal += unitCost * qty;
+      ? quickBreakdown.equivalentUnitTotal
+      : formulaBreakdown.equivalentUnitTotal;
+    const lineTotal = method === "quick" ? quickBreakdown.lineTotal : formulaBreakdown.lineTotal;
+    subtotal += lineTotal;
     // final_remark is the operator-confirmed wording shown on the Remarks page.
     // Keep notes as a backward-compatible fallback for older saved drafts.
     const note = standardizedRemark(item);
@@ -638,11 +720,11 @@ function fillSheet(sheet, method) {
     values[3] = qty;
     values[4] = "台";
     values[5] = unitCost;
-    values[6] = unitCost * qty;
+    values[6] = lineTotal;
     values[7] = note;
     const extras = method === "quick"
-      ? quickAttachmentAmounts(attachments)
-      : attachmentAmounts(attachments, discount, method);
+      ? quickAttachmentAmounts(attachments, qty, gangedCount)
+      : attachmentAmounts(attachments, discount, method, qty, gangedCount);
     for (const [columnIndex, amount] of Object.entries(extras)) values[Number(columnIndex) - 1] = amount;
     const attachmentFee = quote?.attachment_fee !== null
       && quote?.attachment_fee !== undefined
@@ -662,10 +744,11 @@ function fillSheet(sheet, method) {
       const listedAmount = attachmentTotalFromItems(attachments);
       // Every selected attachment name has one original-price audit column.
       // The fixed delta column reconciles authoritative attachment totals.
-      values[quickOtherColumnIndex - 1] = attachmentFee - listedAmount;
-      values[11] = quickBreakdown.basePrice;
-      values[quickDescriptionColumnIndex - 1] = doorVariantDescription;
-      values[quickSurchargeColumnIndex - 1] = doorVariantSurcharge || "";
+      if (quickOtherColumnIndex) {
+        const difference = (attachmentFee - listedAmount) * qty;
+        values[quickOtherColumnIndex - 1] = Math.abs(difference) > 0.000001 ? difference : "";
+      }
+      values[11] = quickBreakdown.basePrice * qty;
       values[quickDiscountColumnIndex - 1] = discount;
       const populatedCellReferences = (columns) => columns
         .filter(([, valueIndex]) => {
@@ -683,10 +766,9 @@ function fillSheet(sheet, method) {
         if (sample && quickDiscountCategory(sample)) discountedColumns.push(target);
         else originalColumns.push(target);
       }
-      originalColumns.push(
-        [col(quickOtherColumnIndex), quickOtherColumnIndex - 1],
-        [col(quickSurchargeColumnIndex), quickSurchargeColumnIndex - 1],
-      );
+      if (quickOtherColumnIndex) {
+        originalColumns.push([col(quickOtherColumnIndex), quickOtherColumnIndex - 1]);
+      }
       const discountedCells = populatedCellReferences(discountedColumns);
       const originalPriceCells = populatedCellReferences(originalColumns);
       // K is a real, editable Excel formula. Every amount references its
@@ -701,7 +783,7 @@ function fillSheet(sheet, method) {
       }
       if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
       const formula = formulaParts.join("+") || "0";
-      values[10] = { formula, result: quickBreakdown.discountedTotal };
+      values[10] = { formula, result: quickBreakdown.lineTotal };
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];
     sheet.getRange(`H${row}`).format.wrapText = true;
@@ -727,8 +809,8 @@ function buildFormulaCostDetailSheet() {
   const items = payload.items || [];
   const headers = [
     "柜号", "名称", "规格型号", "成本类别", "明细项目", "规格/说明",
-    "计算公式/计价依据", "用量", "单位", "单价（元）", "单台金额（元）",
-    "柜体数量", "行金额（元）", "数据来源", "备注",
+    "计算公式/计价依据", "最终用量", "单位", "单价（元）", "本项金额（元）",
+    "柜体数量/倍率", "行金额（元）", "数据来源", "备注",
   ];
   const lastColumn = col(headers.length);
   const firstDataRow = 6;
@@ -736,8 +818,9 @@ function buildFormulaCostDetailSheet() {
   const detailStyles = [];
 
   const addDetail = (itemIndex, item, category, detailName, spec, basis, usage, unit,
-    unitPrice, unitAmount, source, note = "", kind = "detail") => {
-    const cabinetQuantity = asNumber(item.quantity || 1);
+    unitPrice, unitAmount, source, note = "", kind = "detail", quantityMultiplier = null) => {
+    const cabinetQuantity = quantityMultiplier === null
+      ? asNumber(item.quantity || 1) : asNumber(quantityMultiplier);
     detailRows.push([
       itemIndex + 1,
       drawingNameBeforeChinese(
@@ -825,15 +908,30 @@ function buildFormulaCostDetailSheet() {
     const attachments = Array.isArray(item.attachments) ? item.attachments : [];
     let attachmentLineSum = 0;
     for (const attachment of attachments) {
-      const quantity = asNumber(attachment.quantity || 1);
+      const selectedQuantity = asNumber(attachment.quantity || 1);
+      const splitCount = gangedCabinetCount(item);
+      const quantity = effectiveAttachmentQuantity(
+        attachment, item.quantity || 1, splitCount,
+      );
       const price = attachmentUnitPrice(attachment);
-      const amount = attachmentLineAmount(attachment);
-      attachmentLineSum += amount;
+      const selectedAmount = attachmentLineAmount(attachment);
+      const amount = effectiveAttachmentLineAmount(
+        attachment, item.quantity || 1, splitCount,
+      );
+      attachmentLineSum += selectedAmount;
+      const multiplier = attachmentUsesCabinetQuantity(attachment)
+        ? asNumber(item.quantity || 1) * splitCount : 1;
+      const signedPrice = quantity ? amount / quantity : price;
       addDetail(
         itemIndex, item, "附件成本", attachment.item_name || attachment.model_code || "附件",
         [attachment.model_code, attachment.variant, attachment.notes].filter(Boolean).join(" / "),
-        `${quantity} × ${price.toFixed(2)} = ${amount.toFixed(2)} 元`, quantity, "件", price, amount,
-        attachment.price_source || "数据库附件价格表", "用户实际选择附件",
+        `${selectedQuantity} × 柜体倍率 ${multiplier} = 最终数量 ${quantity}；`
+          + `${quantity} × ${signedPrice.toFixed(2)} = ${amount.toFixed(2)} 元`,
+        quantity, "件", signedPrice, amount,
+        attachment.price_source || "数据库附件价格表",
+        attachmentUsesCabinetQuantity(attachment)
+          ? "选择数量随柜体数量变化" : "人工数量不受柜体数量影响",
+        "detail", 1,
       );
     }
     if (!attachments.length && attachmentCost > 0) {
@@ -887,10 +985,12 @@ function buildFormulaCostDetailSheet() {
       );
     }
     const discount = asNumber(item.formula_discount) || 1;
+    const lineBreakdown = formulaOrderLineBreakdown(item);
     addDetail(
       itemIndex, item, "柜型小计", "公式法成本", `折扣 ${discount.toFixed(2)}`,
-      `${formulaCost.toFixed(2)} × ${discount.toFixed(2)} = ${(formulaCost * discount).toFixed(2)} 元/台`,
-      1, "台", formulaCost, formulaCost * discount, "公式法报价结果",
+      `柜体基础成本按 ${lineBreakdown.cabinetQuantity} 台计算；附件按最终数量计价；`
+        + `订单行合计 ${lineBreakdown.lineTotal.toFixed(2)} 元`,
+      1, "台", formulaCost, lineBreakdown.equivalentUnitTotal, "公式法报价结果",
       `折后单价；共 ${asNumber(item.quantity || 1)} 台`, "subtotal",
     );
   });
@@ -917,8 +1017,9 @@ function buildFormulaCostDetailSheet() {
   }
   sheet.getRange(`A${subtotalRow}:J${subtotalRow}`).merge();
   sheet.getRange(`A${subtotalRow}`).values = [["合计"]];
-  const formulaOrderTotal = items.reduce((sum, item) => sum
-    + asNumber(item.formula?.total_cost) * (asNumber(item.formula_discount) || 1) * asNumber(item.quantity || 1), 0);
+  const formulaOrderTotal = items.reduce(
+    (sum, item) => sum + formulaOrderLineBreakdown(item).lineTotal, 0,
+  );
   sheet.getRange(`K${subtotalRow}:O${subtotalRow}`).values = [["", "", formulaOrderTotal, "", "折后订单总成本"]];
 
   sheet.getRange(`A1:${lastColumn}1`).format.fill = "#173F67";
@@ -1043,21 +1144,18 @@ const verifyWorkbookContents = (candidateWorkbook) => {
       const row = 11 + index;
       const quote = method === "formula" ? item.formula : item.quick;
       const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
-      const unitCost = method === "quick"
-        ? quickDiscountBreakdown({
-          quote: {
-            ...(quote || {}),
-            door_variant_surcharge: asNumber(
-              quote?.door_variant_surcharge
-              ?? item.door_variant_billing_rule?.quick_price_surcharge,
-            ),
-          },
+      const quantity = asNumber(item.quantity || 1);
+      const lineBreakdown = method === "quick"
+        ? quickOrderLineBreakdown({
+          quote: quote || {},
           attachments: item.attachments || [],
           discount,
-        }).discountedTotal
-        : asNumber(quote?.total_cost) * discount;
-      const quantity = asNumber(item.quantity || 1);
-      subtotal += unitCost * quantity;
+          cabinetQuantity: quantity,
+          gangedCabinetCount: gangedCabinetCount(item),
+        })
+        : formulaOrderLineBreakdown(item);
+      const unitCost = lineBreakdown.equivalentUnitTotal;
+      subtotal += lineBreakdown.lineTotal;
       const actual = rangePlainValues(sheet, `A${row}:H${row}`)[0];
       const expected = [
         index + 1,
@@ -1066,7 +1164,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
         quantity,
         "台",
         unitCost,
-        unitCost * quantity,
+        lineBreakdown.lineTotal,
         standardizedRemark(item),
       ];
       assertRow(actual.slice(0, 5), expected.slice(0, 5), `${sheetName} row ${row} identity`);
@@ -1110,8 +1208,9 @@ const verifyWorkbookContents = (candidateWorkbook) => {
   if (rangePlainValues(costSheet, `A${costDetailLastRow}`)[0][0] !== "合计") {
     throw new Error("saved workbook cost-detail subtotal is missing");
   }
-  const formulaOrderTotal = items.reduce((sum, item) => sum
-    + asNumber(item.formula?.total_cost) * (asNumber(item.formula_discount) || 1) * asNumber(item.quantity || 1), 0);
+  const formulaOrderTotal = items.reduce(
+    (sum, item) => sum + formulaOrderLineBreakdown(item).lineTotal, 0,
+  );
   assertClose(
     rangePlainValues(costSheet, `M${costDetailLastRow}`)[0][0],
     formulaOrderTotal,

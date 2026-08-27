@@ -21,6 +21,7 @@ QUICK_DISCOUNT_ATTACHMENT_CATEGORIES = (
     "分段板",
     "JK安装板",
 )
+ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = ("侧板", "门变形", "风机滤网")
 
 
 def _number(value: Any, fallback: float = 0.0) -> float:
@@ -56,10 +57,11 @@ def quick_discount_category(item: Mapping[str, Any] | None) -> str | None:
 
 def quick_attachment_line_amount(item: Mapping[str, Any] | None) -> float:
     item = item or {}
+    sign = -1.0 if _number(item.get("attachment_price_sign"), 1.0) == -1.0 else 1.0
     for key in ("total_price", "total_cost", "amount", "subtotal"):
         if item.get(key) is not None:
             try:
-                return float(item[key])
+                return abs(float(item[key])) * sign
             except (TypeError, ValueError):
                 pass
     unit_price = 0.0
@@ -70,7 +72,46 @@ def quick_attachment_line_amount(item: Mapping[str, Any] | None) -> float:
                 break
             except (TypeError, ValueError):
                 pass
-    return unit_price * _number(item.get("quantity"), 1.0)
+    return abs(unit_price) * _number(item.get("quantity"), 1.0) * sign
+
+
+def attachment_uses_cabinet_quantity(item: Mapping[str, Any] | None) -> bool:
+    item = item or {}
+    candidates = [
+        item.get("category_level3"), item.get("category_level2"),
+        item.get("category_level1"), item.get("attachment_category"),
+        item.get("category"), item.get("item_name"), item.get("model_code"),
+    ]
+    combined = " ".join(str(value).strip() for value in candidates if value)
+    if "风机" in combined or "滤网" in combined:
+        return False
+    return not any(category in combined for category in ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES)
+
+
+def effective_attachment_quantity(
+    item: Mapping[str, Any] | None,
+    cabinet_quantity: Any,
+    ganged_cabinet_count: Any = 1,
+) -> float:
+    item = item or {}
+    selected = _number(item.get("quantity"), 1.0)
+    cabinets = _number(cabinet_quantity, 1.0)
+    split_count = _number(ganged_cabinet_count, 1.0)
+    return selected * (
+        cabinets * split_count if attachment_uses_cabinet_quantity(item) else 1.0
+    )
+
+
+def effective_attachment_line_amount(
+    item: Mapping[str, Any] | None,
+    cabinet_quantity: Any,
+    ganged_cabinet_count: Any = 1,
+) -> float:
+    item = item or {}
+    selected = _number(item.get("quantity"), 1.0) or 1.0
+    return quick_attachment_line_amount(item) * effective_attachment_quantity(
+        item, cabinet_quantity, ganged_cabinet_count
+    ) / selected
 
 
 def quick_discount_breakdown(
@@ -87,11 +128,10 @@ def quick_discount_breakdown(
         if quote.get("attachment_fee") is not None
         else listed_attachment_total
     )
-    door_variant_surcharge = _number(quote.get("door_variant_surcharge"))
     base_price = (
         _number(quote.get("base_price"))
         if quote.get("base_price") is not None
-        else raw_total - attachment_fee - door_variant_surcharge
+        else raw_total - attachment_fee
     )
     listed_eligible = sum(
         quick_attachment_line_amount(item)
@@ -104,7 +144,6 @@ def quick_discount_breakdown(
     discounted_total = (
         (base_price + eligible_attachment_total) * factor
         + original_price_attachment_total
-        + door_variant_surcharge
     )
     return {
         "raw_total": raw_total,
@@ -113,7 +152,41 @@ def quick_discount_breakdown(
         "listed_attachment_total": listed_attachment_total,
         "eligible_attachment_total": eligible_attachment_total,
         "original_price_attachment_total": original_price_attachment_total,
-        "door_variant_surcharge": door_variant_surcharge,
         "discount": factor,
         "discounted_total": discounted_total,
+    }
+
+
+def quick_order_line_breakdown(
+    quote: Mapping[str, Any] | None,
+    attachments: Iterable[Mapping[str, Any]] | None,
+    discount: Any,
+    cabinet_quantity: Any,
+    ganged_cabinet_count: Any = 1,
+) -> dict[str, float]:
+    rows = list(attachments or [])
+    unit = quick_discount_breakdown(quote, rows, discount)
+    cabinets = _number(cabinet_quantity, 1.0)
+    split_count = _number(ganged_cabinet_count, 1.0)
+    eligible_total = sum(
+        effective_attachment_line_amount(item, cabinets, split_count)
+        for item in rows if quick_discount_category(item)
+    )
+    original_total = sum(
+        effective_attachment_line_amount(item, cabinets, split_count)
+        for item in rows if not quick_discount_category(item)
+    )
+    unlisted_difference = unit["attachment_fee"] - unit["listed_attachment_total"]
+    original_total += unlisted_difference * cabinets * split_count
+    factor = _number(discount, 1.0)
+    line_total = (unit["base_price"] * cabinets + eligible_total) * factor + original_total
+    return {
+        **unit,
+        "cabinet_quantity": cabinets,
+        "ganged_cabinet_count": split_count,
+        "eligible_attachment_total": eligible_total,
+        "original_price_attachment_total": original_total,
+        "unlisted_difference": unlisted_difference,
+        "line_total": line_total,
+        "equivalent_unit_total": line_total / cabinets if cabinets else line_total,
     }
