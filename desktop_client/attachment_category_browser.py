@@ -50,6 +50,8 @@ DOOR_TRANSFORMATION_NAMES = (
     "JA、JE单开门改为双开门",
 )
 ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = ("侧板", "门变形", "风机滤网")
+GANGED_FIXED_BASE_MATCH_KEY = "ganged_fixed_base_match"
+GANGED_FIXED_BASE_INDEX_KEY = "ganged_fixed_base_index"
 DOOR_COUNT_DEFAULT_QUANTITIES = {
     (1, 0): 1,
     (2, 0): 2,
@@ -59,18 +61,6 @@ DOOR_COUNT_DEFAULT_QUANTITIES = {
 }
 # Backward-compatible public name used by the existing client contracts.
 DOOR_LIMITER_DEFAULT_QUANTITIES = DOOR_COUNT_DEFAULT_QUANTITIES
-SIZE_MATCH_ATTACHMENT_NAMES = (
-    "固定底座",
-    "活动底座",
-    "侧板",
-    "安装板",
-    "内门",
-    "玻璃门",
-    "通风顶罩",
-    "防雨顶",
-    "分段板",
-    "JK安装板",
-)
 SIZE_MATCH_METADATA_KEYS = (
     "size_match_target_width_mm",
     "size_match_target_height_mm",
@@ -347,11 +337,14 @@ def final_attachment_quantity(
     cabinets = 1.0 if cabinets is None else cabinets
     split_count = _number(ganged_cabinet_count)
     split_count = 1.0 if split_count is None else split_count
-    return (
-        quantity * cabinets * split_count
-        if attachment_uses_cabinet_quantity(item)
-        else quantity
-    )
+    if not attachment_uses_cabinet_quantity(item):
+        return quantity
+    # A ganged cabinet owns one separately matched base per split cabinet.
+    # Those rows already represent the split count, so only the number of
+    # complete ganged cabinets is applied here.
+    if bool(item.get(GANGED_FIXED_BASE_MATCH_KEY)):
+        return quantity * cabinets
+    return quantity * cabinets * split_count
 
 
 def match_jp_side_panel(

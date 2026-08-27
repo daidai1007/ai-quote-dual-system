@@ -325,6 +325,105 @@ assert any(button.text() == "默认已选择\n红绿线" for button in quick_mat
 assert any(button.text() == "默认已选择\n门限位器 · 数量：1 个" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n铜排 · 默认数量：1 件" for button in quick_match_buttons)
 
+# A ganged cabinet receives one independently size-matched fixed base for
+# each split row.  Those selection rows do not multiply by the split count a
+# second time, but each still follows the number of complete ganged cabinets.
+ganged_attachment_parent = QWidget()
+ganged_attachment_parent.quote_spec_edit = QLineEdit(ganged_attachment_parent)
+ganged_attachment_parent.quote_spec_edit.setText("(600+900)*500*(1800+100)")
+ganged_attachment_parent.selected_product_code = lambda: "JP_SINGLE"
+ganged_attachment_parent.door_counts = lambda: (1, 0)
+ganged_attachment_parent.ganged_cabinets = [
+    {
+        "width_mm": 600,
+        "depth_mm": 500,
+        "height_mm": 1800,
+        "base_height_mm": 100,
+        "single_door_count": 1,
+        "double_door_count": 0,
+    },
+    {
+        "width_mm": 900,
+        "depth_mm": 500,
+        "height_mm": 1800,
+        "base_height_mm": 100,
+        "single_door_count": 1,
+        "double_door_count": 0,
+    },
+]
+ganged_attachment_dialog = attachment_dialog_class(
+    [],
+    api_url="http://127.0.0.1:1",
+    parent=ganged_attachment_parent,
+    target_dimensions=(600, 1800, 500),
+)
+ganged_attachment_dialog.catalog = [
+    {
+        "attachment_price_id": 101,
+        "item_name": "固定底座",
+        "model_code": "BASE-600",
+        "price": 100,
+        "category_level1": "底座",
+        "category_level2": "固定底座",
+        "width_mm": 600,
+        "height_mm": 100,
+        "depth_mm": 500,
+    },
+    {
+        "attachment_price_id": 102,
+        "item_name": "固定底座",
+        "model_code": "BASE-900",
+        "price": 140,
+        "category_level1": "底座",
+        "category_level2": "固定底座",
+        "width_mm": 900,
+        "height_mm": 100,
+        "depth_mm": 500,
+    },
+]
+assert ganged_attachment_dialog.prepare_default_selections() == 2
+ganged_bases = [
+    item for item in ganged_attachment_dialog.attachments
+    if item.get("ganged_fixed_base_match")
+]
+assert [item["model_code"] for item in ganged_bases] == ["BASE-600", "BASE-900"]
+assert [item["ganged_fixed_base_index"] for item in ganged_bases] == [0, 1]
+assert [item["quantity"] for item in ganged_bases] == [1, 1]
+assert [layout_refresh.final_attachment_quantity(item, 3, 2) for item in ganged_bases] == [3, 3]
+ganged_attachment_dialog.rebuild_table()
+assert [item.get("ganged_fixed_base_index") for item in ganged_attachment_dialog.attachments] == [0, 1], ganged_attachment_dialog.attachments
+ganged_table_sources = [
+    ganged_attachment_dialog.table.item(row, ganged_attachment_dialog.COL_CHECK).data(Qt.ItemDataRole.UserRole)
+    for row in range(ganged_attachment_dialog.table.rowCount())
+    if ganged_attachment_dialog.table.item(row, ganged_attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
+]
+assert [item.get("ganged_fixed_base_index") for item in ganged_table_sources] == [0, 1], ganged_table_sources
+collected_ganged_bases = ganged_attachment_dialog.collect_attachments(show_errors=False)
+assert collected_ganged_bases is not None
+assert [item.get("ganged_fixed_base_index") for item in collected_ganged_bases] == [0, 1], collected_ganged_bases
+
+same_base_parent = QWidget()
+same_base_parent.quote_spec_edit = QLineEdit(same_base_parent)
+same_base_parent.quote_spec_edit.setText("(600+600)*500*(1800+100)")
+same_base_parent.selected_product_code = lambda: "JP_SINGLE"
+same_base_parent.door_counts = lambda: (1, 0)
+same_base_parent.ganged_cabinets = [
+    {**row, "width_mm": 600}
+    for row in ganged_attachment_parent.ganged_cabinets
+]
+same_base_dialog = attachment_dialog_class(
+    [], api_url="http://127.0.0.1:1", parent=same_base_parent,
+    target_dimensions=(600, 1800, 500),
+)
+same_base_dialog.catalog = [dict(ganged_attachment_dialog.catalog[0])]
+assert same_base_dialog.prepare_default_selections() == 2
+same_base_dialog.rebuild_table()
+same_base_collected = same_base_dialog.collect_attachments(show_errors=False)
+assert same_base_collected is not None
+assert len(same_base_collected) == 2
+assert [item.get("ganged_fixed_base_index") for item in same_base_collected] == [0, 1]
+assert [layout_refresh.final_attachment_quantity(item, 3, 2) for item in same_base_collected] == [3, 3]
+
 # An installation board selected through category browsing is summarized back
 # on the first-level card.  Its circular sign toggle keeps the original price
 # positive in metadata and stores subtraction separately.
@@ -665,6 +764,7 @@ assert "4,190.58" in window.quick_labels["total"].text(), window.quick_labels["t
 
 window.draft_items = [{
     "name": "折扣规则测试柜",
+    "model_code": "MODEL-QUICK-DISCOUNT",
     "width_mm": 1000,
     "height_mm": 1800,
     "depth_mm": 600,
@@ -678,6 +778,7 @@ window.draft_items = [{
     "notes": "选择性折扣测试",
 }]
 window.refresh_summary()
+assert window.summary_table.item(0, 2).text() == "MODEL-QUICK-DISCOUNT"
 quick_price_columns = [
     column
     for column in range(window.summary_table.columnCount())

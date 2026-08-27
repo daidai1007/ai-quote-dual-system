@@ -33,6 +33,8 @@ test('manual attachment accepts optional dimensions and metadata', () => {
 
 test('manual attachment rejects unsafe or incomplete values', () => {
   assert.throws(() => normalizeCatalogAttachment({ item_name: '', price: 1 }), /required/);
+  assert.throws(() => normalizeCatalogAttachment({ item_name: '附件', price: null }), /price is required/);
+  assert.throws(() => normalizeCatalogAttachment({ item_name: '附件', price: '' }), /price is required/);
   assert.throws(() => normalizeCatalogAttachment({ item_name: '附件', price: -1 }), /non-negative/);
   assert.throws(() => normalizeCatalogAttachment({ item_name: '附件', price: 1, width_mm: 0 }), /positive/);
   assert.throws(() => normalizeCatalogAttachment({ item_name: 'x'.repeat(161), price: 1 }), /cannot exceed/);

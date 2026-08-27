@@ -28,6 +28,10 @@ test('Docker image includes every local module needed by the API and workbook ex
   ];
 
   assert.ok(localModules.length > 0);
+  assert.doesNotMatch(serverSource, /quick_variant_code/, 'unused quick_variant_code transport field returned');
+  assert.doesNotMatch(serverSource, /toISOString\(\)\.slice\(0, 10\)/, 'server date still depends on UTC');
+  assert.match(serverSource, /timeZone: 'Asia\/Shanghai'/, 'server date does not use the business timezone');
+  assert.match(serverSource, /\.trim\(\)\.toUpperCase\(\)/, 'product codes are not normalized at the API boundary');
   for (const modulePath of localModules) {
     assert.match(dockerfile, new RegExp(`\\b${modulePath.replaceAll('.', '\\.')}\\b`));
     assert.match(dockerignore, new RegExp(`^!${modulePath.replaceAll('.', '\\.')}\\s*$`, 'm'));
@@ -97,6 +101,47 @@ test('Docker-compatible server starts and serves a database-free health check', 
     body: JSON.stringify({ item_name: '', price: -1 }),
   });
   assert.equal(attachmentValidation.status, 400);
+
+  const malformedJson = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    body: '{',
+  });
+  assert.equal(malformedJson.status, 400);
+
+  const arrayPayload = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    body: '[]',
+  });
+  assert.equal(arrayPayload.status, 400);
+
+  const validQuoteInput = {
+    quote_id: 'TEST-ATTACHMENT-VALIDATION', product_code: 'js_single', material_code: 'SECC',
+    width_mm: 1000, height_mm: 1800, depth_mm: 600,
+  };
+  for (const [field, attachment] of [
+    ['quantity', { item_name: '附件', quantity: 0 }],
+    ['width', { item_name: '附件', quantity: 1, width_mm: 0 }],
+    ['override', { item_name: '附件', quantity: 1, unit_price_override: -1 }],
+  ]) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+      body: JSON.stringify({ ...validQuoteInput, quote_id: `${validQuoteInput.quote_id}-${field}`, attachments: [attachment] }),
+    });
+    assert.equal(response.status, 400, `invalid attachment ${field} returned ${response.status}`);
+  }
+
+  const arrayHistoryPayload = await fetch(`http://127.0.0.1:${port}/api/company-history`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    body: JSON.stringify({
+      company_code: 'TEST', product_code: 'js_single', material_code: 'SECC',
+      width_mm: 1000, height_mm: 1800, depth_mm: 600, payload: [],
+    }),
+  });
+  assert.equal(arrayHistoryPayload.status, 400);
 
   const doorValidation = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
     method: 'POST',

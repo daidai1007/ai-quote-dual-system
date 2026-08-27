@@ -14,6 +14,9 @@ const optionalDimension = (value, name) => {
 
 export function normalizeCatalogAttachment(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
+  if (input.price === undefined || input.price === null || input.price === '') {
+    throw new Error('price is required');
+  }
   const price = Number(input.price);
   if (!Number.isFinite(price) || price < 0) throw new Error('price must be a non-negative number');
   return {

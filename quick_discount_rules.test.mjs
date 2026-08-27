@@ -2,11 +2,36 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  effectiveAttachmentLineAmount,
   effectiveAttachmentQuantity,
+  quickAttachmentLineAmount,
   quickDiscountBreakdown,
   quickDiscountCategory,
   quickOrderLineBreakdown,
 } from "./quick_discount_rules.mjs";
+
+test("missing numeric quote fields and attachment quantities keep fallback semantics", () => {
+  const attachment = { item_name: "固定底座", quantity: null, unit_price: 100 };
+  assert.equal(quickAttachmentLineAmount(attachment), 100);
+  assert.equal(effectiveAttachmentQuantity(attachment, null, null), 1);
+  assert.equal(effectiveAttachmentLineAmount(attachment, null, null), 100);
+
+  const result = quickDiscountBreakdown({
+    quote: { total_cost: 1100, base_price: null, attachment_fee: null },
+    attachments: [attachment],
+    discount: 0.9,
+  });
+  assert.equal(result.attachmentFee, 100);
+  assert.equal(result.basePrice, 1000);
+  assert.equal(result.discountedTotal, 990);
+});
+
+test("an explicit zero attachment quantity remains a zero amount", () => {
+  const attachment = { item_name: "固定底座", quantity: 0, unit_price: 100 };
+  assert.equal(quickAttachmentLineAmount(attachment), 0);
+  assert.equal(effectiveAttachmentQuantity(attachment, 2, 3), 0);
+  assert.equal(effectiveAttachmentLineAmount(attachment, 2, 3), 0);
+});
 
 test("quick quote discounts only the nine approved attachment categories", () => {
   const approved = [
@@ -107,6 +132,13 @@ test("ganged cabinet count multiplies normal attachments in addition to order qu
   assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3, 4), 2);
   assert.equal(effectiveAttachmentQuantity({ item_name: "门变形", category_level1: "门变形", quantity: 1 }, 3, 4), 1);
   assert.equal(effectiveAttachmentQuantity({ item_name: "风机", category_level1: "风机滤网", quantity: 2 }, 3, 4), 2);
+  assert.equal(effectiveAttachmentQuantity({
+    item_name: "固定底座",
+    category_level1: "底座",
+    quantity: 1,
+    ganged_fixed_base_match: true,
+    ganged_fixed_base_index: 0,
+  }, 3, 4), 3);
 });
 
 test("quick order line applies quantity exceptions and scales negative boards once", () => {

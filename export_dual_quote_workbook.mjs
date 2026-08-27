@@ -24,6 +24,7 @@ import {
   attachmentUsesCabinetQuantity,
   effectiveAttachmentLineAmount,
   effectiveAttachmentQuantity,
+  quickDiscountBreakdown,
   quickDiscountCategory,
   quickOrderLineBreakdown,
 } from "./quick_discount_rules.mjs";
@@ -382,7 +383,10 @@ const attachmentColumn = (itemName = "") => {
   return null;
 };
 
-const asNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+const hasFiniteNumber = (value) => value !== null && value !== undefined && value !== ""
+  && Number.isFinite(Number(value));
+const asNumber = (value) => hasFiniteNumber(value) ? Number(value) : 0;
+const optionalNumber = (value) => hasFiniteNumber(value) ? Number(value) : null;
 const gangedCabinetCount = (item = {}) => {
   const stored = Number(item.ganged_cabinet_count);
   if (Number.isInteger(stored) && stored > 1) return stored;
@@ -469,9 +473,31 @@ const formulaOrderLineBreakdown = (item = {}) => {
   const gangedCount = gangedCabinetCount(item);
   const discount = asNumber(item.formula_discount) || 1;
   const listedAttachmentTotal = attachmentTotalFromItems(attachments);
-  const attachmentFee = Number.isFinite(Number(quote.attachment_fee))
+  const attachmentFee = hasFiniteNumber(quote.attachment_fee)
     ? Number(quote.attachment_fee) : listedAttachmentTotal;
-  const basePrice = asNumber(quote.total_cost) - attachmentFee;
+  const componentKeys = [
+    "material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee",
+  ];
+  const hasCompleteComponentBreakdown = componentKeys.every(
+    (key) => hasFiniteNumber(quote[key]),
+  );
+  const basePrice = hasCompleteComponentBreakdown
+    ? componentKeys.reduce((sum, key) => sum + asNumber(quote[key]), 0)
+    : asNumber(quote.total_cost) - attachmentFee;
+  if (gangedCount <= 1) {
+    const equivalentUnitTotal = (basePrice + attachmentFee) * discount;
+    return {
+      basePrice,
+      attachmentFee,
+      listedAttachmentTotal,
+      effectiveAttachmentTotal: attachmentFee * cabinetQuantity,
+      cabinetQuantity,
+      gangedCabinetCount: gangedCount,
+      discount,
+      lineTotal: equivalentUnitTotal * cabinetQuantity,
+      equivalentUnitTotal,
+    };
+  }
   const effectiveAttachmentTotal = effectiveAttachmentTotalFromItems(
     attachments, cabinetQuantity, gangedCount,
   ) + (attachmentFee - listedAttachmentTotal) * cabinetQuantity * gangedCount;
@@ -486,6 +512,35 @@ const formulaOrderLineBreakdown = (item = {}) => {
     discount,
     lineTotal,
     equivalentUnitTotal: cabinetQuantity ? lineTotal / cabinetQuantity : lineTotal,
+  };
+};
+
+// Public non-ganged quote rows use a per-cabinet unit price and multiply that
+// price by the operator-entered cabinet quantity. Ganged rows remain one
+// complete assembly per public row, so their right-side audit amounts are
+// calculated as order totals before deriving the equivalent unit price.
+const quickPublicLineBreakdown = (item = {}) => {
+  const quote = item.quick || {};
+  const attachments = item.attachments || [];
+  const cabinetQuantity = asNumber(item.quantity || 1);
+  const gangedCount = gangedCabinetCount(item);
+  const discount = asNumber(item.quick_discount) || 1;
+  if (gangedCount > 1) {
+    return quickOrderLineBreakdown({
+      quote,
+      attachments,
+      discount,
+      cabinetQuantity,
+      gangedCabinetCount: gangedCount,
+    });
+  }
+  const unit = quickDiscountBreakdown({ quote, attachments, discount });
+  return {
+    ...unit,
+    cabinetQuantity,
+    gangedCabinetCount: gangedCount,
+    lineTotal: unit.discountedTotal * cabinetQuantity,
+    equivalentUnitTotal: unit.discountedTotal,
   };
 };
 
@@ -690,14 +745,11 @@ function fillSheet(sheet, method) {
     const attachments = item.attachments || [];
     const qty = asNumber(item.quantity || 1);
     const gangedCount = gangedCabinetCount(item);
+    const isGanged = gangedCount > 1;
+    const auditCabinetQuantity = isGanged ? qty : 1;
+    const auditGangedCount = isGanged ? gangedCount : 1;
     const quickBreakdown = method === "quick"
-      ? quickOrderLineBreakdown({
-        quote: quote || {},
-        attachments,
-        discount,
-        cabinetQuantity: qty,
-        gangedCabinetCount: gangedCount,
-      })
+      ? quickPublicLineBreakdown(item)
       : null;
     const formulaBreakdown = method === "formula" ? formulaOrderLineBreakdown(item) : null;
     const unitCost = method === "quick"
@@ -723,8 +775,10 @@ function fillSheet(sheet, method) {
     values[6] = lineTotal;
     values[7] = note;
     const extras = method === "quick"
-      ? quickAttachmentAmounts(attachments, qty, gangedCount)
-      : attachmentAmounts(attachments, discount, method, qty, gangedCount);
+      ? quickAttachmentAmounts(attachments, auditCabinetQuantity, auditGangedCount)
+      : attachmentAmounts(
+        attachments, discount, method, auditCabinetQuantity, auditGangedCount,
+      );
     for (const [columnIndex, amount] of Object.entries(extras)) values[Number(columnIndex) - 1] = amount;
     const attachmentFee = quote?.attachment_fee !== null
       && quote?.attachment_fee !== undefined
@@ -733,22 +787,25 @@ function fillSheet(sheet, method) {
       : attachmentTotalFromItems(attachments);
     if (method === "formula") {
       // Keep the five component columns reconcilable with the discounted
-      // formula-method unit price.  Attachment prices use the same discount.
-      values[11] = asNumber(quote?.material_cost) * discount;
-      values[12] = asNumber(quote?.auxiliary_cost) * discount;
-      values[13] = asNumber(quote?.labor_cost) * discount;
-      values[14] = asNumber(quote?.spray_cost) * discount;
-      values[15] = asNumber(quote?.management_fee) * discount;
+      // formula-method amount. Non-ganged rows show one-cabinet costs; ganged
+      // rows show the complete order costs for the entered assembly quantity.
+      const componentMultiplier = isGanged ? qty : 1;
+      values[11] = asNumber(quote?.material_cost) * discount * componentMultiplier;
+      values[12] = asNumber(quote?.auxiliary_cost) * discount * componentMultiplier;
+      values[13] = asNumber(quote?.labor_cost) * discount * componentMultiplier;
+      values[14] = asNumber(quote?.spray_cost) * discount * componentMultiplier;
+      values[15] = asNumber(quote?.management_fee) * discount * componentMultiplier;
       values[28] = discount;
     } else {
       const listedAmount = attachmentTotalFromItems(attachments);
       // Every selected attachment name has one original-price audit column.
       // The fixed delta column reconciles authoritative attachment totals.
       if (quickOtherColumnIndex) {
-        const difference = (attachmentFee - listedAmount) * qty;
+        const difference = (attachmentFee - listedAmount)
+          * auditCabinetQuantity * auditGangedCount;
         values[quickOtherColumnIndex - 1] = Math.abs(difference) > 0.000001 ? difference : "";
       }
-      values[11] = quickBreakdown.basePrice * qty;
+      values[11] = quickBreakdown.basePrice * auditCabinetQuantity;
       values[quickDiscountColumnIndex - 1] = discount;
       const populatedCellReferences = (columns) => columns
         .filter(([, valueIndex]) => {
@@ -783,7 +840,10 @@ function fillSheet(sheet, method) {
       }
       if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
       const formula = formulaParts.join("+") || "0";
-      values[10] = { formula, result: quickBreakdown.lineTotal };
+      values[10] = {
+        formula,
+        result: isGanged ? quickBreakdown.lineTotal : quickBreakdown.equivalentUnitTotal,
+      };
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];
     sheet.getRange(`H${row}`).format.wrapText = true;
@@ -846,17 +906,17 @@ function buildFormulaCostDetailSheet() {
   items.forEach((item, itemIndex) => {
     const quote = item.formula || {};
     const materialCost = asNumber(quote.material_cost);
-    const materialUnitPrice = Number(quote.material_unit_price);
-    const correctedWeight = Number(quote.corrected_material_weight_kg);
-    const weight = Number.isFinite(correctedWeight)
+    const materialUnitPrice = optionalNumber(quote.material_unit_price);
+    const correctedWeight = optionalNumber(quote.corrected_material_weight_kg);
+    const weight = correctedWeight !== null
       ? correctedWeight
-      : (Number.isFinite(materialUnitPrice) && materialUnitPrice > 0 ? materialCost / materialUnitPrice : null);
+      : (materialUnitPrice !== null && materialUnitPrice > 0 ? materialCost / materialUnitPrice : null);
     addDetail(
       itemIndex, item, "材料成本", `${item.material_code || "材料"}板材`,
-      item.material_code || "", Number.isFinite(weight) && Number.isFinite(materialUnitPrice)
+      item.material_code || "", weight !== null && materialUnitPrice !== null
         ? `${weight.toFixed(6)} kg × ${materialUnitPrice.toFixed(4)} 元/kg = ${materialCost.toFixed(2)} 元`
         : "修正后材料重量 × 材料单价",
-      weight, "kg", Number.isFinite(materialUnitPrice) ? materialUnitPrice : null,
+      weight, "kg", materialUnitPrice,
       materialCost, "数据库材料价格历史", "材料重量为公式法修正后重量",
     );
 
@@ -904,7 +964,7 @@ function buildFormulaCostDetailSheet() {
       "数据库人工经验值", "非精确尺寸按同柜型最近尺寸及周长比例修正",
     );
 
-    const attachmentCost = asNumber(quote.attachment_fee);
+    const attachmentCost = formulaOrderLineBreakdown(item).attachmentFee;
     const attachments = Array.isArray(item.attachments) ? item.attachments : [];
     let attachmentLineSum = 0;
     for (const attachment of attachments) {
@@ -919,8 +979,7 @@ function buildFormulaCostDetailSheet() {
         attachment, item.quantity || 1, splitCount,
       );
       attachmentLineSum += selectedAmount;
-      const multiplier = attachmentUsesCabinetQuantity(attachment)
-        ? asNumber(item.quantity || 1) * splitCount : 1;
+      const multiplier = selectedQuantity ? quantity / selectedQuantity : 1;
       const signedPrice = quantity ? amount / quantity : price;
       addDetail(
         itemIndex, item, "附件成本", attachment.item_name || attachment.model_code || "附件",
@@ -929,8 +988,10 @@ function buildFormulaCostDetailSheet() {
           + `${quantity} × ${signedPrice.toFixed(2)} = ${amount.toFixed(2)} 元`,
         quantity, "件", signedPrice, amount,
         attachment.price_source || "数据库附件价格表",
-        attachmentUsesCabinetQuantity(attachment)
-          ? "选择数量随柜体数量变化" : "人工数量不受柜体数量影响",
+        attachment.ganged_fixed_base_match
+          ? "按子柜分别匹配；仅随整套柜体数量变化"
+          : (attachmentUsesCabinetQuantity(attachment)
+            ? "选择数量随柜体数量变化" : "人工数量不受柜体数量影响"),
         "detail", 1,
       );
     }
@@ -951,9 +1012,9 @@ function buildFormulaCostDetailSheet() {
     }
 
     const sprayCost = asNumber(quote.spray_cost);
-    const productArea = Number(quote.product_area_m2);
-    const sprayUnitPrice = Number(quote.spray_unit_price);
-    if (Number.isFinite(productArea) && Number.isFinite(sprayUnitPrice)) {
+    const productArea = optionalNumber(quote.product_area_m2);
+    const sprayUnitPrice = optionalNumber(quote.spray_unit_price);
+    if (productArea !== null && sprayUnitPrice !== null) {
       addDetail(
         itemIndex, item, "喷塑费用", `${item.coating_type || "喷塑"}`, "产品喷涂面积",
         `${productArea.toFixed(6)} m² × ${sprayUnitPrice.toFixed(4)} 元/m² = ${sprayCost.toFixed(2)} 元`,
@@ -1146,13 +1207,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
       const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
       const quantity = asNumber(item.quantity || 1);
       const lineBreakdown = method === "quick"
-        ? quickOrderLineBreakdown({
-          quote: quote || {},
-          attachments: item.attachments || [],
-          discount,
-          cabinetQuantity: quantity,
-          gangedCabinetCount: gangedCabinetCount(item),
-        })
+        ? quickPublicLineBreakdown(item)
         : formulaOrderLineBreakdown(item);
       const unitCost = lineBreakdown.equivalentUnitTotal;
       subtotal += lineBreakdown.lineTotal;

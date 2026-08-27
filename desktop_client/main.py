@@ -69,6 +69,9 @@ from attachment_category_browser import (
     valid_selection_prefix,
 )
 
+# 管理费固定为人工成本的 13%（见运行规则：管理费 = 人工成本 × 0.13）。
+MANAGEMENT_FEE_RATE = 0.13
+
 
 def application_root() -> Path:
     """Return the writable installation folder in source and packaged modes."""
@@ -91,11 +94,11 @@ def load_client_config() -> dict:
             # field still lets support staff correct a damaged config file.
             config = {}
     elif not getattr(sys, "frozen", False):
-        # The source checkout keeps the distributable client configuration in
-        # deployment/.  Reuse only its access key here: a developer/source
+        # The source checkout sits beside the distributable AIQuoteDualSystem
+        # folder. Reuse only that client's access key here: a developer/source
         # client should continue to call the local API unless explicitly
         # overridden, while packaged clients still use their adjacent config.
-        shared_config = application_root() / "client_config.json"
+        shared_config = application_root().parent / "AIQuoteDualSystem" / "client_config.json"
         if shared_config.is_file():
             try:
                 loaded = json.loads(shared_config.read_text(encoding="utf-8-sig"))
@@ -181,7 +184,10 @@ def _attachment_remark(item: dict) -> str:
         return f"配接地线{qty}套"
     if "底座" in name:
         height = item.get("height_mm")
-        height_text = f"{float(height):g}高" if height not in (None, "") else ""
+        try:
+            height_text = f"{float(height):g}高" if height not in (None, "") else ""
+        except (TypeError, ValueError):
+            height_text = ""
         kind = "活动底座" if "活动" in name else "底座"
         return f"配{height_text}{kind}{qty}件" if float(qty) != 1 else f"配{height_text}{kind}"
     if "风机" in name:
@@ -1003,7 +1009,8 @@ class AttachmentDialog(QDialog):
         if path_labels:
             breadcrumb += "  ›  " + "  ›  ".join(path_labels)
         if options:
-            breadcrumb += f"  /  选择{'一二三'[len(self.category_selection)]}级分类"
+            level_label = ('一', '二', '三')[len(self.category_selection)] if len(self.category_selection) < 3 else '三'
+            breadcrumb += f"  /  选择{level_label}级分类"
         else:
             breadcrumb += "  /  选择具体附件"
         self.category_breadcrumb.setText(breadcrumb)
@@ -2340,7 +2347,9 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         for button_index, button in enumerate(self.nav_buttons):
             button.setChecked(button_index == index)
-        self.statusBar().showMessage(f"当前模块：{('图片导入', '基础报价', '备注', '汇总清单')[index]}")
+        section_names = ('图片导入', '基础报价', '备注', '汇总清单')
+        name = section_names[index] if 0 <= index < len(section_names) else '未知模块'
+        self.statusBar().showMessage(f"当前模块：{name}")
 
     def build_image_page(self):
         page = QWidget(); page.setObjectName("sectionPage")
@@ -2941,7 +2950,7 @@ class MainWindow(QMainWindow):
         if labor is not None and management is not None and total is not None:
             multiplier = float(self.labor_multiplier.value())
             new_labor = float(labor) * multiplier
-            new_management = new_labor * 0.13
+            new_management = new_labor * MANAGEMENT_FEE_RATE
             formula["labor_cost"] = new_labor
             formula["management_fee"] = new_management
             formula["total_cost"] = float(total) - float(labor) - float(management) + new_labor + new_management
@@ -3011,7 +3020,7 @@ class MainWindow(QMainWindow):
             )["discounted_total"]
             formula_sum += formula_unit * item["quantity"]; quick_sum += quick_unit * item["quantity"]
             dimensions = f"{item['width_mm']:g}×{item['height_mm']:g}×{item['depth_mm']:g}"
-            values = [row + 1, self.drawing_name_before_chinese(item["name"]), dimensions, dimensions, item["material_code"], item["quantity"], f"{formula_unit:,.2f}", f"{item['formula_discount']:.2f}", f"{quick_unit:,.2f}", f"{item['quick_discount']:.2f}", str(len(item["attachments"])), item["notes"]]
+            values = [row + 1, self.drawing_name_before_chinese(item["name"]), item.get("model_code") or "", dimensions, item["material_code"], item["quantity"], f"{formula_unit:,.2f}", f"{item['formula_discount']:.2f}", f"{quick_unit:,.2f}", f"{item['quick_discount']:.2f}", str(len(item["attachments"])), item["notes"]]
             for col, value in enumerate(values): self.summary_table.setItem(row, col, QTableWidgetItem(str(value)))
         self.summary_formula_total.setText(f"公式法：{formula_sum:,.2f} 元"); self.summary_quick_total.setText(f"快速报价：{quick_sum:,.2f} 元")
 

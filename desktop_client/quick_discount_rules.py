@@ -10,18 +10,8 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 
-QUICK_DISCOUNT_ATTACHMENT_CATEGORIES = (
-    "底座",
-    "侧板",
-    "安装板",
-    "内门",
-    "玻璃门",
-    "通风顶罩",
-    "防雨顶",
-    "分段板",
-    "JK安装板",
-)
 ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = ("侧板", "门变形", "风机滤网")
+GANGED_FIXED_BASE_MATCH_KEY = "ganged_fixed_base_match"
 
 
 def _number(value: Any, fallback: float = 0.0) -> float:
@@ -97,9 +87,11 @@ def effective_attachment_quantity(
     selected = _number(item.get("quantity"), 1.0)
     cabinets = _number(cabinet_quantity, 1.0)
     split_count = _number(ganged_cabinet_count, 1.0)
-    return selected * (
-        cabinets * split_count if attachment_uses_cabinet_quantity(item) else 1.0
-    )
+    if not attachment_uses_cabinet_quantity(item):
+        return selected
+    if bool(item.get(GANGED_FIXED_BASE_MATCH_KEY)):
+        return selected * cabinets
+    return selected * cabinets * split_count
 
 
 def effective_attachment_line_amount(

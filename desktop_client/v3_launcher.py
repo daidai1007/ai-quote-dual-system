@@ -34,6 +34,10 @@ _COMPACT_HEIGHT_PATTERN = re.compile(
     r"(?P<size>\d+(?:\.\d+)?)\s*(?P<unit>px|pt)",
     re.IGNORECASE,
 )
+# The recovered V3 core hard-codes its application font at 10pt inside
+# ``install_application_font``; the UI scaling pass bumps that literal to 11pt.
+_APPLICATION_FONT_BASE_SIZE = 10
+_APPLICATION_FONT_SCALED_SIZE = 11
 
 
 def _install_silent_windows_subprocesses() -> None:
@@ -103,8 +107,11 @@ def _scale_ui_code(code: types.CodeType) -> types.CodeType:
     for value in code.co_consts:
         if isinstance(value, types.CodeType):
             replacement = _scale_ui_code(value)
-        elif code.co_qualname == "install_application_font" and value == 10:
-            replacement = 11
+        elif (
+            code.co_qualname == "install_application_font"
+            and value == _APPLICATION_FONT_BASE_SIZE
+        ):
+            replacement = _APPLICATION_FONT_SCALED_SIZE
         elif isinstance(value, str) and (
             "font-size" in value or "min-height" in value or "max-height" in value
         ):

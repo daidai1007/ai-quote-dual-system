@@ -1,5 +1,7 @@
+const hasFiniteNumber = (value) => value !== null && value !== undefined && value !== ""
+  && Number.isFinite(Number(value));
 const asFiniteNumber = (value, fallback = 0) =>
-  Number.isFinite(Number(value)) ? Number(value) : fallback;
+  hasFiniteNumber(value) ? Number(value) : fallback;
 
 export const QUICK_DISCOUNT_ATTACHMENT_CATEGORIES = Object.freeze([
   "底座",
@@ -15,6 +17,7 @@ export const QUICK_DISCOUNT_ATTACHMENT_CATEGORIES = Object.freeze([
 export const ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = Object.freeze([
   "侧板", "门变形", "风机滤网",
 ]);
+export const GANGED_FIXED_BASE_MATCH_KEY = "ganged_fixed_base_match";
 
 const categoryCandidates = (item = {}) => [
   item.category_level3,
@@ -42,13 +45,13 @@ export function quickDiscountCategory(item = {}) {
 export function quickAttachmentLineAmount(item = {}) {
   const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
   for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
-    if (item[key] !== null && item[key] !== undefined && Number.isFinite(Number(item[key]))) {
+    if (hasFiniteNumber(item[key])) {
       return Math.abs(Number(item[key])) * sign;
     }
   }
   let unitPrice = 0;
   for (const key of ["unit_price_override", "matched_price", "unit_price", "price"]) {
-    if (item[key] !== null && item[key] !== undefined && Number.isFinite(Number(item[key]))) {
+    if (hasFiniteNumber(item[key])) {
       unitPrice = Number(item[key]);
       break;
     }
@@ -69,14 +72,17 @@ export function effectiveAttachmentQuantity(
   const selected = asFiniteNumber(item.quantity, 1);
   const cabinets = asFiniteNumber(cabinetQuantity, 1);
   const splitCount = asFiniteNumber(gangedCabinetCount, 1);
-  return selected * (attachmentUsesCabinetQuantity(item) ? cabinets * splitCount : 1);
+  if (!attachmentUsesCabinetQuantity(item)) return selected;
+  if (Boolean(item[GANGED_FIXED_BASE_MATCH_KEY])) return selected * cabinets;
+  return selected * cabinets * splitCount;
 }
 
 export function effectiveAttachmentLineAmount(
   item = {}, cabinetQuantity = 1, gangedCabinetCount = 1,
 ) {
-  const selected = asFiniteNumber(item.quantity, 1) || 1;
+  const selected = asFiniteNumber(item.quantity, 1);
   const lineAmount = quickAttachmentLineAmount(item);
+  if (selected === 0) return 0;
   return lineAmount * effectiveAttachmentQuantity(
     item, cabinetQuantity, gangedCabinetCount,
   ) / selected;
@@ -93,10 +99,10 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
     (sum, item) => sum + quickAttachmentLineAmount(item),
     0,
   );
-  const attachmentFee = Number.isFinite(Number(quote.attachment_fee))
+  const attachmentFee = hasFiniteNumber(quote.attachment_fee)
     ? Number(quote.attachment_fee)
     : listedAttachmentTotal;
-  const basePrice = Number.isFinite(Number(quote.base_price))
+  const basePrice = hasFiniteNumber(quote.base_price)
     ? Number(quote.base_price)
     : rawTotal - attachmentFee;
   const listedEligible = attachments.reduce(
@@ -105,7 +111,7 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
   );
   const eligibleAttachmentTotal = listedEligible;
   const originalPriceAttachmentTotal = attachmentFee - eligibleAttachmentTotal;
-  const factor = Number.isFinite(Number(discount)) ? Number(discount) : 1;
+  const factor = hasFiniteNumber(discount) ? Number(discount) : 1;
   const discountedTotal = (basePrice + eligibleAttachmentTotal) * factor
     + originalPriceAttachmentTotal;
   return {

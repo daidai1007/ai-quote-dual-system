@@ -233,6 +233,13 @@ for attachment, cabinets, expected in (
     assert final_attachment_quantity(attachment, cabinets) == expected
 
 assert final_attachment_quantity({"item_name": "安装板", "quantity": 2}, 3, 4) == 24
+assert final_attachment_quantity({
+    "item_name": "固定底座",
+    "category_level1": "底座",
+    "quantity": 1,
+    "ganged_fixed_base_match": True,
+    "ganged_fixed_base_index": 0,
+}, 3, 4) == 3
 assert final_attachment_quantity({"item_name": "侧板", "quantity": 2}, 3, 4) == 2
 assert final_attachment_quantity(
     {"category_level1": "门变形", "item_name": "JS、JP单开门改为双开门", "quantity": 1},
@@ -504,6 +511,8 @@ assert ganged_area == 9.5
 
 
 source = (ROOT / "desktop_client" / "main.py").read_text(encoding="utf-8")
+assert 'application_root().parent / "AIQuoteDualSystem" / "client_config.json"' in source
+assert 'item.get("model_code") or ""' in source
 tree = ast.parse(source)
 calculator_node = next(
     node for node in tree.body

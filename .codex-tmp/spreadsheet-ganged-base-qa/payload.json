@@ -1,0 +1,38 @@
+{
+  "quote_id": "QA-GANGED-BASE-20260827",
+  "quote_date": "2026-08-27",
+  "company_code": "QA",
+  "company_name": "并柜底座数量验证",
+  "items": [
+    {
+      "name": "三联并柜底座",
+      "product_family": "JS",
+      "product_code": "JS_SINGLE",
+      "model_code": "（200+200+200）×600×（600+200）",
+      "specification": "（200+200+200）×600×（600+200）",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "material_code": "SECC",
+      "width_mm": 200,
+      "height_mm": 600,
+      "depth_mm": 600,
+      "quantity": 2,
+      "ganged_cabinet_count": 3,
+      "ganged_cabinets": [
+        {"width_mm": 200, "depth_mm": 600, "height_mm": 600, "base_height_mm": 200, "single_door_count": 1, "double_door_count": 0},
+        {"width_mm": 200, "depth_mm": 600, "height_mm": 600, "base_height_mm": 200, "single_door_count": 1, "double_door_count": 0},
+        {"width_mm": 200, "depth_mm": 600, "height_mm": 600, "base_height_mm": 200, "single_door_count": 1, "double_door_count": 0}
+      ],
+      "formula_discount": 0.9,
+      "quick_discount": 0.9,
+      "formula": {"material_cost": 400, "auxiliary_cost": 100, "labor_cost": 200, "spray_cost": 80, "management_fee": 26, "attachment_fee": 120, "total_cost": 926},
+      "quick": {"base_price": 2000, "attachment_fee": 120, "total_cost": 2120},
+      "attachments": [
+        {"item_name": "固定底座200高", "category_level1": "底座", "quantity": 1, "unit_price": 40, "ganged_fixed_base_match": true, "ganged_fixed_base_index": 0},
+        {"item_name": "固定底座200高", "category_level1": "底座", "quantity": 1, "unit_price": 40, "ganged_fixed_base_match": true, "ganged_fixed_base_index": 1},
+        {"item_name": "固定底座200高", "category_level1": "底座", "quantity": 1, "unit_price": 40, "ganged_fixed_base_match": true, "ganged_fixed_base_index": 2}
+      ],
+      "final_remark": "三个子柜分别匹配底座，整套柜体数量为2。"
+    }
+  ]
+}

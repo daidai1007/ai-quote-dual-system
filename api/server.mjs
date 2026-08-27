@@ -67,17 +67,45 @@ const sqlNumber = (value, name, required = false) => {
   return String(n);
 };
 
+const positiveSqlNumber = (value, name, required = false) => {
+  const sql = sqlNumber(value, name, required);
+  if (sql !== 'NULL' && Number(value) <= 0) throw new Error(`${name} must be a positive number`);
+  return sql;
+};
+
+const nonNegativeSqlNumber = (value, name, required = false) => {
+  const sql = sqlNumber(value, name, required);
+  if (sql !== 'NULL' && Number(value) < 0) throw new Error(`${name} must be a non-negative number`);
+  return sql;
+};
+
+const productCodeValue = (value, name = 'product_code') => {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${name} is required`);
+  return value.trim().toUpperCase();
+};
+
+const shanghaiDate = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
+
 const dateValue = (value) => {
-  const date = value || new Date().toISOString().slice(0, 10);
+  const date = value || shanghaiDate();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('quote_date must be YYYY-MM-DD');
   return date;
 };
 
+const clientErrorStatus = (error) => {
+  const message = String(error?.message || '');
+  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only/i.test(message)
+    ? 400 : 500;
+};
+
 const validateRequest = (input) => {
-  if (!input || typeof input !== 'object') throw new Error('JSON body is required');
-  for (const key of ['quote_id', 'product_code', 'material_code']) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
+  for (const key of ['quote_id', 'material_code']) {
     if (!input[key] || typeof input[key] !== 'string') throw new Error(`${key} is required`);
   }
+  const productCode = productCodeValue(input.product_code);
   for (const key of ['width_mm', 'height_mm', 'depth_mm']) {
     const n = Number(input[key]);
     if (!Number.isFinite(n) || n <= 0) throw new Error(`${key} must be a positive number`);
@@ -86,7 +114,15 @@ const validateRequest = (input) => {
     throw new Error('attachments must be an array');
   }
   if ((input.attachments || []).length > 100) throw new Error('attachments cannot exceed 100 items');
-  return input;
+  return {
+    ...input,
+    product_code: productCode,
+    attachments: (input.attachments || []).map((attachment) => (
+      attachment?.product_code
+        ? { ...attachment, product_code: productCodeValue(attachment.product_code, 'attachment product_code') }
+        : attachment
+    )),
+  };
 };
 
 const normalizeProductVariant = (input = {}) => {
@@ -99,7 +135,6 @@ const normalizeProductVariant = (input = {}) => {
       ...doorNormalized,
       variant_code: 'WIDE',
       quick_product_code: quickNormalized.product_code,
-      quick_variant_code: 'WIDE',
     };
   }
   if (productCode === 'JM' && (!variantCode || variantCode === 'DEFAULT')) {
@@ -107,18 +142,16 @@ const normalizeProductVariant = (input = {}) => {
       ...doorNormalized,
       variant_code: 'SINGLE',
       quick_product_code: quickNormalized.product_code,
-      quick_variant_code: quickNormalized.variant_code || 'SINGLE',
     };
   }
   return {
     ...doorNormalized,
     quick_product_code: quickNormalized.product_code || doorNormalized.product_code,
-    quick_variant_code: quickNormalized.variant_code || doorNormalized.variant_code,
   };
 };
 
 const attachmentStatements = (input) => (input.attachments || []).map((a, index) => {
-  if (!a || typeof a !== 'object') throw new Error(`attachments[${index}] must be an object`);
+  if (!a || typeof a !== 'object' || Array.isArray(a)) throw new Error(`attachments[${index}] must be an object`);
   if (!a.model_code && !a.item_name) {
     throw new Error(`attachments[${index}] requires model_code or item_name`);
   }
@@ -137,13 +170,14 @@ const attachmentStatements = (input) => (input.attachments || []).map((a, index)
     sqlText(a.product_code || input.product_code),
     sqlUnicodeText(a.model_code ?? null),
     sqlUnicodeText(a.item_name ?? null),
-    sqlNumber(a.quantity ?? 1, `attachments[${index}].quantity`),
-    a.width_mm == null ? 'NULL' : sqlNumber(a.width_mm, `attachments[${index}].width_mm`),
-    a.height_mm == null ? 'NULL' : sqlNumber(a.height_mm, `attachments[${index}].height_mm`),
-    a.depth_mm == null ? 'NULL' : sqlNumber(a.depth_mm, `attachments[${index}].depth_mm`),
+    positiveSqlNumber(a.quantity ?? 1, `attachments[${index}].quantity`, true),
+    a.width_mm == null || a.width_mm === '' ? 'NULL' : positiveSqlNumber(a.width_mm, `attachments[${index}].width_mm`, true),
+    a.height_mm == null || a.height_mm === '' ? 'NULL' : positiveSqlNumber(a.height_mm, `attachments[${index}].height_mm`, true),
+    a.depth_mm == null || a.depth_mm === '' ? 'NULL' : positiveSqlNumber(a.depth_mm, `attachments[${index}].depth_mm`, true),
     sqlUnicodeText(a.variant ?? null),
     sqlUnicodeText(a.price_source ?? null),
-    a.unit_price_override == null ? 'NULL' : sqlNumber(a.unit_price_override, `attachments[${index}].unit_price_override`),
+    a.unit_price_override == null || a.unit_price_override === ''
+      ? 'NULL' : nonNegativeSqlNumber(a.unit_price_override, `attachments[${index}].unit_price_override`, true),
     sqlUnicodeText(a.notes ?? null),
     `${sqlNumber(priceSign, `attachments[${index}].attachment_price_sign`, true)}::SMALLINT`,
   ].join(', ')});`;
@@ -425,10 +459,12 @@ FROM (
 ) x;`;
 
 const historyMatchSql = (input) => {
-  const required = ['company_code', 'product_code', 'material_code'];
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
+  const required = ['company_code', 'material_code'];
   for (const key of required) {
     if (!input[key] || typeof input[key] !== 'string') throw new Error(`${key} is required`);
   }
+  const productCode = productCodeValue(input.product_code);
   for (const key of ['width_mm', 'height_mm', 'depth_mm']) {
     if (!Number.isFinite(Number(input[key])) || Number(input[key]) <= 0) {
       throw new Error(`${key} must be a positive number`);
@@ -448,7 +484,7 @@ SELECT COALESCE((
   FROM calc.company_quote_history h
   JOIN calc.ordering_company c ON c.company_id = h.company_id
   WHERE c.company_code = ${sqlUnicodeText(input.company_code)}
-    AND h.product_code = ${sqlUnicodeText(input.product_code)}
+    AND h.product_code = ${sqlUnicodeText(productCode)}
     AND h.material_code = ${sqlUnicodeText(input.material_code)}
     AND COALESCE(h.variant_code, '') = COALESCE(${sqlUnicodeText(input.variant_code ?? '')}, '')
     AND h.width_mm = ${sqlNumber(input.width_mm, 'width_mm')}
@@ -460,16 +496,21 @@ SELECT COALESCE((
 };
 
 const companyHistoryInsertSql = (input) => {
-  const required = ['company_code', 'product_code', 'material_code'];
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
+  const required = ['company_code', 'material_code'];
   for (const key of required) {
     if (!input[key] || typeof input[key] !== 'string') throw new Error(`${key} is required`);
   }
+  const productCode = productCodeValue(input.product_code);
   for (const key of ['width_mm', 'height_mm', 'depth_mm']) {
     if (!Number.isFinite(Number(input[key])) || Number(input[key]) <= 0) {
       throw new Error(`${key} must be a positive number`);
     }
   }
-  const payload = input.payload && typeof input.payload === 'object' ? input.payload : input;
+  if (input.payload !== undefined && (
+    !input.payload || typeof input.payload !== 'object' || Array.isArray(input.payload)
+  )) throw new Error('payload must be an object');
+  const payload = input.payload || input;
   return `
 WITH company AS (
   INSERT INTO calc.ordering_company (company_code, company_name, is_active)
@@ -488,7 +529,7 @@ WITH company AS (
   )
   SELECT company_id,
          ${sqlUnicodeText(input.quote_id ?? payload.quote_id ?? null)},
-         ${sqlUnicodeText(input.product_code)},
+         ${sqlUnicodeText(productCode)},
          ${sqlUnicodeText(input.model_code ?? payload.model_code ?? null)},
          ${sqlUnicodeText(input.material_code)},
          ${sqlUnicodeText(input.coating_type ?? payload.coating_type ?? null)},
@@ -508,21 +549,27 @@ SELECT COALESCE((SELECT jsonb_build_object('saved', TRUE, 'history_id', history_
 // values are stored together only for presentation/export; their source
 // calculations remain independent database systems.
 const confirmQuoteSql = (input) => {
-  if (!input || typeof input !== 'object') throw new Error('JSON body is required');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
   if (!input.quote_id || !input.company_name || !Array.isArray(input.items) || !input.items.length) {
     throw new Error('quote_id, company_name and at least one item are required');
   }
   const quoteDate = dateValue(input.quote_date);
   const companyCode = String(input.company_code || input.company_name).trim();
+  const normalizedItems = input.items.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`items[${index}] must be an object`);
+    }
+    return { ...item, product_code: productCodeValue(item.product_code, `items[${index}].product_code`) };
+  });
   const snapshot = {
     quote_id: input.quote_id,
     quote_date: quoteDate,
     company_code: companyCode,
     company_name: input.company_name,
-    items: input.items,
+    items: normalizedItems,
   };
-  const historyRows = input.items.map((item, index) => {
-    for (const field of ['product_code', 'material_code']) {
+  const historyRows = normalizedItems.map((item, index) => {
+    for (const field of ['material_code']) {
       if (!item[field]) throw new Error(`items[${index}].${field} is required`);
     }
     for (const field of ['width_mm', 'height_mm', 'depth_mm']) {
@@ -639,7 +686,7 @@ const runWorkbookExporter = async (payload) => {
 
 const auxiliaryLookupKey = (item = {}) => {
   const normalizedItem = normalizeProductVariant(item);
-  const productCode = String(normalizedItem.product_code || '').trim();
+  const productCode = productCodeValue(normalizedItem.product_code);
   const variant = String(normalizedItem.variant_code || '').trim().toUpperCase();
   const mappedProduct = {
     JS_SINGLE: 'JS', JS_DOUBLE: 'JS',
@@ -667,7 +714,7 @@ const exportCostDetailSql = (payload) => {
       variant_code: key.variant_code,
       material_code: item.material_code || 'SECC',
       coating_type: item.coating_type || DEFAULT_COATING_TYPE,
-      quote_date: item.quote_date || payload.quote_date || new Date().toISOString().slice(0, 10),
+      quote_date: dateValue(item.quote_date || payload.quote_date),
     };
   });
   const requestJson = sqlUnicodeText(JSON.stringify(requests));
@@ -822,7 +869,7 @@ const server = http.createServer(async (req, res) => {
       const output = await runPsql(historyMatchSql(input));
       return json(res, 200, output ? JSON.parse(output) : { matched: false });
     } catch (error) {
-      return json(res, error.message?.includes('required') || error.message?.includes('must be') ? 400 : 500, {
+      return json(res, clientErrorStatus(error), {
         error: 'company_history_match_failed',
         message: error.message,
       });
@@ -834,7 +881,7 @@ const server = http.createServer(async (req, res) => {
       const output = await runPsql(historyPriceMatchSql(input));
       return json(res, 200, output ? JSON.parse(output) : { matched: false, items: [] });
     } catch (error) {
-      return json(res, error.message?.includes('required') || error.message?.includes('too long') ? 400 : 500, {
+      return json(res, clientErrorStatus(error), {
         error: 'history_price_match_failed',
         message: error.message,
       });
@@ -846,7 +893,7 @@ const server = http.createServer(async (req, res) => {
       const output = await runPsql(companyHistoryInsertSql(input));
       return json(res, 200, output ? JSON.parse(output) : { saved: false });
     } catch (error) {
-      return json(res, error.message?.includes('required') || error.message?.includes('must be') ? 400 : 500, {
+      return json(res, clientErrorStatus(error), {
         error: 'company_history_save_failed',
         message: error.message,
       });
@@ -858,8 +905,7 @@ const server = http.createServer(async (req, res) => {
       const output = await runPsql(confirmQuoteSql(input));
       return json(res, 200, output ? JSON.parse(output) : { confirmed: false });
     } catch (error) {
-      return json(res, error.message?.includes('required') || error.message?.includes('must be')
-        ? 400 : 500, { error: 'quote_confirm_failed', message: error.message });
+      return json(res, clientErrorStatus(error), { error: 'quote_confirm_failed', message: error.message });
     }
   }
   if (req.method === 'POST' && req.url === '/api/quotes/confirm-check') {
@@ -872,8 +918,7 @@ const server = http.createServer(async (req, res) => {
       const checked = output ? JSON.parse(output) : { confirmed: false };
       return json(res, 200, { ...checked, dry_run: true, persisted: false });
     } catch (error) {
-      return json(res, error.message?.includes('required') || error.message?.includes('must be')
-        ? 400 : 500, { error: 'quote_confirm_check_failed', message: error.message });
+      return json(res, clientErrorStatus(error), { error: 'quote_confirm_check_failed', message: error.message });
     }
   }
   if (req.method === 'GET' && req.url === '/api/products/catalog') {
@@ -906,29 +951,30 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ...saved, item: command.item, source: 'postgresql' });
     } catch (error) {
       const message = String(error?.message || 'attachment catalogue write failed');
-      return json(res, message.includes('required') || message.includes('must be') || message.includes('cannot exceed')
-        ? 400 : 500, { error: 'attachment_catalog_save_failed', message });
+      return json(res, clientErrorStatus(error), { error: 'attachment_catalog_save_failed', message });
     }
   }
   if (req.method === 'POST' && req.url === '/api/quotes/formula-template') {
     try {
       const input = await readBody(req);
-      if (!input.product_code || typeof input.product_code !== 'string') {
-        return json(res, 400, { error: 'formula_template_failed', message: 'product_code is required' });
-      }
-      const output = await runPsql(formulaTemplateSql(input.product_code));
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
+      const productCode = productCodeValue(input.product_code);
+      const output = await runPsql(formulaTemplateSql(productCode));
       const rows = output ? JSON.parse(output) : [];
       if (!rows.length) {
-        return json(res, 404, { error: 'formula_template_not_found', message: `no formula template for ${input.product_code}` });
+        return json(res, 404, { error: 'formula_template_not_found', message: `no formula template for ${productCode}` });
       }
       return json(res, 200, { template: rows[0], source: 'postgresql' });
     } catch (error) {
-      return json(res, 500, { error: 'formula_template_failed', message: error.message });
+      return json(res, clientErrorStatus(error), { error: 'formula_template_failed', message: error.message });
     }
   }
   if (req.method === 'POST' && req.url === '/api/quotes/export') {
     try {
       const input = await readBody(req);
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        return json(res, 400, { error: 'quote_export_failed', message: 'JSON body is required' });
+      }
       if (!Array.isArray(input.items) || input.items.length === 0) {
         return json(res, 400, { error: 'quote_export_failed', message: 'items are required' });
       }
@@ -941,7 +987,7 @@ const server = http.createServer(async (req, res) => {
       });
       return res.end(workbook);
     } catch (error) {
-      return json(res, 500, { error: 'quote_export_failed', message: error.message });
+      return json(res, clientErrorStatus(error), { error: 'quote_export_failed', message: error.message });
     }
   }
   if (req.method !== 'POST' || req.url !== '/api/quotes/calculate-dual') {
@@ -957,7 +1003,7 @@ const server = http.createServer(async (req, res) => {
     const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
     json(res, 200, JSON.parse(jsonLine));
   } catch (error) {
-    json(res, error.message?.includes('required') || error.message?.includes('must be') ? 400 : 500, {
+    json(res, clientErrorStatus(error), {
       error: 'dual_quote_failed',
       message: error.message,
     });
