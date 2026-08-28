@@ -314,6 +314,9 @@ assert attachment_dialog.width() == 900
 assert attachment_dialog.height() == 680
 assert attachment_dialog.minimumWidth() == attachment_dialog.maximumWidth() == 900
 assert attachment_dialog.minimumHeight() == attachment_dialog.maximumHeight() == 680
+assert len(buttons_with_text(attachment_dialog, {"确认选择"})) == 1
+assert len(buttons_with_text(attachment_dialog, {"取消"})) == 1
+assert not buttons_with_text(attachment_dialog, {"Cancel"})
 selection_status = attachment_dialog.findChild(QFrame, "attachmentSelectionStatusBar")
 assert selection_status is not None
 assert attachment_dialog.selection_hint.parentWidget() is selection_status

@@ -5121,6 +5121,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 
     def init_with_default_filters(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
+        for button_box in self.findChildren(QDialogButtonBox):
+            cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+            if cancel_button is not None:
+                cancel_button.setText("取消")
         # Keep the category browser and table columns at their approved layout;
         # overflowing catalogue content is handled by the existing scroll areas.
         self.setFixedSize(900, 680)
