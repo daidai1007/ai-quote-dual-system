@@ -8,6 +8,7 @@ database catalogue presentation and API interactions approved for V3.
 from __future__ import annotations
 
 import json
+import math
 import re
 import urllib.error
 import urllib.request
@@ -53,6 +54,8 @@ from quick_discount_rules import (
     quick_order_line_breakdown,
 )
 from attachment_category_browser import (
+    ATTACHMENT_SELECTION_SOURCE_KEY,
+    AUTOMATIC_SELECTION_SOURCE,
     DOOR_TRANSFORMATION_RULE_PREFIX,
     DEFAULT_A4_FOLDER,
     DEFAULT_DOOR_REINFORCEMENT,
@@ -64,6 +67,8 @@ from attachment_category_browser import (
     DEFAULT_LIGHT_SWITCH,
     GANGED_FIXED_BASE_INDEX_KEY,
     GANGED_FIXED_BASE_MATCH_KEY,
+    MANUAL_SELECTION_SOURCE,
+    attachment_selection_source,
     category_options,
     category_path as attachment_category_path,
     category_value as attachment_category_value,
@@ -73,6 +78,8 @@ from attachment_category_browser import (
     door_transformation_default_names,
     final_attachment_quantity,
     is_base_selection,
+    is_automatic_attachment_selection,
+    is_manual_attachment_selection,
     is_jp_product,
     match_attachment_size,
     match_default_a4_folder,
@@ -88,6 +95,7 @@ from attachment_category_browser import (
     SIZE_MATCH_METADATA_KEYS,
     size_match_group_key,
     valid_selection_prefix,
+    with_attachment_selection_source,
 )
 from ganged_cabinet_rules import (
     cascade_door_counts,
@@ -161,7 +169,14 @@ class _GangedQuoteWorker(QThread):
                     method="POST",
                 )
                 with urllib.request.urlopen(request, timeout=30) as response:
-                    results.append(json.loads(response.read().decode("utf-8")))
+                    result = json.loads(response.read().decode("utf-8"))
+                if not isinstance(result, dict):
+                    raise RuntimeError(f"第 {len(results) + 1} 个子柜返回了无效数据")
+                if not isinstance(result.get("formula_cost"), dict):
+                    raise RuntimeError(f"第 {len(results) + 1} 个子柜缺少公式法报价结果")
+                if not isinstance(result.get("quick_quote"), dict):
+                    raise RuntimeError(f"第 {len(results) + 1} 个子柜缺少快速报价结果")
+                results.append(result)
 
             formula_keys = (
                 "material_cost", "auxiliary_cost", "labor_cost", "spray_cost",
@@ -228,6 +243,107 @@ class _GangedQuoteWorker(QThread):
             self.failed.emit(detail or f"HTTP {exc.code}")
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class _GangedFormulaTemplateWorker(QThread):
+    """Load every formula template needed by the split cabinets."""
+
+    succeeded = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, base_url: str, product_codes: list[str], headers_factory, parent=None):
+        super().__init__(parent)
+        self.base_url = str(base_url).rstrip("/")
+        self.product_codes = list(product_codes)
+        self.headers_factory = headers_factory
+
+    def run(self) -> None:
+        try:
+            templates = []
+            for product_code in self.product_codes:
+                body = json.dumps(
+                    {"product_code": product_code}, ensure_ascii=False
+                ).encode("utf-8")
+                headers = (
+                    self.headers_factory(True)
+                    if callable(self.headers_factory)
+                    else {"Content-Type": "application/json; charset=utf-8"}
+                )
+                request = urllib.request.Request(
+                    self.base_url + "/api/quotes/formula-template",
+                    data=body,
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                template = payload.get("template") if isinstance(payload, dict) else None
+                if not isinstance(template, dict):
+                    raise RuntimeError(f"{product_code} 的公式模板返回无效数据")
+                returned_code = str(template.get("template_code") or "").strip()
+                if returned_code != product_code:
+                    raise RuntimeError(
+                        f"公式模板不匹配：需要 {product_code}，实际返回 {returned_code or '空'}"
+                    )
+                templates.append(payload)
+            self.succeeded.emit(templates)
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8")
+            except Exception:
+                detail = str(exc)
+            self.failed.emit(detail or f"HTTP {exc.code}")
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+def _ganged_error_text(message) -> str:
+    """Turn HTTP/JSON worker failures into one operator-facing sentence."""
+
+    text = str(message or "").strip()
+    if text:
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            text = str(
+                payload.get("error")
+                or payload.get("message")
+                or payload.get("detail")
+                or text
+            ).strip()
+    return text or "报价服务未返回错误详情，请检查网络和服务状态后重试。"
+
+
+def _set_ganged_calculation_state(window, text: str, tone: str) -> None:
+    state = _find(window, QLabel, "quoteResultState")
+    if isinstance(state, QLabel):
+        state.setText(text)
+        state.setProperty("tone", tone)
+        state.style().unpolish(state)
+        state.style().polish(state)
+    status_bar = getattr(window, "statusBar", None)
+    if callable(status_bar):
+        bar = status_bar()
+        if bar is not None:
+            bar.showMessage(text)
+
+
+def _invalidate_quote_after_attachment_change(window, before: list) -> bool:
+    """Invalidate all derived quote state after the operator changes attachments."""
+
+    if before == getattr(window, "attachments", []):
+        return False
+    clear_result = getattr(window, "clear_quote_result", None)
+    if callable(clear_result):
+        clear_result()
+    _set_ganged_calculation_state(
+        window,
+        "附件选择已更新，请重新计算双报价。",
+        "warning",
+    )
+    return True
 
 
 class _QuotedTextSafeCellPattern:
@@ -719,6 +835,72 @@ def _product_code_for_door_counts(window, single: int, double: int) -> tuple[str
     return None, None
 
 
+def _ganged_formula_product_codes(window) -> list[str]:
+    codes = []
+    for index, row in enumerate(_ganged_rows(window)):
+        code, _variant = _product_code_for_door_counts(
+            window,
+            int(row.get("single_door_count") or 0),
+            int(row.get("double_door_count") or 0),
+        )
+        if not code:
+            raise ValueError(f"第 {index + 1} 个子柜没有可用的产品变体")
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _missing_ganged_formula_product_codes(window) -> list[str]:
+    entry = getattr(window, "product_catalog", {}).get(
+        getattr(getattr(window, "product_combo", None), "currentData", lambda: None)() or "",
+        {},
+    )
+    if entry.get("method") != "formula":
+        return []
+    calculator = getattr(window, "formula_calculator", None)
+    sheets = getattr(calculator, "sheets", None)
+    if not isinstance(sheets, dict):
+        return []
+    return [code for code in _ganged_formula_product_codes(window) if not sheets.get(code)]
+
+
+def _ganged_formula_metrics(window) -> list[tuple[float, float]]:
+    """Calculate one workbook weight/area pair for every split cabinet."""
+
+    rows = _ganged_rows(window)
+    calculator = getattr(window, "formula_calculator", None)
+    if len(rows) <= 1 or calculator is None:
+        raise ValueError("并柜公式计算器尚未就绪")
+    metrics = []
+    for index, row in enumerate(rows):
+        single = int(row.get("single_door_count") or 0)
+        double = int(row.get("double_door_count") or 0)
+        code, _variant = _product_code_for_door_counts(window, single, double)
+        if not code:
+            raise ValueError(f"第 {index + 1} 个子柜没有可用的产品变体")
+        values = calculator.calculate(
+            code,
+            float(row["width_mm"]),
+            float(row["height_mm"]),
+            float(row["depth_mm"]),
+            single,
+            double,
+        )
+        if not values or len(values) < 2:
+            raise ValueError(f"第 {index + 1} 个子柜的公式重量和面积尚未生成")
+        try:
+            weight = float(_formula_workbook_value(values[0]))
+            area = float(_formula_workbook_value(values[1]))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"第 {index + 1} 个子柜的公式重量或面积无效") from exc
+        if not math.isfinite(weight) or weight <= 0:
+            raise ValueError(f"第 {index + 1} 个子柜的公式重量无效")
+        if not math.isfinite(area) or area < 0:
+            raise ValueError(f"第 {index + 1} 个子柜的公式面积无效")
+        metrics.append((weight, area))
+    return metrics
+
+
 def _normalize_door_pair(single: int, double: int, source: str) -> tuple[int, int]:
     single, double = int(single), int(double)
     if (single, double) in VALID_DOOR_COMBINATIONS:
@@ -847,7 +1029,18 @@ def _sync_door_count_default_quantities(
 ) -> bool:
     """Update system-managed limiter/reinforcement after real count changes."""
 
-    current_counts = _current_door_counts(window)
+    rows = _ganged_rows(window)
+    current_counts = (
+        tuple(
+            (
+                int(row.get("single_door_count") or 0),
+                int(row.get("double_door_count") or 0),
+            )
+            for row in rows
+        )
+        if len(rows) > 1
+        else _current_door_counts(window)
+    )
     if current_counts is None:
         return False
     if previous_counts is None:
@@ -864,14 +1057,31 @@ def _sync_door_count_default_quantities(
     if not isinstance(attachments, list):
         return False
     changed = False
+    def total_quantity(quantity_builder) -> int | None:
+        if len(rows) <= 1:
+            return quantity_builder(*current_counts)
+        quantities = [
+            quantity_builder(
+                int(row.get("single_door_count") or 0),
+                int(row.get("double_door_count") or 0),
+            )
+            for row in rows
+        ]
+        if any(quantity is None for quantity in quantities):
+            return None
+        return sum(int(quantity) for quantity in quantities)
+
     for rule, quantity in (
-        (DEFAULT_DOOR_LIMITER, door_limiter_default_quantity(*current_counts)),
-        (DEFAULT_DOOR_REINFORCEMENT, door_reinforcement_default_quantity(*current_counts)),
+        (DEFAULT_DOOR_LIMITER, total_quantity(door_limiter_default_quantity)),
+        (DEFAULT_DOOR_REINFORCEMENT, total_quantity(door_reinforcement_default_quantity)),
     ):
         if quantity is None or rule in opt_outs or rule in quantity_overrides:
             continue
         for item in attachments:
             if not isinstance(item, dict) or default_rule_for_item(item) != rule:
+                continue
+            selection_source = attachment_selection_source(item)
+            if selection_source not in ("", AUTOMATIC_SELECTION_SOURCE):
                 continue
             try:
                 old_quantity = int(item.get("quantity", 1))
@@ -913,7 +1123,7 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
         effective_attachment_line_amount(row, cabinets, split_count)
         for row in attachments
     )
-    effective += (attachment_fee - listed) * cabinets * split_count
+    effective += (attachment_fee - listed) * cabinets
     line_total = (base * cabinets + effective) * discount
     return {
         "cabinet_quantity": cabinets,
@@ -974,7 +1184,9 @@ def _sync_door_transform_defaults(window) -> bool:
     ]
     matches = _door_transform_matches_for_window(window, catalog)
     for candidate in matches.values():
-        selected = dict(candidate)
+        selected = with_attachment_selection_source(
+            candidate, AUTOMATIC_SELECTION_SOURCE
+        )
         selected["quantity"] = 1
         attachments.append(selected)
     changed = attachments != getattr(window, "attachments", [])
@@ -1149,6 +1361,10 @@ def _render_ganged_cabinet_table(window) -> None:
         return
     rows = _ganged_rows(window)
     table.blockSignals(True)
+    # Recreating rows also disposes the previous combo-box cell widgets.
+    # Merely setting the same row count leaves stale widgets over the index
+    # cells after a specification or door-count refresh.
+    table.setRowCount(0)
     table.setRowCount(len(rows))
     for row_index, row in enumerate(rows):
         index_item = QTableWidgetItem(str(row_index + 1))
@@ -1209,6 +1425,17 @@ def _sync_ganged_specification(window, text: str) -> bool:
     panel = getattr(window, "ganged_cabinet_panel", None)
     label = getattr(window, "ganged_cabinet_label", None)
     previous = _ganged_rows(window)
+    previous_door_context = (
+        tuple(
+            (
+                int(row.get("single_door_count") or 0),
+                int(row.get("double_door_count") or 0),
+            )
+            for row in previous
+        )
+        if len(previous) > 1
+        else _current_door_counts(window)
+    )
     if parsed is None:
         was_ganged = len(previous) > 1
         window.ganged_cabinets = []
@@ -1221,9 +1448,14 @@ def _sync_ganged_specification(window, text: str) -> bool:
             label.hide()
         _set_ganged_controls_enabled(window, False)
         if was_ganged:
+            _sync_door_count_default_quantities(window, previous_door_context)
+        if was_ganged:
             refresh = getattr(window, "update_attachment_view", None)
             if callable(refresh):
                 refresh()
+        readiness = getattr(window, "update_quote_readiness", None)
+        if callable(readiness):
+            readiness()
         return False
 
     default_counts = _current_door_counts(window) or (1, 0)
@@ -1257,10 +1489,14 @@ def _sync_ganged_specification(window, text: str) -> bool:
     if label is not None:
         label.show()
     _render_ganged_cabinet_table(window)
+    _sync_door_count_default_quantities(window, previous_door_context)
     _sync_door_transform_defaults(window)
     refresh = getattr(window, "update_attachment_view", None)
     if callable(refresh):
         refresh()
+    readiness = getattr(window, "update_quote_readiness", None)
+    if callable(readiness):
+        readiness()
     return True
 
 
@@ -1273,6 +1509,13 @@ def _ganged_door_changed(window, row_index: int, source: str) -> None:
     double_combo = table.cellWidget(row_index, 3)
     if not isinstance(single_combo, QComboBox) or not isinstance(double_combo, QComboBox):
         return
+    previous_door_context = tuple(
+        (
+            int(row.get("single_door_count") or 0),
+            int(row.get("double_door_count") or 0),
+        )
+        for row in rows
+    )
     single, double = _normalize_door_pair(
         int(single_combo.currentData() or 0),
         int(double_combo.currentData() or 0),
@@ -1284,8 +1527,14 @@ def _ganged_door_changed(window, row_index: int, source: str) -> None:
         if callable(setter):
             setter(single, double)
     _render_ganged_cabinet_table(window)
+    _sync_door_count_default_quantities(window, previous_door_context)
     _sync_door_transform_defaults(window)
-    for method_name in ("clear_quote_result", "refresh_formula_inputs", "request_history_match"):
+    for method_name in (
+        "clear_quote_result",
+        "refresh_formula_inputs",
+        "request_history_match",
+        "update_quote_readiness",
+    ):
         method = getattr(window, method_name, None)
         if callable(method):
             try:
@@ -1301,42 +1550,22 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
     material_combo = getattr(window, "material_combo", None)
     coating_combo = getattr(window, "coating_combo", None)
     quote_date = getattr(window, "quote_date", None)
-    calculator = getattr(window, "formula_calculator", None)
+    metrics = _ganged_formula_metrics(window)
     weights: list[float] = []
     areas: list[float] = []
-    local_complete = True
     payloads = []
     quote_prefix = "TMP" + datetime.now().strftime("%Y%m%d%H%M%S%f")[-12:]
-    for index, row in enumerate(rows):
+    for index, (row, local) in enumerate(zip(rows, metrics)):
         single = int(row.get("single_door_count", 1))
         double = int(row.get("double_door_count", 0))
         code, variant = _product_code_for_door_counts(window, single, double)
         if not code:
             raise ValueError(f"第 {index + 1} 个子柜没有可用的产品变体")
-        local = None
-        if calculator is not None:
-            local = calculator.calculate(
-                code,
-                float(row["width_mm"]),
-                float(row["height_mm"]),
-                float(row["depth_mm"]),
-                single,
-                double,
-            )
-        if local:
-            # Formula quotes use the one-decimal values displayed by the
-            # authoritative workbook.  Keep child-cabinet API inputs on the
-            # same precision as ordinary (non-ganged) quotes so identical
-            # cabinets cannot produce different costs solely because they
-            # travelled through the ganged path.
-            local = (
-                float(_formula_workbook_value(local[0])),
-                float(_formula_workbook_value(local[1])),
-            )
-            weights.append(local[0])
-            areas.append(local[1])
-        else:
-            local_complete = False
+        # Each split cabinet contributes exactly one independently calculated
+        # workbook weight/area pair.  Order quantity is intentionally not
+        # applied here; it is applied later at quote-list/export line level.
+        weights.append(local[0])
+        areas.append(local[1])
         payloads.append({
             "quote_id": f"{quote_prefix}-{index + 1}",
             "product_code": code,
@@ -1348,8 +1577,8 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
             "width_mm": float(row["width_mm"]),
             "height_mm": float(row["height_mm"]),
             "depth_mm": float(row["depth_mm"]),
-            "base_material_weight_kg": local[0] if local else None,
-            "product_area_m2": local[1] if local else None,
+            "base_material_weight_kg": local[0],
+            "product_area_m2": local[1],
             "coating_type": coating_combo.currentData() if coating_combo is not None else None,
             "variant_code": variant,
             "single_door_count": single,
@@ -1362,27 +1591,181 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
         })
     return (
         payloads,
-        sum(weights) if local_complete else None,
-        sum(areas) if local_complete else None,
+        sum(weights),
+        sum(areas),
     )
+
+
+def _start_ganged_formula_template_preparation(
+    window,
+    product_codes: list[str],
+    headers_factory,
+) -> bool:
+    running = getattr(window, "ganged_template_worker", None)
+    if running is not None:
+        try:
+            if running.isRunning():
+                _set_ganged_calculation_state(
+                    window, "正在读取并柜公式模板，请稍候。", "loading"
+                )
+                return True
+        except RuntimeError:
+            window.ganged_template_worker = None
+
+    base_url_builder = getattr(window, "base_url", None)
+    base_url = str(base_url_builder() if callable(base_url_builder) else "").strip()
+    if not base_url:
+        _set_ganged_calculation_state(
+            window, "并柜计算未启动：报价接口地址为空。", "error"
+        )
+        return True
+
+    worker = _GangedFormulaTemplateWorker(
+        base_url,
+        product_codes,
+        headers_factory,
+        window,
+    )
+    window.ganged_template_worker = worker
+    signature_builder = getattr(window, "quote_input_signature", None)
+    request_signature = signature_builder() if callable(signature_builder) else None
+    calculate_button = getattr(window, "calculate_button", None)
+    idle_text = (
+        calculate_button.text()
+        if isinstance(calculate_button, QPushButton)
+        else "计算双报价"
+    )
+    if isinstance(calculate_button, QPushButton):
+        calculate_button.setProperty("gangedIdleText", idle_text)
+        calculate_button.setText(f"正在读取 {len(product_codes)} 个公式模板…")
+        calculate_button.setEnabled(False)
+    _set_ganged_calculation_state(
+        window,
+        f"正在读取 {len(product_codes)} 个并柜公式模板，请稍候…",
+        "loading",
+    )
+    outcome = {"templates": None, "error": None}
+
+    def templates_loaded(payloads):
+        outcome["templates"] = list(payloads)
+
+    def templates_failed(message):
+        outcome["error"] = _ganged_error_text(message)
+
+    def preparation_finished():
+        templates = outcome["templates"]
+        error = outcome["error"]
+        if templates is None and error is None:
+            error = "公式模板线程已结束，但没有返回数据"
+        if getattr(window, "ganged_template_worker", None) is worker:
+            window.ganged_template_worker = None
+        if error is None and templates is not None:
+            try:
+                calculator = getattr(window, "formula_calculator", None)
+                if calculator is None:
+                    raise RuntimeError("并柜公式计算器尚未就绪")
+                for payload in templates:
+                    calculator.load_template(payload)
+            except Exception as exc:
+                error = str(exc)
+        worker.deleteLater()
+
+        if error is not None:
+            rendered = f"并柜计算未启动：公式模板读取失败：{error}"
+            if isinstance(calculate_button, QPushButton):
+                calculate_button.setText(
+                    str(calculate_button.property("gangedIdleText") or "计算双报价")
+                )
+                calculate_button.setEnabled(True)
+            _set_ganged_calculation_state(window, rendered, "error")
+            return
+
+        if (
+            request_signature is not None
+            and callable(signature_builder)
+            and signature_builder() != request_signature
+        ):
+            if isinstance(calculate_button, QPushButton):
+                calculate_button.setText(
+                    str(calculate_button.property("gangedIdleText") or "计算双报价")
+                )
+                calculate_button.setEnabled(True)
+            _set_ganged_calculation_state(
+                window,
+                "并柜输入已变化，请重新计算双报价。",
+                "warning",
+            )
+            return
+
+        if isinstance(calculate_button, QPushButton):
+            calculate_button.setText(
+                str(calculate_button.property("gangedIdleText") or "计算双报价")
+            )
+
+        # Resume the original click automatically after all required formula
+        # sheets have been hydrated; the operator should not need to click a
+        # second time merely because a template was still loading.
+        QTimer.singleShot(
+            0,
+            lambda: _start_ganged_calculation(window, headers_factory),
+        )
+
+    worker.succeeded.connect(templates_loaded)
+    worker.failed.connect(templates_failed)
+    worker.finished.connect(preparation_finished)
+    worker.start()
+    return True
 
 
 def _start_ganged_calculation(window, headers_factory) -> bool:
     if _ganged_count(window) <= 1:
         return False
+    running = getattr(window, "worker", None)
+    if running is not None:
+        try:
+            if running.isRunning():
+                _set_ganged_calculation_state(window, "并柜双报价正在计算，请稍候。", "loading")
+                return True
+        except RuntimeError:
+            window.worker = None
+    try:
+        missing_formula_codes = _missing_ganged_formula_product_codes(window)
+    except Exception as exc:
+        message = _ganged_error_text(exc)
+        _set_ganged_calculation_state(window, f"并柜计算未启动：{message}", "error")
+        return True
+    if missing_formula_codes:
+        return _start_ganged_formula_template_preparation(
+            window,
+            missing_formula_codes,
+            headers_factory,
+        )
     try:
         payloads, weight_total, area_total = _build_ganged_quote_payloads(window)
     except Exception as exc:
-        QMessageBox.warning(window, "并柜规格无法计算", str(exc))
+        message = _ganged_error_text(exc)
+        _set_ganged_calculation_state(window, f"并柜计算未启动：{message}", "error")
+        QMessageBox.warning(window, "并柜规格无法计算", message)
         return True
     if not payloads:
         return False
-    attachment_total = sum(
-        quick_attachment_line_amount(item)
-        for item in getattr(window, "attachments", [])
-        if isinstance(item, dict)
-    )
-    api_url = str(getattr(window, "api_url", None).text() or "").strip()
+    try:
+        attachment_total = sum(
+            quick_attachment_line_amount(item)
+            for item in getattr(window, "attachments", [])
+            if isinstance(item, dict)
+        )
+        api_field = getattr(window, "api_url", None)
+        api_url = str(api_field.text() if api_field is not None else "").strip()
+        if not api_url:
+            raise ValueError("报价接口地址为空")
+    except Exception as exc:
+        message = _ganged_error_text(exc)
+        _set_ganged_calculation_state(window, f"并柜计算未启动：{message}", "error")
+        show_error = getattr(window, "show_error", None)
+        if callable(show_error):
+            show_error(f"并柜报价失败：{message}")
+        return True
     worker = _GangedQuoteWorker(
         api_url,
         payloads,
@@ -1392,24 +1775,78 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         area_total,
         window,
     )
-    window.calculate_button.setEnabled(False)
+    signature_builder = getattr(window, "quote_input_signature", None)
+    if callable(signature_builder):
+        # The recovered core rejects a response whose request signature was
+        # not captured before dispatch.  Ordinary quotes already populate
+        # this guard; the ganged path must participate in the same stale-
+        # result protection or every successful aggregate is discarded.
+        window.pending_quote_signature = signature_builder()
+    calculate_button = getattr(window, "calculate_button", None)
+    idle_text = (
+        calculate_button.text()
+        if isinstance(calculate_button, QPushButton)
+        else "计算双报价"
+    )
+    if isinstance(calculate_button, QPushButton):
+        calculate_button.setProperty("gangedIdleText", idle_text)
+        calculate_button.setText(f"正在计算 {len(payloads)} 个子柜…")
+        calculate_button.setEnabled(False)
     window.worker = worker
+    outcome = {"settled": False}
+    _set_ganged_calculation_state(
+        window,
+        f"正在分别计算 {len(payloads)} 个子柜，请稍候…",
+        "loading",
+    )
 
     def show_ganged_result(result):
+        outcome["settled"] = True
+        weight_blocked = window.weight_edit.blockSignals(True)
         if weight_total is None:
             window.weight_edit.clear()
         else:
             window.weight_edit.setText(_formula_workbook_value(weight_total))
+        window.weight_edit.blockSignals(weight_blocked)
         result_area = result.get("ganged_area_m2")
+        area_blocked = window.area_edit.blockSignals(True)
         if result_area is None:
             window.area_edit.clear()
         else:
             window.area_edit.setText(_formula_workbook_value(result_area))
+        window.area_edit.blockSignals(area_blocked)
         window.show_result(result)
 
+        _set_ganged_calculation_state(
+            window,
+            f"并柜双报价计算完成：已合并 {len(payloads)} 个子柜。",
+            "success",
+        )
+
+    def show_ganged_error(message):
+        outcome["settled"] = True
+        detail = _ganged_error_text(message)
+        rendered = f"并柜报价失败：{detail}"
+        show_error = getattr(window, "show_error", None)
+        if callable(show_error):
+            show_error(rendered)
+        _set_ganged_calculation_state(window, rendered, "error")
+
+    def finish_ganged_calculation():
+        if isinstance(calculate_button, QPushButton):
+            calculate_button.setText(
+                str(calculate_button.property("gangedIdleText") or "计算双报价")
+            )
+            calculate_button.setEnabled(True)
+        if not outcome["settled"]:
+            show_ganged_error("计算线程已结束，但没有返回报价结果。")
+        if getattr(window, "worker", None) is worker:
+            window.worker = None
+        worker.deleteLater()
+
     worker.succeeded.connect(show_ganged_result)
-    worker.failed.connect(window.show_error)
-    worker.finished.connect(lambda: window.calculate_button.setEnabled(True))
+    worker.failed.connect(show_ganged_error)
+    worker.finished.connect(finish_ganged_calculation)
     worker.start()
     return True
 
@@ -1840,16 +2277,29 @@ def _position_quote_action_dock(window) -> None:
         dock.hide()
         return
 
+    # QAbstractScrollArea owns a native viewport that handles input ahead of
+    # ordinary children placed directly on the scroll area.  On Windows a
+    # dock parented to ``main_scroll`` can therefore remain visibly painted in
+    # the reserved bottom margin while mouse clicks never reach its buttons.
+    # Keep the floating dock as a direct MainWindow child and only use the
+    # scroll area as its positioning reference.
+    if dock.parentWidget() is not window:
+        dock.setParent(window)
     viewport = main_scroll.viewport()
     target = workspace
-    origin = target.mapTo(main_scroll, QPoint(0, 0))
-    left = max(8, origin.x())
+    origin = target.mapTo(window, QPoint(0, 0))
+    scroll_origin = main_scroll.mapTo(window, QPoint(0, 0))
+    left = max(scroll_origin.x() + 8, origin.x())
     right_padding = 8
-    width = min(target.width(), main_scroll.width() - left - right_padding)
+    scroll_right = scroll_origin.x() + main_scroll.width()
+    width = min(target.width(), scroll_right - left - right_padding)
     if width < 360:
-        left = 8
+        left = scroll_origin.x() + 8
         width = max(360, main_scroll.width() - 16)
-    top = max(8, main_scroll.height() - QUOTE_ACTION_DOCK_HEIGHT - 4)
+    top = main_scroll.mapTo(
+        window,
+        QPoint(0, max(8, main_scroll.height() - QUOTE_ACTION_DOCK_HEIGHT - 4)),
+    ).y()
     dock.setGeometry(left, top, width, QUOTE_ACTION_DOCK_HEIGHT)
     dock.raise_()
 
@@ -1872,7 +2322,10 @@ def _ensure_quote_action_dock(window) -> None:
     if any(button is None for button in buttons):
         return
 
-    dock = QFrame(main_scroll)
+    # Parent the overlay to the main window.  Parenting it to QScrollArea
+    # makes the native viewport intercept real mouse input on Windows even
+    # though the dock remains visible.
+    dock = QFrame(window)
     dock.setObjectName("quoteActionDock")
     dock.setFixedHeight(QUOTE_ACTION_DOCK_HEIGHT)
     layout = QHBoxLayout(dock)
@@ -2864,9 +3317,25 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         return counts if counts is not None else (1, 0)
 
     def default_door_quantity(self, rule: str) -> int | None:
-        if rule == DEFAULT_DOOR_REINFORCEMENT:
-            return door_reinforcement_default_quantity(*selected_door_counts(self))
-        return door_limiter_default_quantity(*selected_door_counts(self))
+        quantity_builder = (
+            door_reinforcement_default_quantity
+            if rule == DEFAULT_DOOR_REINFORCEMENT
+            else door_limiter_default_quantity
+        )
+        parent = self.parentWidget()
+        rows = _ganged_rows(parent) if parent is not None else []
+        if len(rows) <= 1:
+            return quantity_builder(*selected_door_counts(self))
+        quantities = [
+            quantity_builder(
+                int(row.get("single_door_count") or 0),
+                int(row.get("double_door_count") or 0),
+            )
+            for row in rows
+        ]
+        if any(quantity is None for quantity in quantities):
+            return None
+        return sum(int(quantity) for quantity in quantities)
 
     def same_choice(self, left: dict, right: dict) -> bool:
         matcher = getattr(self, "_same_catalog_choice", None)
@@ -2881,6 +3350,47 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             and str(left.get("model_code") or "").strip() == str(right.get("model_code") or "").strip()
             and str(left.get("variant") or "").strip() == str(right.get("variant") or "").strip()
         )
+
+    def selection_identity(item: dict) -> tuple:
+        price_id = item.get("attachment_price_id")
+        if price_id is not None:
+            return (
+                "id",
+                str(price_id),
+                str(item.get(GANGED_FIXED_BASE_INDEX_KEY) or ""),
+            )
+        return (
+            "row",
+            str(item.get("item_name") or "").strip(),
+            str(item.get("model_code") or "").strip(),
+            str(item.get("variant") or "").strip(),
+            str(item.get(GANGED_FIXED_BASE_INDEX_KEY) or ""),
+        )
+
+    def normalize_selection_origins(self, matches: dict) -> None:
+        """Upgrade legacy snapshots without overwriting an explicit origin."""
+
+        normalized = []
+        for item in getattr(self, "attachments", []):
+            if not isinstance(item, dict):
+                normalized.append(item)
+                continue
+            if attachment_selection_source(item):
+                normalized.append(item)
+                continue
+            rule = default_rule_for_item(item)
+            candidate = matches.get(rule) if rule is not None else None
+            is_system_default = bool(
+                candidate is not None and same_choice(self, item, candidate)
+            ) or bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
+            normalized.append(
+                with_attachment_selection_source(
+                    item,
+                    AUTOMATIC_SELECTION_SOURCE
+                    if is_system_default else MANUAL_SELECTION_SOURCE,
+                )
+            )
+        self.attachments = normalized
 
     def target_dimensions(self) -> tuple[float, float, float] | None:
         value = getattr(self, "target_dimensions", None)
@@ -3028,6 +3538,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 
     def prepare_default_selections(self) -> int:
         matches = build_default_matches(self)
+        normalize_selection_origins(self, matches)
         opt_outs = getattr(self, "default_selection_opt_outs", set())
         selected_items = [item for item in getattr(self, "attachments", []) if isinstance(item, dict)]
         added = 0
@@ -3073,7 +3584,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                             "size_match_target_depth_mm",
                         )
                     )
-                    chosen = existing if existing is not None and existing_target == expected_target else dict(candidate)
+                    chosen = (
+                        existing
+                        if existing is not None and existing_target == expected_target
+                        else with_attachment_selection_source(
+                            candidate, AUTOMATIC_SELECTION_SOURCE
+                        )
+                    )
                     retained.append(chosen)
                     if existing is None:
                         added += 1
@@ -3094,7 +3611,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 continue
             if any(default_rule_for_item(item) == rule for item in selected_items):
                 continue
-            selected = dict(candidate)
+            selected = with_attachment_selection_source(
+                candidate, AUTOMATIC_SELECTION_SOURCE
+            )
             if rule in (DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT):
                 quantity = default_door_quantity(self, rule)
                 if quantity is None:
@@ -3269,7 +3788,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则", None, False
         category_name = str(option.get("value") or "")
         if category_name == "门变形":
-            selected = checked_sources_for_category(self, category_name)
+            selected = [
+                item for item in getattr(self, "attachments", [])
+                if isinstance(item, dict)
+                and attachment_category_value(item, 0) == category_name
+                and is_automatic_attachment_selection(item)
+            ]
             wanted = tuple(getattr(self, "default_door_transformation_names", ()))
             if selected:
                 summary = selected_summary(selected)
@@ -3297,16 +3821,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             )
         rule = category_rules.get(category_name)
         if rule is None:
-            selected = checked_sources_for_category(self, str(option.get("value") or ""))
-            if selected:
-                summary = selected_summary(selected)
-                return (
-                    f"人工已选择\n{summary}",
-                    "attachmentQuickMatchManual",
-                    "当前附件由人工选择；返回分类可继续修改",
-                    None,
-                    True,
-                )
             return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则", None, False
 
         parsed = getattr(self, "default_match_spec", None)
@@ -3454,7 +3968,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                     continue
                 should_check = candidate is not None and same_choice(self, source, candidate)
                 if should_check:
-                    check_item.setData(Qt.ItemDataRole.UserRole, dict(candidate))
+                    check_item.setData(
+                        Qt.ItemDataRole.UserRole,
+                        with_attachment_selection_source(
+                            candidate, AUTOMATIC_SELECTION_SOURCE
+                        ),
+                    )
                 check_item.setCheckState(Qt.CheckState.Checked if should_check else Qt.CheckState.Unchecked)
         finally:
             table.blockSignals(False)
@@ -3499,7 +4018,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     def toggle_default_selection(self, rule: str) -> None:
         if rule == DEFAULT_FIXED_BASE:
             ganged_candidates = [
-                dict(item) for item in getattr(self, "default_ganged_fixed_base_matches", ())
+                with_attachment_selection_source(
+                    item, AUTOMATIC_SELECTION_SOURCE
+                )
+                for item in getattr(self, "default_ganged_fixed_base_matches", ())
                 if isinstance(item, dict)
             ]
             if ganged_candidates:
@@ -3548,6 +4070,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             return original_apply_filter(self, text)
         needle = str(text or "").strip().casefold()
         selected = tuple(self.category_selection)
+        filter_path = () if needle and not selected else selected
         table = getattr(self, "table", None)
         if not isinstance(table, QTableWidget):
             return original_apply_filter(self, text)
@@ -3556,7 +4079,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else {}
             source = source if isinstance(source, dict) else {}
             path = attachment_category_path(source)
-            category_matches = path[:len(selected)] == selected
+            category_matches = path[:len(filter_path)] == filter_path
             table_text = [
                 table.item(row, column).text()
                 for column in (self.COL_NAME, self.COL_SPEC, self.COL_SCHEME, self.COL_PRICE)
@@ -3587,6 +4110,93 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if widget is not None:
                 widget.hide()
                 widget.deleteLater()
+
+    def manual_selections_for_category(self, category_name: str) -> list[dict]:
+        return [
+            item for item in getattr(self, "attachments", [])
+            if isinstance(item, dict)
+            and attachment_category_value(item, 0) == category_name
+            and is_manual_attachment_selection(item)
+        ]
+
+    def manual_selection_card_text(self, item: dict) -> str:
+        name = str(item.get("item_name") or "附件").strip()
+        model = str(item.get("model_code") or item.get("variant") or "").strip()
+        if not model:
+            formatter = getattr(self, "format_size", None)
+            model = str(formatter(item) if callable(formatter) else "").strip()
+        model = model or "通用"
+        quantity = item.get("quantity", 1)
+        unit = str(item.get("unit") or "件").strip() or "件"
+        raw_price = item.get(
+            "unit_price_override",
+            item.get("matched_price", item.get("price")),
+        )
+        try:
+            sign = -1 if int(item.get("attachment_price_sign", 1)) == -1 else 1
+        except (TypeError, ValueError):
+            sign = 1
+        try:
+            price = f"{abs(float(raw_price)) * sign:,.2f} 元"
+        except (TypeError, ValueError):
+            price = "单价待补充"
+        return (
+            f"人工已选择\n{name}\n{model}\n"
+            f"数量 {quantity} {unit} · 单价 {price}"
+        )
+
+    def cancel_manual_selection(self, identity: tuple) -> None:
+        removed = None
+        retained = []
+        for item in getattr(self, "attachments", []):
+            if (
+                removed is None
+                and isinstance(item, dict)
+                and is_manual_attachment_selection(item)
+                and selection_identity(item) == identity
+            ):
+                removed = item
+                continue
+            retained.append(item)
+        if removed is None:
+            return
+        self.attachments = retained
+        rule = default_rule_for_item(removed)
+        if rule is not None:
+            self.default_selection_opt_outs.add(rule)
+            self.default_quantity_manual_overrides.discard(rule)
+        original_rebuild_table(self)
+        restore_manual_selection_rows(self)
+        restore_ganged_fixed_base_rows(self)
+        refresh_category_browser(self)
+
+    def clear_automatic_door_transformations(self) -> int:
+        automatic = [
+            item for item in getattr(self, "attachments", [])
+            if isinstance(item, dict)
+            and attachment_category_value(item, 0) == "门变形"
+            and is_automatic_attachment_selection(item)
+        ]
+        if not automatic:
+            return 0
+        identities = {selection_identity(item) for item in automatic}
+        self.attachments = [
+            item for item in getattr(self, "attachments", [])
+            if not (
+                isinstance(item, dict)
+                and is_automatic_attachment_selection(item)
+                and selection_identity(item) in identities
+            )
+        ]
+        for item in automatic:
+            rule = default_rule_for_item(item)
+            if rule is not None:
+                self.default_selection_opt_outs.add(rule)
+                self.default_quantity_manual_overrides.discard(rule)
+        original_rebuild_table(self)
+        restore_manual_selection_rows(self)
+        restore_ganged_fixed_base_rows(self)
+        return len(automatic)
 
     def refresh_category_browser(self):
         catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
@@ -3652,6 +4262,29 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 card_layout.addLayout(quick_row)
             else:
                 card_layout.addWidget(quick_button)
+            for manual_item in manual_selections_for_category(
+                self, str(option.get("value") or "")
+            ):
+                manual_button = QPushButton(
+                    manual_selection_card_text(self, manual_item), card
+                )
+                manual_button.setObjectName("attachmentManualSelection")
+                manual_button.setAccessibleName(
+                    manual_selection_card_text(self, manual_item).replace("\n", "，")
+                )
+                manual_button.setToolTip("人工已选择；单击只取消这一项附件")
+                manual_button.setMinimumHeight(100)
+                manual_button.setSizePolicy(
+                    QSizePolicy.Policy.Expanding,
+                    QSizePolicy.Policy.Fixed,
+                )
+                identity = selection_identity(manual_item)
+                manual_button.clicked.connect(
+                    lambda _checked=False, value=identity: cancel_manual_selection(
+                        self, value
+                    )
+                )
+                card_layout.addWidget(manual_button)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.category_grid.addWidget(card, index // 4, index % 4)
 
@@ -3668,10 +4301,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             level1_count = len({attachment_category_value(item, 0) for item in catalog})
             hint.setText(
                 f"已读取 {len(catalog)} 条附件价格，覆盖 {level1_count} 个一级分类。"
-                "绿色默认项已自动勾选；单击默认项可取消，进入分类可人工改选。"
+                "绿色框分别标明系统默认和人工选择；单击人工框只取消对应附件。"
             )
 
     def open_attachment_category(self, value: str):
+        if not self.category_selection and str(value) == "门变形":
+            clear_automatic_door_transformations(self)
         self.category_selection.append(str(value))
         self.search_edit.clear()
         refresh_category_browser(self)
@@ -3681,6 +4316,66 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             self.category_selection.pop()
         self.search_edit.clear()
         refresh_category_browser(self)
+
+    def restore_manual_selection_rows(self) -> None:
+        """Keep manual checked state and metadata across legacy table rebuilds."""
+
+        table = getattr(self, "table", None)
+        selections = [
+            item for item in getattr(self, "attachments", [])
+            if isinstance(item, dict)
+            and is_manual_attachment_selection(item)
+            and not bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
+        ]
+        if not selections or not isinstance(table, QTableWidget):
+            return
+        self._default_selection_guard = True
+        table.blockSignals(True)
+        try:
+            for selected in selections:
+                target_row = next(
+                    (
+                        row for row in range(table.rowCount())
+                        if isinstance(
+                            table.item(row, self.COL_CHECK).data(
+                                Qt.ItemDataRole.UserRole
+                            ) if table.item(row, self.COL_CHECK) is not None else None,
+                            dict,
+                        )
+                        and same_choice(
+                            self,
+                            selected,
+                            table.item(row, self.COL_CHECK).data(
+                                Qt.ItemDataRole.UserRole
+                            ),
+                        )
+                    ),
+                    None,
+                )
+                if target_row is None:
+                    append_row = getattr(self, "_append_row", None)
+                    if callable(append_row):
+                        append_row(selected, selected, historical=True)
+                        target_row = table.rowCount() - 1
+                if target_row is None:
+                    continue
+                check_item = table.item(target_row, self.COL_CHECK)
+                check_item.setData(Qt.ItemDataRole.UserRole, dict(selected))
+                check_item.setCheckState(Qt.CheckState.Checked)
+                quantity_item = table.item(target_row, self.COL_QUANTITY)
+                if quantity_item is not None:
+                    quantity_item.setText(str(selected.get("quantity", 1)))
+                price_item = table.item(target_row, self.COL_PRICE)
+                price = selected.get(
+                    "unit_price_override",
+                    selected.get("matched_price", selected.get("price")),
+                )
+                if price_item is not None and price is not None:
+                    price_item.setText(f"{float(price):g}")
+        finally:
+            table.blockSignals(False)
+            self._default_selection_guard = False
+        self.update_selection_hint()
 
     def restore_ganged_fixed_base_rows(self) -> None:
         """Restore per-child metadata after the legacy table rebuild.
@@ -3753,6 +4448,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             prepare_default_selections(self)
         result = original_rebuild_table(self)
         if hasattr(self, "category_selection"):
+            restore_manual_selection_rows(self)
             restore_ganged_fixed_base_rows(self)
             refresh_category_browser(self)
         return result
@@ -3763,6 +4459,15 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         quick_match_notice = ""
         if item.column() == self.COL_CHECK:
             source = item.data(Qt.ItemDataRole.UserRole)
+            manual_checkbox_selection = bool(
+                item.checkState() == Qt.CheckState.Checked
+                and isinstance(source, dict)
+            )
+            if manual_checkbox_selection:
+                source = with_attachment_selection_source(
+                    source, MANUAL_SELECTION_SOURCE
+                )
+                item.setData(Qt.ItemDataRole.UserRole, source)
             if (
                 item.checkState() == Qt.CheckState.Checked
                 and isinstance(source, dict)
@@ -3770,6 +4475,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             ):
                 matched = quick_match_source(self, source)
                 if matched is not None:
+                    matched = with_attachment_selection_source(
+                        matched, MANUAL_SELECTION_SOURCE
+                    )
                     target_item = item
                     matched_id = matched.get("attachment_price_id")
                     self._default_selection_guard = True
@@ -3860,6 +4568,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 else:
                     self.default_selection_opt_outs.add(rule)
                     self.default_quantity_manual_overrides.discard(rule)
+                if manual_checkbox_selection:
+                    # A checkbox interaction is an explicit operator choice,
+                    # even when it happens to select the same catalogue row as
+                    # the system recommendation.  Keep the default opted out
+                    # so later rebuilds cannot replace that manual decision.
+                    self.default_selection_opt_outs.add(rule)
                 sync_attachments_from_table(self)
             elif isinstance(source, dict):
                 sync_attachments_from_table(self)
@@ -3945,6 +4659,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 "attachment_price_id",
                 "category_level1", "category_level2", "category_level3",
                 "attachment_price_sign",
+                ATTACHMENT_SELECTION_SOURCE_KEY,
                 GANGED_FIXED_BASE_MATCH_KEY,
                 GANGED_FIXED_BASE_INDEX_KEY,
                 "ganged_fixed_base_split_count",
@@ -4018,7 +4733,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 
     def init_with_default_filters(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
-        self.resize(900, 680)
+        # Keep the category browser and table columns at their approved layout;
+        # overflowing catalogue content is handled by the existing scroll areas.
+        self.setFixedSize(900, 680)
         self.category_selection = []
         parent = self.parentWidget()
         self.default_selection_opt_outs = set(getattr(parent, "attachment_default_opt_outs", set()))
@@ -4077,8 +4794,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             "QPushButton#attachmentQuickMatch,QPushButton#attachmentQuickMatchCancelled {background:#f1f4f6;color:#66727e;padding:7px 12px;border:0;text-align:left;}"
             "QPushButton#attachmentQuickMatchSelected {background:#e3f3e9;color:#1f6841;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
             "QPushButton#attachmentQuickMatchSelected:hover {background:#d4eadc;}"
-            "QPushButton#attachmentQuickMatchManual {background:#e7f1fb;color:#245f91;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
-            "QPushButton#attachmentQuickMatchManual:hover {background:#d8e9f7;}"
+            "QPushButton#attachmentQuickMatchManual,QPushButton#attachmentManualSelection {background:#e3f3e9;color:#1f6841;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
+            "QPushButton#attachmentQuickMatchManual:hover,QPushButton#attachmentManualSelection:hover {background:#d4eadc;}"
             "QPushButton#attachmentQuickMatchCancelled:hover {background:#e4e9ed;color:#44515d;}"
             "QPushButton#attachmentQuickMatchMissing {background:#fff5df;color:#9a620e;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
             "QPushButton#attachmentPriceSignPositive,QPushButton#attachmentPriceSignNegative {border-radius:17px;font-size:20px;font-weight:800;padding:0;}"
@@ -4131,6 +4848,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         self.default_match_specification = specification_text(self)
         prepare_default_selections(self)
         original_rebuild_table(self)
+        restore_manual_selection_rows(self)
+        restore_ganged_fixed_base_rows(self)
         refresh_category_browser(self)
 
     dialog_class.__init__ = init_with_default_filters
@@ -4173,11 +4892,14 @@ def install_layout_refresh(namespace: dict) -> None:
     original_recognition_finished = main_window.pdf_recognition_finished
     original_refresh_summary = main_window.refresh_summary
     original_update_attachment_view = getattr(main_window, "update_attachment_view", None)
+    original_open_attachment_dialog = getattr(main_window, "open_attachment_dialog", None)
     original_calculate = getattr(main_window, "calculate", None)
+    original_quote_input_signature = getattr(main_window, "quote_input_signature", None)
     original_product_changed = getattr(main_window, "product_changed", None)
     original_door_counts_changed = getattr(main_window, "door_counts_changed", None)
     original_product_catalog_loaded = getattr(main_window, "product_catalog_loaded", None)
     original_formula_template_loaded = getattr(main_window, "formula_template_loaded", None)
+    original_update_quote_readiness = getattr(main_window, "update_quote_readiness", None)
 
     def build_ui_with_refresh(self):
         original_build_ui(self)
@@ -4220,6 +4942,19 @@ def install_layout_refresh(namespace: dict) -> None:
         ):
             quantity_spin.valueChanged.connect(lambda _value: self.update_attachment_view())
             quantity_spin._attachment_quantity_connected = True
+        calculate_button = getattr(self, "calculate_button", None)
+        if isinstance(calculate_button, QPushButton):
+            # The recovered core may bind the concrete method object before
+            # this overlay replaces MainWindow.calculate.  Rebinding here
+            # guarantees the visible primary action always resolves the
+            # current ganged-aware method at click time.
+            try:
+                calculate_button.clicked.disconnect()
+            except RuntimeError:
+                pass
+            calculate_button.clicked.connect(
+                lambda _checked=False: self.calculate()
+            )
 
     def resize_event_with_responsive_quote(self, event):
         original_resize_event(self, event)
@@ -4314,6 +5049,95 @@ def install_layout_refresh(namespace: dict) -> None:
     main_window.pdf_recognition_progress = recognition_progress_without_strip
     main_window.pdf_recognition_finished = recognition_finished_without_strip
     main_window.refresh_summary = refresh_summary_with_action_state
+    if callable(original_update_quote_readiness):
+        def update_quote_readiness_with_ganged_cabinets(self):
+            original_update_quote_readiness(self)
+            rows = _ganged_rows(self)
+            if len(rows) <= 1:
+                return None
+
+            material_combo = getattr(self, "material_combo", None)
+            coating_combo = getattr(self, "coating_combo", None)
+            quantity_spin = getattr(self, "quantity_spin", None)
+            calculate_button = getattr(self, "calculate_button", None)
+            template_worker = getattr(self, "ganged_template_worker", None)
+            template_loading = False
+            if template_worker is not None:
+                try:
+                    template_loading = template_worker.isRunning()
+                except RuntimeError:
+                    self.ganged_template_worker = None
+            allowed_doors = _allowed_door_combinations(self)
+            rows_ready = all(
+                min(
+                    float(row.get("width_mm") or 0),
+                    float(row.get("depth_mm") or 0),
+                    float(row.get("height_mm") or 0),
+                ) > 0
+                and (
+                    int(row.get("single_door_count") or 0),
+                    int(row.get("double_door_count") or 0),
+                ) in allowed_doors
+                and _product_code_for_door_counts(
+                    self,
+                    int(row.get("single_door_count") or 0),
+                    int(row.get("double_door_count") or 0),
+                )[0]
+                for row in rows
+            )
+            ready = bool(
+                getattr(self, "quote_catalog_state", None) == "ready"
+                and rows_ready
+                and isinstance(material_combo, QComboBox)
+                and material_combo.currentData()
+                and isinstance(coating_combo, QComboBox)
+                and coating_combo.currentData()
+                and quantity_spin is not None
+                and quantity_spin.value() > 0
+                and not template_loading
+                and not getattr(self, "quote_calculation_in_progress", False)
+            )
+            if isinstance(calculate_button, QPushButton):
+                calculate_button.setEnabled(ready)
+            return None
+
+        main_window.update_quote_readiness = update_quote_readiness_with_ganged_cabinets
+    if callable(original_quote_input_signature):
+        def quote_input_signature_with_ganged_rows(self):
+            base = original_quote_input_signature(self)
+            rows = _ganged_rows(self)
+            if len(rows) <= 1:
+                return base
+            normalized_rows = tuple(
+                (
+                    float(row.get("width_mm") or 0),
+                    float(row.get("depth_mm") or 0),
+                    float(row.get("height_mm") or 0),
+                    float(row.get("base_height_mm") or 0),
+                    int(row.get("single_door_count") or 0),
+                    int(row.get("double_door_count") or 0),
+                )
+                for row in rows
+            )
+            base_tuple = tuple(base) if isinstance(base, (tuple, list)) else (base,)
+            return base_tuple + ((
+                "ganged",
+                str(getattr(self, "ganged_cabinet_specification", "") or ""),
+                normalized_rows,
+            ),)
+
+        main_window.quote_input_signature = quote_input_signature_with_ganged_rows
+    if callable(original_open_attachment_dialog):
+        def open_attachment_dialog_with_quote_invalidation(self):
+            before = [
+                dict(item) if isinstance(item, dict) else item
+                for item in getattr(self, "attachments", [])
+            ]
+            result = original_open_attachment_dialog(self)
+            _invalidate_quote_after_attachment_change(self, before)
+            return result
+
+        main_window.open_attachment_dialog = open_attachment_dialog_with_quote_invalidation
     if callable(original_update_attachment_view):
         def update_attachment_view_with_signed_prices(self):
             original_update_attachment_view(self)

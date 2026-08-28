@@ -7,9 +7,11 @@ script with the Python 3.12/PySide6 environment used to build the client.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import sys
+import time
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QFrame,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -286,6 +289,12 @@ attachment_dialog.resize(900, 680)
 attachment_dialog.show()
 app.processEvents()
 assert attachment_dialog.width() == 900
+assert attachment_dialog.height() == 680
+assert attachment_dialog.minimumWidth() == attachment_dialog.maximumWidth() == 900
+assert attachment_dialog.minimumHeight() == attachment_dialog.maximumHeight() == 680
+attachment_dialog.resize(1100, 800)
+app.processEvents()
+assert (attachment_dialog.width(), attachment_dialog.height()) == (900, 680)
 assert attachment_dialog.search_edit.geometry().top() < attachment_dialog.category_breadcrumb.geometry().top()
 
 def attachment_category_buttons():
@@ -424,6 +433,198 @@ assert len(same_base_collected) == 2
 assert [item.get("ganged_fixed_base_index") for item in same_base_collected] == [0, 1]
 assert [layout_refresh.final_attachment_quantity(item, 3, 2) for item in same_base_collected] == [3, 3]
 
+# Entering the door-transformation category is an explicit override gesture:
+# it removes only automatic door rows, keeps every earlier manual row and
+# prevents unrelated navigation/search rebuilds from restoring the default.
+door_parent = QWidget()
+door_parent.quote_spec_edit = QLineEdit(door_parent)
+door_parent.quote_spec_edit.setText("1500*300*1800")
+door_parent.selected_product_code = lambda: "JP_SINGLE"
+door_parent._door_counts = (2, 0)
+door_parent.door_counts = lambda: door_parent._door_counts
+manual_keep = {
+    "attachment_price_id": 201,
+    "item_name": "人工保留配置",
+    "model_code": "MANUAL-KEEP",
+    "price": 12,
+    "quantity": 2,
+    "category_level1": "配置变形",
+    "selection_source": "manual",
+}
+door_dialog = attachment_dialog_class(
+    [dict(manual_keep)],
+    api_url="http://127.0.0.1:1",
+    parent=door_parent,
+    target_dimensions=(1500, 1800, 300),
+)
+door_dialog.catalog = [
+    dict(manual_keep),
+    {
+        "attachment_price_id": 202,
+        "item_name": "JS、JP后背板改为单开门",
+        "model_code": "DOOR-AUTO",
+        "price": 150,
+        "category_level1": "门变形",
+    },
+    {
+        "attachment_price_id": 203,
+        "item_name": "JS、JP后背板改为双开门",
+        "model_code": "DOOR-MANUAL",
+        "price": 270,
+        "category_level1": "门变形",
+    },
+    {
+        "attachment_price_id": 204,
+        "item_name": "搜索选择附件",
+        "model_code": "SEARCH-MANUAL",
+        "price": 30,
+        "category_level1": "控制柜附件",
+    },
+    {
+        "attachment_price_id": 205,
+        "item_name": "三级风机附件",
+        "model_code": "FAN-L3",
+        "price": 45,
+        "category_level1": "风机滤网",
+        "category_level2": "风机",
+        "category_level3": "三级风机附件",
+    },
+]
+assert door_dialog.prepare_default_selections() == 1
+door_dialog.rebuild_table()
+door_dialog.show()
+app.processEvents()
+automatic_door = next(
+    item for item in door_dialog.attachments
+    if item.get("item_name") == "JS、JP后背板改为单开门"
+)
+assert automatic_door["selection_source"] == "automatic"
+
+def visible_dialog_category_button(dialog, label: str):
+    return next(
+        button for button in dialog.findChildren(QPushButton, "attachmentCategoryCard")
+        if button.isVisible() and button.text().splitlines()[0] == label
+    )
+
+
+visible_dialog_category_button(door_dialog, "门变形").click()
+app.processEvents()
+assert not any(
+    item.get("item_name") == "JS、JP后背板改为单开门"
+    for item in door_dialog.attachments
+)
+assert any(item.get("item_name") == "人工保留配置" for item in door_dialog.attachments)
+assert any(
+    str(rule).startswith("door_transformation:")
+    for rule in door_dialog.default_selection_opt_outs
+)
+door_dialog.search_edit.setText("DOOR-MANUAL")
+app.processEvents()
+door_manual_row = next(
+    row for row in range(door_dialog.table.rowCount())
+    if not door_dialog.table.isRowHidden(row)
+    and door_dialog.table.item(row, door_dialog.COL_NAME).text()
+    == "JS、JP后背板改为双开门"
+)
+door_dialog.table.item(
+    door_manual_row, door_dialog.COL_CHECK
+).setCheckState(Qt.CheckState.Checked)
+app.processEvents()
+door_dialog.search_edit.clear()
+door_dialog.back_attachment_category()
+app.processEvents()
+manual_door = next(
+    item for item in door_dialog.attachments
+    if item.get("item_name") == "JS、JP后背板改为双开门"
+)
+assert manual_door["selection_source"] == "manual"
+door_dialog.rebuild_table()
+app.processEvents()
+assert not any(
+    item.get("item_name") == "JS、JP后背板改为单开门"
+    for item in door_dialog.attachments
+)
+assert any(
+    item.get("item_name") == "JS、JP后背板改为双开门"
+    for item in door_dialog.attachments
+)
+
+# A search selection and a third-level selection both survive the return to
+# level one and each receives its own green manual-selection card.
+door_dialog.search_edit.setText("SEARCH-MANUAL")
+app.processEvents()
+search_row = next(
+    row for row in range(door_dialog.table.rowCount())
+    if not door_dialog.table.isRowHidden(row)
+)
+door_dialog.table.item(
+    search_row, door_dialog.COL_CHECK
+).setCheckState(Qt.CheckState.Checked)
+app.processEvents()
+door_dialog.search_edit.clear()
+door_dialog.refresh_category_browser()
+app.processEvents()
+visible_dialog_category_button(door_dialog, "风机滤网").click()
+app.processEvents()
+visible_dialog_category_button(door_dialog, "风机").click()
+app.processEvents()
+visible_dialog_category_button(door_dialog, "三级风机附件").click()
+app.processEvents()
+fan_row = next(
+    row for row in range(door_dialog.table.rowCount())
+    if not door_dialog.table.isRowHidden(row)
+)
+door_dialog.table.item(
+    fan_row, door_dialog.COL_CHECK
+).setCheckState(Qt.CheckState.Checked)
+app.processEvents()
+while door_dialog.category_selection:
+    door_dialog.back_attachment_category()
+app.processEvents()
+manual_cards = [
+    button for button in door_dialog.findChildren(
+        QPushButton, "attachmentManualSelection"
+    )
+    if button.isVisible()
+]
+manual_card_texts = [button.text() for button in manual_cards]
+for expected in (
+    "人工保留配置", "JS、JP后背板改为双开门", "搜索选择附件", "三级风机附件",
+):
+    assert sum(expected in text for text in manual_card_texts) == 1, manual_card_texts
+assert all("数量" in text and "元" in text for text in manual_card_texts)
+assert "#e3f3e9" in door_dialog.attachment_category_panel.styleSheet().lower()
+if artifact_dir is not None:
+    assert door_dialog.grab().save(
+        str(artifact_dir / "v3_manual_attachment_cards.png")
+    )
+
+before_manual_total = sum(
+    layout_refresh.quick_attachment_line_amount(item)
+    for item in door_dialog.attachments
+)
+door_card = next(
+    button for button in manual_cards
+    if "JS、JP后背板改为双开门" in button.text()
+)
+door_card.click()
+app.processEvents()
+assert not any(
+    item.get("item_name") == "JS、JP后背板改为双开门"
+    for item in door_dialog.attachments
+)
+assert all(
+    any(item.get("item_name") == expected for item in door_dialog.attachments)
+    for expected in ("人工保留配置", "搜索选择附件", "三级风机附件")
+)
+after_manual_total = sum(
+    layout_refresh.quick_attachment_line_amount(item)
+    for item in door_dialog.attachments
+)
+assert before_manual_total - after_manual_total == 270
+door_dialog.close()
+door_parent.close()
+
 # An installation board selected through category browsing is summarized back
 # on the first-level card.  Its circular sign toggle keeps the original price
 # positive in metadata and stores subtraction separately.
@@ -441,10 +642,10 @@ while attachment_dialog.category_selection:
     attachment_dialog.back_attachment_category()
 app.processEvents()
 board_summary = next(
-    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchManual")
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentManualSelection")
     if button.isVisible() and "JK安装板" in button.text()
 )
-assert board_summary.text() == "人工已选择\nJK安装板"
+assert board_summary.text().startswith("人工已选择\nJK安装板\n")
 board_sign = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentPriceSignPositive")
     if button.isVisible()
@@ -693,7 +894,328 @@ attachment_dialog_class.load_catalog = original_attachment_load
 window = namespace["MainWindow"]()
 window.resize(1519, 987)
 window.show()
+window.show_section(1)
 app.processEvents()
+layout_refresh._position_quote_action_dock(window)
+app.processEvents()
+
+# The sticky action dock must be a real top-level child, not a painted child
+# of QScrollArea whose native viewport intercepts manual Windows clicks.
+assert window.quote_action_dock.parentWidget() is window
+button_center = window.calculate_button.mapToGlobal(
+    window.calculate_button.rect().center()
+)
+hit_widget = QApplication.widgetAt(button_center)
+assert window.calculate_button.isVisible()
+assert window.quote_action_dock.geometry().contains(
+    window.calculate_button.mapTo(window, window.calculate_button.rect().center())
+)
+# The offscreen Qt platform does not implement native widgetAt(), but on a
+# desktop platform the center of the visible action must resolve to the
+# button itself.
+if hit_widget is not None:
+    assert hit_widget is window.calculate_button, (
+        hit_widget.objectName(),
+        window.calculate_button.geometry(),
+        window.quote_action_dock.geometry(),
+    )
+
+# The visible primary action must enter the ganged-aware calculation path.
+# Mock only the transport boundary so parsing, payload generation, QThread
+# lifetime, aggregation and MainWindow rendering all execute as production.
+window.product_catalog = {
+    "JP": {
+        "codes": {"SINGLE": "JP_SINGLE", "DOUBLE": "JP_DOUBLE"},
+        "method": "formula",
+    }
+}
+window.quote_catalog_state = "ready"
+window.product_combo.clear()
+window.product_combo.addItem("JP", "JP")
+window.formula_calculator.calculate = (
+    lambda _code, width, height, depth, _single, _double: (
+        round(width * height * depth / 10_000_000, 1),
+        round((width + height + depth) / 1000, 1),
+    )
+)
+assert layout_refresh._missing_ganged_formula_product_codes(window) == []
+window.api_url.setText("https://quote.test/api/quotes/calculate-dual")
+window.attachments = []
+window.quantity_spin.setValue(2)
+window.quote_spec_edit.setText("（600+900）*300*1800")
+assert layout_refresh._sync_ganged_specification(
+    window, "（600+900）*300*1800"
+)
+app.processEvents()
+window.ganged_cabinets = [
+    {
+        "width_mm": 600,
+        "depth_mm": 300,
+        "height_mm": 1800,
+        "base_height_mm": None,
+        "single_door_count": 1,
+        "double_door_count": 0,
+    },
+    {
+        "width_mm": 900,
+        "depth_mm": 300,
+        "height_mm": 1800,
+        "base_height_mm": None,
+        "single_door_count": 1,
+        "double_door_count": 0,
+    },
+]
+window.ganged_cabinet_count = 2
+window.ganged_cabinet_specification = "（600+900）*300*1800"
+layout_refresh._render_ganged_cabinet_table(window)
+assert window.ganged_cabinet_table.item(0, 0).text() == "1"
+assert window.ganged_cabinet_table.cellWidget(0, 0) is None
+assert layout_refresh._missing_ganged_formula_product_codes(window) == ["JP_SINGLE"]
+
+working_formula_calculate = window.formula_calculator.calculate
+window.formula_calculator.calculate = lambda *_args: None
+try:
+    layout_refresh._build_ganged_quote_payloads(window)
+except ValueError as exc:
+    assert "第 1 个子柜的公式重量和面积尚未生成" in str(exc)
+else:
+    raise AssertionError("missing ganged formula metrics must block the request")
+window.formula_calculator.calculate = working_formula_calculate
+
+class MockHttpResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+
+child_results = [
+    {
+        "formula_cost": {
+            "material_cost": 100,
+            "auxiliary_cost": 20,
+            "labor_cost": 30,
+            "spray_cost": 40,
+            "management_fee": 3.9,
+            "attachment_fee": 0,
+            "total_cost": 193.9,
+            "product_area_m2": 2.7,
+        },
+        "quick_quote": {
+            "base_price": 1000,
+            "attachment_fee": 0,
+            "total_cost": 1000,
+            "dimension_distance": 0,
+            "matched_experience": {"reference_width_mm": 600, "reference_height_mm": 1800, "reference_depth_mm": 300},
+        },
+        "risk_flags": [],
+    },
+    {
+        "formula_cost": {
+            "material_cost": 150,
+            "auxiliary_cost": 25,
+            "labor_cost": 35,
+            "spray_cost": 45,
+            "management_fee": 4.55,
+            "attachment_fee": 0,
+            "total_cost": 259.55,
+            "product_area_m2": 3.0,
+        },
+        "quick_quote": {
+            "base_price": 1500,
+            "attachment_fee": 0,
+            "total_cost": 1500,
+            "dimension_distance": 0,
+            "matched_experience": {"reference_width_mm": 900, "reference_height_mm": 1800, "reference_depth_mm": 300},
+        },
+        "risk_flags": [],
+    },
+]
+recorded_payloads = []
+template_requests = []
+original_urlopen = layout_refresh.urllib.request.urlopen
+
+def successful_urlopen(request, timeout=0):
+    del timeout
+    if request.full_url.endswith("/api/quotes/formula-template"):
+        template_request = json.loads(request.data.decode("utf-8"))
+        template_requests.append(template_request)
+        time.sleep(0.3)
+        return MockHttpResponse({
+            "template": {
+                "template_code": template_request["product_code"],
+                "option_cells": {"defaults": {}},
+                "rules": [],
+            }
+        })
+    recorded_payloads.append(json.loads(request.data.decode("utf-8")))
+    time.sleep(0.3)
+    return MockHttpResponse(child_results[len(recorded_payloads) - 1])
+
+
+layout_refresh.urllib.request.urlopen = successful_urlopen
+window.update_quote_readiness()
+assert window.calculate_button.isEnabled()
+app.processEvents()
+window.calculate_button.click()
+app.processEvents()
+assert window.ganged_template_worker is not None
+assert window.ganged_template_worker.isRunning()
+assert not window.calculate_button.isEnabled()
+assert "正在读取 1 个并柜公式模板" in window.findChild(
+    QLabel, "quoteResultState"
+).text()
+deadline = time.monotonic() + 5
+while (
+    (
+        getattr(window, "ganged_template_worker", None) is not None
+        or getattr(window, "worker", None) is not None
+        or len(recorded_payloads) < 2
+    )
+    and time.monotonic() < deadline
+):
+    app.processEvents()
+    time.sleep(0.01)
+app.processEvents()
+assert window.ganged_template_worker is None
+assert window.worker is None
+assert window.calculate_button.isEnabled()
+assert window.calculate_button.text() == "计算双报价"
+assert template_requests == [{"product_code": "JP_SINGLE"}]
+assert layout_refresh._missing_ganged_formula_product_codes(window) == []
+assert len(recorded_payloads) == 2
+assert [payload["model_code"] for payload in recorded_payloads] == [
+    "600×300×1800", "900×300×1800",
+]
+assert [payload["product_code"] for payload in recorded_payloads] == [
+    "JP_SINGLE", "JP_SINGLE",
+]
+assert [payload["attachments"] for payload in recorded_payloads] == [[], []]
+assert [payload["base_material_weight_kg"] for payload in recorded_payloads] == [
+    32.4, 48.6,
+]
+assert [payload["product_area_m2"] for payload in recorded_payloads] == [
+    2.7, 3.0,
+]
+assert window.current_result is not None, (
+    window.findChild(QLabel, "quoteResultState").text(),
+    window.risk_label.text(),
+    len(recorded_payloads),
+)
+assert window.weight_edit.text() == "81.0"
+assert window.area_edit.text() == "5.7"
+assert window.current_result["formula"]["material_cost"] == 250
+assert window.current_result["formula"]["spray_cost"] == 85
+assert window.current_result["formula"]["product_area_m2"] == 5.7
+assert abs(window.current_result["formula"]["total_cost"] - 453.45) < 1e-9
+assert window.current_result["quick"]["total_cost"] == 2500, window.current_result
+assert len(window.current_result["quick"]["matched_experience"]["items"]) == 2
+assert "已合并 2 个子柜" in window.findChild(QLabel, "quoteResultState").text()
+assert window.pending_quote_signature == window.quote_input_signature()
+assert window.pending_quote_signature[-1][0] == "ganged"
+formula_order = layout_refresh._formula_order_line_breakdown({
+    "formula": window.current_result["formula"],
+    "attachments": [],
+    "quantity": 2,
+    "formula_discount": 1,
+    "ganged_cabinet_count": 2,
+})
+quick_order = layout_refresh.quick_order_line_breakdown(
+    window.current_result["quick"], [], 1, 2, 2,
+)
+assert abs(formula_order["line_total"] - 906.9) < 1e-9
+assert quick_order["line_total"] == 5000
+if artifact_dir is not None:
+    window.show_section(1)
+    app.processEvents()
+    assert window.grab().save(str(artifact_dir / "v3_ganged_quote_success.png"))
+
+# A failed request must be explicit and must restore both button and worker.
+def failed_urlopen(_request, timeout=0):
+    del timeout
+    raise OSError("simulated network failure")
+
+
+layout_refresh.urllib.request.urlopen = failed_urlopen
+window.calculate_button.click()
+deadline = time.monotonic() + 5
+while window.worker is not None and time.monotonic() < deadline:
+    app.processEvents()
+    time.sleep(0.01)
+assert window.worker is None
+assert window.calculate_button.isEnabled()
+assert "并柜报价失败" in window.findChild(QLabel, "quoteResultState").text()
+assert "simulated network failure" in window.findChild(
+    QLabel, "quoteResultState"
+).text()
+if artifact_dir is not None:
+    app.processEvents()
+    assert window.grab().save(str(artifact_dir / "v3_ganged_quote_failure.png"))
+
+# Ordinary one-cabinet calculation still falls through to the recovered path.
+ordinary_requests = []
+
+def ordinary_urlopen(request, timeout=0):
+    del timeout
+    ordinary_requests.append(json.loads(request.data.decode("utf-8")))
+    return MockHttpResponse(child_results[0])
+
+
+layout_refresh.urllib.request.urlopen = ordinary_urlopen
+window.ganged_cabinets = []
+window.ganged_cabinet_count = 1
+window.product_catalog["JP"]["method"] = "manual"
+window.set_door_counts(1, 0)
+window.width_spin.setValue(600)
+window.depth_spin.setValue(300)
+window.height_spin.setValue(1800)
+window.model_edit.setText("JP-600")
+window.quote_spec_edit.setText("600*300*1800")
+window.weight_edit.setText("32.4")
+window.area_edit.setText("2.7")
+window.calculate_button.setEnabled(True)
+modal_calls = []
+original_message_warning = QMessageBox.warning
+original_message_information = QMessageBox.information
+QMessageBox.warning = lambda _parent, title, message, *_args: modal_calls.append((title, message))
+QMessageBox.information = lambda _parent, title, message, *_args: modal_calls.append((title, message))
+window.calculate_button.click()
+deadline = time.monotonic() + 5
+while (
+    getattr(window, "worker", None) is not None
+    and window.worker.isRunning()
+    and time.monotonic() < deadline
+):
+    app.processEvents()
+    time.sleep(0.01)
+app.processEvents()
+QMessageBox.warning = original_message_warning
+QMessageBox.information = original_message_information
+assert not modal_calls, modal_calls
+assert len(ordinary_requests) == 1
+assert ordinary_requests[0]["model_code"] == "JP-600"
+assert window.current_result["quick"]["total_cost"] == 1000
+layout_refresh.urllib.request.urlopen = original_urlopen
+
+before_attachment_change = [{"item_name": "附件 A", "quantity": 1, "unit_price": 10}]
+window.attachments = [dict(before_attachment_change[0])]
+window.current_result = {
+    "formula": {"total_cost": 100},
+    "quick": {"total_cost": 120},
+}
+window.attachments = []
+assert layout_refresh._invalidate_quote_after_attachment_change(
+    window, before_attachment_change
+)
+assert window.current_result is None
+assert "请重新计算双报价" in window.findChild(QLabel, "quoteResultState").text()
 
 window.attachments = [{
     "item_name": "门限位器", "category_level1": "门限位器",
@@ -765,6 +1287,7 @@ assert "4,190.58" in window.quick_labels["total"].text(), window.quick_labels["t
 window.draft_items = [{
     "name": "折扣规则测试柜",
     "model_code": "MODEL-QUICK-DISCOUNT",
+    "specification": "MODEL-QUICK-DISCOUNT",
     "width_mm": 1000,
     "height_mm": 1800,
     "depth_mm": 600,
@@ -778,7 +1301,11 @@ window.draft_items = [{
     "notes": "选择性折扣测试",
 }]
 window.refresh_summary()
-assert window.summary_table.item(0, 2).text() == "MODEL-QUICK-DISCOUNT"
+assert window.summary_table.item(0, 2).text() == "MODEL-QUICK-DISCOUNT", [
+    window.summary_table.item(0, column).text()
+    if window.summary_table.item(0, column) is not None else None
+    for column in range(window.summary_table.columnCount())
+]
 quick_price_columns = [
     column
     for column in range(window.summary_table.columnCount())
@@ -850,9 +1377,10 @@ assert main_scroll is not None
 assert main_scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
 assert main_scroll.horizontalScrollBar().maximum() == 0
 assert quote_dock is not None and quote_dock.isVisible()
-assert quote_dock.parentWidget() is main_scroll
+assert quote_dock.parentWidget() is window
 assert main_scroll.viewportMargins().bottom() >= layout_refresh.QUOTE_ACTION_DOCK_HEIGHT
-assert quote_dock.geometry().bottom() <= main_scroll.height()
+main_scroll_bottom = main_scroll.mapTo(window, main_scroll.rect().bottomRight()).y()
+assert quote_dock.geometry().bottom() <= main_scroll_bottom
 assert window.findChild(QAbstractButton, "secondaryQuoteAction").parentWidget() is quote_dock
 assert window.findChild(QAbstractButton, "quietQuoteAction").parentWidget() is quote_dock
 
@@ -869,7 +1397,8 @@ assert medium_left >= 520, quote_workspace.sizes()
 assert medium_right >= 500, quote_workspace.sizes()
 assert main_scroll.horizontalScrollBar().maximum() == 0
 assert quote_dock.isVisible()
-assert quote_dock.geometry().bottom() <= main_scroll.height()
+main_scroll_bottom = main_scroll.mapTo(window, main_scroll.rect().bottomRight()).y()
+assert quote_dock.geometry().bottom() <= main_scroll_bottom
 
 window.resize(1180, 720)
 app.processEvents()

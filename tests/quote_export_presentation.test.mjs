@@ -265,7 +265,7 @@ test("quick workbook uses stable selected-name columns without obsolete configur
     const discountColumn = headerIndex("折扣");
     const expected = [
       [990, 990], [960, 960], [1140, 1140], [1640, 4920], [1290, 2580],
-      [1665, 3330],
+      [1980, 3960],
     ];
     expected.forEach(([unitTotal, lineTotal], index) => {
       const row = 11 + index;
@@ -444,19 +444,19 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     }
     const quickSheet = workbook.getWorksheet("快速报价单");
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
-    closeTo(quickSheet.getCell("F11").value, 1773, "ganged quick equivalent unit total");
-    closeTo(quickSheet.getCell("G11").value, 3546, "ganged quick line total");
+    closeTo(quickSheet.getCell("F11").value, 2088, "ganged quick equivalent unit total");
+    closeTo(quickSheet.getCell("G11").value, 4176, "ganged quick line total");
     closeTo(quickSheet.getCell("L11").value, 4000, "ganged quick cabinet order amount");
-    closeTo(quickSheet.getCell("K11").value.result, 3546, "ganged quick order formula result");
+    closeTo(quickSheet.getCell("K11").value.result, 4176, "ganged quick order formula result");
     closeTo(quickSheet.getCell(11, headerIndex("固定底座100高")).value, 240, "separately matched ganged base amount");
-    closeTo(quickSheet.getCell(11, headerIndex("标准安装板")).value, -600, "ganged board amount");
-    closeTo(quickSheet.getCell(11, headerIndex("侧板")).value, 100, "ganged side amount");
-    closeTo(quickSheet.getCell(11, headerIndex("KA2206风机")).value, 30, "ganged fan amount");
-    closeTo(quickSheet.getCell(11, headerIndex("JS、JP后背板改为单开门")).value, 150, "ganged transform amount");
+    closeTo(quickSheet.getCell(11, headerIndex("标准安装板")).value, -200, "ganged board amount");
+    closeTo(quickSheet.getCell(11, headerIndex("侧板")).value, 200, "ganged side amount");
+    closeTo(quickSheet.getCell(11, headerIndex("KA2206风机")).value, 60, "ganged fan amount");
+    closeTo(quickSheet.getCell(11, headerIndex("JS、JP后背板改为单开门")).value, 300, "ganged transform amount");
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 689.4, "ganged formula equivalent unit total");
-    closeTo(formulaSheet.getCell("G11").value, 1378.8, "ganged formula line total");
+    closeTo(formulaSheet.getCell("F11").value, 995.4, "ganged formula equivalent unit total");
+    closeTo(formulaSheet.getCell("G11").value, 1990.8, "ganged formula line total");
     [720, 180, 360, 144, 46.8].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
       expected,
@@ -472,10 +472,10 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
       if (name === "固定底座100高") gangedBaseQuantity += Number(row.getCell(8).value);
     });
     assert.equal(gangedBaseQuantity, 6);
-    assert.equal(quantityByName.get("标准安装板"), 6);
-    assert.equal(quantityByName.get("侧板"), 2);
-    assert.equal(quantityByName.get("KA2206风机"), 1);
-    assert.equal(quantityByName.get("JS、JP后背板改为单开门"), 1);
+    assert.equal(quantityByName.get("标准安装板"), 2);
+    assert.equal(quantityByName.get("侧板"), 4);
+    assert.equal(quantityByName.get("KA2206风机"), 2);
+    assert.equal(quantityByName.get("JS、JP后背板改为单开门"), 2);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

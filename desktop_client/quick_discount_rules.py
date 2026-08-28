@@ -87,11 +87,14 @@ def effective_attachment_quantity(
     selected = _number(item.get("quantity"), 1.0)
     cabinets = _number(cabinet_quantity, 1.0)
     split_count = _number(ganged_cabinet_count, 1.0)
+    # A selected quantity in a ganged quote is the quantity for one complete
+    # ganged set.  Automatic limiter/reinforcement rows already contain the
+    # sum required by all child cabinets, while fixed bases are separate rows.
+    if split_count > 1:
+        return selected * cabinets
     if not attachment_uses_cabinet_quantity(item):
         return selected
-    if bool(item.get(GANGED_FIXED_BASE_MATCH_KEY)):
-        return selected * cabinets
-    return selected * cabinets * split_count
+    return selected * cabinets
 
 
 def effective_attachment_line_amount(
@@ -169,7 +172,7 @@ def quick_order_line_breakdown(
         for item in rows if not quick_discount_category(item)
     )
     unlisted_difference = unit["attachment_fee"] - unit["listed_attachment_total"]
-    original_total += unlisted_difference * cabinets * split_count
+    original_total += unlisted_difference * cabinets
     factor = _number(discount, 1.0)
     line_total = (unit["base_price"] * cabinets + eligible_total) * factor + original_total
     return {

@@ -127,6 +127,8 @@ assert spec.loader
 spec.loader.exec_module(layout_refresh)
 
 from attachment_category_browser import (  # noqa: E402
+    ATTACHMENT_SELECTION_SOURCE_KEY,
+    AUTOMATIC_SELECTION_SOURCE,
     DEFAULT_A4_FOLDER,
     DEFAULT_COPPER_BUSBAR,
     DEFAULT_DOOR_REINFORCEMENT,
@@ -137,6 +139,8 @@ from attachment_category_browser import (  # noqa: E402
     DOOR_LIMITER_DEFAULT_QUANTITIES,
     DOOR_TRANSFORMATION_RULE_PREFIX,
     LEVEL1_ORDER,
+    MANUAL_SELECTION_SOURCE,
+    attachment_selection_source,
     category_options,
     default_rule_for_item,
     door_limiter_default_quantity,
@@ -144,6 +148,8 @@ from attachment_category_browser import (  # noqa: E402
     door_transformation_default_names,
     final_attachment_quantity,
     is_jp_product,
+    is_automatic_attachment_selection,
+    is_manual_attachment_selection,
     match_default_a4_folder,
     match_default_copper_busbar,
     match_default_door_reinforcement,
@@ -154,6 +160,7 @@ from attachment_category_browser import (  # noqa: E402
     match_fixed_base,
     match_jp_side_panel,
     parse_base_specification,
+    with_attachment_selection_source,
 )
 from quote_remark_rules import (  # noqa: E402
     DOOR_PHRASES_BY_COUNTS,
@@ -188,6 +195,19 @@ assert mixed_options == [
     {"value": "JK安装板", "label": "JK安装板", "count": 1},
     {"value": "", "label": "本级附件", "count": 1},
 ]
+automatic_selection = with_attachment_selection_source(
+    {"item_name": "系统默认门变形"}, AUTOMATIC_SELECTION_SOURCE
+)
+manual_selection = with_attachment_selection_source(
+    {"item_name": "人工门变形"}, MANUAL_SELECTION_SOURCE
+)
+assert automatic_selection[ATTACHMENT_SELECTION_SOURCE_KEY] == "automatic"
+assert attachment_selection_source(automatic_selection) == "automatic"
+assert is_automatic_attachment_selection(automatic_selection)
+assert not is_manual_attachment_selection(automatic_selection)
+assert is_manual_attachment_selection(manual_selection)
+assert not is_automatic_attachment_selection(manual_selection)
+assert attachment_selection_source({"item_name": "旧快照"}) == ""
 assert DOOR_PHRASES_BY_COUNTS == {
     (1, 0): "前单开门",
     (0, 1): "前双开门",
@@ -232,7 +252,7 @@ for attachment, cabinets, expected in (
 ):
     assert final_attachment_quantity(attachment, cabinets) == expected
 
-assert final_attachment_quantity({"item_name": "安装板", "quantity": 2}, 3, 4) == 24
+assert final_attachment_quantity({"item_name": "安装板", "quantity": 2}, 3, 4) == 6
 assert final_attachment_quantity({
     "item_name": "固定底座",
     "category_level1": "底座",
@@ -240,13 +260,13 @@ assert final_attachment_quantity({
     "ganged_fixed_base_match": True,
     "ganged_fixed_base_index": 0,
 }, 3, 4) == 3
-assert final_attachment_quantity({"item_name": "侧板", "quantity": 2}, 3, 4) == 2
+assert final_attachment_quantity({"item_name": "侧板", "quantity": 2}, 3, 4) == 6
 assert final_attachment_quantity(
     {"category_level1": "门变形", "item_name": "JS、JP单开门改为双开门", "quantity": 1},
     3,
     4,
-) == 1
-assert final_attachment_quantity({"item_name": "FU滤网", "quantity": 2}, 3, 4) == 2
+) == 3
+assert final_attachment_quantity({"item_name": "FU滤网", "quantity": 2}, 3, 4) == 6
 for counts, expected in DOOR_PHRASES_BY_COUNTS.items():
     original = "手工录入，碳钢喷塑RAL7035橘纹，前双开门后背板，配风机1个。"
     actual = replace_door_configuration_phrase(
@@ -376,7 +396,7 @@ assert default_rule_for_item({"item_name": "照明灯/行程开关"}) == DEFAULT
 assert default_rule_for_item({"item_name": "侧板", "model_code": "JP682060"}) == DEFAULT_JP_SIDE_PANEL
 assert final_attachment_quantity(
     {"item_name": "铜排", "category_level1": "铜排", "quantity": 2}, 3, 4
-) == 24
+) == 6
 
 
 class ManualWindow:
@@ -512,6 +532,10 @@ assert ganged_area == 9.5
 
 source = (ROOT / "desktop_client" / "main.py").read_text(encoding="utf-8")
 assert 'application_root().parent / "AIQuoteDualSystem" / "client_config.json"' in source
+assert 'for key in ("api_url", "api_key")' in source
+assert 'https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual' in source
+assert 'or DEFAULT_RENDER_API_URL' in source
+assert 'or "http://127.0.0.1:8080/api/quotes/calculate-dual"' not in source
 assert 'item.get("model_code") or ""' in source
 tree = ast.parse(source)
 calculator_node = next(
@@ -669,6 +693,37 @@ limiter_window._counts = (2, 0)
 assert not layout_refresh._sync_door_limiter_default_quantity(limiter_window, (1, 1))
 assert all(item.get("item_name") != "门限位器" for item in limiter_window.attachments)
 assert all(item.get("item_name") != "门加强筋" for item in limiter_window.attachments)
+
+ganged_limiter_window = DoorLimiterWindow()
+ganged_limiter_window.ganged_cabinets = [
+    {"single_door_count": 1, "double_door_count": 0},
+    {"single_door_count": 0, "double_door_count": 2},
+    {"single_door_count": 1, "double_door_count": 1},
+]
+ganged_limiter_window.attachments[0]["selection_source"] = "automatic"
+ganged_limiter_window.attachments[1]["selection_source"] = "automatic"
+assert layout_refresh._sync_door_count_default_quantities(
+    ganged_limiter_window,
+    ((1, 0), (1, 0), (1, 0)),
+)
+assert ganged_limiter_window.attachments[0]["quantity"] == 8
+assert ganged_limiter_window.attachments[1]["quantity"] == 8
+assert final_attachment_quantity(ganged_limiter_window.attachments[0], 2, 3) == 16
+
+ganged_limiter_window.attachment_default_quantity_overrides = {
+    DEFAULT_DOOR_LIMITER,
+}
+ganged_limiter_window.attachments[0]["quantity"] = 5
+ganged_limiter_window.ganged_cabinets[1] = {
+    "single_door_count": 2,
+    "double_door_count": 0,
+}
+layout_refresh._sync_door_count_default_quantities(
+    ganged_limiter_window,
+    ((1, 0), (0, 2), (1, 1)),
+)
+assert ganged_limiter_window.attachments[0]["quantity"] == 5
+assert ganged_limiter_window.attachments[1]["quantity"] == 6
 
 
 class DoorTransformWindow:

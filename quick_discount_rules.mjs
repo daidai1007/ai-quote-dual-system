@@ -72,9 +72,12 @@ export function effectiveAttachmentQuantity(
   const selected = asFiniteNumber(item.quantity, 1);
   const cabinets = asFiniteNumber(cabinetQuantity, 1);
   const splitCount = asFiniteNumber(gangedCabinetCount, 1);
+  // In a ganged quote the stored quantity already describes one complete
+  // ganged set. Automatic limiter/reinforcement rows contain the sum required
+  // by all child cabinets, and fixed bases already exist as one row per child.
+  if (splitCount > 1) return selected * cabinets;
   if (!attachmentUsesCabinetQuantity(item)) return selected;
-  if (Boolean(item[GANGED_FIXED_BASE_MATCH_KEY])) return selected * cabinets;
-  return selected * cabinets * splitCount;
+  return selected * cabinets;
 }
 
 export function effectiveAttachmentLineAmount(
@@ -146,7 +149,7 @@ export function quickOrderLineBreakdown({
   );
   const unlistedDifference = unit.attachmentFee - unit.listedAttachmentTotal;
   const originalPriceAttachmentTotal = listedOriginalTotal
-    + unlistedDifference * cabinets * splitCount;
+    + unlistedDifference * cabinets;
   const factor = asFiniteNumber(discount, 1);
   const lineTotal = (unit.basePrice * cabinets + eligibleAttachmentTotal) * factor
     + originalPriceAttachmentTotal;

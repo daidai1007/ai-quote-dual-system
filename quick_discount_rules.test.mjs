@@ -53,7 +53,7 @@ test("quick quote discounts only the nine approved attachment categories", () =>
   }
 });
 
-test("copper busbar stays at original price and scales with cabinet and ganged counts", () => {
+test("copper busbar stays at original price and scales only with complete ganged sets", () => {
   const copper = {
     item_name: "铜排",
     category_level1: "铜排",
@@ -61,7 +61,7 @@ test("copper busbar stays at original price and scales with cabinet and ganged c
     unit_price: 50,
   };
   assert.equal(quickDiscountCategory(copper), null);
-  assert.equal(effectiveAttachmentQuantity(copper, 2, 3), 6);
+  assert.equal(effectiveAttachmentQuantity(copper, 2, 3), 2);
   const result = quickOrderLineBreakdown({
     quote: { base_price: 1000, attachment_fee: 50, total_cost: 1050 },
     attachments: [copper],
@@ -70,9 +70,9 @@ test("copper busbar stays at original price and scales with cabinet and ganged c
     gangedCabinetCount: 3,
   });
   assert.equal(result.eligibleAttachmentTotal, 0);
-  assert.equal(result.originalPriceAttachmentTotal, 300);
-  assert.equal(result.lineTotal, 2100);
-  assert.equal(result.equivalentUnitTotal, 1050);
+  assert.equal(result.originalPriceAttachmentTotal, 100);
+  assert.equal(result.lineTotal, 1900);
+  assert.equal(result.equivalentUnitTotal, 950);
 });
 
 test("quick quote keeps non-approved attachments at original price", () => {
@@ -125,13 +125,13 @@ test("cabinet quantity multiplies normal attachments but not the three manual ca
   assert.equal(effectiveAttachmentQuantity({ item_name: "FU滤网", quantity: 2 }, 3), 2);
 });
 
-test("ganged cabinet count multiplies normal attachments in addition to order quantity", () => {
-  assert.equal(effectiveAttachmentQuantity({ item_name: "门限位器", quantity: 2 }, 3, 4), 24);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "安装板", quantity: 1 }, 2, 3), 6);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "铜排", category_level1: "铜排", quantity: 2 }, 2, 3), 12);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3, 4), 2);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "门变形", category_level1: "门变形", quantity: 1 }, 3, 4), 1);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "风机", category_level1: "风机滤网", quantity: 2 }, 3, 4), 2);
+test("ganged attachments use selected quantity times complete-set quantity only", () => {
+  assert.equal(effectiveAttachmentQuantity({ item_name: "门限位器", quantity: 7 }, 3, 4), 21);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "安装板", quantity: 1 }, 2, 3), 2);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "铜排", category_level1: "铜排", quantity: 2 }, 2, 3), 4);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3, 4), 6);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "门变形", category_level1: "门变形", quantity: 1 }, 3, 4), 3);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "风机", category_level1: "风机滤网", quantity: 2 }, 3, 4), 6);
   assert.equal(effectiveAttachmentQuantity({
     item_name: "固定底座",
     category_level1: "底座",
@@ -162,7 +162,7 @@ test("quick order line applies quantity exceptions and scales negative boards on
   assert.equal(result.equivalentUnitTotal, 900);
 });
 
-test("quick order line combines ganged and order multipliers without scaling exceptions", () => {
+test("quick order line does not multiply attachments by the ganged split count", () => {
   const attachments = [
     { item_name: "安装板", category_level1: "安装板", quantity: 1, unit_price: 100, attachment_price_sign: -1 },
     { item_name: "侧板", category_level1: "侧板", quantity: 2, unit_price: 50 },
@@ -176,8 +176,8 @@ test("quick order line combines ganged and order multipliers without scaling exc
     cabinetQuantity: 2,
     gangedCabinetCount: 3,
   });
-  assert.equal(result.eligibleAttachmentTotal, -500);
-  assert.equal(result.originalPriceAttachmentTotal, 180);
-  assert.equal(result.lineTotal, 3330);
-  assert.equal(result.equivalentUnitTotal, 1665);
+  assert.equal(result.eligibleAttachmentTotal, 0);
+  assert.equal(result.originalPriceAttachmentTotal, 360);
+  assert.equal(result.lineTotal, 3960);
+  assert.equal(result.equivalentUnitTotal, 1980);
 });

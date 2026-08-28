@@ -71,6 +71,9 @@ from attachment_category_browser import (
 
 # 管理费固定为人工成本的 13%（见运行规则：管理费 = 人工成本 × 0.13）。
 MANAGEMENT_FEE_RATE = 0.13
+DEFAULT_RENDER_API_URL = (
+    "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual"
+)
 
 
 def application_root() -> Path:
@@ -81,7 +84,7 @@ def application_root() -> Path:
 
 
 def load_client_config() -> dict:
-    """Load deployment settings without hard-coding a customer's server."""
+    """Load deployment settings for both source and packaged clients."""
     config_path = application_root() / "client_config.json"
     config: dict = {}
     if config_path.is_file():
@@ -90,20 +93,23 @@ def load_client_config() -> dict:
             if isinstance(loaded, dict):
                 config = loaded
         except (OSError, ValueError, json.JSONDecodeError):
-            # Keep a usable localhost default.  The visible interface-address
-            # field still lets support staff correct a damaged config file.
+            # Fall back to the deployed Render endpoint below.  The visible
+            # interface-address field still lets support staff correct a
+            # damaged config file.
             config = {}
     elif not getattr(sys, "frozen", False):
         # The source checkout sits beside the distributable AIQuoteDualSystem
-        # folder. Reuse only that client's access key here: a developer/source
-        # client should continue to call the local API unless explicitly
-        # overridden, while packaged clients still use their adjacent config.
+        # folder. Reuse its Render endpoint and access key so an ordinary
+        # source launch behaves like the deployed client. Environment variables
+        # remain the highest-priority override for local development.
         shared_config = application_root().parent / "AIQuoteDualSystem" / "client_config.json"
         if shared_config.is_file():
             try:
                 loaded = json.loads(shared_config.read_text(encoding="utf-8-sig"))
-                if isinstance(loaded, dict) and loaded.get("api_key"):
-                    config["api_key"] = loaded["api_key"]
+                if isinstance(loaded, dict):
+                    for key in ("api_url", "api_key"):
+                        if loaded.get(key):
+                            config[key] = loaded[key]
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
     return config
@@ -113,7 +119,7 @@ CLIENT_CONFIG = load_client_config()
 API_URL = str(
     os.getenv("AI_QUOTE_API_URL")
     or CLIENT_CONFIG.get("api_url")
-    or "http://127.0.0.1:8080/api/quotes/calculate-dual"
+    or DEFAULT_RENDER_API_URL
 ).strip()
 API_KEY = str(os.getenv("AI_QUOTE_API_KEY") or CLIENT_CONFIG.get("api_key") or "").strip()
 REQUIRED_EXPORT_API_BUILD = "2026-08-26-signed-attachments-v1"
@@ -742,7 +748,7 @@ class AttachmentDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("附件选择")
-        self.resize(900, 680)
+        self.setFixedSize(900, 680)
         self.attachments = [dict(item) for item in attachments]
         self.catalog: list[dict] = []
         self.api_url = api_url

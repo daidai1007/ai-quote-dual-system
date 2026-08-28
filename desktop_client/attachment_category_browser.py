@@ -52,6 +52,9 @@ DOOR_TRANSFORMATION_NAMES = (
 ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = ("侧板", "门变形", "风机滤网")
 GANGED_FIXED_BASE_MATCH_KEY = "ganged_fixed_base_match"
 GANGED_FIXED_BASE_INDEX_KEY = "ganged_fixed_base_index"
+ATTACHMENT_SELECTION_SOURCE_KEY = "selection_source"
+AUTOMATIC_SELECTION_SOURCE = "automatic"
+MANUAL_SELECTION_SOURCE = "manual"
 DOOR_COUNT_DEFAULT_QUANTITIES = {
     (1, 0): 1,
     (2, 0): 2,
@@ -59,6 +62,32 @@ DOOR_COUNT_DEFAULT_QUANTITIES = {
     (0, 2): 4,
     (1, 1): 3,
 }
+
+
+def attachment_selection_source(item: dict) -> str:
+    """Return the persisted operator/system origin for one selected row."""
+
+    value = str((item or {}).get(ATTACHMENT_SELECTION_SOURCE_KEY) or "").strip().lower()
+    return value if value in {AUTOMATIC_SELECTION_SOURCE, MANUAL_SELECTION_SOURCE} else ""
+
+
+def with_attachment_selection_source(item: dict, source: str) -> dict:
+    """Copy an attachment snapshot and attach a validated selection origin."""
+
+    normalized = str(source or "").strip().lower()
+    if normalized not in {AUTOMATIC_SELECTION_SOURCE, MANUAL_SELECTION_SOURCE}:
+        raise ValueError(f"unsupported attachment selection source: {source}")
+    selected = dict(item)
+    selected[ATTACHMENT_SELECTION_SOURCE_KEY] = normalized
+    return selected
+
+
+def is_automatic_attachment_selection(item: dict) -> bool:
+    return attachment_selection_source(item) == AUTOMATIC_SELECTION_SOURCE
+
+
+def is_manual_attachment_selection(item: dict) -> bool:
+    return attachment_selection_source(item) == MANUAL_SELECTION_SOURCE
 # Backward-compatible public name used by the existing client contracts.
 DOOR_LIMITER_DEFAULT_QUANTITIES = DOOR_COUNT_DEFAULT_QUANTITIES
 SIZE_MATCH_METADATA_KEYS = (
@@ -337,14 +366,16 @@ def final_attachment_quantity(
     cabinets = 1.0 if cabinets is None else cabinets
     split_count = _number(ganged_cabinet_count)
     split_count = 1.0 if split_count is None else split_count
+    # In a ganged quote the selected quantity already describes one complete
+    # ganged set.  System-matched door limiters/reinforcements persist the sum
+    # of the child-cabinet door matrix in that selected quantity, and fixed
+    # bases already have one separate row per child.  Do not multiply any row
+    # by the split count a second time.
+    if split_count > 1:
+        return quantity * cabinets
     if not attachment_uses_cabinet_quantity(item):
         return quantity
-    # A ganged cabinet owns one separately matched base per split cabinet.
-    # Those rows already represent the split count, so only the number of
-    # complete ganged cabinets is applied here.
-    if bool(item.get(GANGED_FIXED_BASE_MATCH_KEY)):
-        return quantity * cabinets
-    return quantity * cabinets * split_count
+    return quantity * cabinets
 
 
 def match_jp_side_panel(
