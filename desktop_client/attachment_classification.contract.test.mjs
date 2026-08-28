@@ -50,6 +50,13 @@ test('attachment dialog drills through four-column category cards before showing
   assert.match(overlay, /attachmentPriceSignPositive/);
   assert.match(overlay, /attachmentPriceSignNegative/);
   assert.match(overlay, /attachment_price_sign/);
+  assert.match(overlay, /"attachment_category": category/);
+  assert.match(overlay, /"category_level1": category/);
+  assert.match(overlay, /"category_level2": category_level2\.text\(\)\.strip\(\) or None/);
+  assert.match(overlay, /"category_level3": category_level3\.text\(\)\.strip\(\) or None/);
+  assert.match(overlay, /getattr\(owner, "category_selection", \[\]\)/);
+  assert.match(overlay, /show_quick_button = not \(\s*object_name == "attachmentQuickMatchManual" and manual_items\s*\)/);
+  assert.match(overlay, /elif show_quick_button:\s*card_layout\.addWidget\(quick_button\)/);
   assert.match(overlay, /match_attachment_size\(getattr\(self, "catalog", \[\]\), source, target\)/);
   assert.match(overlay, /rule in \(DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT\)/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);

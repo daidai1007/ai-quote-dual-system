@@ -201,10 +201,14 @@ test("formal workbook exports the revised presentation without changing quote de
       });
     }
 
-    const quickFormulaCell = workbook.getWorksheet("快速报价单").getCell("K11");
+    const quickSheet = workbook.getWorksheet("快速报价单");
+    const quickFormulaCell = quickSheet.getCell("K11");
+    const discountColumn = quickSheet.getRow(10).values.findIndex(
+      (value) => value === "折扣",
+    );
     assert.equal(
       quickFormulaCell.value.formula,
-      "L11*O11+M11+N11",
+      `L11*${quickSheet.getColumn(discountColumn).letter}11+M11+N11`,
     );
     closeTo(quickFormulaCell.value.result, 3200, "quick Excel unit formula cached result");
 
@@ -244,16 +248,11 @@ test("quick workbook uses stable selected-name columns without obsolete configur
     const reversedHeaders = reversedSheet.getRow(10).values.slice(11).filter((value) => value !== null && value !== undefined && value !== "");
     assert.deepEqual(headers, reversedHeaders, "dynamic attachment order changed with quote row order");
     assert.deepEqual(headers.slice(0, 2), ["成本计算公式", "柜体"]);
-    assert.deepEqual(headers.slice(-1), ["折扣"]);
+    assert.deepEqual(headers.slice(-2), ["运费", "折扣"]);
     assert.ok(!headers.includes("其他附件/差额"));
     assert.ok(!headers.includes("配置变形说明"));
     assert.ok(!headers.includes("配置变形"));
-    const trailingColumn = sheet.getColumn(sheet.getRow(10).values.length).letter;
-    if (trailingColumn !== "Y") {
-      assert.equal(sheet.getCell("Y10").border, undefined, "unused template columns still look like attachment columns");
-      assert.equal(sheet.getCell("Y10").fill, undefined);
-    }
-    const dynamicNames = headers.slice(2, -1);
+    const dynamicNames = headers.slice(2, -2);
     assert.deepEqual(new Set(dynamicNames), new Set([
       "固定底座100高", "标准安装板", "JA内门板", "JP通风顶罩", "KA2206风机", "门限位器",
       "侧板",
@@ -331,6 +330,7 @@ test("workbook uses final attachment quantities with the three manual exceptions
     const payload = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8"));
     const item = structuredClone(payload.items[0]);
     item.quantity = 3;
+    item.freight_fee = 50;
     item.formula_discount = 0.9;
     item.quick_discount = 0.9;
     item.attachments = [
@@ -338,11 +338,12 @@ test("workbook uses final attachment quantities with the three manual exceptions
       { item_name: "侧板", category_level1: "侧板", quantity: 2, unit_price: 50 },
       { item_name: "KA2206风机", category_level1: "风机滤网", quantity: 1, unit_price: 30 },
       { item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1, unit_price: 150 },
+      { item_name: "门安装条", category_level1: "门安装条", quantity: 1, unit_price: 20, unit: "根" },
     ];
-    item.quick = { base_price: 1000, attachment_fee: 180, total_cost: 1180 };
+    item.quick = { base_price: 1000, attachment_fee: 200, total_cost: 1200 };
     item.formula = {
       material_cost: 400, auxiliary_cost: 100, labor_cost: 200,
-      spray_cost: 80, management_fee: 26, attachment_fee: 180, total_cost: 986,
+      spray_cost: 80, management_fee: 26, attachment_fee: 200, total_cost: 1006,
     };
     payload.items = [item];
     await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
@@ -352,9 +353,9 @@ test("workbook uses final attachment quantities with the three manual exceptions
     await workbook.xlsx.readFile(outputPath);
     const quickSheet = workbook.getWorksheet("快速报价单");
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
-    closeTo(quickSheet.getCell("F11").value, 1080, "quick per-cabinet unit total");
-    closeTo(quickSheet.getCell("G11").value, 3240, "quick quote line total");
-    closeTo(quickSheet.getCell("K11").value.result, 1080, "quick per-cabinet cost formula result");
+    closeTo(quickSheet.getCell("F11").value, 1150, "quick per-cabinet unit total with original-price door strip");
+    closeTo(quickSheet.getCell("G11").value, 3450, "quick quote line total with original-price door strip");
+    closeTo(quickSheet.getCell("K11").value.result, 1150, "quick cost formula keeps door strip outside discount");
     closeTo(quickSheet.getCell("L11").value, 1000, "quick per-cabinet cabinet amount");
     closeTo(
       quickSheet.getCell("G11").value,
@@ -365,10 +366,17 @@ test("workbook uses final attachment quantities with the three manual exceptions
     closeTo(quickSheet.getCell(11, headerIndex("侧板")).value, 100, "side-panel manual amount");
     closeTo(quickSheet.getCell(11, headerIndex("KA2206风机")).value, 30, "fan manual amount");
     closeTo(quickSheet.getCell(11, headerIndex("JS、JP后背板改为单开门")).value, 150, "door-transform manual amount");
+    closeTo(quickSheet.getCell(11, headerIndex("门安装条")).value, 20, "door strip original-price amount");
+    closeTo(quickSheet.getCell(11, headerIndex("运费")).value, 150, "quick final freight");
+    assert.match(
+      quickSheet.getCell("K11").value.formula,
+      new RegExp(`${quickSheet.getColumn(headerIndex("运费")).letter}11/3`),
+    );
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 887.4, "formula per-cabinet unit total");
-    closeTo(formulaSheet.getCell("G11").value, 2662.2, "formula quote line total");
+    closeTo(formulaSheet.getCell("F11").value, 957.4, "formula unit keeps door strip outside discount");
+    closeTo(formulaSheet.getCell("G11").value, 2872.2, "formula line keeps door strip outside discount");
+    closeTo(formulaSheet.getCell("AB11").value, 150, "formula final freight");
     [360, 90, 180, 72, 23.4].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
       expected,
@@ -382,14 +390,18 @@ test("workbook uses final attachment quantities with the three manual exceptions
 
     const detailSheet = workbook.getWorksheet("成本明细");
     const quantityByName = new Map();
+    let doorStripNote = "";
     detailSheet.eachRow((row) => {
       const name = row.getCell(5).text;
       if (name) quantityByName.set(name, Number(row.getCell(8).value));
+      if (name === "门安装条") doorStripNote = row.getCell(15).text;
     });
     assert.equal(quantityByName.get("标准安装板"), 3);
     assert.equal(quantityByName.get("侧板"), 2);
     assert.equal(quantityByName.get("KA2206风机"), 1);
     assert.equal(quantityByName.get("JS、JP后背板改为单开门"), 1);
+    assert.equal(quantityByName.get("门安装条"), 3);
+    assert.match(doorStripNote, /不参与公式法或快速报价折扣/);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
@@ -408,6 +420,7 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     item.depth_mm = 600;
     item.height_mm = 600;
     item.quantity = 2;
+    item.freight_fee = 50;
     item.ganged_cabinet_count = 3;
     item.ganged_cabinets = [0, 1, 2].map((index) => ({
       width_mm: 200, depth_mm: 600, height_mm: 600, base_height_mm: 200,
@@ -444,19 +457,21 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     }
     const quickSheet = workbook.getWorksheet("快速报价单");
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
-    closeTo(quickSheet.getCell("F11").value, 2088, "ganged quick equivalent unit total");
-    closeTo(quickSheet.getCell("G11").value, 4176, "ganged quick line total");
+    closeTo(quickSheet.getCell("F11").value, 2138, "ganged quick equivalent unit total with freight");
+    closeTo(quickSheet.getCell("G11").value, 4276, "ganged quick line total with freight");
     closeTo(quickSheet.getCell("L11").value, 4000, "ganged quick cabinet order amount");
-    closeTo(quickSheet.getCell("K11").value.result, 4176, "ganged quick order formula result");
+    closeTo(quickSheet.getCell("K11").value.result, 4276, "ganged quick order formula result with freight");
     closeTo(quickSheet.getCell(11, headerIndex("固定底座100高")).value, 240, "separately matched ganged base amount");
     closeTo(quickSheet.getCell(11, headerIndex("标准安装板")).value, -200, "ganged board amount");
     closeTo(quickSheet.getCell(11, headerIndex("侧板")).value, 200, "ganged side amount");
     closeTo(quickSheet.getCell(11, headerIndex("KA2206风机")).value, 60, "ganged fan amount");
     closeTo(quickSheet.getCell(11, headerIndex("JS、JP后背板改为单开门")).value, 300, "ganged transform amount");
+    closeTo(quickSheet.getCell(11, headerIndex("运费")).value, 100, "ganged freight ignores split count");
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 995.4, "ganged formula equivalent unit total");
-    closeTo(formulaSheet.getCell("G11").value, 1990.8, "ganged formula line total");
+    closeTo(formulaSheet.getCell("F11").value, 1045.4, "ganged formula equivalent unit total with freight");
+    closeTo(formulaSheet.getCell("G11").value, 2090.8, "ganged formula line total with freight");
+    closeTo(formulaSheet.getCell("AB11").value, 100, "ganged formula freight ignores split count");
     [720, 180, 360, 144, 46.8].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
       expected,

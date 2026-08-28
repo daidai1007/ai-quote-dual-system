@@ -48,6 +48,7 @@ from quote_defaults import (
 )
 from quote_remark_rules import replace_door_configuration_phrase
 from quick_discount_rules import (
+    attachment_excluded_from_discount,
     effective_attachment_line_amount,
     quick_attachment_line_amount,
     quick_discount_breakdown,
@@ -113,6 +114,103 @@ FORMULA_MULTI_DOOR_FAMILIES = {"JS", "JP", "JA", "JE"}
 QUOTE_WIDE_BREAKPOINT = 1280
 QUOTE_STACK_BREAKPOINT = 1050
 QUOTE_ACTION_DOCK_HEIGHT = 62
+FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS = 75
+FORMULA_TEMPLATE_MAX_ATTEMPTS = 3
+FORMULA_TEMPLATE_RETRY_DELAYS_MS = (500, 1000)
+
+
+def _formula_template_error_text(error: Exception) -> str:
+    if isinstance(error, urllib.error.HTTPError):
+        try:
+            detail = error.read().decode("utf-8")
+        except Exception:
+            detail = str(error)
+        return detail or f"HTTP {error.code}"
+    return str(error)
+
+
+def _formula_template_error_is_transient(error: Exception) -> bool:
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in (408, 425, 429) or error.code >= 500
+    # ssl.SSLError inherits OSError. URLError also covers DNS, connection and
+    # TLS failures raised by urllib on Windows.
+    return isinstance(error, (urllib.error.URLError, TimeoutError, OSError))
+
+
+def _formula_template_input_signature(window) -> tuple:
+    code_getter = getattr(window, "selected_product_code", None)
+    door_getter = getattr(window, "door_counts", None)
+    width = getattr(window, "width_spin", None)
+    height = getattr(window, "height_spin", None)
+    depth = getattr(window, "depth_spin", None)
+    product_combo = getattr(window, "product_combo", None)
+    doors = door_getter() if callable(door_getter) else (None, None)
+    return (
+        code_getter() if callable(code_getter) else None,
+        product_combo.currentData() if isinstance(product_combo, QComboBox) else None,
+        float(width.value()) if width is not None else None,
+        float(height.value()) if height is not None else None,
+        float(depth.value()) if depth is not None else None,
+        tuple(doors) if isinstance(doors, (tuple, list)) else doors,
+    )
+
+
+class _FormulaTemplateWorker(QThread):
+    """Load one formula template with bounded retries for Render cold starts."""
+
+    succeeded = Signal(dict)
+    failed = Signal(str)
+    retrying = Signal(int, int, str)
+
+    def __init__(self, url: str, product_code: str, headers_factory, parent=None):
+        super().__init__(parent)
+        self.url = str(url)
+        self.product_code = str(product_code)
+        self.headers_factory = headers_factory
+        self.attempt_count = 0
+
+    def run(self) -> None:
+        for attempt in range(1, FORMULA_TEMPLATE_MAX_ATTEMPTS + 1):
+            self.attempt_count = attempt
+            try:
+                body = json.dumps(
+                    {"product_code": self.product_code}, ensure_ascii=False
+                ).encode("utf-8")
+                headers = (
+                    self.headers_factory(True)
+                    if callable(self.headers_factory)
+                    else {"Content-Type": "application/json; charset=utf-8"}
+                )
+                request = urllib.request.Request(
+                    self.url,
+                    data=body,
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(
+                    request, timeout=FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS
+                ) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise RuntimeError("公式模板接口返回了无效数据")
+                self.succeeded.emit(payload)
+                return
+            except Exception as error:
+                message = _formula_template_error_text(error)
+                if (
+                    attempt < FORMULA_TEMPLATE_MAX_ATTEMPTS
+                    and _formula_template_error_is_transient(error)
+                ):
+                    self.retrying.emit(
+                        attempt + 1, FORMULA_TEMPLATE_MAX_ATTEMPTS, message
+                    )
+                    delay_index = min(
+                        attempt - 1, len(FORMULA_TEMPLATE_RETRY_DELAYS_MS) - 1
+                    )
+                    self.msleep(FORMULA_TEMPLATE_RETRY_DELAYS_MS[delay_index])
+                    continue
+                self.failed.emit(message)
+                return
 
 
 class _GangedQuoteWorker(QThread):
@@ -250,6 +348,7 @@ class _GangedFormulaTemplateWorker(QThread):
 
     succeeded = Signal(list)
     failed = Signal(str)
+    retrying = Signal(str, int, int, str)
 
     def __init__(self, base_url: str, product_codes: list[str], headers_factory, parent=None):
         super().__init__(parent)
@@ -261,22 +360,47 @@ class _GangedFormulaTemplateWorker(QThread):
         try:
             templates = []
             for product_code in self.product_codes:
-                body = json.dumps(
-                    {"product_code": product_code}, ensure_ascii=False
-                ).encode("utf-8")
-                headers = (
-                    self.headers_factory(True)
-                    if callable(self.headers_factory)
-                    else {"Content-Type": "application/json; charset=utf-8"}
-                )
-                request = urllib.request.Request(
-                    self.base_url + "/api/quotes/formula-template",
-                    data=body,
-                    headers=headers,
-                    method="POST",
-                )
-                with urllib.request.urlopen(request, timeout=30) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
+                payload = None
+                for attempt in range(1, FORMULA_TEMPLATE_MAX_ATTEMPTS + 1):
+                    try:
+                        body = json.dumps(
+                            {"product_code": product_code}, ensure_ascii=False
+                        ).encode("utf-8")
+                        headers = (
+                            self.headers_factory(True)
+                            if callable(self.headers_factory)
+                            else {"Content-Type": "application/json; charset=utf-8"}
+                        )
+                        request = urllib.request.Request(
+                            self.base_url + "/api/quotes/formula-template",
+                            data=body,
+                            headers=headers,
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(
+                            request,
+                            timeout=FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS,
+                        ) as response:
+                            payload = json.loads(response.read().decode("utf-8"))
+                        break
+                    except Exception as error:
+                        if (
+                            attempt < FORMULA_TEMPLATE_MAX_ATTEMPTS
+                            and _formula_template_error_is_transient(error)
+                        ):
+                            self.retrying.emit(
+                                product_code,
+                                attempt + 1,
+                                FORMULA_TEMPLATE_MAX_ATTEMPTS,
+                                _formula_template_error_text(error),
+                            )
+                            delay_index = min(
+                                attempt - 1,
+                                len(FORMULA_TEMPLATE_RETRY_DELAYS_MS) - 1,
+                            )
+                            self.msleep(FORMULA_TEMPLATE_RETRY_DELAYS_MS[delay_index])
+                            continue
+                        raise
                 template = payload.get("template") if isinstance(payload, dict) else None
                 if not isinstance(template, dict):
                     raise RuntimeError(f"{product_code} 的公式模板返回无效数据")
@@ -380,8 +504,8 @@ def _install_formula_cell_reference_guard(namespace: dict) -> None:
     calculator.DETAIL_ROWS.update({
         "JS_SINGLE": (5, 25, 28, 28, 1),
         "JS_DOUBLE": (5, 25, 28, 28, 1),
-        "JP_SINGLE": (5, 26, 29, 29, 1),
-        "JP_DOUBLE": (5, 26, 29, 29, 1),
+        "JP_SINGLE": (5, 43, 29, 3, 2),
+        "JP_DOUBLE": (5, 43, 29, 3, 2),
         "JA_SINGLE": (5, 25, 28, 28, 2),
         "JE_SINGLE": (5, 25, 28, 28, 2),
         "JE_DOUBLE": (5, 25, 28, 28, 2),
@@ -417,9 +541,24 @@ def _install_formula_cell_reference_guard(namespace: dict) -> None:
                 r"(?P<right_op>>=|<=|>|<)\s*(?P<right>\d+(?:\.\d+)?)"
             )
             for ref, formula in list(formulas.items()):
+                formula = str(formula).replace(
+                    "$B$9+($B$9/$B$15-1)*$B$15",
+                    "2*$B$9-$B$15",
+                ).replace(
+                    "($B$9/$B$15-1)*$B$15",
+                    "($B$9-$B$15)",
+                )
+                if code.startswith("JP_"):
+                    # JP workbook rows 35-43 read dimensions through the
+                    # alias cells B36:B38.  The recovered runtime does not
+                    # populate those aliases, so bind them to the canonical
+                    # width/height/depth inputs before evaluation.
+                    formula = formula.replace("$B$36", "$B$6")
+                    formula = formula.replace("$B$37", "$B$7")
+                    formula = formula.replace("$B$38", "$B$8")
                 formulas[ref] = chained_comparison.sub(
                     r"\g<left>\g<left_op>(\g<middle>\g<right_op>\g<right>)",
-                    str(formula),
+                    formula,
                 )
             for rule in template.get("rules") or []:
                 raw = rule.get("raw_rule") or {}
@@ -1119,16 +1258,33 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
     if attachment_fee is None:
         attachment_fee = listed
     base = (_safe_float(quote.get("total_cost")) or 0.0) - attachment_fee
-    effective = sum(
+    original_price_attachment_total = sum(
         effective_attachment_line_amount(row, cabinets, split_count)
         for row in attachments
+        if attachment_excluded_from_discount(row)
     )
-    effective += (attachment_fee - listed) * cabinets
-    line_total = (base * cabinets + effective) * discount
+    discounted_attachment_total = sum(
+        effective_attachment_line_amount(row, cabinets, split_count)
+        for row in attachments
+        if not attachment_excluded_from_discount(row)
+    )
+    discounted_attachment_total += (attachment_fee - listed) * cabinets
+    effective = discounted_attachment_total + original_price_attachment_total
+    freight_fee = max(
+        0.0,
+        _safe_float(item.get("freight_fee", item.get("freight"))) or 0.0,
+    )
+    freight_total = freight_fee * cabinets
+    line_total = (base * cabinets + discounted_attachment_total) * discount \
+        + original_price_attachment_total + freight_total
     return {
         "cabinet_quantity": cabinets,
         "ganged_cabinet_count": split_count,
         "attachment_total": effective,
+        "discounted_attachment_total": discounted_attachment_total,
+        "original_price_attachment_total": original_price_attachment_total,
+        "freight_fee": freight_fee,
+        "freight_total": freight_total,
         "line_total": line_total,
         "equivalent_unit_total": line_total / cabinets if cabinets else line_total,
     }
@@ -1652,6 +1808,14 @@ def _start_ganged_formula_template_preparation(
     def templates_failed(message):
         outcome["error"] = _ganged_error_text(message)
 
+    def templates_retrying(product_code, attempt, total, message):
+        del message
+        _set_ganged_calculation_state(
+            window,
+            f"{product_code} 公式模板连接超时，正在自动重试 {attempt}/{total}…",
+            "loading",
+        )
+
     def preparation_finished():
         templates = outcome["templates"]
         error = outcome["error"]
@@ -1712,6 +1876,7 @@ def _start_ganged_formula_template_preparation(
 
     worker.succeeded.connect(templates_loaded)
     worker.failed.connect(templates_failed)
+    worker.retrying.connect(templates_retrying)
     worker.finished.connect(preparation_finished)
     worker.start()
     return True
@@ -2469,7 +2634,14 @@ def _refresh_quote_page(window) -> None:
 
     attachment_list = getattr(window, "attachment_list", None)
     if attachment_list is not None:
-        attachment_list.setMaximumHeight(84)
+        attachment_list.setObjectName("attachmentDetailList")
+        attachment_list.setMinimumHeight(104)
+        attachment_list.setMaximumHeight(132)
+        if not getattr(attachment_list, "_detail_font_enlarged", False):
+            font = attachment_list.font()
+            font.setPointSize(max(12, font.pointSize() + 2))
+            attachment_list.setFont(font)
+            attachment_list._detail_font_enlarged = True
 
     _ensure_quote_action_dock(window)
     _apply_quote_responsive_layout(window, force=True)
@@ -2508,6 +2680,103 @@ def _refresh_summary_page(window) -> None:
 
     _ensure_summary_empty_action(window, list_card)
     _sync_summary_action_state(window)
+
+
+def _ensure_freight_field(window) -> None:
+    """Add the runtime-core freight input and result rows exactly once."""
+
+    freight = getattr(window, "freight_spin", None)
+    if not isinstance(freight, QDoubleSpinBox):
+        freight = QDoubleSpinBox()
+        freight.setObjectName("freightFeeSpin")
+        freight.setRange(0, 999999999)
+        freight.setDecimals(2)
+        freight.setSingleStep(10)
+        freight.setSuffix(" 元")
+        freight.setValue(0)
+        freight.setToolTip(
+            "填写每台柜体或每套并柜的运费；最终运费＝运费×柜型数量，且不参与折扣"
+        )
+        freight.setAccessibleName("运费")
+        window.freight_spin = freight
+
+        quantity = getattr(window, "quantity_spin", None)
+        parent = quantity.parentWidget() if isinstance(quantity, QWidget) else None
+        layout = parent.layout() if parent is not None else None
+        if isinstance(layout, QGridLayout):
+            row = layout.rowCount()
+            label = QLabel("运费", parent)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            layout.addWidget(label, row, 0)
+            layout.addWidget(freight, row, 1, 1, max(1, layout.columnCount() - 1))
+            window.freight_label = label
+        elif isinstance(layout, QFormLayout):
+            layout.addRow("运费", freight)
+        elif layout is not None:
+            row_widget = QWidget(parent)
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.addWidget(QLabel("运费", row_widget))
+            row_layout.addWidget(freight, 1)
+            layout.addWidget(row_widget)
+
+    freight.setObjectName("freightFeeSpin")
+    freight.setMinimumWidth(116)
+    if not getattr(freight, "_quote_refresh_connected", False):
+        freight.valueChanged.connect(lambda _value: window.refresh_discounted_totals())
+        freight._quote_refresh_connected = True
+
+    for card_name, labels_name in (
+        ("formulaCard", "formula_labels"),
+        ("quickCard", "quick_labels"),
+    ):
+        labels = getattr(window, labels_name, None)
+        if not isinstance(labels, dict) or "freight" in labels:
+            continue
+        total = labels.get("total")
+        card = total.parentWidget() if isinstance(total, QWidget) else None
+        layout = None
+        cursor = card
+        while cursor is not None and layout is None:
+            candidate = cursor.layout()
+            if candidate is not None and candidate.indexOf(total) >= 0:
+                layout = candidate
+                card = cursor
+                break
+            cursor = cursor.parentWidget()
+        if layout is None and isinstance(total, QWidget):
+            for candidate in [
+                *window.findChildren(QFormLayout),
+                *window.findChildren(QGridLayout),
+            ]:
+                if candidate.indexOf(total) >= 0:
+                    layout = candidate
+                    card = total.parentWidget()
+                    break
+        if layout is None:
+            continue
+        value = QLabel("—", card)
+        value.setObjectName(f"new_{card_name}_freight")
+        if isinstance(layout, QFormLayout):
+            row = layout.rowCount()
+            if isinstance(total, QWidget):
+                total_row, _role = layout.getWidgetPosition(total)
+                if total_row >= 0:
+                    row = total_row
+            layout.insertRow(row, "运费", value)
+        elif isinstance(layout, QGridLayout):
+            row = layout.rowCount()
+            caption = QLabel("运费", card)
+            layout.addWidget(caption, row, 0)
+            layout.addWidget(value, row, 1)
+        else:
+            row_widget = QWidget(card)
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.addWidget(QLabel("运费", row_widget))
+            row_layout.addWidget(value, 1)
+            layout.addWidget(row_widget)
+        labels["freight"] = value
 
 
 def _ensure_labor_multiplier_field(window) -> None:
@@ -2796,6 +3065,7 @@ def apply_layout_refresh(window) -> None:
     _refresh_recognition_page(window)
     _refresh_quote_page(window)
     _ensure_labor_multiplier_field(window)
+    _ensure_freight_field(window)
     _refresh_summary_page(window)
     _configure_action_copy(window)
     window.setStyleSheet(window.styleSheet() + INDUSTRIAL_WORKBENCH_STYLE)
@@ -2899,14 +3169,22 @@ def _refresh_quick_discount_total(window, money) -> None:
     if not isinstance(quick, dict) or not isinstance(labels, dict) or "total" not in labels:
         return
     discount = _safe_float(getattr(discount_widget, "value", lambda: 1.0)())
+    freight_widget = getattr(window, "freight_spin", None)
+    freight_fee = max(
+        0.0,
+        _safe_float(getattr(freight_widget, "value", lambda: 0.0)()) or 0.0,
+    )
     amount = quick_order_line_breakdown(
         quick,
         getattr(window, "attachments", []),
         1.0 if discount is None else discount,
         1,
         _ganged_count(window),
+        freight_fee,
     )["line_total"]
     labels["total"].setText(money(amount))
+    if "freight" in labels:
+        labels["freight"].setText(money(freight_fee))
     if "attachment" in labels:
         attachment_total = sum(
             effective_attachment_line_amount(item, 1, _ganged_count(window))
@@ -2943,6 +3221,9 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
                 None,
             ) or _current_product_selection(self)
             result = original_reset(self, *args, **kwargs)
+            freight_widget = getattr(self, "freight_spin", None)
+            if isinstance(freight_widget, QDoubleSpinBox):
+                freight_widget.setValue(0)
             _restore_product_selection(self, retained_product)
             self._formula_base_result = None
             self.attachment_default_opt_outs = set()
@@ -3001,20 +3282,26 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
         area_value = _safe_float(rendered.get("product_area_m2"))
         if area_value is not None and "area" in labels:
             labels["area"].setText(f"{area_value:,.1f} m²")
-        if _ganged_count(self) > 1:
-            discount_widget = getattr(self, "formula_discount", None)
-            formula_discount = discount_widget.value() if discount_widget is not None else 1.0
-            formula_line = _formula_order_line_breakdown({
-                "formula": rendered,
-                "attachments": getattr(self, "attachments", []),
-                "quantity": 1,
-                "formula_discount": formula_discount,
-                "ganged_cabinet_count": _ganged_count(self),
-            })
-            if "total" in labels:
-                labels["total"].setText(money(formula_line["line_total"]))
-            if "attachment" in labels:
-                labels["attachment"].setText(money(formula_line["attachment_total"]))
+        discount_widget = getattr(self, "formula_discount", None)
+        formula_discount = discount_widget.value() if discount_widget is not None else 1.0
+        formula_line = _formula_order_line_breakdown({
+            "formula": rendered,
+            "attachments": getattr(self, "attachments", []),
+            "quantity": 1,
+            "formula_discount": formula_discount,
+            "ganged_cabinet_count": _ganged_count(self),
+            "freight_fee": getattr(
+                getattr(self, "freight_spin", None),
+                "value",
+                lambda: 0.0,
+            )(),
+        })
+        if "total" in labels:
+            labels["total"].setText(money(formula_line["line_total"]))
+        if "attachment" in labels:
+            labels["attachment"].setText(money(formula_line["attachment_total"]))
+        if "freight" in labels:
+            labels["freight"].setText(money(formula_line["freight_fee"]))
         _refresh_quick_discount_total(self, money)
 
     main_window.refresh_discounted_totals = refresh_discounted_totals_with_labor
@@ -3034,6 +3321,11 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             )
             multiplier_widget = getattr(self, "labor_multiplier", None)
             multiplier = _safe_float(getattr(multiplier_widget, "value", lambda: 1.0)()) or 1.0
+            freight_widget = getattr(self, "freight_spin", None)
+            freight_fee = max(
+                0.0,
+                _safe_float(getattr(freight_widget, "value", lambda: 0.0)()) or 0.0,
+            )
             before = len(getattr(self, "draft_items", []))
             result = original_add(self)
             items = getattr(self, "draft_items", [])
@@ -3042,6 +3334,7 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
                 if isinstance(base, dict):
                     item["formula_base"] = dict(base)
                 item["labor_multiplier"] = multiplier
+                item["freight_fee"] = freight_fee
                 item["attachment_default_opt_outs"] = sorted(default_opt_outs)
                 item["attachment_default_quantity_overrides"] = sorted(
                     quantity_overrides
@@ -3086,6 +3379,9 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
                 "attachment_door_transform_context"
             ) if isinstance(item, dict) else None
             result = original_load(self, item)
+            freight_widget = getattr(self, "freight_spin", None)
+            if isinstance(freight_widget, QDoubleSpinBox):
+                freight_widget.setValue(float(item.get("freight_fee", item.get("freight", 0)) or 0))
             if len(restored_ganged_rows) > 1:
                 self.ganged_cabinets = restored_ganged_rows
                 self.ganged_cabinet_count = len(restored_ganged_rows)
@@ -3144,6 +3440,23 @@ def _show_add_attachment_dialog(owner, namespace: dict) -> None:
 
     form = QFormLayout()
     form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    selected_category_path = [
+        str(value).strip()
+        for value in list(getattr(owner, "category_selection", []) or [])[:3]
+    ]
+    category_level1 = QLineEdit(
+        selected_category_path[0] if selected_category_path else "其他附件",
+        editor,
+    )
+    category_level1.setPlaceholderText("必填，如：安装板")
+    category_level2 = QLineEdit(
+        selected_category_path[1] if len(selected_category_path) > 1 else "",
+        editor,
+    )
+    category_level3 = QLineEdit(
+        selected_category_path[2] if len(selected_category_path) > 2 else "",
+        editor,
+    )
     name = QLineEdit(editor)
     name.setPlaceholderText("必填")
     model = QLineEdit(editor)
@@ -3159,6 +3472,9 @@ def _show_add_attachment_dialog(owner, namespace: dict) -> None:
     source = QLineEdit("人工新增", editor)
     notes = QLineEdit(editor)
     for caption, field in (
+        ("一级分类 *", category_level1),
+        ("二级分类（可选）", category_level2),
+        ("三级分类（可选）", category_level3),
         ("附件名称 *", name),
         ("型号（可选）", model),
         ("变体（可选）", variant),
@@ -3183,12 +3499,21 @@ def _show_add_attachment_dialog(owner, namespace: dict) -> None:
     root.addWidget(buttons)
 
     def submit():
+        category = category_level1.text().strip()
+        if not category:
+            category_level1.setFocus()
+            QMessageBox.warning(editor, "信息不完整", "请输入附件一级分类。")
+            return
         item_name = name.text().strip()
         if not item_name:
             name.setFocus()
             QMessageBox.warning(editor, "信息不完整", "请输入附件名称。")
             return
         payload = {
+            "attachment_category": category,
+            "category_level1": category,
+            "category_level2": category_level2.text().strip() or None,
+            "category_level3": category_level3.text().strip() or None,
             "item_name": item_name,
             "model_code": model.text().strip() or None,
             "variant": variant.text().strip() or None,
@@ -3274,6 +3599,61 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     original_table_item_changed = dialog_class.table_item_changed
     original_accept_selection = dialog_class.accept_selection
     original_collect_attachments = dialog_class.collect_attachments
+
+    def ensure_selection_status_bar(self) -> None:
+        """Keep the blue selection summary inside its own white footer row."""
+
+        hint = getattr(self, "selection_hint", None)
+        layout = self.layout()
+        if not isinstance(hint, QLabel) or layout is None:
+            return
+
+        status = getattr(self, "selection_status_frame", None)
+        if not isinstance(status, QFrame):
+            hint_index = layout.indexOf(hint)
+            if hint_index < 0:
+                hint_index = max(0, layout.count() - 1)
+            layout.removeWidget(hint)
+            status = QFrame(self)
+            status.setObjectName("attachmentSelectionStatusBar")
+            status_layout = QHBoxLayout(status)
+            status_layout.setContentsMargins(10, 5, 10, 5)
+            status_layout.addWidget(hint)
+            if hasattr(layout, "insertWidget"):
+                layout.insertWidget(hint_index, status)
+            else:
+                layout.addWidget(status)
+            self.selection_status_frame = status
+        elif hint.parentWidget() is not status:
+            current_layout = hint.parentWidget().layout() if hint.parentWidget() else None
+            if current_layout is not None:
+                current_layout.removeWidget(hint)
+            status_layout = status.layout()
+            if status_layout is None:
+                status_layout = QHBoxLayout(status)
+                status_layout.setContentsMargins(10, 5, 10, 5)
+            status_layout.addWidget(hint)
+
+        status.setMinimumHeight(38)
+        status.setMaximumHeight(44)
+        status.setStyleSheet(
+            "QFrame#attachmentSelectionStatusBar {"
+            "background:#ffffff;border:1px solid #d7e1ea;border-radius:6px;}"
+        )
+        hint.setObjectName("attachmentSelectionHint")
+        hint.setStyleSheet(
+            "QLabel#attachmentSelectionHint {font-weight:600;color:#174a73;"
+            "background:transparent;border:0;}"
+        )
+        hint.setWordWrap(False)
+
+        table = getattr(self, "table", None)
+        if isinstance(table, QTableWidget):
+            table.setMinimumHeight(0)
+            table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            table_index = layout.indexOf(table)
+            if table_index >= 0 and hasattr(layout, "setStretch"):
+                layout.setStretch(table_index, 1)
 
     category_rules = {
         "底座": DEFAULT_FIXED_BASE,
@@ -4231,6 +4611,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             button.clicked.connect(lambda _checked=False, value=option["value"]: open_attachment_category(self, value))
 
             text, object_name, tooltip, rule, enabled = default_card_state(self, option)
+            manual_items = manual_selections_for_category(
+                self, str(option.get("value") or "")
+            )
+            show_quick_button = not (
+                object_name == "attachmentQuickMatchManual" and manual_items
+            )
             quick_button = QPushButton(text, card)
             quick_button.setObjectName(object_name)
             quick_button.setAccessibleName(f"{option['label']}，{text.replace(chr(10), '，')}")
@@ -4238,6 +4624,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             quick_button.setEnabled(enabled)
             quick_button.setMinimumHeight(54 if text.count("\n") == 1 else 70)
             quick_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            quick_button.setVisible(show_quick_button)
             if rule is not None and enabled:
                 quick_button.clicked.connect(lambda _checked=False, value=rule: toggle_default_selection(self, value))
             card_layout.addWidget(button)
@@ -4245,7 +4632,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 quick_row = QHBoxLayout()
                 quick_row.setContentsMargins(0, 0, 8, 0)
                 quick_row.setSpacing(6)
-                quick_row.addWidget(quick_button, 1)
+                if show_quick_button:
+                    quick_row.addWidget(quick_button, 1)
+                else:
+                    quick_row.addStretch(1)
                 sign = installation_board_price_sign(self)
                 sign_button = QPushButton("−" if sign < 0 else "+", card)
                 sign_button.setObjectName(
@@ -4260,11 +4650,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 sign_button.clicked.connect(lambda: toggle_installation_board_sign(self))
                 quick_row.addWidget(sign_button, 0, Qt.AlignmentFlag.AlignVCenter)
                 card_layout.addLayout(quick_row)
-            else:
+            elif show_quick_button:
                 card_layout.addWidget(quick_button)
-            for manual_item in manual_selections_for_category(
-                self, str(option.get("value") or "")
-            ):
+            for manual_item in manual_items:
                 manual_button = QPushButton(
                     manual_selection_card_text(self, manual_item), card
                 )
@@ -4736,6 +5124,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         # Keep the category browser and table columns at their approved layout;
         # overflowing catalogue content is handled by the existing scroll areas.
         self.setFixedSize(900, 680)
+        ensure_selection_status_bar(self)
         self.category_selection = []
         parent = self.parentWidget()
         self.default_selection_opt_outs = set(getattr(parent, "attachment_default_opt_outs", set()))
@@ -4898,7 +5287,9 @@ def install_layout_refresh(namespace: dict) -> None:
     original_product_changed = getattr(main_window, "product_changed", None)
     original_door_counts_changed = getattr(main_window, "door_counts_changed", None)
     original_product_catalog_loaded = getattr(main_window, "product_catalog_loaded", None)
+    original_refresh_formula_inputs = getattr(main_window, "refresh_formula_inputs", None)
     original_formula_template_loaded = getattr(main_window, "formula_template_loaded", None)
+    original_formula_template_failed = getattr(main_window, "formula_template_failed", None)
     original_update_quote_readiness = getattr(main_window, "update_quote_readiness", None)
 
     def build_ui_with_refresh(self):
@@ -4928,6 +5319,7 @@ def install_layout_refresh(namespace: dict) -> None:
             "_persistent_product_selection",
             None,
         )
+        self._pending_formula_calculation = False
         product_combo = getattr(self, "product_combo", None)
         if isinstance(product_combo, QComboBox):
             def remember_manual_product_selection(_index):
@@ -5012,6 +5404,7 @@ def install_layout_refresh(namespace: dict) -> None:
                 item.get("quick", {}), item.get("attachments", []),
                 item.get("quick_discount", 1), quantity,
                 ganged_split_count(item),
+                item.get("freight_fee", item.get("freight", 0)),
             )
             formula_sum += formula_line["line_total"]
             quick_sum += quick_line["line_total"]
@@ -5105,9 +5498,15 @@ def install_layout_refresh(namespace: dict) -> None:
     if callable(original_quote_input_signature):
         def quote_input_signature_with_ganged_rows(self):
             base = original_quote_input_signature(self)
+            base_tuple = tuple(base) if isinstance(base, (tuple, list)) else (base,)
+            freight_widget = getattr(self, "freight_spin", None)
+            freight_value = _safe_float(
+                getattr(freight_widget, "value", lambda: 0.0)()
+            ) or 0.0
+            base_with_freight = base_tuple + (("freight", freight_value),)
             rows = _ganged_rows(self)
             if len(rows) <= 1:
-                return base
+                return base_with_freight
             normalized_rows = tuple(
                 (
                     float(row.get("width_mm") or 0),
@@ -5119,8 +5518,7 @@ def install_layout_refresh(namespace: dict) -> None:
                 )
                 for row in rows
             )
-            base_tuple = tuple(base) if isinstance(base, (tuple, list)) else (base,)
-            return base_tuple + ((
+            return base_with_freight + ((
                 "ganged",
                 str(getattr(self, "ganged_cabinet_specification", "") or ""),
                 normalized_rows,
@@ -5223,9 +5621,166 @@ def install_layout_refresh(namespace: dict) -> None:
             _sync_door_transform_defaults(self)
             return result
         main_window.door_counts_changed = door_counts_changed_with_product_rules
+    if callable(original_refresh_formula_inputs):
+        def refresh_formula_inputs_with_retry(self):
+            code = self.selected_product_code()
+            entry = self.product_catalog.get(self.product_combo.currentData() or "", {})
+            if not code or entry.get("method") != "formula":
+                self.weight_edit.clear()
+                self.area_edit.clear()
+                self._pending_formula_calculation = False
+                return None
+
+            self.weight_edit.clear()
+            self.area_edit.clear()
+            self.template_serial += 1
+            serial = self.template_serial
+            request_signature = _formula_template_input_signature(self)
+            worker = _FormulaTemplateWorker(
+                self.base_url() + "/api/quotes/formula-template",
+                code,
+                namespace.get("api_headers"),
+                self,
+            )
+            self.template_worker = worker
+            calculate_button = getattr(self, "calculate_button", None)
+            if isinstance(calculate_button, QPushButton):
+                idle_text = str(
+                    calculate_button.property("formulaIdleText")
+                    or calculate_button.text()
+                    or "计算双报价"
+                )
+                if idle_text.startswith("正在读取"):
+                    idle_text = "计算双报价"
+                calculate_button.setProperty("formulaIdleText", idle_text)
+                calculate_button.setText("正在读取公式模板…")
+                calculate_button.setEnabled(False)
+
+            outcome = {"loaded": False, "error": None}
+
+            def template_loaded(result):
+                if serial != self.template_serial:
+                    return
+                self.formula_template_loaded(result, serial, code)
+                outcome["loaded"] = bool(
+                    self.weight_edit.text().strip() and self.area_edit.text().strip()
+                )
+                if not outcome["loaded"]:
+                    outcome["error"] = "公式模板未生成有效的材料重量和喷涂面积"
+
+            def template_failed(message):
+                if serial != self.template_serial:
+                    return
+                outcome["error"] = _ganged_error_text(message)
+                if callable(original_formula_template_failed):
+                    original_formula_template_failed(self, message, serial)
+
+            def template_retrying(attempt, total, message):
+                del message
+                if serial != self.template_serial:
+                    return
+                text = f"公式模板连接超时，正在自动重试 {attempt}/{total}…"
+                risk = getattr(self, "risk_label", None)
+                if isinstance(risk, QLabel):
+                    risk.setStyleSheet("color:#b45309;")
+                    risk.setText(text)
+                _set_ganged_calculation_state(self, text, "loading")
+
+            def template_finished():
+                if serial != self.template_serial:
+                    worker.deleteLater()
+                    return
+                if getattr(self, "template_worker", None) is worker:
+                    self.template_worker = None
+                button = getattr(self, "calculate_button", None)
+                if isinstance(button, QPushButton):
+                    button.setText(
+                        str(button.property("formulaIdleText") or "计算双报价")
+                    )
+                worker.deleteLater()
+
+                if outcome["error"] is not None or not outcome["loaded"]:
+                    self._pending_formula_calculation = False
+                    rendered = (
+                        (
+                            f"公式模板读取失败（已自动尝试 {worker.attempt_count} 次）："
+                            if worker.attempt_count > 1
+                            else "公式模板读取失败："
+                        )
+                        + str(outcome["error"] or "报价服务未返回模板数据")
+                    )
+                    risk = getattr(self, "risk_label", None)
+                    if isinstance(risk, QLabel):
+                        risk.setStyleSheet("color:#b91c1c;")
+                        risk.setText(rendered)
+                    _set_ganged_calculation_state(self, rendered, "error")
+                    if isinstance(button, QPushButton):
+                        button.setEnabled(True)
+                    return
+
+                if request_signature != _formula_template_input_signature(self):
+                    self._pending_formula_calculation = False
+                    _set_ganged_calculation_state(
+                        self, "报价输入已变化，请重新计算双报价。", "warning"
+                    )
+                    if isinstance(button, QPushButton):
+                        button.setEnabled(True)
+                    return
+
+                pending = bool(getattr(self, "_pending_formula_calculation", False))
+                self._pending_formula_calculation = False
+                if pending:
+                    _set_ganged_calculation_state(
+                        self, "公式模板读取完成，正在继续计算双报价…", "loading"
+                    )
+                    QTimer.singleShot(0, lambda: self.calculate())
+                    return
+                readiness = getattr(self, "update_quote_readiness", None)
+                if callable(readiness):
+                    readiness()
+                elif isinstance(button, QPushButton):
+                    button.setEnabled(True)
+
+            worker.succeeded.connect(template_loaded)
+            worker.failed.connect(template_failed)
+            worker.retrying.connect(template_retrying)
+            worker.finished.connect(template_finished)
+            worker.start()
+            return None
+
+        main_window.refresh_formula_inputs = refresh_formula_inputs_with_retry
     if callable(original_calculate):
         def calculate_with_ganged_cabinets(self):
             if _start_ganged_calculation(self, namespace.get("api_headers")):
+                return None
+            code = self.selected_product_code()
+            entry = self.product_catalog.get(self.product_combo.currentData() or "", {})
+            if (
+                code
+                and entry.get("method") == "formula"
+                and (
+                    not self.weight_edit.text().strip()
+                    or not self.area_edit.text().strip()
+                )
+            ):
+                self._pending_formula_calculation = True
+                running = getattr(self, "template_worker", None)
+                is_running = False
+                if running is not None:
+                    try:
+                        is_running = running.isRunning()
+                    except RuntimeError:
+                        self.template_worker = None
+                if not is_running:
+                    self.refresh_formula_inputs()
+                button = getattr(self, "calculate_button", None)
+                if isinstance(button, QPushButton):
+                    button.setEnabled(False)
+                _set_ganged_calculation_state(
+                    self,
+                    "正在读取公式模板，读取完成后将自动继续计算…",
+                    "loading",
+                )
                 return None
             return original_calculate(self)
         main_window.calculate = calculate_with_ganged_cabinets

@@ -42,6 +42,11 @@ export function quickDiscountCategory(item = {}) {
   return null;
 }
 
+/** Attachments that remain at original price in both quotation methods. */
+export function attachmentExcludedFromDiscount(item = {}) {
+  return categoryCandidates(item).some((value) => value === "门安装条");
+}
+
 export function quickAttachmentLineAmount(item = {}) {
   const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
   for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
@@ -132,7 +137,7 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
 /** Compute one complete quote-line total with attachment quantity exceptions. */
 export function quickOrderLineBreakdown({
   quote = {}, attachments = [], discount = 1, cabinetQuantity = 1,
-  gangedCabinetCount = 1,
+  gangedCabinetCount = 1, freightFee = 0,
 } = {}) {
   const unit = quickDiscountBreakdown({ quote, attachments, discount });
   const cabinets = asFiniteNumber(cabinetQuantity, 1);
@@ -151,8 +156,10 @@ export function quickOrderLineBreakdown({
   const originalPriceAttachmentTotal = listedOriginalTotal
     + unlistedDifference * cabinets;
   const factor = asFiniteNumber(discount, 1);
+  const unitFreight = Math.max(0, asFiniteNumber(freightFee, 0));
+  const freightTotal = unitFreight * cabinets;
   const lineTotal = (unit.basePrice * cabinets + eligibleAttachmentTotal) * factor
-    + originalPriceAttachmentTotal;
+    + originalPriceAttachmentTotal + freightTotal;
   return {
     ...unit,
     cabinetQuantity: cabinets,
@@ -160,6 +167,8 @@ export function quickOrderLineBreakdown({
     eligibleAttachmentTotal,
     originalPriceAttachmentTotal,
     unlistedDifference,
+    freightFee: unitFreight,
+    freightTotal,
     lineTotal,
     equivalentUnitTotal: cabinets ? lineTotal / cabinets : lineTotal,
   };

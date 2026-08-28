@@ -13,6 +13,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "database" / "migrations" / "sync_unified_door_formula_templates.sql"
 COMPLETION_SQL_PATH = ROOT / "database" / "migrations" / "complete_formula_shared_cells_from_workbooks.sql"
+JP_FRAME_SQL_PATH = ROOT / "database" / "migrations" / "extend_jp_frame_formula_template.sql"
 DOORS = ((1, 0), (0, 1), (0, 2), (2, 0), (1, 1))
 
 
@@ -79,6 +80,26 @@ for code, patches in completion_patches.items():
         assert old_formula in ("", patch["formula"]), (code, patch["cell"], old_formula)
         formulas[patch["formula_index"]] = patch["formula"]
 
+# The authoritative JP worksheet has a second material block at rows 35-43.
+# It is intentionally delivered as a follow-up migration so already-deployed
+# databases can acquire the missing rules without replaying the original sync.
+jp_frame_sql = JP_FRAME_SQL_PATH.read_text(encoding="utf-8")
+jp_frame_pattern = re.compile(
+    r"\((?P<row>3[5-9]|4[0-3]),\s*convert_from\(decode\('(?P<hex>[0-9a-f]+)', 'hex'\), 'UTF8'\)::jsonb\)"
+)
+jp_frame_rules = [
+    {
+        "source_row_no": int(match.group("row")),
+        "raw_rule": decoded_json(match.group("hex")),
+        "include_material_cost": True,
+        "include_spray_area": True,
+    }
+    for match in jp_frame_pattern.finditer(jp_frame_sql)
+]
+assert [row["source_row_no"] for row in jp_frame_rules] == list(range(35, 44))
+for code in ("JP_SINGLE", "JP_DOUBLE"):
+    rules[code].extend(json.loads(json.dumps(jp_frame_rules, ensure_ascii=False)))
+
 expected_codes = {
     "JS_SINGLE", "JS_DOUBLE", "JP_SINGLE", "JP_DOUBLE",
     "JA_SINGLE", "JE_SINGLE", "JE_DOUBLE",
@@ -100,6 +121,10 @@ calculator_module = ast.fix_missing_locations(ast.Module(body=[calculator_node],
 calculator_namespace = {"math": math, "re": re}
 exec(compile(calculator_module, "FormulaDatabaseCalculator", "exec"), calculator_namespace)
 calculator = calculator_namespace["FormulaDatabaseCalculator"]()
+unsafe_jp_formula = "=IF(TRUE,($B$9/$B$15-1)*$B$15,0)"
+rewritten_jp_formula = calculator._rewrite_eager_if_branches(unsafe_jp_formula)
+assert "$B$9/$B$15" not in rewritten_jp_formula, rewritten_jp_formula
+assert "($B$9-$B$15)" in rewritten_jp_formula, rewritten_jp_formula
 display_module = ast.fix_missing_locations(ast.Module(body=[display_node], type_ignores=[]))
 display_namespace = {}
 exec(compile(display_module, "formula_display_number", "exec"), display_namespace)
@@ -153,11 +178,11 @@ excel_oracle = (
     ('600x600x2000', 'JS_DOUBLE', '0/1', 138.50337080639648, 14.270433499999502),
     ('600x600x2000', 'JS_DOUBLE', '0/2', 300.6952093955964, 30.6437939999995),
     ('600x600x2000', 'JS_SINGLE', '1/1', 146.23804171499648, 14.2625299999995),
-    ('600x600x2000', 'JP_SINGLE', '1/0', 82.63965311609647, 6.936453499999501),
-    ('600x600x2000', 'JP_SINGLE', '2/0', 232.16669362439646, 21.9885499999995),
-    ('600x600x2000', 'JP_DOUBLE', '0/1', 84.49052735639647, 7.125205499999501),
-    ('600x600x2000', 'JP_DOUBLE', '0/2', 246.68236594559647, 23.4985659999995),
-    ('600x600x2000', 'JP_SINGLE', '1/1', 92.22519826499648, 7.1173019999995),
+    ('600x600x2000', 'JP_SINGLE', '1/0', 115.38440207609646, 5.78561874999975),
+    ('600x600x2000', 'JP_SINGLE', '2/0', 264.91144258439647, 13.31166699999975),
+    ('600x600x2000', 'JP_DOUBLE', '0/1', 117.23527631639647, 5.87999474999975),
+    ('600x600x2000', 'JP_DOUBLE', '0/2', 279.42711490559645, 14.06667499999975),
+    ('600x600x2000', 'JP_SINGLE', '1/1', 124.96994722499647, 5.87604299999975),
     ('600x600x2000', 'JA_SINGLE', '1/0', 114.06182150039999, 5.76867276),
     ('600x600x2000', 'JA_SINGLE', '2/0', 140.0399237148, 7.02290652),
     ('600x600x2000', 'JA_SINGLE', '0/1', 115.12789947959999, 5.84829864),
@@ -173,11 +198,11 @@ excel_oracle = (
     ('800x1800x300', 'JS_DOUBLE', '0/1', 84.20042903638416, 10.386269499997761),
     ('800x1800x300', 'JS_DOUBLE', '0/2', 116.18293759558416, 13.634729999997761),
     ('800x1800x300', 'JS_SINGLE', '1/1', 85.40471791498418, 10.382865999997762),
-    ('800x1800x300', 'JP_SINGLE', '1/0', 66.22186010608418, 8.096353499997761),
-    ('800x1800x300', 'JP_SINGLE', '2/0', 96.07678258438416, 11.142149999997763),
-    ('800x1800x300', 'JP_DOUBLE', '0/1', 66.56741834638416, 8.125305499997763),
-    ('800x1800x300', 'JP_DOUBLE', '0/2', 98.54992690558416, 11.373765999997762),
-    ('800x1800x300', 'JP_SINGLE', '1/1', 67.77170722498417, 8.121901999997762),
+    ('800x1800x300', 'JP_SINGLE', '1/0', 95.60932106608418, 6.127968749998881),
+    ('800x1800x300', 'JP_SINGLE', '2/0', 125.46424354438416, 7.650866999998882),
+    ('800x1800x300', 'JP_DOUBLE', '0/1', 95.95487930638416, 6.142444749998882),
+    ('800x1800x300', 'JP_DOUBLE', '0/2', 127.93738786558416, 7.766674999998881),
+    ('800x1800x300', 'JP_SINGLE', '1/1', 97.15916818498417, 6.140742999998881),
     ('800x1800x300', 'JA_SINGLE', '1/0', 70.7295389004, 4.49607276),
     ('800x1800x300', 'JA_SINGLE', '2/0', 78.8733203148, 4.7576065199999995),
     ('800x1800x300', 'JA_SINGLE', '0/1', 70.3874210796, 4.508633639999999),
@@ -203,6 +228,31 @@ for dimension, code, doors, expected_weight, expected_area in excel_oracle:
     )
     assert math.isclose(actual_area, expected_area, rel_tol=0, abs_tol=1e-8), (
         dimension, code, doors, actual_area, expected_area
+    )
+
+# User-requested regression: 800 W x 600 D x 2000 H, one double door.
+jp_weight, jp_area = calculator.calculate("JP_DOUBLE", 800, 2000, 600, 0, 1)
+assert math.isclose(jp_weight, 145.69639331639482, rel_tol=0, abs_tol=1e-8), jp_weight
+assert math.isclose(jp_area, 7.117694749999634, rel_tol=0, abs_tol=1e-8), jp_area
+assert formula_display_number(jp_weight) == "145.7"
+assert formula_display_number(jp_area) == "7.1"
+
+# The request contained ``400*400*/400``.  Preserve both defensible readings:
+# literal 400 W x 400 D x 400 H and the likely 1400 mm height typo.  These
+# values come from Excel CalculateFullRebuild and guard JA/JE independently.
+small_family_oracles = (
+    ("JA_SINGLE", (400, 400, 400), (1, 0), 18.8486063004, 1.01775276),
+    ("JE_SINGLE", (400, 400, 400), (1, 0), 18.9060175266, 1.01775276),
+    ("JA_SINGLE", (400, 1400, 400), (1, 0), 53.4416723004, 2.73215276),
+    ("JE_SINGLE", (400, 1400, 400), (1, 0), 53.8614238266, 2.73215276),
+)
+for code, dimensions_400, doors_400, expected_weight, expected_area in small_family_oracles:
+    actual_weight, actual_area = calculator.calculate(code, *dimensions_400, *doors_400)
+    assert math.isclose(actual_weight, expected_weight, rel_tol=0, abs_tol=1e-8), (
+        code, dimensions_400, actual_weight, expected_weight
+    )
+    assert math.isclose(actual_area, expected_area, rel_tol=0, abs_tol=1e-8), (
+        code, dimensions_400, actual_area, expected_area
     )
 
 family_measurements = {}

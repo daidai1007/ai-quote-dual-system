@@ -35,3 +35,19 @@ test('current door counts replace only the door phrase in manual remarks', async
   assert.match(layout, /_install_door_remark_sync\(namespace\)/);
   assert.match(exporter, /replaceDoorConfigurationPhrase/);
 });
+
+test('manual freight persists independently and remains outside both discounts', async () => {
+  const main = await fs.readFile(path.join(projectRoot, 'desktop_client', 'main.py'), 'utf8');
+  const layout = await fs.readFile(path.join(projectRoot, 'desktop_client', 'layout_refresh.py'), 'utf8');
+  const quickRules = await fs.readFile(path.join(projectRoot, 'quick_discount_rules.mjs'), 'utf8');
+  const exporter = await fs.readFile(path.join(projectRoot, 'export_dual_quote_workbook.mjs'), 'utf8');
+
+  assert.match(main, /field\(7, "运费", self\.freight_spin\)/);
+  assert.match(main, /"freight_fee": self\.freight_spin\.value\(\)/);
+  assert.match(main, /self\.freight_spin\.setValue\(float\(item\.get\("freight_fee", 0\) or 0\)\)/);
+  assert.match(layout, /freight_total = freight_fee \* cabinets/);
+  assert.match(layout, /item\["freight_fee"\] = freight_fee/);
+  assert.match(quickRules, /\+ originalPriceAttachmentTotal \+ freightTotal/);
+  assert.match(exporter, /"其他附件\/差额"\] : \[\]\), "运费", "折扣"/);
+  assert.match(exporter, /values\[27\] = formulaBreakdown\.freightTotal/);
+});

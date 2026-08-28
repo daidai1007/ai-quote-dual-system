@@ -546,7 +546,7 @@ calculator_module = ast.fix_missing_locations(ast.Module(body=[calculator_node],
 calculator_namespace = {"math": math, "re": re}
 exec(compile(calculator_module, "FormulaDatabaseCalculator", "exec"), calculator_namespace)
 formula_calculator = calculator_namespace["FormulaDatabaseCalculator"]()
-assert formula_calculator.DETAIL_ROWS["JP_SINGLE"][:3] == (5, 26, 29)
+assert formula_calculator.DETAIL_ROWS["JP_SINGLE"] == (5, 43, 29, 3, 2)
 door_combinations = ((1, 0), (0, 1), (0, 2), (2, 0), (1, 1))
 expected_weights = (10, 20, 40, 20, 30)
 for product_code in ("JS_SINGLE", "JP_SINGLE", "JA_SINGLE", "JE_SINGLE"):

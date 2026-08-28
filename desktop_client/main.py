@@ -58,7 +58,11 @@ from quote_defaults import (
     apply_default_quote_inputs,
 )
 from quote_remark_rules import replace_door_configuration_phrase
-from quick_discount_rules import quick_discount_breakdown
+from quick_discount_rules import (
+    attachment_excluded_from_discount,
+    quick_attachment_line_amount,
+    quick_discount_breakdown,
+)
 from attachment_category_browser import (
     category_options,
     category_path as attachment_category_path,
@@ -309,8 +313,10 @@ class FormulaDatabaseCalculator:
     DETAIL_ROWS = {
         "JS_SINGLE": (5, 25, 28, 28, 1),
         "JS_DOUBLE": (5, 25, 28, 28, 1),
-        "JP_SINGLE": (5, 26, 29, 29, 1),
-        "JP_DOUBLE": (5, 26, 29, 29, 1),
+        # JP has a second frame-material block at rows 35-43.  The workbook's
+        # final surface area is the two-sided sum of both material blocks / 2.
+        "JP_SINGLE": (5, 43, 29, 3, 2),
+        "JP_DOUBLE": (5, 43, 29, 3, 2),
         "JA_SINGLE": (5, 25, 28, 28, 2),
         "JE_SINGLE": (5, 25, 28, 28, 2),
         "JE_DOUBLE": (5, 25, 28, 28, 2),
@@ -491,6 +497,25 @@ class FormulaDatabaseCalculator:
             expression,
         )
 
+    @staticmethod
+    def _rewrite_eager_if_branches(expression: str) -> str:
+        """Keep imported JP IF branches safe for the eager evaluator.
+
+        Excel evaluates only the selected ``IF`` branch.  The recovered V3
+        runtime evaluates function arguments eagerly, so JP rows 42-43 used
+        to divide by the default ``B15 = 0`` even when that branch was not
+        selected.  These algebraically equivalent forms preserve every
+        non-zero result while removing the spurious division-by-zero path.
+        """
+        expression = expression.replace(
+            "$B$9+($B$9/$B$15-1)*$B$15",
+            "2*$B$9-$B$15",
+        )
+        return expression.replace(
+            "($B$9/$B$15-1)*$B$15",
+            "($B$9-$B$15)",
+        )
+
     def _evaluate_sheet(
         self,
         product_code: str,
@@ -507,6 +532,9 @@ class FormulaDatabaseCalculator:
         formulas = dict(spec["formulas"])
         start, end, _weight_output, _area_output, area_divisor = self.DETAIL_ROWS[product_code]
         cells.update({"B6": float(width), "B7": float(height), "B8": float(depth), "B9": 1})
+        if product_code.startswith("JP_"):
+            # The JP frame section uses workbook aliases B36:B38 = B6:B8.
+            cells.update({"B36": float(width), "B37": float(height), "B38": float(depth)})
         door_cells = self.DOOR_CONTROL_CELLS.get(product_code)
         if door_cells:
             cells[door_cells[0]] = int(single_door_count)
@@ -545,6 +573,7 @@ class FormulaDatabaseCalculator:
                     value = cells.get(ref, "")
                     cache[ref] = value
                     return value
+                expression = self._rewrite_eager_if_branches(expression)
                 expression = self._rewrite_excel_chained_comparisons(expression)
                 expression = expression.replace("<>", "!=")
                 expression = re.sub(r"(?<![<>=!])=(?!=)", "==", expression)
@@ -809,7 +838,9 @@ class AttachmentDialog(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.verticalHeader().setVisible(False)
-        self.table.setMinimumHeight(430)
+        # The dialog is fixed-size. Let the table consume the remaining
+        # vertical space instead of forcing the status text over its rows.
+        self.table.setMinimumHeight(300)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(self.COL_CHECK, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeToContents)
@@ -819,8 +850,23 @@ class AttachmentDialog(QDialog):
         header.setSectionResizeMode(self.COL_QUANTITY, QHeaderView.ResizeToContents)
         self.table.itemChanged.connect(self.table_item_changed)
 
-        self.selection_hint = QLabel("已勾选 0 项")
-        self.selection_hint.setStyleSheet("font-weight:600;color:#174a73;")
+        self.selection_status_frame = QFrame(self)
+        self.selection_status_frame.setObjectName("attachmentSelectionStatusBar")
+        self.selection_status_frame.setStyleSheet(
+            "QFrame#attachmentSelectionStatusBar {"
+            "background:#ffffff;border:1px solid #d7e1ea;border-radius:6px;}"
+        )
+        self.selection_status_frame.setMinimumHeight(38)
+        self.selection_status_frame.setMaximumHeight(44)
+        selection_status_layout = QHBoxLayout(self.selection_status_frame)
+        selection_status_layout.setContentsMargins(10, 5, 10, 5)
+        self.selection_hint = QLabel("已勾选 0 项", self.selection_status_frame)
+        self.selection_hint.setObjectName("attachmentSelectionHint")
+        self.selection_hint.setStyleSheet(
+            "QLabel#attachmentSelectionHint {font-weight:600;color:#174a73;"
+            "background:transparent;border:0;}"
+        )
+        selection_status_layout.addWidget(self.selection_hint)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("确认选择")
@@ -840,7 +886,7 @@ class AttachmentDialog(QDialog):
         layout.addWidget(self.search_edit)
         layout.addWidget(self.category_panel)
         layout.addWidget(self.table, 1)
-        layout.addWidget(self.selection_hint)
+        layout.addWidget(self.selection_status_frame)
         layout.addWidget(buttons)
 
         self.load_catalog(api_url)
@@ -2452,11 +2498,12 @@ class MainWindow(QMainWindow):
         self.double_door_combo.currentIndexChanged.connect(lambda _i: self.door_counts_changed("double"))
         field(5, "产品变体", door_panel)
         self.quantity_spin = QSpinBox(); self.quantity_spin.setRange(1, 999); self.quantity_spin.setValue(1); field(6, "柜型数量", self.quantity_spin)
-        self.quote_date = QDateEdit(QDate.currentDate()); self.quote_date.setCalendarPopup(True); field(7, "报价日期", self.quote_date)
-        self.api_url = QLineEdit(API_URL); field(8, "接口地址", self.api_url)
+        self.freight_spin = QDoubleSpinBox(); self.freight_spin.setRange(0, 999999999); self.freight_spin.setDecimals(2); self.freight_spin.setSingleStep(10); self.freight_spin.setSuffix(" 元"); self.freight_spin.setValue(0); self.freight_spin.setToolTip("填写每台柜体或每套并柜的运费；最终运费＝运费×柜型数量，且不参与折扣"); self.freight_spin.valueChanged.connect(self.refresh_discounted_totals); field(7, "运费", self.freight_spin)
+        self.quote_date = QDateEdit(QDate.currentDate()); self.quote_date.setCalendarPopup(True); field(8, "报价日期", self.quote_date)
+        self.api_url = QLineEdit(API_URL); field(9, "接口地址", self.api_url)
         self.weight_edit = QLineEdit(); self.weight_edit.setReadOnly(True); self.weight_edit.setPlaceholderText("数据库公式计算后自动带入")
         self.area_edit = QLineEdit(); self.area_edit.setReadOnly(True); self.area_edit.setPlaceholderText("数据库公式计算后自动带入")
-        field(9, "公式基准重量（kg）", self.weight_edit); field(10, "公式喷涂面积（m²）", self.area_edit)
+        field(10, "公式基准重量（kg）", self.weight_edit); field(11, "公式喷涂面积（m²）", self.area_edit)
         attachment_panel = QWidget(); attachment_layout = QVBoxLayout(attachment_panel); attachment_layout.setContentsMargins(0, 0, 0, 0)
         self.attachment_recommendation = QLabel("OCR 推荐附件：—")
         self.attachment_recommendation.setWordWrap(True)
@@ -2464,15 +2511,15 @@ class MainWindow(QMainWindow):
         attachment_layout.addWidget(self.attachment_recommendation)
         bar = QHBoxLayout(); self.attachment_status = QLabel("未选择附件"); self.attachment_status.setObjectName("attachmentStatus")
         pick = QPushButton("选择附件"); pick.clicked.connect(self.open_attachment_dialog); bar.addWidget(self.attachment_status, 1); bar.addWidget(pick); attachment_layout.addLayout(bar)
-        self.attachment_list = QListWidget(); self.attachment_list.setMaximumHeight(70); attachment_layout.addWidget(self.attachment_list)
-        field(12, "附件", attachment_panel)
+        self.attachment_list = QListWidget(); self.attachment_list.setObjectName("attachmentDetailList"); self.attachment_list.setMinimumHeight(96); self.attachment_list.setMaximumHeight(120); attachment_layout.addWidget(self.attachment_list)
+        field(13, "附件", attachment_panel)
         root.addWidget(input_box)
         action_row = QHBoxLayout(); self.calculate_button = QPushButton("开始计算"); self.calculate_button.setDefault(True); self.calculate_button.clicked.connect(self.calculate)
         add_btn = QPushButton("加入汇总清单"); add_btn.clicked.connect(self.add_current_to_summary)
         clear_btn = QPushButton("新建柜型"); clear_btn.clicked.connect(lambda: self.reset_current_cabinet(keep_company=True))
         action_row.addWidget(self.calculate_button); action_row.addWidget(add_btn); action_row.addWidget(clear_btn); action_row.addStretch(); root.addLayout(action_row)
         results = QHBoxLayout(); results.setSpacing(14)
-        self.formula_box, self.formula_labels, self.formula_discount = self.build_result_card("公式法报价", ("material", "auxiliary", "labor", "attachment", "spray", "management", "area", "total"), "formulaCard")
+        self.formula_box, self.formula_labels, self.formula_discount = self.build_result_card("公式法报价", ("material", "auxiliary", "labor", "attachment", "spray", "management", "area", "freight", "total"), "formulaCard")
         self.labor_multiplier = QDoubleSpinBox()
         self.labor_multiplier.setRange(0.01, 10)
         self.labor_multiplier.setDecimals(2)
@@ -2487,7 +2534,7 @@ class MainWindow(QMainWindow):
             "人工成本折扣系数",
             self.labor_multiplier,
         )
-        self.quick_box, self.quick_labels, self.quick_discount = self.build_result_card("快速报价", ("base_price", "matched_size", "attachment", "total"), "quickCard")
+        self.quick_box, self.quick_labels, self.quick_discount = self.build_result_card("快速报价", ("base_price", "matched_size", "attachment", "freight", "total"), "quickCard")
         self.formula_discount.valueChanged.connect(self.refresh_discounted_totals); self.quick_discount.valueChanged.connect(self.refresh_discounted_totals)
         results.addWidget(self.formula_box, 1); results.addWidget(self.quick_box, 1); root.addLayout(results)
         risk = QGroupBox("数据提示"); risk.setObjectName("riskCard"); risk_layout = QVBoxLayout(risk); self.risk_label = QLabel("尚未计算"); self.risk_label.setWordWrap(True); risk_layout.addWidget(self.risk_label); root.addWidget(risk)
@@ -2498,7 +2545,7 @@ class MainWindow(QMainWindow):
         box = QGroupBox(title); box.setObjectName(object_name)
         box.setMinimumHeight(360)
         layout = QFormLayout(box); layout.setContentsMargins(18, 18, 18, 16); layout.setVerticalSpacing(7)
-        captions = {"material":"材料成本", "auxiliary":"辅材成本", "labor":"人工成本", "attachment":"附件成本", "spray":"喷塑费用", "management":"管理费用", "area":"产品面积", "base_price":"面价", "matched_size":"匹配尺寸", "total":"总成本"}
+        captions = {"material":"材料成本", "auxiliary":"辅材成本", "labor":"人工成本", "attachment":"附件成本", "spray":"喷塑费用", "management":"管理费用", "area":"产品面积", "base_price":"面价", "matched_size":"匹配尺寸", "freight":"运费", "total":"总成本"}
         labels = {}
         for key in keys:
             label = QLabel("—"); label.setObjectName(f"new_{object_name}_{key}"); labels[key] = label; layout.addRow(captions[key], label)
@@ -2951,6 +2998,7 @@ class MainWindow(QMainWindow):
 
     def refresh_discounted_totals(self):
         if not self.current_result: return
+        freight = float(self.freight_spin.value()) if hasattr(self, "freight_spin") else 0.0
         formula = dict(self._formula_base_result or self.current_result["formula"])
         labor = formula.get("labor_cost"); management = formula.get("management_fee"); total = formula.get("total_cost")
         if labor is not None and management is not None and total is not None:
@@ -2965,14 +3013,25 @@ class MainWindow(QMainWindow):
         values = {"material": formula.get("material_cost"), "auxiliary": formula.get("auxiliary_cost"), "labor": formula.get("labor_cost"), "attachment": formula.get("attachment_fee"), "spray": formula.get("spray_cost"), "management": formula.get("management_fee")}
         for key, value in values.items(): self.formula_labels[key].setText(money(value))
         area = formula.get("product_area_m2"); self.formula_labels["area"].setText("—" if area is None else f"{float(area):,.1f} m²")
-        formula_total = formula.get("total_cost"); self.formula_labels["total"].setText(money(None if formula_total is None else float(formula_total) * self.formula_discount.value()))
+        if "freight" in self.formula_labels: self.formula_labels["freight"].setText(money(freight))
+        excluded_attachment_total = sum(
+            quick_attachment_line_amount(item)
+            for item in self.attachments
+            if attachment_excluded_from_discount(item)
+        )
+        formula_total = formula.get("total_cost"); self.formula_labels["total"].setText(money(
+            None if formula_total is None else
+            (float(formula_total) - excluded_attachment_total) * self.formula_discount.value()
+            + excluded_attachment_total + freight
+        ))
         self.quick_labels["base_price"].setText(money(quick.get("base_price"))); self.quick_labels["attachment"].setText(money(quick.get("attachment_fee")))
         matched = quick.get("matched_experience") or {}; dims = [matched.get("reference_width_mm"), matched.get("reference_height_mm"), matched.get("reference_depth_mm")]
         self.quick_labels["matched_size"].setText(" × ".join(f"{float(x):g}" for x in dims) + " mm" if all(x is not None for x in dims) else "待补充经验值")
         quick_total = quick.get("total_cost")
         discounted_quick = None if quick_total is None else quick_discount_breakdown(
             quick, self.attachments, self.quick_discount.value()
-        )["discounted_total"]
+        )["discounted_total"] + freight
+        if "freight" in self.quick_labels: self.quick_labels["freight"].setText(money(freight))
         self.quick_labels["total"].setText(money(discounted_quick))
 
     def show_error(self, message): self.risk_label.setStyleSheet("color:#b91c1c;"); self.risk_label.setText(message)
@@ -3008,7 +3067,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "数据待补充", "公式法或快速报价存在缺失数据，不能加入正式汇总清单。"); return
         source_ocr_remark = self.notes_text.toPlainText().strip()
         single_count, double_count = self.door_counts()
-        item = {"name": self.cabinet_name(), "model_code": self.model_edit.text().strip(), "product_code": self.selected_product_code(), "product_family": self.product_combo.currentText(), "variant_code": self.selected_variant_code(), "variant_name": self.selected_variant_name(), "single_door_count": single_count, "double_door_count": double_count, "material_code": self.material_combo.currentData(), "coating_type": self.coating_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "quantity": self.quantity_spin.value(), "attachments": [dict(x) for x in self.attachments], "source_ocr_remark": source_ocr_remark, "source_pdf_name": self.active_drawing.get("name") if self.active_drawing else None, "formula": dict(self.current_result["formula"]), "formula_base": dict(self._formula_base_result or self.current_result["formula"]), "quick": dict(self.current_result["quick"]), "formula_discount": self.formula_discount.value(), "quick_discount": self.quick_discount.value(), "labor_multiplier": self.labor_multiplier.value()}
+        item = {"name": self.cabinet_name(), "model_code": self.model_edit.text().strip(), "product_code": self.selected_product_code(), "product_family": self.product_combo.currentText(), "variant_code": self.selected_variant_code(), "variant_name": self.selected_variant_name(), "single_door_count": single_count, "double_door_count": double_count, "material_code": self.material_combo.currentData(), "coating_type": self.coating_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "quantity": self.quantity_spin.value(), "freight_fee": self.freight_spin.value(), "attachments": [dict(x) for x in self.attachments], "source_ocr_remark": source_ocr_remark, "source_pdf_name": self.active_drawing.get("name") if self.active_drawing else None, "formula": dict(self.current_result["formula"]), "formula_base": dict(self._formula_base_result or self.current_result["formula"]), "quick": dict(self.current_result["quick"]), "formula_discount": self.formula_discount.value(), "quick_discount": self.quick_discount.value(), "labor_multiplier": self.labor_multiplier.value()}
         final_remark = replace_door_configuration_phrase(
             build_standardized_quote_remark(item, source_ocr_remark),
             item,
@@ -3020,10 +3079,20 @@ class MainWindow(QMainWindow):
     def refresh_summary(self):
         self.summary_table.setRowCount(len(self.draft_items)); formula_sum = quick_sum = 0.0
         for row, item in enumerate(self.draft_items):
-            formula_unit = float(item["formula"]["total_cost"]) * float(item["formula_discount"])
+            excluded_attachment_total = sum(
+                quick_attachment_line_amount(attachment)
+                for attachment in item.get("attachments", [])
+                if attachment_excluded_from_discount(attachment)
+            )
+            freight_fee = float(item.get("freight_fee", 0) or 0)
+            formula_unit = (
+                (float(item["formula"]["total_cost"]) - excluded_attachment_total)
+                * float(item["formula_discount"])
+                + excluded_attachment_total + freight_fee
+            )
             quick_unit = quick_discount_breakdown(
                 item["quick"], item.get("attachments", []), item["quick_discount"]
-            )["discounted_total"]
+            )["discounted_total"] + freight_fee
             formula_sum += formula_unit * item["quantity"]; quick_sum += quick_unit * item["quantity"]
             dimensions = f"{item['width_mm']:g}×{item['height_mm']:g}×{item['depth_mm']:g}"
             values = [row + 1, self.drawing_name_before_chinese(item["name"]), item.get("model_code") or "", dimensions, item["material_code"], item["quantity"], f"{formula_unit:,.2f}", f"{item['formula_discount']:.2f}", f"{quick_unit:,.2f}", f"{item['quick_discount']:.2f}", str(len(item["attachments"])), item["notes"]]
@@ -3061,10 +3130,10 @@ class MainWindow(QMainWindow):
         mi = self.material_combo.findData(item["material_code"]); ci = self.coating_combo.findData(item["coating_type"])
         if mi >= 0: self.material_combo.setCurrentIndex(mi)
         if ci >= 0: self.coating_combo.setCurrentIndex(ci)
-        self.attachments = [dict(x) for x in item["attachments"]]; self.notes_text.setPlainText(item.get("final_remark", item.get("notes", ""))); self.formula_discount.setValue(item["formula_discount"]); self.quick_discount.setValue(item["quick_discount"]); self.labor_multiplier.setValue(item.get("labor_multiplier", 1.0)); self.update_attachment_view(); self._formula_base_result = dict(item.get("formula_base") or item["formula"]); self.current_result = {"formula": dict(item["formula"]), "quick": dict(item["quick"]), "risk_flags": []}; self.refresh_discounted_totals(); self.refresh_formula_inputs()
+        self.attachments = [dict(x) for x in item["attachments"]]; self.notes_text.setPlainText(item.get("final_remark", item.get("notes", ""))); self.formula_discount.setValue(item["formula_discount"]); self.quick_discount.setValue(item["quick_discount"]); self.labor_multiplier.setValue(item.get("labor_multiplier", 1.0)); self.freight_spin.setValue(float(item.get("freight_fee", 0) or 0)); self.update_attachment_view(); self._formula_base_result = dict(item.get("formula_base") or item["formula"]); self.current_result = {"formula": dict(item["formula"]), "quick": dict(item["quick"]), "risk_flags": []}; self.refresh_discounted_totals(); self.refresh_formula_inputs()
 
     def reset_current_cabinet(self, keep_company=False):
-        self.model_edit.clear(); self.width_spin.setValue(1000); self.height_spin.setValue(1800); self.depth_spin.setValue(600); self.quantity_spin.setValue(1); apply_default_quote_inputs(self); self.labor_multiplier.setValue(1); self.formula_discount.setValue(1); self.quick_discount.setValue(1); self.attachments = []; self.notes_text.clear(); self.active_drawing = None; self.recommended_attachments = []; self.attachment_recommendation.setText("OCR 推荐附件：—"); self._formula_base_result = None; self.current_result = None; self.weight_edit.clear(); self.area_edit.clear(); self.update_attachment_view()
+        self.model_edit.clear(); self.width_spin.setValue(1000); self.height_spin.setValue(1800); self.depth_spin.setValue(600); self.quantity_spin.setValue(1); self.freight_spin.setValue(0); apply_default_quote_inputs(self); self.labor_multiplier.setValue(1); self.formula_discount.setValue(1); self.quick_discount.setValue(1); self.attachments = []; self.notes_text.clear(); self.active_drawing = None; self.recommended_attachments = []; self.attachment_recommendation.setText("OCR 推荐附件：—"); self._formula_base_result = None; self.current_result = None; self.weight_edit.clear(); self.area_edit.clear(); self.update_attachment_view()
         for label in self.formula_labels.values(): label.setText("—")
         for label in self.quick_labels.values(): label.setText("—")
         self.risk_label.setStyleSheet(""); self.risk_label.setText("尚未计算")

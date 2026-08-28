@@ -308,6 +308,10 @@ const runPsql = (sql, clientEncoding = 'UTF8') => new Promise((resolve, reject) 
 const addAttachmentCatalogSql = (input) => {
   const item = normalizeCatalogAttachment(input);
   const values = {
+    attachmentCategory: sqlUnicodeText(item.attachment_category),
+    categoryLevel1: sqlUnicodeText(item.category_level1),
+    categoryLevel2: sqlUnicodeText(item.category_level2),
+    categoryLevel3: sqlUnicodeText(item.category_level3),
     itemName: sqlUnicodeText(item.item_name),
     modelCode: sqlUnicodeText(item.model_code),
     variant: sqlUnicodeText(item.variant),
@@ -327,6 +331,7 @@ WITH existing AS (
   SELECT attachment_price_id
   FROM calc.attachment_price
   WHERE is_active = TRUE
+    AND attachment_category = ${values.attachmentCategory}
     AND item_name = ${values.itemName}
     AND model_code IS NOT DISTINCT FROM ${values.modelCode}
     AND variant IS NOT DISTINCT FROM ${values.variant}
@@ -340,10 +345,12 @@ WITH existing AS (
   LIMIT 1
 ), inserted AS (
   INSERT INTO calc.attachment_price (
-    item_name, model_code, variant, width_mm, height_mm, depth_mm,
+    attachment_category, item_name, model_code, variant,
+    width_mm, height_mm, depth_mm,
     price, price_text, unit, price_source, notes, is_active
   )
-  SELECT ${values.itemName}, ${values.modelCode}, ${values.variant},
+  SELECT ${values.attachmentCategory}, ${values.itemName},
+         ${values.modelCode}, ${values.variant},
          ${values.width}, ${values.height}, ${values.depth},
          ${values.price}, ${values.priceText}, ${values.unit},
          ${values.source}, ${values.notes}, TRUE
@@ -353,6 +360,32 @@ WITH existing AS (
   SELECT attachment_price_id, TRUE AS created FROM inserted
   UNION ALL
   SELECT attachment_price_id, FALSE AS created FROM existing
+), classification_updated AS (
+  UPDATE calc.attachment_classification classification
+  SET category_level1 = ${values.categoryLevel1},
+      category_level2 = ${values.categoryLevel2},
+      category_level3 = ${values.categoryLevel3}
+  FROM chosen
+  WHERE classification.attachment_price_id = chosen.attachment_price_id
+  RETURNING classification.attachment_price_id
+), classification_inserted AS (
+  INSERT INTO calc.attachment_classification (
+    attachment_price_id, category_level1, category_level2, category_level3
+  )
+  SELECT chosen.attachment_price_id, ${values.categoryLevel1},
+         ${values.categoryLevel2}, ${values.categoryLevel3}
+  FROM chosen
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM classification_updated updated
+    WHERE updated.attachment_price_id = chosen.attachment_price_id
+  )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM calc.attachment_classification classification
+      WHERE classification.attachment_price_id = chosen.attachment_price_id
+    )
+  RETURNING attachment_price_id
 )
 SELECT jsonb_build_object(
   'saved', TRUE,

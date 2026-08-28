@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   effectiveAttachmentLineAmount,
   effectiveAttachmentQuantity,
+  attachmentExcludedFromDiscount,
   quickAttachmentLineAmount,
   quickDiscountBreakdown,
   quickDiscountCategory,
@@ -48,9 +49,37 @@ test("quick quote discounts only the nine approved attachment categories", () =>
   for (const [itemName, metadata, expected] of approved) {
     assert.equal(quickDiscountCategory({ item_name: itemName, ...metadata }), expected);
   }
-  for (const itemName of ["风机", "门限位器", "接地线", "铜排", "文件夹", "三排纵梁", "安装板单发", "JK安装板单发", "运费"]) {
+  for (const itemName of ["风机", "门限位器", "接地线", "铜排", "文件夹", "三排纵梁", "门安装条", "安装板单发", "JK安装板单发", "运费"]) {
     assert.equal(quickDiscountCategory({ item_name: itemName }), null, itemName);
   }
+  assert.equal(attachmentExcludedFromDiscount({ category_level1: "门安装条" }), true);
+  assert.equal(attachmentExcludedFromDiscount({ item_name: "安装板" }), false);
+});
+
+test("door installation strip remains at original price in quick quote", () => {
+  const strip = {
+    item_name: "门安装条",
+    category_level1: "门安装条",
+    quantity: 1,
+    unit_price: 20,
+  };
+  const unit = quickDiscountBreakdown({
+    quote: { base_price: 1000, attachment_fee: 20, total_cost: 1020 },
+    attachments: [strip],
+    discount: 0.8,
+  });
+  assert.equal(unit.eligibleAttachmentTotal, 0);
+  assert.equal(unit.originalPriceAttachmentTotal, 20);
+  assert.equal(unit.discountedTotal, 820);
+
+  const order = quickOrderLineBreakdown({
+    quote: { base_price: 1000, attachment_fee: 20, total_cost: 1020 },
+    attachments: [strip],
+    discount: 0.8,
+    cabinetQuantity: 3,
+  });
+  assert.equal(order.originalPriceAttachmentTotal, 60);
+  assert.equal(order.lineTotal, 2460);
 });
 
 test("copper busbar stays at original price and scales only with complete ganged sets", () => {
@@ -180,4 +209,26 @@ test("quick order line does not multiply attachments by the ganged split count",
   assert.equal(result.originalPriceAttachmentTotal, 360);
   assert.equal(result.lineTotal, 3960);
   assert.equal(result.equivalentUnitTotal, 1980);
+});
+
+test("freight is not discounted and multiplies only the complete cabinet quantity", () => {
+  const ordinary = quickOrderLineBreakdown({
+    quote: { base_price: 1000, attachment_fee: 0, total_cost: 1000 },
+    discount: 0.8,
+    cabinetQuantity: 3,
+    freightFee: 50,
+  });
+  assert.equal(ordinary.freightTotal, 150);
+  assert.equal(ordinary.lineTotal, 2550);
+  assert.equal(ordinary.equivalentUnitTotal, 850);
+
+  const ganged = quickOrderLineBreakdown({
+    quote: { base_price: 2000, attachment_fee: 0, total_cost: 2000 },
+    discount: 0.8,
+    cabinetQuantity: 3,
+    gangedCabinetCount: 2,
+    freightFee: 50,
+  });
+  assert.equal(ganged.freightTotal, 150);
+  assert.equal(ganged.lineTotal, 4950);
 });

@@ -25,6 +25,7 @@ from recognition_repair import install_recognition_repair
 
 _DLL_DIRECTORY_HANDLES = []
 _REQUIRED_CLOUD_API_BUILD = "2026-08-26-signed-attachments-v1"
+_DEFAULT_RENDER_API_URL = "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual"
 _FONT_SIZE_PATTERN = re.compile(
     r"font-size\s*:\s*(?P<size>\d+(?:\.\d+)?)\s*(?P<unit>pt|px)",
     re.IGNORECASE,
@@ -38,6 +39,42 @@ _COMPACT_HEIGHT_PATTERN = re.compile(
 # ``install_application_font``; the UI scaling pass bumps that literal to 11pt.
 _APPLICATION_FONT_BASE_SIZE = 10
 _APPLICATION_FONT_SCALED_SIZE = 11
+
+
+def _install_source_render_config(namespace: dict) -> None:
+    """Give the recovered core the same Render defaults as source main.py.
+
+    ``main.raw`` predates the source configuration loader.  Without this
+    bridge, launching ``v3_launcher.py`` uses the recovered localhost default
+    even though ``desktop_client/main.py`` and the packaged client point to
+    Render.  Packaged mode keeps its existing adjacent client_config behavior.
+    """
+
+    if getattr(sys, "frozen", False):
+        return
+    config: dict = {}
+    source_root = pathlib.Path(__file__).resolve().parents[1]
+    for config_path in (
+        source_root / "client_config.json",
+        source_root.parent / "AIQuoteDualSystem" / "client_config.json",
+    ):
+        if not config_path.is_file():
+            continue
+        try:
+            loaded = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(loaded, dict):
+            config.update({key: loaded[key] for key in ("api_url", "api_key") if loaded.get(key)})
+            break
+    namespace["API_URL"] = str(
+        os.getenv("AI_QUOTE_API_URL")
+        or config.get("api_url")
+        or _DEFAULT_RENDER_API_URL
+    ).strip()
+    namespace["API_KEY"] = str(
+        os.getenv("AI_QUOTE_API_KEY") or config.get("api_key") or ""
+    ).strip()
 
 
 def _install_silent_windows_subprocesses() -> None:
@@ -326,6 +363,7 @@ def load_v3_namespace() -> dict:
     }
     main_code = _scale_ui_code(marshal.loads(main_path.read_bytes()))
     exec(main_code, namespace)
+    _install_source_render_config(namespace)
     _install_cloud_export_validation(namespace)
     install_recognition_repair(namespace)
     install_layout_refresh(namespace)

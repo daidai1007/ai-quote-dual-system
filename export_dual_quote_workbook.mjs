@@ -21,6 +21,7 @@ import {
   validateConfirmedQuoteSnapshot,
 } from "./quote_export_contract.mjs";
 import {
+  attachmentExcludedFromDiscount,
   attachmentUsesCabinetQuantity,
   effectiveAttachmentLineAmount,
   effectiveAttachmentQuantity,
@@ -127,13 +128,14 @@ const hasQuickOtherColumn = payload.items.some((item) => {
 });
 const quickCostHeaders = [
   "成本计算公式", "柜体", ...quickAttachmentNames,
-  ...(hasQuickOtherColumn ? ["其他附件/差额"] : []), "折扣",
+  ...(hasQuickOtherColumn ? ["其他附件/差额"] : []), "运费", "折扣",
 ];
 const quickNameColumnByName = new Map(
   quickAttachmentNames.map((name, index) => [name, 13 + index]),
 );
 const quickOtherColumnIndex = hasQuickOtherColumn ? 13 + quickAttachmentNames.length : null;
-const quickDiscountColumnIndex = 13 + quickAttachmentNames.length + (hasQuickOtherColumn ? 1 : 0);
+const quickFreightColumnIndex = 13 + quickAttachmentNames.length + (hasQuickOtherColumn ? 1 : 0);
+const quickDiscountColumnIndex = quickFreightColumnIndex + 1;
 const templateRowHeights = {
   1: 20.1, 2: 20.1, 3: 22.5,
   4: 16.5, 5: 16.5, 6: 16.5, 7: 16.5, 8: 16.5,
@@ -325,6 +327,7 @@ for (let index = 13; index < 13 + quickAttachmentNames.length; index += 1) {
 if (quickOtherColumnIndex) {
   quickSheet.getRange(`${col(quickOtherColumnIndex)}1:${col(quickOtherColumnIndex)}28`).format.columnWidth = 13;
 }
+quickSheet.getRange(`${col(quickFreightColumnIndex)}1:${col(quickFreightColumnIndex)}28`).format.columnWidth = 11;
 quickSheet.getRange(`${col(quickDiscountColumnIndex)}1:${col(quickDiscountColumnIndex)}28`).format.columnWidth = 9;
 
 // The formula sheet exposes its five database cost components before the
@@ -439,8 +442,10 @@ const attachmentAmounts = (
       if (index === 12) index = null;
       else if (index >= 13) index += 4;
     }
+    const factor = method === "formula" && attachmentExcludedFromDiscount(item)
+      ? 1 : discount;
     if (index) out[index] = (out[index] || 0)
-      + effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount) * discount;
+      + effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount) * factor;
   }
   return out;
 };
@@ -472,6 +477,8 @@ const formulaOrderLineBreakdown = (item = {}) => {
   const cabinetQuantity = asNumber(item.quantity || 1);
   const gangedCount = gangedCabinetCount(item);
   const discount = asNumber(item.formula_discount) || 1;
+  const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
+  const freightTotal = freightFee * cabinetQuantity;
   const listedAttachmentTotal = attachmentTotalFromItems(attachments);
   const attachmentFee = hasFiniteNumber(quote.attachment_fee)
     ? Number(quote.attachment_fee) : listedAttachmentTotal;
@@ -484,32 +491,51 @@ const formulaOrderLineBreakdown = (item = {}) => {
   const basePrice = hasCompleteComponentBreakdown
     ? componentKeys.reduce((sum, key) => sum + asNumber(quote[key]), 0)
     : asNumber(quote.total_cost) - attachmentFee;
+  const originalPriceAttachmentTotal = attachments.reduce(
+    (sum, attachment) => sum + (attachmentExcludedFromDiscount(attachment)
+      ? effectiveAttachmentLineAmount(attachment, cabinetQuantity, gangedCount) : 0),
+    0,
+  );
   if (gangedCount <= 1) {
-    const equivalentUnitTotal = (basePrice + attachmentFee) * discount;
+    const effectiveAttachmentTotal = attachmentFee * cabinetQuantity;
+    const discountedAttachmentTotal = effectiveAttachmentTotal - originalPriceAttachmentTotal;
+    const lineTotal = (basePrice * cabinetQuantity + discountedAttachmentTotal) * discount
+      + originalPriceAttachmentTotal + freightTotal;
+    const equivalentUnitTotal = cabinetQuantity ? lineTotal / cabinetQuantity : lineTotal;
     return {
       basePrice,
       attachmentFee,
       listedAttachmentTotal,
-      effectiveAttachmentTotal: attachmentFee * cabinetQuantity,
+      effectiveAttachmentTotal,
+      discountedAttachmentTotal,
+      originalPriceAttachmentTotal,
       cabinetQuantity,
       gangedCabinetCount: gangedCount,
       discount,
-      lineTotal: equivalentUnitTotal * cabinetQuantity,
+      freightFee,
+      freightTotal,
+      lineTotal,
       equivalentUnitTotal,
     };
   }
   const effectiveAttachmentTotal = effectiveAttachmentTotalFromItems(
     attachments, cabinetQuantity, gangedCount,
   ) + (attachmentFee - listedAttachmentTotal) * cabinetQuantity * gangedCount;
-  const lineTotal = (basePrice * cabinetQuantity + effectiveAttachmentTotal) * discount;
+  const discountedAttachmentTotal = effectiveAttachmentTotal - originalPriceAttachmentTotal;
+  const lineTotal = (basePrice * cabinetQuantity + discountedAttachmentTotal) * discount
+    + originalPriceAttachmentTotal + freightTotal;
   return {
     basePrice,
     attachmentFee,
     listedAttachmentTotal,
     effectiveAttachmentTotal,
+    discountedAttachmentTotal,
+    originalPriceAttachmentTotal,
     cabinetQuantity,
     gangedCabinetCount: gangedCount,
     discount,
+    freightFee,
+    freightTotal,
     lineTotal,
     equivalentUnitTotal: cabinetQuantity ? lineTotal / cabinetQuantity : lineTotal,
   };
@@ -525,6 +551,7 @@ const quickPublicLineBreakdown = (item = {}) => {
   const cabinetQuantity = asNumber(item.quantity || 1);
   const gangedCount = gangedCabinetCount(item);
   const discount = asNumber(item.quick_discount) || 1;
+  const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
   if (gangedCount > 1) {
     return quickOrderLineBreakdown({
       quote,
@@ -532,15 +559,19 @@ const quickPublicLineBreakdown = (item = {}) => {
       discount,
       cabinetQuantity,
       gangedCabinetCount: gangedCount,
+      freightFee,
     });
   }
   const unit = quickDiscountBreakdown({ quote, attachments, discount });
+  const freightTotal = freightFee * cabinetQuantity;
   return {
     ...unit,
     cabinetQuantity,
     gangedCabinetCount: gangedCount,
-    lineTotal: unit.discountedTotal * cabinetQuantity,
-    equivalentUnitTotal: unit.discountedTotal,
+    freightFee,
+    freightTotal,
+    lineTotal: unit.discountedTotal * cabinetQuantity + freightTotal,
+    equivalentUnitTotal: unit.discountedTotal + freightFee,
   };
 };
 
@@ -795,6 +826,8 @@ function fillSheet(sheet, method) {
       values[13] = asNumber(quote?.labor_cost) * discount * componentMultiplier;
       values[14] = asNumber(quote?.spray_cost) * discount * componentMultiplier;
       values[15] = asNumber(quote?.management_fee) * discount * componentMultiplier;
+      // AB shows the final freight for the complete quote line and is never discounted.
+      values[27] = formulaBreakdown.freightTotal || "";
       values[28] = discount;
     } else {
       const listedAmount = attachmentTotalFromItems(attachments);
@@ -806,6 +839,7 @@ function fillSheet(sheet, method) {
         values[quickOtherColumnIndex - 1] = Math.abs(difference) > 0.000001 ? difference : "";
       }
       values[11] = quickBreakdown.basePrice * auditCabinetQuantity;
+      values[quickFreightColumnIndex - 1] = quickBreakdown.freightTotal || "";
       values[quickDiscountColumnIndex - 1] = discount;
       const populatedCellReferences = (columns) => columns
         .filter(([, valueIndex]) => {
@@ -839,6 +873,10 @@ function fillSheet(sheet, method) {
         formulaParts.push(`${discountedExpression}*${col(quickDiscountColumnIndex)}${row}`);
       }
       if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
+      if (quickBreakdown.freightTotal) {
+        const freightCell = `${col(quickFreightColumnIndex)}${row}`;
+        formulaParts.push(isGanged ? freightCell : `${freightCell}/${qty || 1}`);
+      }
       const formula = formulaParts.join("+") || "0";
       values[10] = {
         formula,
@@ -988,7 +1026,9 @@ function buildFormulaCostDetailSheet() {
           + `${quantity} × ${signedPrice.toFixed(2)} = ${amount.toFixed(2)} 元`,
         quantity, "件", signedPrice, amount,
         attachment.price_source || "数据库附件价格表",
-        attachment.ganged_fixed_base_match
+        attachmentExcludedFromDiscount(attachment)
+          ? "门安装条按原价计入，不参与公式法或快速报价折扣"
+          : attachment.ganged_fixed_base_match
           ? "按子柜分别匹配；仅随整套柜体数量变化"
           : (attachmentUsesCabinetQuantity(attachment)
             ? "选择数量随柜体数量变化" : "人工数量不受柜体数量影响"),
@@ -1035,6 +1075,16 @@ function buildFormulaCostDetailSheet() {
       laborCost, "元", 0.13, managementCost, "系统统一公式", "管理费用＝人工成本×0.13",
     );
 
+    const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
+    if (freightFee > 0) {
+      addDetail(
+        itemIndex, item, "运费", "运费", "人工输入",
+        `${freightFee.toFixed(2)} 元 × ${asNumber(item.quantity || 1)} 台`,
+        1, "项", freightFee, freightFee, "人工输入",
+        "运费不参与公式法或快速报价折扣",
+      );
+    }
+
     const componentTotal = materialCost + auxiliaryCost + laborCost + attachmentCost + sprayCost + managementCost;
     const formulaCost = asNumber(quote.total_cost);
     if (Math.abs(formulaCost - componentTotal) > 0.01) {
@@ -1050,6 +1100,8 @@ function buildFormulaCostDetailSheet() {
     addDetail(
       itemIndex, item, "柜型小计", "公式法成本", `折扣 ${discount.toFixed(2)}`,
       `柜体基础成本按 ${lineBreakdown.cabinetQuantity} 台计算；附件按最终数量计价；`
+        + `门安装条 ${lineBreakdown.originalPriceAttachmentTotal.toFixed(2)} 元按原价计入；`
+        + `运费 ${lineBreakdown.freightFee.toFixed(2)} 元/台且不参与折扣；`
         + `订单行合计 ${lineBreakdown.lineTotal.toFixed(2)} 元`,
       1, "台", formulaCost, lineBreakdown.equivalentUnitTotal, "公式法报价结果",
       `折后单价；共 ${asNumber(item.quantity || 1)} 台`, "subtotal",

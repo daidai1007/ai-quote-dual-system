@@ -19,7 +19,17 @@ export function normalizeCatalogAttachment(input = {}) {
   }
   const price = Number(input.price);
   if (!Number.isFinite(price) || price < 0) throw new Error('price must be a non-negative number');
+  const categoryLevel1 = textField(
+    input.category_level1 ?? input.attachment_category,
+    'category_level1',
+    120,
+    { fallback: '其他附件' },
+  ) || '其他附件';
   return {
+    attachment_category: categoryLevel1,
+    category_level1: categoryLevel1,
+    category_level2: textField(input.category_level2, 'category_level2', 120),
+    category_level3: textField(input.category_level3, 'category_level3', 120),
     item_name: textField(input.item_name, 'item_name', 160, { required: true }),
     model_code: textField(input.model_code, 'model_code', 100) || null,
     variant: textField(input.variant, 'variant', 80) || null,

@@ -52,6 +52,7 @@ def buttons_with_text(root, captions: set[str]):
 
 
 namespace = v3_launcher.load_v3_namespace()
+assert namespace["API_URL"] == "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual"
 
 remark_builder = namespace["build_standardized_quote_remark"]
 manual_remark = "手工录入，碳钢喷塑RAL7035橘纹，前双开门后背板，配风机1个。"
@@ -74,7 +75,7 @@ original_attachment_load = attachment_dialog_class.load_catalog
 attachment_dialog_class.load_catalog = lambda self, _api_url: None
 
 runtime_calculator = namespace["FormulaDatabaseCalculator"]()
-assert runtime_calculator.DETAIL_ROWS["JP_SINGLE"][:3] == (5, 26, 29)
+assert runtime_calculator.DETAIL_ROWS["JP_SINGLE"] == (5, 43, 29, 3, 2)
 assert runtime_calculator.DOOR_CONTROL_CELLS["JE_SINGLE"] == ("B16", "B17")
 runtime_calculator.load_template({
     "template": {
@@ -95,6 +96,27 @@ runtime_calculator.load_template({
     }
 })
 assert "1000>=(B8>=350)" in runtime_calculator.sheets["JS_SINGLE"]["formulas"]["F5"]
+runtime_calculator.load_template({
+    "template": {
+        "template_code": "JP_DOUBLE",
+        "option_cells": {"defaults": {"B15": 0}},
+        "rules": [{
+            "source_row_no": 35,
+            "raw_rule": {
+                "values": [],
+                "formulas": [
+                    "", "", "=$B$37-88", "", "", "", "", "",
+                    "=IF(TRUE,($B$9/$B$15-1)*$B$15,0)",
+                ],
+            },
+            "include_material_cost": False,
+            "include_spray_area": False,
+        }],
+    }
+})
+jp_runtime_formulas = runtime_calculator.sheets["JP_DOUBLE"]["formulas"]
+assert jp_runtime_formulas["F35"] == "$B$7-88", jp_runtime_formulas["F35"]
+assert "$B$9/$B$15" not in jp_runtime_formulas["L35"], jp_runtime_formulas["L35"]
 runtime_calculator.sheets["JS_SINGLE"] = {
     "cells": {
         "E5": "安装纵梁", "H5": 2, "M5": 1.07794944,
@@ -292,6 +314,11 @@ assert attachment_dialog.width() == 900
 assert attachment_dialog.height() == 680
 assert attachment_dialog.minimumWidth() == attachment_dialog.maximumWidth() == 900
 assert attachment_dialog.minimumHeight() == attachment_dialog.maximumHeight() == 680
+selection_status = attachment_dialog.findChild(QFrame, "attachmentSelectionStatusBar")
+assert selection_status is not None
+assert attachment_dialog.selection_hint.parentWidget() is selection_status
+assert "background:#ffffff" in selection_status.styleSheet().replace(" ", "").lower()
+assert "color:#174a73" in attachment_dialog.selection_hint.styleSheet().replace(" ", "").lower()
 attachment_dialog.resize(1100, 800)
 app.processEvents()
 assert (attachment_dialog.width(), attachment_dialog.height()) == (900, 680)
@@ -800,11 +827,29 @@ app.processEvents()
 assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Unchecked
 attachment_dialog.back_attachment_category()
 app.processEvents()
-folder_manual = next(
-    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchManual")
+folder_manual_cards = [
+    button for button in attachment_dialog.findChildren(
+        QPushButton, "attachmentManualSelection"
+    )
     if button.isVisible() and "A3资料盒" in button.text()
+]
+assert len(folder_manual_cards) == 1
+assert not any(
+    button.isVisible() and "A3资料盒" in button.text()
+    for button in attachment_dialog.findChildren(
+        QPushButton, "attachmentQuickMatchManual"
+    )
 )
-folder_manual.click()
+folder_manual_cards[0].click()
+app.processEvents()
+assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Unchecked
+folder_cancelled = next(
+    button for button in attachment_dialog.findChildren(
+        QPushButton, "attachmentQuickMatchCancelled"
+    )
+    if button.isVisible() and "A4资料盒" in button.text()
+)
+folder_cancelled.click()
 app.processEvents()
 assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
 
@@ -826,6 +871,11 @@ visible_rows = [
     if not attachment_dialog.table.isRowHidden(row)
 ]
 assert len(visible_rows) == 1, visible_rows
+app.processEvents()
+assert selection_status.isVisible()
+assert attachment_dialog.table.geometry().bottom() < selection_status.geometry().top(), (
+    attachment_dialog.table.geometry(), selection_status.geometry()
+)
 visible_source = attachment_dialog.table.item(
     visible_rows[0], attachment_dialog.COL_CHECK
 ).data(Qt.ItemDataRole.UserRole)
@@ -898,6 +948,14 @@ window.show_section(1)
 app.processEvents()
 layout_refresh._position_quote_action_dock(window)
 app.processEvents()
+assert window.freight_spin.value() == 0
+assert window.freight_spin.toolTip().startswith("填写每台柜体或每套并柜的运费")
+assert len([
+    label for label in window.findChildren(QLabel)
+    if label.text().strip() == "运费"
+]) >= 3
+assert window.attachment_list.font().pointSize() >= 12
+assert window.attachment_list.maximumHeight() >= 120
 
 # The sticky action dock must be a real top-level child, not a painted child
 # of QScrollArea whose native viewport intercepts manual Windows clicks.
@@ -942,6 +1000,7 @@ assert layout_refresh._missing_ganged_formula_product_codes(window) == []
 window.api_url.setText("https://quote.test/api/quotes/calculate-dual")
 window.attachments = []
 window.quantity_spin.setValue(2)
+window.freight_spin.setValue(50)
 window.quote_spec_edit.setText("（600+900）*300*1800")
 assert layout_refresh._sync_ganged_specification(
     window, "（600+900）*300*1800"
@@ -1098,6 +1157,7 @@ assert [payload["product_code"] for payload in recorded_payloads] == [
     "JP_SINGLE", "JP_SINGLE",
 ]
 assert [payload["attachments"] for payload in recorded_payloads] == [[], []]
+assert all("freight_fee" not in payload for payload in recorded_payloads)
 assert [payload["base_material_weight_kg"] for payload in recorded_payloads] == [
     32.4, 48.6,
 ]
@@ -1116,6 +1176,10 @@ assert window.current_result["formula"]["spray_cost"] == 85
 assert window.current_result["formula"]["product_area_m2"] == 5.7
 assert abs(window.current_result["formula"]["total_cost"] - 453.45) < 1e-9
 assert window.current_result["quick"]["total_cost"] == 2500, window.current_result
+assert window.formula_labels["freight"].text() == "50.00 元"
+assert window.quick_labels["freight"].text() == "50.00 元"
+assert window.formula_labels["total"].text() == "503.45 元"
+assert window.quick_labels["total"].text() == "2,550.00 元"
 assert len(window.current_result["quick"]["matched_experience"]["items"]) == 2
 assert "已合并 2 个子柜" in window.findChild(QLabel, "quoteResultState").text()
 assert window.pending_quote_signature == window.quote_input_signature()
@@ -1126,16 +1190,35 @@ formula_order = layout_refresh._formula_order_line_breakdown({
     "quantity": 2,
     "formula_discount": 1,
     "ganged_cabinet_count": 2,
+    "freight_fee": 50,
 })
 quick_order = layout_refresh.quick_order_line_breakdown(
-    window.current_result["quick"], [], 1, 2, 2,
+    window.current_result["quick"], [], 1, 2, 2, 50,
 )
-assert abs(formula_order["line_total"] - 906.9) < 1e-9
-assert quick_order["line_total"] == 5000
+assert formula_order["freight_total"] == 100
+assert abs(formula_order["line_total"] - 1006.9) < 1e-9
+assert quick_order["freight_total"] == 100
+assert quick_order["line_total"] == 5100
+door_strip = {
+    "item_name": "门安装条",
+    "category_level1": "门安装条",
+    "quantity": 1,
+    "unit_price": 20,
+}
+door_strip_formula_order = layout_refresh._formula_order_line_breakdown({
+    "formula": {"attachment_fee": 20, "total_cost": 1020},
+    "attachments": [door_strip],
+    "quantity": 3,
+    "formula_discount": 0.8,
+})
+assert door_strip_formula_order["discounted_attachment_total"] == 0
+assert door_strip_formula_order["original_price_attachment_total"] == 60
+assert door_strip_formula_order["line_total"] == 2460
 if artifact_dir is not None:
     window.show_section(1)
     app.processEvents()
     assert window.grab().save(str(artifact_dir / "v3_ganged_quote_success.png"))
+window.freight_spin.setValue(0)
 
 # A failed request must be explicit and must restore both button and worker.
 def failed_urlopen(_request, timeout=0):
@@ -1202,6 +1285,92 @@ assert not modal_calls, modal_calls
 assert len(ordinary_requests) == 1
 assert ordinary_requests[0]["model_code"] == "JP-600"
 assert window.current_result["quick"]["total_cost"] == 1000
+
+# A formula quote clicked after a TLS/template failure must retry in the
+# background and automatically resume the pending calculation.  It must not
+# show the old "please click again later" modal.
+window.product_catalog["JP"]["method"] = "formula"
+window.weight_edit.clear()
+window.area_edit.clear()
+window.template_worker = None
+window.current_result = None
+formula_template_attempts = []
+resumed_quote_requests = []
+original_formula_load_template = window.formula_calculator.load_template
+original_formula_calculate = window.formula_calculator.calculate
+original_retry_delays = layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS
+window.formula_calculator.load_template = lambda _payload: None
+window.formula_calculator.calculate = lambda *_args: (40.7, 1.9)
+layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS = (1, 1)
+
+def transient_template_then_quote(request, timeout=0):
+    assert timeout in (30, layout_refresh.FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS)
+    if request.full_url.endswith("/api/quotes/formula-template"):
+        formula_template_attempts.append(timeout)
+        if len(formula_template_attempts) == 1:
+            raise TimeoutError("The handshake operation timed out")
+        return MockHttpResponse({
+            "template": {
+                "template_code": "JP_SINGLE",
+                "option_cells": {"defaults": {}},
+                "rules": [],
+            }
+        })
+    resumed_quote_requests.append(json.loads(request.data.decode("utf-8")))
+    return MockHttpResponse(child_results[0])
+
+
+layout_refresh.urllib.request.urlopen = transient_template_then_quote
+window.calculate()
+deadline = time.monotonic() + 5
+while (
+    (
+        getattr(window, "template_worker", None) is not None
+        or getattr(window, "worker", None) is not None
+        or not resumed_quote_requests
+    )
+    and time.monotonic() < deadline
+):
+    app.processEvents()
+    time.sleep(0.01)
+app.processEvents()
+assert len(formula_template_attempts) == 2, formula_template_attempts
+assert len(resumed_quote_requests) == 1, resumed_quote_requests
+assert resumed_quote_requests[0]["base_material_weight_kg"] == 40.7
+assert resumed_quote_requests[0]["product_area_m2"] == 1.9
+assert not modal_calls, modal_calls
+assert window.current_result is not None
+assert window.current_result["quick"]["total_cost"] == 1000
+
+# Exhausting all retries must restore the action and show an explicit error.
+failed_template_attempts = []
+
+def always_timeout_template(_request, timeout=0):
+    assert timeout == layout_refresh.FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS
+    failed_template_attempts.append(timeout)
+    raise TimeoutError("The handshake operation timed out")
+
+
+layout_refresh.urllib.request.urlopen = always_timeout_template
+window.weight_edit.clear()
+window.area_edit.clear()
+window.calculate()
+deadline = time.monotonic() + 5
+while (
+    getattr(window, "template_worker", None) is not None
+    and time.monotonic() < deadline
+):
+    app.processEvents()
+    time.sleep(0.01)
+app.processEvents()
+assert len(failed_template_attempts) == 3, failed_template_attempts
+assert window.calculate_button.isEnabled()
+assert "已自动尝试 3 次" in window.risk_label.text(), window.risk_label.text()
+assert "handshake operation timed out" in window.risk_label.text()
+window.formula_calculator.load_template = original_formula_load_template
+window.formula_calculator.calculate = original_formula_calculate
+layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS = original_retry_delays
+window.product_catalog["JP"]["method"] = "manual"
 layout_refresh.urllib.request.urlopen = original_urlopen
 
 before_attachment_change = [{"item_name": "附件 A", "quantity": 1, "unit_price": 10}]
@@ -1293,6 +1462,7 @@ window.draft_items = [{
     "depth_mm": 600,
     "material_code": "SECC",
     "quantity": 2,
+    "freight_fee": 50,
     "attachments": [dict(item) for item in window.attachments],
     "formula": dict(window._formula_base_result),
     "formula_discount": 1,
@@ -1317,10 +1487,10 @@ assert quick_price_columns, [
     window.summary_table.horizontalHeaderItem(column).text()
     for column in range(window.summary_table.columnCount())
 ]
-assert window.summary_table.item(0, quick_price_columns[0]).text() == "4,150.58", (
+assert window.summary_table.item(0, quick_price_columns[0]).text() == "4,200.58", (
     window.summary_table.item(0, quick_price_columns[0]).text()
 )
-assert "8,301.15" in window.summary_quick_total.text(), window.summary_quick_total.text()
+assert "8,401.15" in window.summary_quick_total.text(), window.summary_quick_total.text()
 window.draft_items = []
 window.refresh_summary()
 
@@ -1521,6 +1691,21 @@ window.coating_combo.setCurrentIndex(-1)
 window.product_changed()
 assert window.material_combo.currentData() == "SECC"
 assert window.coating_combo.currentData() == "橘纹"
+
+def final_formula_template_urlopen(request, timeout=0):
+    assert request.full_url.endswith("/api/quotes/formula-template")
+    assert timeout == layout_refresh.FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS
+    product_code = json.loads(request.data.decode("utf-8"))["product_code"]
+    return MockHttpResponse({
+        "template": {
+            "template_code": product_code,
+            "option_cells": {"defaults": {}},
+            "rules": [],
+        }
+    })
+
+
+layout_refresh.urllib.request.urlopen = final_formula_template_urlopen
 window.product_catalog = {"JA": {"codes": {"SINGLE": "JA_SINGLE"}, "method": "formula"}}
 window.product_combo.clear()
 window.product_combo.addItem("JA", "JA")
@@ -1597,6 +1782,18 @@ if artifact_dir is not None:
     app.processEvents()
     app.processEvents()
     assert window.grab().save(str(artifact_dir / "v3_quote_stacked_980x700.png"))
+
+deadline = time.monotonic() + 5
+while (
+    any(
+        worker.isRunning()
+        for worker in window.findChildren(layout_refresh._FormulaTemplateWorker)
+    )
+    and time.monotonic() < deadline
+):
+    app.processEvents()
+    time.sleep(0.01)
+layout_refresh.urllib.request.urlopen = original_urlopen
 
 window.close()
 app.processEvents()

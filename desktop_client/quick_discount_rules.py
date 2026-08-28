@@ -45,6 +45,18 @@ def quick_discount_category(item: Mapping[str, Any] | None) -> str | None:
     return None
 
 
+def attachment_excluded_from_discount(item: Mapping[str, Any] | None) -> bool:
+    """Return whether an attachment stays at original price in both methods."""
+
+    item = item or {}
+    candidates = (
+        item.get("category_level3"), item.get("category_level2"),
+        item.get("category_level1"), item.get("attachment_category"),
+        item.get("category"), item.get("item_name"), item.get("model_code"),
+    )
+    return any(str(value).strip() == "门安装条" for value in candidates if value)
+
+
 def quick_attachment_line_amount(item: Mapping[str, Any] | None) -> float:
     item = item or {}
     sign = -1.0 if _number(item.get("attachment_price_sign"), 1.0) == -1.0 else 1.0
@@ -158,6 +170,7 @@ def quick_order_line_breakdown(
     discount: Any,
     cabinet_quantity: Any,
     ganged_cabinet_count: Any = 1,
+    freight_fee: Any = 0,
 ) -> dict[str, float]:
     rows = list(attachments or [])
     unit = quick_discount_breakdown(quote, rows, discount)
@@ -174,7 +187,13 @@ def quick_order_line_breakdown(
     unlisted_difference = unit["attachment_fee"] - unit["listed_attachment_total"]
     original_total += unlisted_difference * cabinets
     factor = _number(discount, 1.0)
-    line_total = (unit["base_price"] * cabinets + eligible_total) * factor + original_total
+    unit_freight = max(0.0, _number(freight_fee, 0.0))
+    freight_total = unit_freight * cabinets
+    line_total = (
+        (unit["base_price"] * cabinets + eligible_total) * factor
+        + original_total
+        + freight_total
+    )
     return {
         **unit,
         "cabinet_quantity": cabinets,
@@ -182,6 +201,8 @@ def quick_order_line_breakdown(
         "eligible_attachment_total": eligible_total,
         "original_price_attachment_total": original_total,
         "unlisted_difference": unlisted_difference,
+        "freight_fee": unit_freight,
+        "freight_total": freight_total,
         "line_total": line_total,
         "equivalent_unit_total": line_total / cabinets if cabinets else line_total,
     }

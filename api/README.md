@@ -51,7 +51,10 @@ BOM规则，但不会产生自动门型附加值；公式法的模板选择和�
 `GET /api/attachments/catalog` 读取附件库，并返回独立的
 `category_level1`、`category_level2`、`category_level3` 分类字段；
 `POST /api/attachments/catalog`
-新增一条持久附件。新增请求至少包含 `item_name` 和非负 `price`。
+新增一条持久附件。新增请求至少包含 `item_name` 和非负 `price`；
+可传 `category_level1`、`category_level2`、`category_level3`。为兼容旧客户端，
+未传一级分类时自动归入“其他附件”。保存时同时维护价格表的必填旧分类字段和
+独立的附件分类映射。
 
 ## 快速检查
 
