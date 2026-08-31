@@ -23,7 +23,7 @@ core_root = Path(os.environ.get("AI_QUOTE_V3_CORE_ROOT", ""))
 if not core_root.is_dir():
     raise RuntimeError("AI_QUOTE_V3_CORE_ROOT must point to the verified V3 core directory")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QRect, Qt  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QAbstractButton,
@@ -41,6 +41,47 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 import layout_refresh  # noqa: E402
 import v3_launcher  # noqa: E402
+
+
+class _LogicalScreen:
+    def __init__(self, width: int, height: int):
+        self._available = QRect(0, 0, width, height)
+
+    def availableGeometry(self):
+        return self._available
+
+
+class _MinimumWindowProbe:
+    def __init__(self, width: int, height: int):
+        self._screen = _LogicalScreen(width, height)
+        self.minimum = None
+
+    def screen(self):
+        return self._screen
+
+    def setMinimumSize(self, width: int, height: int):
+        self.minimum = (width, height)
+
+
+# Windows scaling is already reflected in Qt logical pixels.  Neither a
+# 1366x768 display at 125% nor a 1366x768 display at 150% may inherit the old
+# fixed 980x700 minimum and push the action area off-screen.
+for logical_size in ((1092, 576), (910, 512)):
+    minimum_probe = _MinimumWindowProbe(*logical_size)
+    layout_refresh._fit_window_minimum_to_screen(minimum_probe)
+    assert minimum_probe.minimum[0] <= logical_size[0]
+    assert minimum_probe.minimum[1] <= logical_size[1]
+
+# The attachment picker is fixed after construction, but caps its logical
+# dimensions to the active desktop at common Windows scaling levels.
+for logical_size, expected in {
+    (1092, 614): (900, 582),   # 1366x768 at 125% (representative logical area)
+    (910, 512): (878, 480),    # 150%
+    (781, 439): (749, 407),    # 175%
+    (683, 384): (651, 352),    # 200%
+}.items():
+    size_probe = _MinimumWindowProbe(*logical_size)
+    assert layout_refresh._attachment_dialog_target_size(size_probe) == expected
 
 
 def buttons_with_text(root, captions: set[str]):
@@ -149,6 +190,15 @@ namespace["MainWindow"].load_catalogs = lambda self: None
 
 app = QApplication.instance() or QApplication(sys.argv[:1])
 namespace["install_application_font"](app)
+assert layout_refresh._install_qt_chinese_translator()
+standard_message = QMessageBox()
+standard_message.setStandardButtons(
+    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
+)
+standard_captions = {button.text().replace("&", "") for button in standard_message.buttons()}
+assert "确定" in standard_captions, standard_captions
+assert "取消" in standard_captions, standard_captions
+assert "OK" not in standard_captions and "Cancel" not in standard_captions
 
 artifact_dir_text = os.environ.get("AI_QUOTE_UI_ARTIFACT_DIR", "").strip()
 artifact_dir = Path(artifact_dir_text) if artifact_dir_text else None
@@ -310,10 +360,20 @@ attachment_dialog.rebuild_table()
 attachment_dialog.resize(900, 680)
 attachment_dialog.show()
 app.processEvents()
-assert attachment_dialog.width() == 900
-assert attachment_dialog.height() == 680
-assert attachment_dialog.minimumWidth() == attachment_dialog.maximumWidth() == 900
-assert attachment_dialog.minimumHeight() == attachment_dialog.maximumHeight() == 680
+expected_attachment_size = layout_refresh._attachment_dialog_target_size(attachment_dialog)
+assert (attachment_dialog.width(), attachment_dialog.height()) == expected_attachment_size
+assert attachment_dialog.width() <= layout_refresh.ATTACHMENT_DIALOG_TARGET_WIDTH
+assert attachment_dialog.height() <= layout_refresh.ATTACHMENT_DIALOG_TARGET_HEIGHT
+assert (
+    attachment_dialog.minimumWidth()
+    == attachment_dialog.maximumWidth()
+    == expected_attachment_size[0]
+)
+assert (
+    attachment_dialog.minimumHeight()
+    == attachment_dialog.maximumHeight()
+    == expected_attachment_size[1]
+)
 assert len(buttons_with_text(attachment_dialog, {"确认选择"})) == 1
 assert len(buttons_with_text(attachment_dialog, {"取消"})) == 1
 assert not buttons_with_text(attachment_dialog, {"Cancel"})
@@ -324,8 +384,12 @@ assert "background:#ffffff" in selection_status.styleSheet().replace(" ", "").lo
 assert "color:#174a73" in attachment_dialog.selection_hint.styleSheet().replace(" ", "").lower()
 attachment_dialog.resize(1100, 800)
 app.processEvents()
-assert (attachment_dialog.width(), attachment_dialog.height()) == (900, 680)
+assert (attachment_dialog.width(), attachment_dialog.height()) == expected_attachment_size
 assert attachment_dialog.search_edit.geometry().top() < attachment_dialog.category_breadcrumb.geometry().top()
+assert attachment_dialog.objectName() == "attachmentDialog"
+assert attachment_dialog.search_edit.objectName() == "attachmentSearchInput"
+assert attachment_dialog.table.objectName() == "attachmentCatalogTable"
+assert attachment_dialog.add_attachment_catalog_button.accessibleName() == "新增附件到附件库"
 
 def attachment_category_buttons():
     return [
@@ -347,13 +411,24 @@ assert [button.text().splitlines()[0] for button in level1_buttons] == [
     "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
     "门限位器", "门加强筋", "配置变形", "门变形", "接地线", "铜排", "未来分类",
 ]
+assert all(button.parentWidget().minimumHeight() >= 118 for button in level1_buttons)
 positions = [
     attachment_dialog.category_grid.getItemPosition(
         attachment_dialog.category_grid.indexOf(button.parentWidget())
     )[:2]
     for button in level1_buttons
 ]
-assert positions[:5] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)], positions
+attachment_columns = layout_refresh._attachment_category_column_count(attachment_dialog)
+expected_positions = [
+    (index // attachment_columns, index % attachment_columns)
+    for index in range(min(len(level1_buttons), attachment_columns + 1))
+]
+assert positions[:len(expected_positions)] == expected_positions, positions
+row_count = max(row for row, _column in positions) + 1
+assert attachment_dialog.category_scroll_content.minimumHeight() >= (
+    row_count * 118
+    + max(0, row_count - 1) * attachment_dialog.category_grid.verticalSpacing()
+)
 assert attachment_dialog.table.isHidden()
 quick_match_buttons = attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
 assert len(quick_match_buttons) == 8
@@ -879,6 +954,23 @@ assert selection_status.isVisible()
 assert attachment_dialog.table.geometry().bottom() < selection_status.geometry().top(), (
     attachment_dialog.table.geometry(), selection_status.geometry()
 )
+for visible_widget in (
+    attachment_dialog.attachment_dialog_header,
+    attachment_dialog.catalog_hint,
+    attachment_dialog.search_edit,
+    attachment_dialog.category_breadcrumb,
+    attachment_dialog.table,
+    selection_status,
+):
+    top_left = visible_widget.mapTo(attachment_dialog, visible_widget.rect().topLeft())
+    bottom_right = visible_widget.mapTo(attachment_dialog, visible_widget.rect().bottomRight())
+    assert top_left.y() >= 0 and bottom_right.y() < attachment_dialog.height(), (
+        visible_widget.objectName(),
+        top_left,
+        bottom_right,
+        attachment_dialog.size(),
+        visible_widget.minimumSize(),
+    )
 visible_source = attachment_dialog.table.item(
     visible_rows[0], attachment_dialog.COL_CHECK
 ).data(Qt.ItemDataRole.UserRole)
@@ -957,19 +1049,32 @@ assert len([
     label for label in window.findChildren(QLabel)
     if label.text().strip() == "运费"
 ]) >= 3
-assert window.attachment_list.font().pointSize() >= 12
-assert window.attachment_list.maximumHeight() >= 120
+assert window.attachment_list.font().pointSize() >= 10
+assert window.attachment_list.maximumHeight() == 116
+assert window.freight_spin.parentWidget() is window.freight_field_block
+assert window.freight_field_block.objectName() == "fieldBlock"
+assert window.freight_label.buddy() is window.freight_spin
+for name in (
+    "product_combo", "model_edit", "width_spin", "depth_spin", "height_spin",
+    "quote_spec_edit", "material_combo", "coating_combo", "quote_date",
+    "single_door_combo", "double_door_combo", "quantity_spin", "freight_spin",
+):
+    control = getattr(window, name)
+    assert control.minimumHeight() >= layout_refresh.UI_CONTROL_HEIGHT, (name, control.minimumHeight())
+    assert control.accessibleName(), name
 
-# The sticky action dock must be a real top-level child, not a painted child
-# of QScrollArea whose native viewport intercepts manual Windows clicks.
-assert window.quote_action_dock.parentWidget() is window
+# The sticky action dock must occupy a real layout row below QScrollArea, not
+# float over its native viewport where Windows can intercept manual clicks.
+assert window.centralWidget() is window.quote_action_dock_host
+assert window.quote_action_dock.parentWidget() is window.quote_action_dock_host
+assert window.quote_action_dock_host.layout().indexOf(window.quote_action_dock) >= 0
 button_center = window.calculate_button.mapToGlobal(
     window.calculate_button.rect().center()
 )
 hit_widget = QApplication.widgetAt(button_center)
 assert window.calculate_button.isVisible()
-assert window.quote_action_dock.geometry().contains(
-    window.calculate_button.mapTo(window, window.calculate_button.rect().center())
+assert window.quote_action_dock.rect().contains(
+    window.calculate_button.mapTo(window.quote_action_dock, window.calculate_button.rect().center())
 )
 # The offscreen Qt platform does not implement native widgetAt(), but on a
 # desktop platform the center of the visible action must resolve to the
@@ -1302,9 +1407,11 @@ resumed_quote_requests = []
 original_formula_load_template = window.formula_calculator.load_template
 original_formula_calculate = window.formula_calculator.calculate
 original_retry_delays = layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS
+original_debounce_ms = layout_refresh.FORMULA_TEMPLATE_DEBOUNCE_MS
 window.formula_calculator.load_template = lambda _payload: None
 window.formula_calculator.calculate = lambda *_args: (40.7, 1.9)
 layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS = (1, 1)
+layout_refresh.FORMULA_TEMPLATE_DEBOUNCE_MS = 1
 
 def transient_template_then_quote(request, timeout=0):
     assert timeout in (30, layout_refresh.FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS)
@@ -1324,10 +1431,25 @@ def transient_template_then_quote(request, timeout=0):
 
 
 layout_refresh.urllib.request.urlopen = transient_template_then_quote
-window.calculate()
+window.refresh_formula_inputs()
+app.processEvents()
+assert window.calculate_button.isEnabled()
+assert any(
+    text in window.calculate_button.text()
+    for text in ("准备读取公式模板", "模板读取中，可点击计算")
+), window.calculate_button.text()
+window.calculate_button.click()
+app.processEvents()
+assert window._pending_formula_calculation
+assert not window.calculate_button.isEnabled()
+assert "读取完成后将自动继续计算" in window.findChild(
+    QLabel, "quoteResultState"
+).text()
 deadline = time.monotonic() + 5
 while (
     (
+        getattr(window, "_formula_template_debounce_timer", None).isActive()
+        or
         getattr(window, "template_worker", None) is not None
         or getattr(window, "worker", None) is not None
         or not resumed_quote_requests
@@ -1360,7 +1482,10 @@ window.area_edit.clear()
 window.calculate()
 deadline = time.monotonic() + 5
 while (
-    getattr(window, "template_worker", None) is not None
+    (
+        getattr(window, "_formula_template_debounce_timer", None).isActive()
+        or getattr(window, "template_worker", None) is not None
+    )
     and time.monotonic() < deadline
 ):
     app.processEvents()
@@ -1370,9 +1495,43 @@ assert len(failed_template_attempts) == 3, failed_template_attempts
 assert window.calculate_button.isEnabled()
 assert "已自动尝试 3 次" in window.risk_label.text(), window.risk_label.text()
 assert "handshake operation timed out" in window.risk_label.text()
+
+# Rapid relevant-input refreshes are collapsed into one template request.
+debounced_template_requests = []
+
+def successful_debounced_template(request, timeout=0):
+    assert timeout == layout_refresh.FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS
+    debounced_template_requests.append(request.full_url)
+    return MockHttpResponse({
+        "template": {
+            "template_code": "JP_SINGLE",
+            "option_cells": {"defaults": {}},
+            "rules": [],
+        }
+    })
+
+
+layout_refresh.urllib.request.urlopen = successful_debounced_template
+window.refresh_formula_inputs()
+window.refresh_formula_inputs()
+window.refresh_formula_inputs()
+assert window.calculate_button.isEnabled()
+deadline = time.monotonic() + 5
+while (
+    (
+        getattr(window, "_formula_template_debounce_timer", None).isActive()
+        or getattr(window, "template_worker", None) is not None
+    )
+    and time.monotonic() < deadline
+):
+    app.processEvents()
+    time.sleep(0.01)
+app.processEvents()
+assert len(debounced_template_requests) == 1, debounced_template_requests
 window.formula_calculator.load_template = original_formula_load_template
 window.formula_calculator.calculate = original_formula_calculate
 layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS = original_retry_delays
+layout_refresh.FORMULA_TEMPLATE_DEBOUNCE_MS = original_debounce_ms
 window.product_catalog["JP"]["method"] = "manual"
 layout_refresh.urllib.request.urlopen = original_urlopen
 
@@ -1550,12 +1709,31 @@ assert main_scroll is not None
 assert main_scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
 assert main_scroll.horizontalScrollBar().maximum() == 0
 assert quote_dock is not None and quote_dock.isVisible()
-assert quote_dock.parentWidget() is window
-assert main_scroll.viewportMargins().bottom() >= layout_refresh.QUOTE_ACTION_DOCK_HEIGHT
-main_scroll_bottom = main_scroll.mapTo(window, main_scroll.rect().bottomRight()).y()
-assert quote_dock.geometry().bottom() <= main_scroll_bottom
+assert quote_dock.parentWidget() is window.quote_action_dock_host
+assert main_scroll.viewportMargins().bottom() == 0
+main_scroll_bottom = main_scroll.geometry().bottom()
+assert quote_dock.geometry().top() >= main_scroll_bottom
 assert window.findChild(QAbstractButton, "secondaryQuoteAction").parentWidget() is quote_dock
 assert window.findChild(QAbstractButton, "quietQuoteAction").parentWidget() is quote_dock
+
+# A compact action dock hides only the descriptive label, not any action, and
+# its minimum widths fit inside the available logical width.
+layout_refresh._configure_quote_action_dock_density(window, 400)
+assert not window.quote_action_dock_label.isVisible()
+compact_actions = [
+    window.findChild(QAbstractButton, name)
+    for name in ("primaryQuoteAction", "secondaryQuoteAction", "quietQuoteAction")
+]
+assert all(action.isVisible() for action in compact_actions)
+compact_layout = quote_dock.layout()
+compact_required = (
+    sum(action.minimumWidth() for action in compact_actions)
+    + compact_layout.spacing() * 2
+    + compact_layout.contentsMargins().left()
+    + compact_layout.contentsMargins().right()
+)
+assert compact_required <= 400, compact_required
+layout_refresh._configure_quote_action_dock_density(window, quote_dock.width())
 
 # A normal 1366x768 office window keeps the two-column workbench, while a
 # 1180px logical window (for example a 1690px display at 150% scaling) stacks
@@ -1570,8 +1748,14 @@ assert medium_left >= 520, quote_workspace.sizes()
 assert medium_right >= 500, quote_workspace.sizes()
 assert main_scroll.horizontalScrollBar().maximum() == 0
 assert quote_dock.isVisible()
-main_scroll_bottom = main_scroll.mapTo(window, main_scroll.rect().bottomRight()).y()
-assert quote_dock.geometry().bottom() <= main_scroll_bottom
+assert quote_dock.geometry().top() >= main_scroll.geometry().bottom()
+door_block = window.single_door_combo.parentWidget().parentWidget()
+quantity_block = window.quantity_spin.parentWidget()
+freight_block = window.freight_spin.parentWidget()
+assert door_block.geometry().top() == quantity_block.geometry().top() == freight_block.geometry().top()
+assert door_block.geometry().right() < quantity_block.geometry().left()
+assert quantity_block.geometry().right() < freight_block.geometry().left()
+assert window.freight_spin.geometry().top() >= window.freight_label.geometry().bottom()
 
 window.resize(1180, 720)
 app.processEvents()
@@ -1584,8 +1768,8 @@ assert main_scroll.verticalScrollBar().maximum() > 0
 stacked_input, stacked_result = quote_workspace.widget(0), quote_workspace.widget(1)
 assert stacked_input.geometry().bottom() < stacked_result.geometry().top()
 assert quote_dock.isVisible()
-assert quote_dock.width() == quote_workspace.width()
-assert quote_dock.geometry().bottom() <= main_scroll.height()
+assert quote_dock.width() == window.quote_action_dock_host.width()
+assert quote_dock.geometry().top() >= main_scroll.geometry().bottom()
 
 window.resize(980, 700)
 app.processEvents()
@@ -1597,7 +1781,7 @@ assert quote_workspace.orientation() == Qt.Orientation.Vertical
 assert main_scroll.horizontalScrollBar().maximum() == 0
 assert main_scroll.verticalScrollBar().maximum() > 0
 assert quote_dock.isVisible()
-assert quote_dock.width() == quote_workspace.width()
+assert quote_dock.width() == window.quote_action_dock_host.width()
 for action_name in ("primaryQuoteAction", "secondaryQuoteAction", "quietQuoteAction"):
     action = window.findChild(QAbstractButton, action_name)
     assert action is not None and action.isVisible()
@@ -1785,6 +1969,44 @@ if artifact_dir is not None:
     app.processEvents()
     app.processEvents()
     assert window.grab().save(str(artifact_dir / "v3_quote_stacked_980x700.png"))
+
+    # Qt lays out widgets in logical pixels.  Resize to the logical desktop
+    # sizes produced by the requested physical resolutions/scales, then keep
+    # an evidence image for each combination.  The production minimum-size
+    # pass uses the real screen geometry; the test temporarily lowers the
+    # offscreen plugin's synthetic 800x800 minimum so smaller logical desktops
+    # can be exercised accurately.
+    previous_minimum = window.minimumSize()
+    window.setMinimumSize(1, 1)
+    scaling_cases = {
+        "1920x1080_scale125": (1536, 864),
+        "1920x1080_scale150": (1280, 720),
+        "1920x1080_scale175": (1097, 617),
+        "1920x1080_scale200": (960, 540),
+        "1366x768_scale125": (1093, 614),
+        "1366x768_scale150": (911, 512),
+        "1366x768_scale175": (781, 439),
+        "1366x768_scale200": (683, 384),
+    }
+    for case_name, logical_size in scaling_cases.items():
+        window.resize(*logical_size)
+        app.processEvents()
+        app.processEvents()
+        assert window.size().toTuple() == logical_size, (case_name, window.size())
+        assert main_scroll.horizontalScrollBar().maximum() == 0, case_name
+        assert quote_dock.isVisible(), case_name
+        for action_name in (
+            "primaryQuoteAction",
+            "secondaryQuoteAction",
+            "quietQuoteAction",
+        ):
+            action = window.findChild(QAbstractButton, action_name)
+            assert action is not None and action.isVisible(), (case_name, action_name)
+            assert quote_dock.rect().contains(action.geometry()), (case_name, action_name)
+        assert window.grab().save(
+            str(artifact_dir / f"v3_quote_{case_name}.png")
+        )
+    window.setMinimumSize(previous_minimum)
 
 deadline = time.monotonic() + 5
 while (

@@ -9,9 +9,15 @@ Unicode True
 !ifndef OutputDir
   !error "OutputDir must be supplied by the build script"
 !endif
+!ifndef AppVersion
+  !define AppVersion "2026.08.29"
+!endif
+!ifndef AppVersionNumeric
+  !define AppVersionNumeric "2026.8.29.0"
+!endif
 
 !define APP_NAME "AI 双报价系统"
-!define APP_VERSION "2026.08.21.4"
+!define APP_VERSION "${AppVersion}"
 !define APP_EXE "AIQuoteDualSystem_layout_v6.exe"
 !define APP_ID "AIQuoteDualSystem.DualQuote.2026"
 !define APP_REG_KEY "Software\AIQuoteDualSystem"
@@ -20,7 +26,7 @@ Unicode True
 Var StartMenuFolder
 
 Name "${APP_NAME}"
-OutFile "${OutputDir}\AIQuoteDualSystem_Setup_v2026.08.21.4.exe"
+OutFile "${OutputDir}\AIQuoteDualSystem_Setup_v${APP_VERSION}.exe"
 InstallDir "$LOCALAPPDATA\Programs\AIQuoteDualSystem"
 InstallDirRegKey HKCU "${APP_REG_KEY}" "InstallDir"
 RequestExecutionLevel user
@@ -34,12 +40,12 @@ BrandingText "AI 双报价系统 · 公式法 × 快速法"
 Icon "${StageDir}\AIQuoteDualSystem.ico"
 WindowIcon on
 
-VIProductVersion "2026.8.21.4"
+VIProductVersion "${AppVersionNumeric}"
 VIAddVersionKey /LANG=2052 "ProductName" "AI 双报价系统"
 VIAddVersionKey /LANG=2052 "CompanyName" "AI 双报价系统"
 VIAddVersionKey /LANG=2052 "FileDescription" "AI 双报价系统安装程序"
-VIAddVersionKey /LANG=2052 "FileVersion" "2026.08.21.4"
-VIAddVersionKey /LANG=2052 "ProductVersion" "2026.08.21.4"
+VIAddVersionKey /LANG=2052 "FileVersion" "${APP_VERSION}"
+VIAddVersionKey /LANG=2052 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright © 2026"
 
 !define MUI_ABORTWARNING
@@ -52,7 +58,7 @@ VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright © 2026"
 !define MUI_WELCOMEPAGE_TEXT "一个柜型，两种算法，报价结果清楚可核对。$\r$\n$\r$\n安装向导将复制已验证的桌面客户端。下一步可自由选择安装磁盘和目录。"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "立即启动 AI 双报价系统"
-!define MUI_FINISHPAGE_LINK "版本：v2026.08.21.4"
+!define MUI_FINISHPAGE_LINK "版本：v${APP_VERSION}"
 !define MUI_FINISHPAGE_LINK_LOCATION "https://github.com/daidai1007/ai-quote-dual-system/releases"
 
 !insertmacro MUI_PAGE_WELCOME

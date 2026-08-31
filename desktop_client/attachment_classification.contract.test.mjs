@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('attachment dialog drills through four-column category cards before showing the table', async () => {
+test('attachment dialog drills through responsive category cards before showing the table', async () => {
   const source = await fs.readFile(path.join(projectRoot, 'desktop_client', 'main.py'), 'utf8');
   const overlay = await fs.readFile(path.join(projectRoot, 'desktop_client', 'layout_refresh.py'), 'utf8');
   const hierarchy = await fs.readFile(
@@ -27,7 +27,11 @@ test('attachment dialog drills through four-column category cards before showing
 
   assert.match(overlay, /def _install_attachment_default_selection_filters/);
   assert.match(overlay, /_install_attachment_default_selection_filters\(namespace\)/);
-  assert.match(overlay, /self\.category_grid\.addWidget\(card, index \/\/ 4, index % 4\)/);
+  assert.match(overlay, /def _attachment_category_column_count\(dialog\) -> int:/);
+  assert.match(overlay, /if width >= 860:\s*return 4/);
+  assert.match(overlay, /if width >= 680:\s*return 3\s*return 2/);
+  assert.match(overlay, /row_index = index \/\/ column_count/);
+  assert.match(overlay, /index % column_count/);
   assert.match(overlay, /parse_base_specification\(specification_text\(self\)\)/);
   assert.match(overlay, /match_fixed_base/);
   assert.match(overlay, /match_jp_side_panel/);

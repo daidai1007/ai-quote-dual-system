@@ -8,6 +8,7 @@ database catalogue presentation and API interactions approved for V3.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import urllib.error
@@ -114,9 +115,24 @@ FORMULA_MULTI_DOOR_FAMILIES = {"JS", "JP", "JA", "JE"}
 QUOTE_WIDE_BREAKPOINT = 1280
 QUOTE_STACK_BREAKPOINT = 1050
 QUOTE_ACTION_DOCK_HEIGHT = 62
+UI_SPACE_XS = 4
+UI_SPACE_SM = 8
+UI_SPACE_MD = 12
+UI_SPACE_LG = 16
+UI_CONTROL_HEIGHT = 34
+UI_PRIMARY_ACTION_HEIGHT = 40
+UI_CARD_RADIUS = 8
+ATTACHMENT_DIALOG_TARGET_WIDTH = 900
+ATTACHMENT_DIALOG_TARGET_HEIGHT = 680
+ATTACHMENT_DIALOG_SCREEN_MARGIN = 32
 FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS = 75
 FORMULA_TEMPLATE_MAX_ATTEMPTS = 3
 FORMULA_TEMPLATE_RETRY_DELAYS_MS = (500, 1000)
+FORMULA_TEMPLATE_DEBOUNCE_MS = 420
+FORMULA_TEMPLATE_BUSY_RECHECK_MS = 160
+
+
+LOGGER = logging.getLogger("ai_quote.client")
 
 
 def _formula_template_error_text(error: Exception) -> str:
@@ -173,6 +189,12 @@ class _FormulaTemplateWorker(QThread):
         for attempt in range(1, FORMULA_TEMPLATE_MAX_ATTEMPTS + 1):
             self.attempt_count = attempt
             try:
+                LOGGER.info(
+                    "formula template request started product=%s attempt=%s/%s",
+                    self.product_code,
+                    attempt,
+                    FORMULA_TEMPLATE_MAX_ATTEMPTS,
+                )
                 body = json.dumps(
                     {"product_code": self.product_code}, ensure_ascii=False
                 ).encode("utf-8")
@@ -193,10 +215,22 @@ class _FormulaTemplateWorker(QThread):
                     payload = json.loads(response.read().decode("utf-8"))
                 if not isinstance(payload, dict):
                     raise RuntimeError("公式模板接口返回了无效数据")
+                LOGGER.info(
+                    "formula template request succeeded product=%s attempt=%s",
+                    self.product_code,
+                    attempt,
+                )
                 self.succeeded.emit(payload)
                 return
             except Exception as error:
                 message = _formula_template_error_text(error)
+                LOGGER.warning(
+                    "formula template request failed product=%s attempt=%s/%s error=%s",
+                    self.product_code,
+                    attempt,
+                    FORMULA_TEMPLATE_MAX_ATTEMPTS,
+                    message,
+                )
                 if (
                     attempt < FORMULA_TEMPLATE_MAX_ATTEMPTS
                     and _formula_template_error_is_transient(error)
@@ -663,6 +697,8 @@ INSPECTION_GREEN = "#2F855A"
 INSPECTION_PALE = "#E8F5EE"
 WARNING_AMBER = "#C98113"
 WARNING_PALE = "#FFF5DF"
+ERROR_RED = "#B42318"
+ERROR_PALE = "#FFF0F0"
 
 
 def _install_door_remark_sync(namespace: dict) -> None:
@@ -682,6 +718,31 @@ def _install_door_remark_sync(namespace: dict) -> None:
 
 def _find(root: QWidget, widget_type, object_name: str):
     return root.findChild(widget_type, object_name)
+
+
+def _install_qt_chinese_translator() -> bool:
+    """Localize standard Qt dialog buttons without changing dialog semantics."""
+
+    try:
+        from PySide6.QtCore import QLibraryInfo, QTranslator
+        from PySide6.QtWidgets import QApplication
+    except (ImportError, AttributeError):
+        # Pure business-rule tests intentionally provide a minimal Qt stub.
+        # Translation is presentation-only, so those environments may skip it.
+        return False
+    app = QApplication.instance()
+    if app is None:
+        return False
+    existing = getattr(app, "_layout_refresh_zh_translator", None)
+    if isinstance(existing, QTranslator):
+        return True
+    translator = QTranslator(app)
+    translations_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    if not translator.load("qtbase_zh_CN", translations_path):
+        return False
+    app.installTranslator(translator)
+    app._layout_refresh_zh_translator = translator
+    return True
 
 
 def _safe_float(value) -> float | None:
@@ -2405,17 +2466,85 @@ def _quote_layout_mode(window, workspace: QSplitter) -> str:
     return "stacked"
 
 
+def _fit_window_minimum_to_screen(window) -> None:
+    """Keep the workbench usable on high-DPI and small office displays.
+
+    Qt reports ``availableGeometry`` in logical pixels, so this also covers a
+    1366x768 display running at 125%/150% Windows scaling.  The content itself
+    is scrollable; forcing the old 980x700 minimum only pushed the fixed action
+    dock and its status text outside the visible desktop.
+    """
+
+    screen = window.screen()
+    if screen is None:
+        window.setMinimumSize(980, 700)
+        return
+    available = screen.availableGeometry()
+    if not available.isValid():
+        window.setMinimumSize(980, 700)
+        return
+    geometry_key = (
+        available.x(),
+        available.y(),
+        available.width(),
+        available.height(),
+    )
+    if getattr(window, "_layout_refresh_screen_geometry", None) == geometry_key:
+        return
+    window._layout_refresh_screen_geometry = geometry_key
+    window.setMinimumSize(
+        max(1, min(980, available.width())),
+        max(1, min(700, available.height())),
+    )
+
+
+def _configure_quote_action_dock_density(window, width: int) -> None:
+    label = getattr(window, "quote_action_dock_label", None)
+    if isinstance(label, QLabel):
+        label.setVisible(width >= 760)
+
+    buttons = [
+        _find(window, QPushButton, "primaryQuoteAction"),
+        _find(window, QPushButton, "secondaryQuoteAction"),
+        _find(window, QPushButton, "quietQuoteAction"),
+    ]
+    if any(button is None for button in buttons):
+        return
+
+    if width >= 760:
+        minimums, maximums = (200, 160, 110), (260, 210, 130)
+    elif width >= 520:
+        minimums, maximums = (170, 135, 90), (220, 180, 120)
+    else:
+        # Preserve all three actions even on a narrow logical desktop.  The
+        # primary calculation action receives the largest share.
+        usable = max(240, width - 44)
+        minimums = (
+            max(96, int(usable * 0.44)),
+            max(82, int(usable * 0.34)),
+            max(62, int(usable * 0.22)),
+        )
+        maximums = (WIDGET_MAX, WIDGET_MAX, WIDGET_MAX)
+    for button, minimum, maximum in zip(buttons, minimums, maximums):
+        button.setMinimumWidth(minimum)
+        button.setMaximumWidth(maximum)
+
+
 def _configure_quote_header(window, mode: str) -> None:
     page = window.stack.widget(1)
     company = _find(page, QComboBox, "baseCompanyCombo")
     if company is not None:
-        company.setMinimumWidth({"wide": 220, "medium": 180, "stacked": 140}[mode])
-        company.setMaximumWidth(260 if mode == "wide" else 220)
+        company.setMinimumWidth({"wide": 220, "medium": 180, "stacked": 105}[mode])
+        company.setMaximumWidth({"wide": 260, "medium": 220, "stacked": 160}[mode])
 
     status = _find(page, QLabel, "serviceStatusBadge")
     if status is not None:
-        status.setMinimumWidth(112)
-        status.setMaximumWidth(140)
+        status.setMinimumWidth(136 if mode == "stacked" else 112)
+        status.setMaximumWidth(160 if mode == "stacked" else 140)
+
+    for label in page.findChildren(QLabel):
+        if label.text().startswith("填写一个柜型"):
+            label.setWordWrap(mode == "stacked")
 
 
 def _position_quote_action_dock(window) -> None:
@@ -2426,47 +2555,11 @@ def _position_quote_action_dock(window) -> None:
         return
 
     visible = stack.currentIndex() == 1 and main_scroll.viewport().isVisible()
-    main_scroll.setViewportMargins(
-        0,
-        0,
-        0,
-        QUOTE_ACTION_DOCK_HEIGHT + 8 if visible else 0,
-    )
+    main_scroll.setViewportMargins(0, 0, 0, 0)
     dock.setVisible(visible)
     if not visible:
         return
-
-    page = stack.widget(1)
-    workspace = _find(page, QSplitter, "quoteWorkspace")
-    if workspace is None or workspace.count() < 2:
-        dock.hide()
-        return
-
-    # QAbstractScrollArea owns a native viewport that handles input ahead of
-    # ordinary children placed directly on the scroll area.  On Windows a
-    # dock parented to ``main_scroll`` can therefore remain visibly painted in
-    # the reserved bottom margin while mouse clicks never reach its buttons.
-    # Keep the floating dock as a direct MainWindow child and only use the
-    # scroll area as its positioning reference.
-    if dock.parentWidget() is not window:
-        dock.setParent(window)
-    viewport = main_scroll.viewport()
-    target = workspace
-    origin = target.mapTo(window, QPoint(0, 0))
-    scroll_origin = main_scroll.mapTo(window, QPoint(0, 0))
-    left = max(scroll_origin.x() + 8, origin.x())
-    right_padding = 8
-    scroll_right = scroll_origin.x() + main_scroll.width()
-    width = min(target.width(), scroll_right - left - right_padding)
-    if width < 360:
-        left = scroll_origin.x() + 8
-        width = max(360, main_scroll.width() - 16)
-    top = main_scroll.mapTo(
-        window,
-        QPoint(0, max(8, main_scroll.height() - QUOTE_ACTION_DOCK_HEIGHT - 4)),
-    ).y()
-    dock.setGeometry(left, top, width, QUOTE_ACTION_DOCK_HEIGHT)
-    dock.raise_()
+    _configure_quote_action_dock_density(window, max(240, dock.width()))
 
 
 def _ensure_quote_action_dock(window) -> None:
@@ -2487,10 +2580,25 @@ def _ensure_quote_action_dock(window) -> None:
     if any(button is None for button in buttons):
         return
 
-    # Parent the overlay to the main window.  Parenting it to QScrollArea
-    # makes the native viewport intercept real mouse input on Windows even
-    # though the dock remains visible.
-    dock = QFrame(window)
+    # Make the action dock a normal sibling below the scroll area.  A floating
+    # child painted over QScrollArea can look correct while the native Windows
+    # viewport still receives the physical mouse click.  A real layout slot
+    # gives the buttons an unambiguous visible and clickable region on every
+    # DPI setting without creating an extra native child window.
+    host = QWidget(window)
+    host.setObjectName("mainScrollHost")
+    host_layout = QVBoxLayout(host)
+    host_layout.setContentsMargins(0, 0, 0, 0)
+    host_layout.setSpacing(0)
+    current_central = window.takeCentralWidget()
+    if current_central is not main_scroll:
+        if current_central is not None:
+            window.setCentralWidget(current_central)
+        host.deleteLater()
+        return
+    host_layout.addWidget(main_scroll, 1)
+
+    dock = QFrame(host)
     dock.setObjectName("quoteActionDock")
     dock.setFixedHeight(QUOTE_ACTION_DOCK_HEIGHT)
     layout = QHBoxLayout(dock)
@@ -2512,22 +2620,16 @@ def _ensure_quote_action_dock(window) -> None:
         if parent_layout is not None:
             parent_layout.removeWidget(button)
         button.setParent(dock)
-        button.setMinimumHeight(40)
-        button.setMaximumHeight(40)
+        button.setMinimumHeight(UI_PRIMARY_ACTION_HEIGHT)
+        button.setMaximumHeight(UI_PRIMARY_ACTION_HEIGHT)
         button.setMinimumWidth(minimum)
         button.setMaximumWidth(maximum)
         layout.addWidget(button)
 
-    workspace = _find(page, QSplitter, "quoteWorkspace")
-    if workspace is not None and workspace.count() >= 2:
-        result_layout = workspace.widget(1).layout()
-        if result_layout is not None:
-            spacer = QWidget(workspace.widget(1))
-            spacer.setObjectName("quoteActionDockSpacer")
-            spacer.setFixedHeight(QUOTE_ACTION_DOCK_HEIGHT)
-            result_layout.addWidget(spacer)
-            window.quote_action_dock_spacer = spacer
+    host_layout.addWidget(dock, 0)
+    window.setCentralWidget(host)
 
+    window.quote_action_dock_host = host
     window.quote_action_dock = dock
     window.quote_action_dock_label = label
     workspace = _find(page, QSplitter, "quoteWorkspace")
@@ -2635,11 +2737,11 @@ def _refresh_quote_page(window) -> None:
     attachment_list = getattr(window, "attachment_list", None)
     if attachment_list is not None:
         attachment_list.setObjectName("attachmentDetailList")
-        attachment_list.setMinimumHeight(104)
-        attachment_list.setMaximumHeight(132)
+        attachment_list.setMinimumHeight(92)
+        attachment_list.setMaximumHeight(116)
         if not getattr(attachment_list, "_detail_font_enlarged", False):
             font = attachment_list.font()
-            font.setPointSize(max(12, font.pointSize() + 2))
+            font.setPointSize(max(10, font.pointSize()))
             attachment_list.setFont(font)
             attachment_list._detail_font_enlarged = True
 
@@ -2682,6 +2784,122 @@ def _refresh_summary_page(window) -> None:
     _sync_summary_action_state(window)
 
 
+def _layout_containing_widget(layout, target: QWidget):
+    """Return the nested layout that directly owns ``target``."""
+
+    if layout is None or target is None:
+        return None
+    if layout.indexOf(target) >= 0:
+        return layout
+    for index in range(layout.count()):
+        child_layout = layout.itemAt(index).layout()
+        found = _layout_containing_widget(child_layout, target)
+        if found is not None:
+            return found
+    return None
+
+
+def _configure_quote_input_form(window) -> None:
+    """Normalize the quote form without replacing any business-owned widget."""
+
+    stack = getattr(window, "stack", None)
+    if stack is None or stack.count() <= 1:
+        return
+    page = stack.widget(1)
+    card = _find(page, QFrame, "quoteInputCard")
+    if card is None:
+        return
+
+    card_layout = card.layout()
+    if card_layout is not None:
+        card_layout.setContentsMargins(20, 16, 20, 16)
+        card_layout.setSpacing(UI_SPACE_MD)
+
+    for block in card.findChildren(QFrame, "fieldBlock"):
+        block_layout = block.layout()
+        if block_layout is not None:
+            block_layout.setSpacing(UI_SPACE_XS)
+        labels = block.findChildren(
+            QLabel,
+            "compactFieldLabel",
+            Qt.FindChildOption.FindDirectChildrenOnly,
+        )
+        label = labels[0] if labels else None
+        if isinstance(label, QLabel):
+            label.setWordWrap(False)
+            label.setMinimumHeight(18)
+            label.setMaximumHeight(18)
+            label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            controls = [
+                child
+                for child in block.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly)
+                if child is not label
+            ]
+            if controls:
+                label.setBuddy(controls[0])
+
+    controls = [
+        getattr(window, name, None)
+        for name in (
+            "product_combo",
+            "model_edit",
+            "width_spin",
+            "depth_spin",
+            "height_spin",
+            "quote_spec_edit",
+            "material_combo",
+            "coating_combo",
+            "quote_date",
+            "single_door_combo",
+            "double_door_combo",
+            "quantity_spin",
+            "freight_spin",
+        )
+    ]
+    for control in controls:
+        if isinstance(control, QWidget):
+            control.setMinimumHeight(UI_CONTROL_HEIGHT)
+    for name in ("width_spin", "depth_spin", "height_spin"):
+        control = getattr(window, name, None)
+        dimension_block = control.parentWidget() if isinstance(control, QWidget) else None
+        if isinstance(dimension_block, QFrame):
+            dimension_block.setMinimumHeight(68)
+
+    accessible_names = {
+        "product_combo": "产品型号（必填）",
+        "model_edit": "图号或型号",
+        "width_spin": "柜体宽度（毫米）",
+        "depth_spin": "柜体深度（毫米）",
+        "height_spin": "柜体高度（毫米）",
+        "quote_spec_edit": "规格型号，宽乘深乘高（必填）",
+        "material_combo": "材质（必填）",
+        "coating_combo": "表面处理（必填）",
+        "quote_date": "报价日期",
+        "single_door_combo": "单门数量",
+        "double_door_combo": "双门数量",
+        "quantity_spin": "柜体数量（必填）",
+        "freight_spin": "运费",
+    }
+    for name, accessible_name in accessible_names.items():
+        control = getattr(window, name, None)
+        if isinstance(control, QWidget):
+            control.setAccessibleName(accessible_name)
+
+    attachment_button = _find(card, QPushButton, "quietAction")
+    advanced_toggle = _find(card, QPushButton, "advancedToggle")
+    calculate_button = getattr(window, "calculate_button", None)
+    tab_order = [
+        *[control for control in controls if isinstance(control, QWidget)],
+        *[
+            control
+            for control in (attachment_button, advanced_toggle, calculate_button)
+            if isinstance(control, QWidget)
+        ],
+    ]
+    for current, following in zip(tab_order, tab_order[1:]):
+        QWidget.setTabOrder(current, following)
+
+
 def _ensure_freight_field(window) -> None:
     """Add the runtime-core freight input and result rows exactly once."""
 
@@ -2701,27 +2919,50 @@ def _ensure_freight_field(window) -> None:
         window.freight_spin = freight
 
         quantity = getattr(window, "quantity_spin", None)
-        parent = quantity.parentWidget() if isinstance(quantity, QWidget) else None
-        layout = parent.layout() if parent is not None else None
-        if isinstance(layout, QGridLayout):
-            row = layout.rowCount()
-            label = QLabel("运费", parent)
-            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            layout.addWidget(label, row, 0)
-            layout.addWidget(freight, row, 1, 1, max(1, layout.columnCount() - 1))
+        quantity_block = quantity.parentWidget() if isinstance(quantity, QWidget) else None
+        stack = getattr(window, "stack", None)
+        page = stack.widget(1) if stack is not None and stack.count() > 1 else None
+        card = _find(page, QFrame, "quoteInputCard") if page is not None else None
+        form_grid = _layout_containing_widget(
+            card.layout() if card is not None else None,
+            quantity_block,
+        )
+        if isinstance(form_grid, QGridLayout) and card is not None:
+            block = QFrame(card)
+            block.setObjectName("fieldBlock")
+            block_layout = QVBoxLayout(block)
+            block_layout.setContentsMargins(0, 0, 0, 0)
+            block_layout.setSpacing(UI_SPACE_XS)
+            label = QLabel("运费", block)
+            label.setObjectName("compactFieldLabel")
+            label.setBuddy(freight)
+            label.setMinimumHeight(18)
+            label.setMaximumHeight(18)
+            block_layout.addWidget(label)
+            block_layout.addWidget(freight)
+            form_grid.addWidget(block, 1, 2)
+            form_grid.setHorizontalSpacing(UI_SPACE_MD)
+            form_grid.setVerticalSpacing(UI_SPACE_MD)
+            for column in range(3):
+                form_grid.setColumnStretch(column, 1)
+            window.freight_field_block = block
             window.freight_label = label
-        elif isinstance(layout, QFormLayout):
-            layout.addRow("运费", freight)
-        elif layout is not None:
-            row_widget = QWidget(parent)
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.addWidget(QLabel("运费", row_widget))
-            row_layout.addWidget(freight, 1)
-            layout.addWidget(row_widget)
+        else:
+            parent = quantity_block
+            layout = parent.layout() if parent is not None else None
+            if isinstance(layout, QFormLayout):
+                layout.addRow("运费", freight)
+            elif layout is not None:
+                row_widget = QWidget(parent)
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.addWidget(QLabel("运费", row_widget))
+                row_layout.addWidget(freight, 1)
+                layout.addWidget(row_widget)
 
     freight.setObjectName("freightFeeSpin")
     freight.setMinimumWidth(116)
+    freight.setMinimumHeight(UI_CONTROL_HEIGHT)
     if not getattr(freight, "_quote_refresh_connected", False):
         freight.valueChanged.connect(lambda _value: window.refresh_discounted_totals())
         freight._quote_refresh_connected = True
@@ -2898,7 +3139,7 @@ QPushButton#navButton:checked {{
     background: {BLUEPRINT}; color: white; border-left: 3px solid #9CCBF0;
 }}
 #modernPageHeader, #commandBar {{
-    background: {PAPER}; border: 1px solid {STEEL_LINE}; border-radius: 8px;
+    background: {PAPER}; border: 1px solid {STEEL_LINE}; border-radius: {UI_CARD_RADIUS}px;
 }}
 QLabel#modernPageTitle, QLabel#workbenchTitle {{
     color: {GRAPHITE}; font-weight: 700;
@@ -2917,7 +3158,7 @@ QLabel#batchBanner {{
 }}
 #inputPanel, #evidencePanel, #outputPanel, #quoteInputCard,
 #quoteResultsPanel, QFrame#summaryListCard {{
-    background: {PAPER}; border: 1px solid {STEEL_LINE}; border-radius: 8px;
+    background: {PAPER}; border: 1px solid {STEEL_LINE}; border-radius: {UI_CARD_RADIUS}px;
 }}
 #importDropZone {{
     background: #FAFBFC; border: 1px dashed #AEB9C3; border-radius: 7px;
@@ -2955,15 +3196,60 @@ QLabel#serviceStatusBadge[tone="info"] {{
     background: {BLUEPRINT_PALE}; color: #24577B;
     border: 1px solid #BED8EB; border-radius: 6px;
 }}
-QLabel#serviceStatusBadge[tone="warning"], QLabel#serviceStatusBadge[tone="error"] {{
+QLabel#serviceStatusBadge[tone="warning"] {{
     background: {WARNING_PALE}; color: #855A08;
     border: 1px solid #ECD39A; border-radius: 6px;
+}}
+QLabel#serviceStatusBadge[tone="error"] {{
+    background: {ERROR_PALE}; color: {ERROR_RED};
+    border: 1px solid #E8B4AF; border-radius: 6px;
 }}
 QLabel#dimensionCode {{
     background: {GRAPHITE}; color: white; border-radius: 5px;
     font-family: "Consolas"; font-weight: 700;
 }}
 QSpinBox, QDoubleSpinBox {{ font-family: "Consolas", "Microsoft YaHei UI"; }}
+QFrame#quoteInputCard QLabel#cardTitle,
+QFrame#quoteResultsPanel QLabel#cardTitle {{ font-size: 11pt; font-weight: 700; }}
+QFrame#quoteInputCard QLabel#cardSubtitle,
+QFrame#quoteResultsPanel QLabel#cardSubtitle {{ font-size: 9pt; }}
+QFrame#quoteInputCard QLabel#compactFieldLabel {{
+    color: #34414D; font-size: 9pt; font-weight: 600;
+}}
+QFrame#quoteInputCard QComboBox,
+QFrame#quoteInputCard QLineEdit,
+QFrame#quoteInputCard QDateEdit,
+QFrame#quoteInputCard QSpinBox,
+QFrame#quoteInputCard QDoubleSpinBox {{
+    min-height: 34px; font-size: 9.5pt;
+}}
+QFrame#quoteInputCard QFrame#dimensionField {{
+    min-height: 68px; background: #F8FAFB; border: 1px solid #DDE3E8;
+    border-radius: 7px;
+}}
+QFrame#quoteInputCard QLabel#quoteParameterSource {{
+    min-height: 28px; color: #51606D; background: #F8FAFB;
+    border-radius: 5px; padding: 0 8px;
+}}
+QFrame#compactAttachmentCard {{
+    background: #F8FAFB; border: 1px solid #DDE3E8; border-radius: 7px;
+}}
+QFrame#compactAttachmentCard QLabel#attachmentRecommendation {{
+    color: #34414D; font-size: 9pt;
+}}
+QFrame#compactAttachmentCard QLabel#attachmentStatus {{
+    color: {MUTED_INK}; font-size: 9pt;
+}}
+QListWidget#attachmentDetailList {{
+    background: {PAPER}; color: {GRAPHITE}; border: 1px solid #DDE3E8;
+    border-radius: 5px; padding: 4px;
+}}
+QPushButton#advancedToggle {{
+    min-height: 32px; background: #EEF2F5; color: #3C4B58;
+    border: 1px solid #D7DEE5; border-radius: 6px; text-align: left;
+    padding: 0 10px; font-weight: 600;
+}}
+QPushButton#advancedToggle:hover {{ background: #E4EBF1; color: #234A66; }}
 QPushButton#primaryQuoteAction, QPushButton#primaryAction,
 QPushButton#primaryExportAction, QPushButton#importPrimaryAction,
 QPushButton#emptyStateAction {{
@@ -3038,7 +3324,8 @@ QDoubleSpinBox#laborMultiplier {{ min-height: 28px; }}
 def apply_layout_refresh(window) -> None:
     """Apply the V3 workbench presentation without changing quote state."""
 
-    window.setMinimumSize(980, 700)
+    _install_qt_chinese_translator()
+    _fit_window_minimum_to_screen(window)
     stack_host = window.stack.parentWidget()
     if stack_host is not None and stack_host.layout() is not None:
         stack_host.layout().setAlignment(window.stack, Qt.AlignmentFlag.AlignTop)
@@ -3051,6 +3338,10 @@ def apply_layout_refresh(window) -> None:
 
     main_scroll = _find(window, QScrollArea, "mainScroll")
     if main_scroll is not None:
+        main_scroll.setMinimumSize(0, 0)
+        scroll_policy = main_scroll.sizePolicy()
+        scroll_policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
+        main_scroll.setSizePolicy(scroll_policy)
         main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         canvas = main_scroll.widget()
         if canvas is not None:
@@ -3063,9 +3354,10 @@ def apply_layout_refresh(window) -> None:
                 shell_layout.setAlignment(window.stack, Qt.AlignmentFlag.AlignTop)
 
     _refresh_recognition_page(window)
-    _refresh_quote_page(window)
-    _ensure_labor_multiplier_field(window)
     _ensure_freight_field(window)
+    _ensure_labor_multiplier_field(window)
+    _configure_quote_input_form(window)
+    _refresh_quote_page(window)
     _refresh_summary_page(window)
     _configure_action_copy(window)
     window.setStyleSheet(window.styleSheet() + INDUSTRIAL_WORKBENCH_STYLE)
@@ -3416,6 +3708,176 @@ def _attachment_api_url(dialog) -> str:
     if marker >= 0:
         base = base[:marker]
     return f"{base}/api/attachments/catalog"
+
+
+def _attachment_dialog_target_size(dialog) -> tuple[int, int]:
+    """Return a fixed logical size that never exceeds the active desktop."""
+
+    screen = dialog.screen()
+    if screen is None:
+        return ATTACHMENT_DIALOG_TARGET_WIDTH, ATTACHMENT_DIALOG_TARGET_HEIGHT
+    available = screen.availableGeometry()
+    if not available.isValid():
+        return ATTACHMENT_DIALOG_TARGET_WIDTH, ATTACHMENT_DIALOG_TARGET_HEIGHT
+    return (
+        max(1, min(ATTACHMENT_DIALOG_TARGET_WIDTH, available.width() - ATTACHMENT_DIALOG_SCREEN_MARGIN)),
+        max(1, min(ATTACHMENT_DIALOG_TARGET_HEIGHT, available.height() - ATTACHMENT_DIALOG_SCREEN_MARGIN)),
+    )
+
+
+def _attachment_category_column_count(dialog) -> int:
+    width = max(1, dialog.width())
+    if width >= 860:
+        return 4
+    if width >= 680:
+        return 3
+    return 2
+
+
+ATTACHMENT_DIALOG_STYLE = f"""
+QDialog#attachmentDialog {{
+    background: {STEEL_CANVAS}; color: {GRAPHITE};
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei"; font-size: 9.5pt;
+}}
+QFrame#attachmentDialogHeader {{
+    background: {PAPER}; border: 1px solid {STEEL_LINE}; border-radius: 8px;
+}}
+QLabel#attachmentDialogTitle {{
+    color: #173F67; font-size: 14pt; font-weight: 700;
+}}
+QLabel#attachmentCatalogStatus {{ color: #51606D; }}
+QPushButton#attachmentReloadButton,
+QPushButton#attachmentCategoryBack {{
+    min-height: 32px; background: {PAPER}; color: #245F91;
+    border: 1px solid #B8CBD9; border-radius: 6px; padding: 0 10px;
+}}
+QLineEdit#attachmentSearchInput {{
+    min-height: 34px; background: {PAPER}; border: 1px solid #AEB9C3;
+    border-radius: 6px; padding: 0 10px;
+}}
+QLineEdit#attachmentSearchInput:focus,
+QTableWidget#attachmentCatalogTable:focus {{ border: 2px solid {BLUEPRINT}; }}
+QTableWidget#attachmentCatalogTable {{
+    background: {PAPER}; alternate-background-color: #F8FAFB;
+    gridline-color: #DDE3E8; border: 1px solid #C8D1D9; border-radius: 5px;
+}}
+QFrame#attachmentSelectionStatusBar {{
+    background: {PAPER}; border: 1px solid #C9D9E6; border-radius: 6px;
+}}
+QDialog#attachmentDialog QDialogButtonBox QPushButton {{
+    min-width: 88px; min-height: 34px; border-radius: 6px; padding: 0 12px;
+}}
+QDialog#attachmentDialog QDialogButtonBox QPushButton:default {{
+    background: {BLUEPRINT}; color: white; border: 1px solid {BLUEPRINT};
+    font-weight: 700;
+}}
+QDialog#attachmentDialog QPushButton:disabled {{
+    background: #EEF1F4; color: #9AA4AE; border-color: #D9DEE3;
+}}
+"""
+
+
+def _configure_attachment_dialog(dialog) -> None:
+    """Apply compact production-dialog chrome and deterministic focus order."""
+
+    dialog.setObjectName("attachmentDialog")
+    width, height = _attachment_dialog_target_size(dialog)
+    dialog.setFixedSize(width, height)
+    layout = dialog.layout()
+    if layout is None:
+        return
+    layout.setContentsMargins(UI_SPACE_LG, UI_SPACE_MD, UI_SPACE_LG, UI_SPACE_MD)
+    layout.setSpacing(UI_SPACE_SM)
+
+    add_button = getattr(dialog, "add_attachment_catalog_button", None)
+    title = layout.itemAt(0).widget() if layout.count() else None
+    if (
+        isinstance(title, QLabel)
+        and isinstance(add_button, QPushButton)
+        and not isinstance(getattr(dialog, "attachment_dialog_header", None), QFrame)
+    ):
+        layout.removeWidget(title)
+        layout.removeWidget(add_button)
+        header = QFrame(dialog)
+        header.setObjectName("attachmentDialogHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(UI_SPACE_MD, UI_SPACE_SM, UI_SPACE_SM, UI_SPACE_SM)
+        header_layout.setSpacing(UI_SPACE_SM)
+        title.setParent(header)
+        title.setObjectName("attachmentDialogTitle")
+        title.setText("附件价格清单")
+        title.setAccessibleName("附件价格清单")
+        add_button.setParent(header)
+        add_button.setMinimumHeight(UI_CONTROL_HEIGHT)
+        header_layout.addWidget(title, 1)
+        header_layout.addWidget(add_button, 0)
+        layout.insertWidget(0, header)
+        dialog.attachment_dialog_header = header
+        dialog.attachment_dialog_title = title
+
+    catalog_hint = getattr(dialog, "catalog_hint", None)
+    if isinstance(catalog_hint, QLabel):
+        catalog_hint.setObjectName("attachmentCatalogStatus")
+        catalog_hint.setWordWrap(True)
+        catalog_hint.setAccessibleName("附件库状态")
+    reload_button = next(
+        (
+            button
+            for button in dialog.findChildren(QPushButton)
+            if "重新读取" in button.text()
+        ),
+        None,
+    )
+    if isinstance(reload_button, QPushButton):
+        reload_button.setObjectName("attachmentReloadButton")
+        reload_button.setAccessibleName("重新读取附件价格库")
+        reload_button.setMinimumHeight(UI_CONTROL_HEIGHT)
+
+    search = getattr(dialog, "search_edit", None)
+    if isinstance(search, QLineEdit):
+        search.setObjectName("attachmentSearchInput")
+        search.setAccessibleName("搜索附件")
+        search.setClearButtonEnabled(True)
+        search.setMinimumHeight(UI_CONTROL_HEIGHT)
+    table = getattr(dialog, "table", None)
+    if isinstance(table, QTableWidget):
+        table.setObjectName("attachmentCatalogTable")
+        table.setAccessibleName("附件价格表")
+        table.setMinimumHeight(max(72, min(260, height - 360)))
+    category_scroll = getattr(dialog, "category_scroll", None)
+    if isinstance(category_scroll, QScrollArea):
+        category_scroll.setMinimumHeight(max(80, min(320, height - 300)))
+
+    button_box = dialog.findChild(QDialogButtonBox)
+    ok_button = None
+    cancel_button = None
+    if isinstance(button_box, QDialogButtonBox):
+        ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        if isinstance(ok_button, QPushButton):
+            ok_button.setText("确认选择")
+            ok_button.setAccessibleName("确认选择附件")
+            ok_button.setDefault(True)
+        if isinstance(cancel_button, QPushButton):
+            cancel_button.setText("取消")
+            cancel_button.setAccessibleName("取消附件选择")
+
+    focus_order = [
+        widget
+        for widget in (
+            add_button,
+            reload_button,
+            search,
+            getattr(dialog, "category_back_button", None),
+            table,
+            ok_button,
+            cancel_button,
+        )
+        if isinstance(widget, QWidget)
+    ]
+    for current, following in zip(focus_order, focus_order[1:]):
+        QWidget.setTabOrder(current, following)
+    dialog.setStyleSheet(dialog.styleSheet() + ATTACHMENT_DIALOG_STYLE)
 
 
 def _new_optional_dimension(parent) -> QDoubleSpinBox:
@@ -4520,10 +4982,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             price = f"{abs(float(raw_price)) * sign:,.2f} 元"
         except (TypeError, ValueError):
             price = "单价待补充"
-        return (
-            f"人工已选择\n{name}\n{model}\n"
-            f"数量 {quantity} {unit} · 单价 {price}"
-        )
+        lines = ["人工已选择", name]
+        if model.casefold() != name.casefold():
+            lines.append(model)
+        lines.append(f"数量 {quantity} {unit} · 单价 {price}")
+        return "\n".join(lines)
 
     def cancel_manual_selection(self, identity: tuple) -> None:
         removed = None
@@ -4596,6 +5059,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         self.category_back_button.setVisible(bool(self.category_selection))
         self.category_back_button.setEnabled(bool(self.category_selection))
 
+        column_count = _attachment_category_column_count(self)
+        for column in range(4):
+            self.category_grid.setColumnStretch(column, 1 if column < column_count else 0)
+        row_minimum_heights: dict[int, int] = {}
         for index, option in enumerate(options):
             card = QFrame(self.category_scroll_content)
             card.setObjectName("attachmentCategoryCardShell")
@@ -4673,8 +5140,36 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                     )
                 )
                 card_layout.addWidget(manual_button)
+            card_minimum_height = button.minimumHeight()
+            if show_quick_button:
+                card_minimum_height += quick_button.minimumHeight()
+            card_minimum_height += sum(
+                child.minimumHeight()
+                for child in card.findChildren(
+                    QPushButton,
+                    "attachmentManualSelection",
+                    Qt.FindChildOption.FindDirectChildrenOnly,
+                )
+            )
+            card.setMinimumHeight(card_minimum_height)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self.category_grid.addWidget(card, index // 4, index % 4)
+            row_index = index // column_count
+            self.category_grid.addWidget(
+                card,
+                row_index,
+                index % column_count,
+            )
+            row_minimum_heights[row_index] = max(
+                row_minimum_heights.get(row_index, 0),
+                card.minimumHeight(),
+            )
+
+        content_minimum_height = sum(row_minimum_heights.values())
+        if row_minimum_heights:
+            content_minimum_height += self.category_grid.verticalSpacing() * (
+                len(row_minimum_heights) - 1
+            )
+        self.category_scroll_content.setMinimumHeight(content_minimum_height)
 
         needle = self.search_edit.text().strip()
         at_category_level = bool(options)
@@ -5125,9 +5620,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
             if cancel_button is not None:
                 cancel_button.setText("取消")
-        # Keep the category browser and table columns at their approved layout;
-        # overflowing catalogue content is handled by the existing scroll areas.
-        self.setFixedSize(900, 680)
+        # The dialog remains fixed after construction, but its logical size is
+        # capped to the active screen so Windows 125%-200% scaling cannot push
+        # the footer actions outside the desktop.
+        self.setFixedSize(
+            ATTACHMENT_DIALOG_TARGET_WIDTH,
+            ATTACHMENT_DIALOG_TARGET_HEIGHT,
+        )
         ensure_selection_status_bar(self)
         self.category_selection = []
         parent = self.parentWidget()
@@ -5214,7 +5713,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         self.category_scroll.setObjectName("attachmentCategoryScroll")
         self.category_scroll.setWidgetResizable(True)
         self.category_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.category_scroll.setMinimumHeight(360)
+        self.category_scroll.setMinimumHeight(180)
         self.category_scroll_content = QWidget(self.category_scroll)
         self.category_grid = QGridLayout(self.category_scroll_content)
         self.category_grid.setContentsMargins(0, 0, 0, 0)
@@ -5243,6 +5742,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         original_rebuild_table(self)
         restore_manual_selection_rows(self)
         restore_ganged_fixed_base_rows(self)
+        _configure_attachment_dialog(self)
         refresh_category_browser(self)
 
     dialog_class.__init__ = init_with_default_filters
@@ -5324,6 +5824,13 @@ def install_layout_refresh(namespace: dict) -> None:
             None,
         )
         self._pending_formula_calculation = False
+        formula_debounce = QTimer(self)
+        formula_debounce.setSingleShot(True)
+        formula_debounce.setInterval(FORMULA_TEMPLATE_DEBOUNCE_MS)
+        formula_debounce.timeout.connect(
+            lambda: self._start_formula_template_request()
+        )
+        self._formula_template_debounce_timer = formula_debounce
         product_combo = getattr(self, "product_combo", None)
         if isinstance(product_combo, QComboBox):
             def remember_manual_product_selection(_index):
@@ -5351,11 +5858,32 @@ def install_layout_refresh(namespace: dict) -> None:
             calculate_button.clicked.connect(
                 lambda _checked=False: self.calculate()
             )
+        for action_name in (
+            "primaryQuoteAction",
+            "secondaryQuoteAction",
+            "quietQuoteAction",
+        ):
+            action_button = _find(self, QPushButton, action_name)
+            if action_button is not None and not getattr(
+                action_button, "_diagnostic_press_connected", False
+            ):
+                action_button.pressed.connect(
+                    lambda name=action_name: LOGGER.info(
+                        "quote action pressed action=%s", name
+                    )
+                )
+                action_button._diagnostic_press_connected = True
 
     def resize_event_with_responsive_quote(self, event):
         original_resize_event(self, event)
         if getattr(self, "stack", None) is not None:
-            QTimer.singleShot(0, lambda: _apply_quote_responsive_layout(self))
+            QTimer.singleShot(
+                0,
+                lambda: (
+                    _fit_window_minimum_to_screen(self),
+                    _apply_quote_responsive_layout(self),
+                ),
+            )
 
     def refresh_document_list_with_preview(self):
         original_refresh_document_list(self)
@@ -5627,8 +6155,15 @@ def install_layout_refresh(namespace: dict) -> None:
         main_window.door_counts_changed = door_counts_changed_with_product_rules
     if callable(original_refresh_formula_inputs):
         def refresh_formula_inputs_with_retry(self):
+            timer = getattr(self, "_formula_template_debounce_timer", None)
+            if isinstance(timer, QTimer):
+                timer.stop()
             code = self.selected_product_code()
             entry = self.product_catalog.get(self.product_combo.currentData() or "", {})
+            # Invalidate any in-flight response as soon as the operator changes
+            # a relevant input.  The actual replacement request is debounced so
+            # width/height/depth editing results in one network call.
+            self.template_serial += 1
             if not code or entry.get("method") != "formula":
                 self.weight_edit.clear()
                 self.area_edit.clear()
@@ -5637,7 +6172,44 @@ def install_layout_refresh(namespace: dict) -> None:
 
             self.weight_edit.clear()
             self.area_edit.clear()
-            self.template_serial += 1
+            button = getattr(self, "calculate_button", None)
+            if isinstance(button, QPushButton):
+                idle_text = str(
+                    button.property("formulaIdleText")
+                    or button.text()
+                    or "计算双报价"
+                )
+                if idle_text.startswith(("正在读取", "模板读取", "准备读取")):
+                    idle_text = "计算双报价"
+                button.setProperty("formulaIdleText", idle_text)
+                button.setText("准备读取公式模板…")
+                # Keep the first click available.  calculate() records it as a
+                # pending calculation and disables the button only after the
+                # click has visibly entered that flow.
+                button.setEnabled(True)
+            if isinstance(timer, QTimer):
+                timer.start(FORMULA_TEMPLATE_DEBOUNCE_MS)
+            else:
+                QTimer.singleShot(0, lambda: self._start_formula_template_request())
+            return None
+
+        def start_formula_template_request(self):
+            code = self.selected_product_code()
+            entry = self.product_catalog.get(self.product_combo.currentData() or "", {})
+            if not code or entry.get("method") != "formula":
+                return None
+
+            running = getattr(self, "template_worker", None)
+            if running is not None:
+                try:
+                    if running.isRunning():
+                        timer = getattr(self, "_formula_template_debounce_timer", None)
+                        if isinstance(timer, QTimer):
+                            timer.start(FORMULA_TEMPLATE_BUSY_RECHECK_MS)
+                        return None
+                except RuntimeError:
+                    self.template_worker = None
+
             serial = self.template_serial
             request_signature = _formula_template_input_signature(self)
             worker = _FormulaTemplateWorker(
@@ -5657,8 +6229,19 @@ def install_layout_refresh(namespace: dict) -> None:
                 if idle_text.startswith("正在读取"):
                     idle_text = "计算双报价"
                 calculate_button.setProperty("formulaIdleText", idle_text)
-                calculate_button.setText("正在读取公式模板…")
-                calculate_button.setEnabled(False)
+                calculate_button.setText("模板读取中，可点击计算")
+                calculate_button.setEnabled(
+                    not bool(getattr(self, "_pending_formula_calculation", False))
+                )
+            _set_ganged_calculation_state(
+                self,
+                (
+                    "正在读取公式模板；现在点击计算，读取完成后会自动继续。"
+                    if not getattr(self, "_pending_formula_calculation", False)
+                    else "正在读取公式模板，读取完成后将自动继续计算…"
+                ),
+                "loading",
+            )
 
             outcome = {"loaded": False, "error": None}
 
@@ -5692,6 +6275,8 @@ def install_layout_refresh(namespace: dict) -> None:
 
             def template_finished():
                 if serial != self.template_serial:
+                    if getattr(self, "template_worker", None) is worker:
+                        self.template_worker = None
                     worker.deleteLater()
                     return
                 if getattr(self, "template_worker", None) is worker:
@@ -5753,9 +6338,18 @@ def install_layout_refresh(namespace: dict) -> None:
             return None
 
         main_window.refresh_formula_inputs = refresh_formula_inputs_with_retry
+        main_window._start_formula_template_request = start_formula_template_request
     if callable(original_calculate):
         def calculate_with_ganged_cabinets(self):
+            LOGGER.info(
+                "calculation flow entered product=%s specification=%s",
+                self.product_combo.currentData(),
+                self.quote_spec_edit.text()
+                if isinstance(getattr(self, "quote_spec_edit", None), QLineEdit)
+                else "",
+            )
             if _start_ganged_calculation(self, namespace.get("api_headers")):
+                LOGGER.info("ganged calculation accepted by workflow")
                 return None
             code = self.selected_product_code()
             entry = self.product_catalog.get(self.product_combo.currentData() or "", {})

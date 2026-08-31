@@ -5,12 +5,17 @@ from __future__ import annotations
 import importlib.abc
 import importlib.util
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import marshal
 import os
 import pathlib
 import re
+import struct
 import subprocess
 import sys
+import tempfile
+import threading
 import types
 import urllib.request
 
@@ -39,6 +44,83 @@ _COMPACT_HEIGHT_PATTERN = re.compile(
 # ``install_application_font``; the UI scaling pass bumps that literal to 11pt.
 _APPLICATION_FONT_BASE_SIZE = 10
 _APPLICATION_FONT_SCALED_SIZE = 11
+_LOGGER = logging.getLogger("ai_quote.client")
+
+
+def _diagnostic_log_path() -> pathlib.Path:
+    local_app_data = str(os.getenv("LOCALAPPDATA") or "").strip()
+    preferred_root = (
+        pathlib.Path(local_app_data)
+        if local_app_data
+        else pathlib.Path(tempfile.gettempdir())
+    )
+    preferred = preferred_root / "AIQuoteDualSystem" / "logs" / "client.log"
+    try:
+        preferred.parent.mkdir(parents=True, exist_ok=True)
+        return preferred
+    except OSError:
+        fallback = pathlib.Path(tempfile.gettempdir()) / "AIQuoteDualSystem-client.log"
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+def _configure_diagnostics() -> pathlib.Path:
+    log_path = _diagnostic_log_path()
+    if not any(
+        isinstance(handler, RotatingFileHandler)
+        and pathlib.Path(getattr(handler, "baseFilename", "")) == log_path
+        for handler in _LOGGER.handlers
+    ):
+        handler = RotatingFileHandler(
+            log_path,
+            maxBytes=2 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(threadName)s %(message)s"
+            )
+        )
+        _LOGGER.addHandler(handler)
+    _LOGGER.setLevel(logging.INFO)
+    _LOGGER.propagate = False
+
+    def unhandled_exception(exc_type, exc_value, exc_traceback):
+        _LOGGER.critical(
+            "unhandled client exception",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )
+
+    sys.excepthook = unhandled_exception
+    if hasattr(threading, "excepthook"):
+        def thread_exception(args):
+            _LOGGER.critical(
+                "unhandled worker exception thread=%s",
+                getattr(args.thread, "name", "unknown"),
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+            )
+
+        threading.excepthook = thread_exception
+    return log_path
+
+
+def _show_fatal_startup_error(error: BaseException, log_path: pathlib.Path) -> None:
+    try:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv[:1])
+        QMessageBox.critical(
+            None,
+            "客户端启动失败",
+            "AI双报价系统无法启动。\n\n"
+            f"原因：{error}\n\n"
+            f"诊断日志：{log_path}",
+        )
+    except Exception:
+        _LOGGER.exception("failed to display startup error dialog")
 
 
 def _install_source_render_config(namespace: dict) -> None:
@@ -333,6 +415,13 @@ class _OriginalPyzFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 def load_v3_namespace() -> dict:
     _install_silent_windows_subprocesses()
     core_root = _resource_root()
+    _LOGGER.info(
+        "loading V3 core root=%s frozen=%s python=%s architecture=%s-bit",
+        core_root,
+        bool(getattr(sys, "frozen", False)),
+        sys.version.split()[0],
+        struct.calcsize("P") * 8,
+    )
     main_path = core_root / "main.raw"
     if not main_path.exists():
         raise RuntimeError(f"V3 client core is missing: {main_path}")
@@ -371,8 +460,21 @@ def load_v3_namespace() -> dict:
 
 
 def main() -> None:
-    namespace = load_v3_namespace()
-    namespace["main"]()
+    log_path = _configure_diagnostics()
+    _LOGGER.info(
+        "client startup executable=%s cwd=%s log=%s",
+        sys.executable,
+        pathlib.Path.cwd(),
+        log_path,
+    )
+    try:
+        namespace = load_v3_namespace()
+        _LOGGER.info("V3 namespace loaded; entering Qt application")
+        namespace["main"]()
+    except Exception as error:
+        _LOGGER.exception("client startup/runtime terminated with an error")
+        _show_fatal_startup_error(error, log_path)
+        raise
 
 
 if __name__ == "__main__":
