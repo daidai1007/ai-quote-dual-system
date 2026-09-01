@@ -639,10 +639,14 @@ ja_window = DoorRuleWindow("JA", {"SINGLE": "JA_SINGLE"}, (0, 2))
 assert layout_refresh._allowed_door_combinations(ja_window) == layout_refresh.VALID_DOOR_COMBINATIONS
 assert not layout_refresh._enforce_product_door_combination(ja_window, "double")
 other_window = DoorRuleWindow("XX", {"SINGLE": "XX_SINGLE", "DOUBLE": "XX_DOUBLE"}, (1, 1))
-assert layout_refresh._allowed_door_combinations(other_window) == {(1, 0), (0, 1)}
-assert layout_refresh._enforce_product_door_combination(other_window, "double")
-assert other_window.door_counts() == (0, 1)
-assert other_window.refreshed == 2
+assert layout_refresh._allowed_door_combinations(other_window) == layout_refresh.VALID_DOOR_COMBINATIONS
+assert not layout_refresh._enforce_product_door_combination(other_window, "double")
+assert other_window.door_counts() == (1, 1)
+assert other_window.refreshed == 0
+default_window = DoorRuleWindow("JC", {"DEFAULT": "JC_EXP"}, (0, 2))
+assert layout_refresh._allowed_door_combinations(default_window) == layout_refresh.VALID_DOOR_COMBINATIONS
+assert not layout_refresh._enforce_product_door_combination(default_window, "double")
+assert default_window.door_counts() == (0, 2)
 
 
 class DoorLimiterWindow:

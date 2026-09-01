@@ -13,7 +13,10 @@ sys.path.insert(0, str(ROOT / "desktop_client"))
 from attachment_category_browser import (  # noqa: E402
     completed_size_dimensions,
     door_reinforcement_default_quantity,
+    installation_board_match_name_for_product,
     match_attachment_size,
+    match_installation_board_for_product,
+    match_installation_board_size,
     size_match_attachment_name,
 )
 
@@ -72,6 +75,61 @@ unsafe_match = match_attachment_size([unsafe], unsafe, (1050, 2000, 600))
 assert unsafe_match is not None
 assert "unit_price_override" not in unsafe_match
 assert "未执行比例折价" in unsafe_match["size_match_warning"]
+
+# Installation boards use cabinet W/H only. An exact face-size row wins even
+# when its stored depth differs. A nearest row is priced by the rectangular
+# perimeter ratio 2(W+H) / 2(matched W+matched H).
+board_source = row(40, "安装板", 900, 1800, 999, 100, "BOARD-900")
+board_exact = row(41, "安装板", 1000, 2000, 100, 160, "BOARD-1000")
+board_close_shape = row(42, "安装板", 950, 1950, 600, 150, "BOARD-950")
+board_same_perimeter_far_shape = row(43, "安装板", 800, 2100, 600, 140, "BOARD-800")
+exact_board_match = match_installation_board_size(
+    [board_source, board_exact, board_close_shape], board_source, (1000, 2000, 600)
+)
+assert exact_board_match is not None
+assert exact_board_match["attachment_price_id"] == 41
+assert exact_board_match["size_match_exact"] is True
+assert exact_board_match["size_match_target_perimeter"] == 6000
+assert exact_board_match["size_match_perimeter"] == 6000
+assert exact_board_match["matched_price"] == 160
+assert "unit_price_override" not in exact_board_match
+
+nearest_board_match = match_attachment_size(
+    [board_source, board_close_shape, board_same_perimeter_far_shape],
+    board_source,
+    (1000, 2000, 600),
+)
+assert nearest_board_match is not None
+assert nearest_board_match["attachment_price_id"] == 42
+assert nearest_board_match["size_match_exact"] is False
+assert math.isclose(nearest_board_match["size_match_ratio"], 6000 / 5800)
+assert nearest_board_match["unit_price_override"] == round(150 * 6000 / 5800, 6)
+assert nearest_board_match["depth_mm"] == 600
+
+# A row without either face dimension cannot be reported as an exact match.
+incomplete_board = row(44, "安装板", None, 2000, 600, 130, "BOARD-INCOMPLETE")
+assert match_installation_board_size(
+    [incomplete_board], incomplete_board, (1000, 2000, 600)
+) is None
+
+# JK products are isolated to the JK installation-board library. Every other
+# product is isolated to the ordinary installation-board library, even when
+# the operator clicked a row from the opposite branch.
+jk_board = row(45, "JK安装板", 1000, 2000, 123, 260, "JK-BOARD")
+assert installation_board_match_name_for_product("JK") == "JK安装板"
+assert installation_board_match_name_for_product("JK_SINGLE") == "JK安装板"
+assert installation_board_match_name_for_product("JP_SINGLE") == "安装板"
+jk_routed = match_installation_board_for_product(
+    [board_exact, jk_board], board_exact, (1000, 2000, 600), "JK"
+)
+ordinary_routed = match_installation_board_for_product(
+    [board_exact, jk_board], jk_board, (1000, 2000, 600), "JP_SINGLE"
+)
+assert jk_routed is not None and jk_routed["attachment_price_id"] == 45
+assert ordinary_routed is not None and ordinary_routed["attachment_price_id"] == 41
+assert match_installation_board_for_product(
+    [jk_board], jk_board, (1000, 2000, 600), "JM"
+) is None
 
 # Fixed bases first keep the entered/recognized height.  Perimeter distance is
 # only compared inside that height group; if no same-height row exists, normal

@@ -24,6 +24,7 @@ if not core_root.is_dir():
     raise RuntimeError("AI_QUOTE_V3_CORE_ROOT must point to the verified V3 core directory")
 
 from PySide6.QtCore import QRect, Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QAbstractButton,
@@ -256,6 +257,19 @@ attachment_dialog.catalog = [
         "category_level1": "三排纵梁",
     },
     {
+        "attachment_price_id": 4,
+        "item_name": "安装板",
+        "model_code": "安装板",
+        "price": 75,
+        "category_level1": "安装板",
+        "category_level2": "安装板",
+        "width_mm": 760,
+        "height_mm": 960,
+        # Installation-board matching intentionally ignores cabinet depth.
+        "depth_mm": 100,
+    },
+    {
+        "attachment_price_id": 5,
         "item_name": "JK安装板",
         "model_code": "JK安装板",
         "price": 80,
@@ -263,7 +277,8 @@ attachment_dialog.catalog = [
         "category_level2": "JK安装板",
         "width_mm": 760,
         "height_mm": 960,
-        "depth_mm": 500,
+        # Installation-board matching intentionally ignores cabinet depth.
+        "depth_mm": 100,
     },
     {
         "attachment_price_id": 7,
@@ -730,27 +745,36 @@ assert before_manual_total - after_manual_total == 270
 door_dialog.close()
 door_parent.close()
 
-# An installation board selected through category browsing is summarized back
-# on the first-level card.  Its circular sign toggle keeps the original price
-# positive in metadata and stores subtraction separately.
+# A non-JK product is routed to the ordinary installation-board library. The
+# selected board is summarized back on the first-level card, and its circular
+# sign toggle stores subtraction separately from the positive source price.
 attachment_category_button("安装板").click()
 app.processEvents()
-attachment_category_button("JK安装板").click()
+attachment_category_button("安装板").click()
 app.processEvents()
 board_row = next(
     row for row in range(attachment_dialog.table.rowCount())
-    if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "JK安装板"
+    if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "安装板"
 )
 attachment_dialog.table.item(board_row, attachment_dialog.COL_CHECK).setCheckState(Qt.CheckState.Checked)
 app.processEvents()
+assert "按柜体宽、高精确匹配安装板" in attachment_dialog.catalog_hint.text()
+board_spec_text = attachment_dialog.table.item(
+    board_row, attachment_dialog.COL_SPEC
+).text()
+assert board_spec_text == "760 × 960 mm", board_spec_text
+if artifact_dir is not None:
+    assert attachment_dialog.grab().save(
+        str(artifact_dir / "v3_installation_board_exact_match.png")
+    )
 while attachment_dialog.category_selection:
     attachment_dialog.back_attachment_category()
 app.processEvents()
 board_summary = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentManualSelection")
-    if button.isVisible() and "JK安装板" in button.text()
+    if button.isVisible() and "安装板" in button.text()
 )
-assert board_summary.text().startswith("人工已选择\nJK安装板\n")
+assert board_summary.text().startswith("人工已选择\n安装板\n")
 board_sign = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentPriceSignPositive")
     if button.isVisible()
@@ -766,18 +790,86 @@ assert negative_sign.text() == "−"
 board_source = attachment_dialog.table.item(
     board_row, attachment_dialog.COL_CHECK
 ).data(Qt.ItemDataRole.UserRole)
+assert board_source["size_match_exact"] is True
+assert board_source["size_match_target_width_mm"] == 760
+assert board_source["size_match_target_height_mm"] == 960
+assert board_source["size_match_target_depth_mm"] == 500
+assert board_source["size_match_depth_mm"] == 100
 assert board_source["attachment_price_sign"] == -1
-assert attachment_dialog.table.item(board_row, attachment_dialog.COL_PRICE).text() == "-80"
+assert attachment_dialog.table.item(board_row, attachment_dialog.COL_PRICE).text() == "-75"
 selected_board = next(
-    item for item in attachment_dialog.attachments if item.get("item_name") == "JK安装板"
+    item for item in attachment_dialog.attachments if item.get("item_name") == "安装板"
 )
 fresh_board = next(
     item for item in attachment_dialog.collect_attachments(False)
-    if item.get("item_name") == "JK安装板"
+    if item.get("item_name") == "安装板"
 )
 assert fresh_board["attachment_price_sign"] == -1, fresh_board
 assert selected_board["attachment_price_sign"] == -1, attachment_dialog.attachments
-assert selected_board["matched_price"] == 80
+assert selected_board["matched_price"] == 75
+
+# Product routing is enforced at the interaction boundary as well: on a JK
+# product, even deliberately clicking the ordinary board branch resolves to
+# the JK board row and leaves no ordinary board selected.
+jk_parent = QWidget()
+jk_parent.quote_spec_edit = QLineEdit(jk_parent)
+jk_parent.quote_spec_edit.setText("800*500*1000")
+jk_parent.selected_product_code = lambda: "JK"
+jk_parent.door_counts = lambda: (1, 0)
+jk_board_dialog = attachment_dialog_class(
+    [],
+    api_url="http://127.0.0.1:1",
+    parent=jk_parent,
+    target_dimensions=(800, 1000, 500),
+)
+jk_board_dialog.catalog = [
+    dict(item) for item in attachment_dialog.catalog
+    if item.get("item_name") in {"安装板", "JK安装板"}
+]
+jk_board_dialog.rebuild_table()
+jk_board_dialog.show()
+app.processEvents()
+visible_dialog_category_button(jk_board_dialog, "安装板").click()
+app.processEvents()
+visible_dialog_category_button(jk_board_dialog, "安装板").click()
+app.processEvents()
+ordinary_board_row = next(
+    row for row in range(jk_board_dialog.table.rowCount())
+    if jk_board_dialog.table.item(row, jk_board_dialog.COL_NAME).text() == "安装板"
+)
+jk_board_dialog.table.item(
+    ordinary_board_row, jk_board_dialog.COL_CHECK
+).setCheckState(Qt.CheckState.Checked)
+app.processEvents()
+checked_board_names = [
+    jk_board_dialog.table.item(row, jk_board_dialog.COL_NAME).text()
+    for row in range(jk_board_dialog.table.rowCount())
+    if jk_board_dialog.table.item(row, jk_board_dialog.COL_CHECK).checkState()
+    == Qt.CheckState.Checked
+]
+assert checked_board_names == ["JK安装板"], checked_board_names
+assert "匹配最相近安装板" in jk_board_dialog.catalog_hint.text()
+jk_selected = next(
+    item for item in jk_board_dialog.attachments
+    if item.get("item_name") == "JK安装板"
+)
+assert jk_selected["size_match_exact"] is False
+assert jk_selected["size_match_target_perimeter"] == 3600
+assert jk_selected["size_match_perimeter"] == 3440
+assert jk_selected["unit_price_override"] == round(80 * 3600 / 3440, 6)
+while jk_board_dialog.category_selection:
+    jk_board_dialog.back_attachment_category()
+app.processEvents()
+assert any(
+    button.isVisible() and "JK安装板" in button.text()
+    for button in jk_board_dialog.findChildren(QPushButton, "attachmentManualSelection")
+)
+if artifact_dir is not None:
+    assert jk_board_dialog.grab().save(
+        str(artifact_dir / "v3_jk_installation_board_routing.png")
+    )
+jk_board_dialog.close()
+jk_parent.close()
 
 limiter_row = next(
     row for row in range(attachment_dialog.table.rowCount())
@@ -900,8 +992,28 @@ a3_row = next(
     if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "A3资料盒"
 )
 a4_row = next(row for row in folder_rows if row != a3_row)
-attachment_dialog.table.item(a3_row, attachment_dialog.COL_CHECK).setCheckState(Qt.CheckState.Checked)
+row_click_item = attachment_dialog.table.item(a3_row, attachment_dialog.COL_NAME)
+assert attachment_dialog.table.item(
+    a3_row, attachment_dialog.COL_CHECK
+).checkState() == Qt.CheckState.Unchecked
+QTest.mouseClick(
+    attachment_dialog.table.viewport(),
+    Qt.MouseButton.LeftButton,
+    pos=attachment_dialog.table.visualItemRect(row_click_item).center(),
+)
 app.processEvents()
+assert attachment_dialog.table.item(
+    a3_row, attachment_dialog.COL_CHECK
+).checkState() == Qt.CheckState.Checked
+# Clicking another cell in an already selected row is additive rather than a
+# toggle, so the first click of a price/quantity double-click cannot deselect it.
+attachment_dialog.table.itemClicked.emit(
+    attachment_dialog.table.item(a3_row, attachment_dialog.COL_PRICE)
+)
+assert attachment_dialog.table.item(
+    a3_row, attachment_dialog.COL_CHECK
+).checkState() == Qt.CheckState.Checked
+assert "单击附件行可选中" in attachment_dialog.selection_hint.text()
 assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Unchecked
 attachment_dialog.back_attachment_category()
 app.processEvents()
@@ -1062,6 +1174,29 @@ for name in (
     control = getattr(window, name)
     assert control.minimumHeight() >= layout_refresh.UI_CONTROL_HEIGHT, (name, control.minimumHeight())
     assert control.accessibleName(), name
+
+# A product with only one DEFAULT database code must still expose all five
+# operator door configurations. Database source mapping happens after the UI
+# choice is captured and must not disable these controls.
+saved_refresh_formula_inputs = window.refresh_formula_inputs
+saved_request_history_match = window.request_history_match
+window.refresh_formula_inputs = lambda: None
+window.request_history_match = lambda *_args: None
+window.product_catalog = {
+    "JC": {"codes": {"DEFAULT": "JC_EXP"}, "method": "experience"},
+}
+window.product_combo.blockSignals(True)
+window.product_combo.clear()
+window.product_combo.addItem("JC", "JC")
+window.product_combo.blockSignals(False)
+window.product_changed()
+assert window.single_door_combo.isEnabled()
+assert window.double_door_combo.isEnabled()
+window.set_door_counts(1, 1)
+assert window.door_counts() == (1, 1)
+assert not layout_refresh._enforce_product_door_combination(window, "double")
+window.refresh_formula_inputs = saved_refresh_formula_inputs
+window.request_history_match = saved_request_history_match
 
 # The sticky action dock must occupy a real layout row below QScrollArea, not
 # float over its native viewport where Windows can intercept manual clicks.
@@ -1352,10 +1487,12 @@ if artifact_dir is not None:
 
 # Ordinary one-cabinet calculation still falls through to the recovered path.
 ordinary_requests = []
+ordinary_timeouts = []
 
 def ordinary_urlopen(request, timeout=0):
-    del timeout
+    ordinary_timeouts.append(timeout)
     ordinary_requests.append(json.loads(request.data.decode("utf-8")))
+    time.sleep(0.25)
     return MockHttpResponse(child_results[0])
 
 
@@ -1378,10 +1515,16 @@ original_message_information = QMessageBox.information
 QMessageBox.warning = lambda _parent, title, message, *_args: modal_calls.append((title, message))
 QMessageBox.information = lambda _parent, title, message, *_args: modal_calls.append((title, message))
 window.calculate_button.click()
+app.processEvents()
+assert window.quote_calculation_in_progress
+assert not window.calculate_button.isEnabled()
+assert "正在计算" in window.calculate_button.text()
+assert "正在提交双报价" in window.findChild(QLabel, "quoteResultState").text()
+window.calculate()
+assert "不需要重复点击" in window.findChild(QLabel, "quoteResultState").text()
 deadline = time.monotonic() + 5
 while (
-    getattr(window, "worker", None) is not None
-    and window.worker.isRunning()
+    getattr(window, "quote_calculation_in_progress", False)
     and time.monotonic() < deadline
 ):
     app.processEvents()
@@ -1391,8 +1534,57 @@ QMessageBox.warning = original_message_warning
 QMessageBox.information = original_message_information
 assert not modal_calls, modal_calls
 assert len(ordinary_requests) == 1
+assert ordinary_timeouts == [layout_refresh.QUOTE_REQUEST_TIMEOUT_SECONDS]
 assert ordinary_requests[0]["model_code"] == "JP-600"
 assert window.current_result["quick"]["total_cost"] == 1000
+assert window.worker is None
+assert not window.quote_calculation_in_progress
+assert window.calculate_button.isEnabled()
+assert window.calculate_button.text() == "计算双报价"
+assert "双报价计算完成" in window.findChild(QLabel, "quoteResultState").text()
+if artifact_dir is not None:
+    app.processEvents()
+    assert window.grab().save(str(artifact_dir / "v3_quote_request_success.png"))
+
+# Timeout/network failures and malformed successful responses must both be
+# visible to the operator, restore the action, and clear the worker reference.
+def ordinary_failed_urlopen(_request, timeout=0):
+    assert timeout == layout_refresh.QUOTE_REQUEST_TIMEOUT_SECONDS
+    raise TimeoutError("simulated quote timeout")
+
+
+layout_refresh.urllib.request.urlopen = ordinary_failed_urlopen
+window.calculate()
+deadline = time.monotonic() + 5
+while getattr(window, "quote_calculation_in_progress", False) and time.monotonic() < deadline:
+    app.processEvents()
+    time.sleep(0.01)
+app.processEvents()
+assert window.worker is None
+assert window.calculate_button.isEnabled()
+assert "双报价计算失败" in window.findChild(QLabel, "quoteResultState").text()
+assert "simulated quote timeout" in window.findChild(QLabel, "quoteResultState").text()
+assert "请检查网络后重试" in window.risk_label.text()
+if artifact_dir is not None:
+    app.processEvents()
+    assert window.grab().save(str(artifact_dir / "v3_quote_timeout_recovery.png"))
+
+
+def ordinary_empty_urlopen(_request, timeout=0):
+    assert timeout == layout_refresh.QUOTE_REQUEST_TIMEOUT_SECONDS
+    return MockHttpResponse({})
+
+
+layout_refresh.urllib.request.urlopen = ordinary_empty_urlopen
+window.calculate()
+deadline = time.monotonic() + 5
+while getattr(window, "quote_calculation_in_progress", False) and time.monotonic() < deadline:
+    app.processEvents()
+    time.sleep(0.01)
+app.processEvents()
+assert window.worker is None
+assert window.calculate_button.isEnabled()
+assert "缺少公式法报价" in window.findChild(QLabel, "quoteResultState").text()
 
 # A formula quote clicked after a TLS/template failure must retry in the
 # background and automatically resume the pending calculation.  It must not
@@ -1414,7 +1606,10 @@ layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS = (1, 1)
 layout_refresh.FORMULA_TEMPLATE_DEBOUNCE_MS = 1
 
 def transient_template_then_quote(request, timeout=0):
-    assert timeout in (30, layout_refresh.FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS)
+    assert timeout in (
+        layout_refresh.QUOTE_REQUEST_TIMEOUT_SECONDS,
+        layout_refresh.FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS,
+    )
     if request.full_url.endswith("/api/quotes/formula-template"):
         formula_template_attempts.append(timeout)
         if len(formula_template_attempts) == 1:
@@ -1623,6 +1818,10 @@ window.draft_items = [{
     "height_mm": 1800,
     "depth_mm": 600,
     "material_code": "SECC",
+    "variant_code": "SINGLE",
+    "variant_name": "数据库记录：单门",
+    "single_door_count": 0,
+    "double_door_count": 2,
     "quantity": 2,
     "freight_fee": 50,
     "attachments": [dict(item) for item in window.attachments],
@@ -1638,6 +1837,18 @@ assert window.summary_table.item(0, 2).text() == "MODEL-QUICK-DISCOUNT", [
     if window.summary_table.item(0, column) is not None else None
     for column in range(window.summary_table.columnCount())
 ]
+door_columns = [
+    column
+    for column in range(window.summary_table.columnCount())
+    if window.summary_table.horizontalHeaderItem(column) is not None
+    and window.summary_table.horizontalHeaderItem(column).text() == "门型"
+]
+assert door_columns
+assert window.summary_table.item(0, door_columns[0]).text() == "前后双开门"
+if artifact_dir is not None:
+    window.show_section(3)
+    app.processEvents()
+    assert window.grab().save(str(artifact_dir / "v3_summary_door_column.png"))
 quick_price_columns = [
     column
     for column in range(window.summary_table.columnCount())
@@ -1862,8 +2073,8 @@ assert history_table.rowCount() == 1
 assert history_table.item(0, 0).text() == "ZJN/S-2606098"
 assert history_table.item(0, 1).text() == "2,400.00 元"
 assert history_state.text() == "完全匹配 1 条（源表 2 行）"
-assert not window.single_door_combo.isEnabled()
-assert not window.double_door_combo.isEnabled()
+assert window.single_door_combo.isEnabled()
+assert window.double_door_combo.isEnabled()
 assert window.door_counts() == (1, 0), window.door_counts()
 material_index = window.material_combo.findData("SUS304")
 coating_index = window.coating_combo.findData("平光")
@@ -1951,6 +2162,63 @@ app.processEvents()
 assert all(action.isEnabled() for action in list_actions)
 assert not empty_action.isVisible()
 
+# A 1920×1080 desktop at 150% scaling has an approximately 1280×720
+# logical work area.  The quote page must preserve every field's layout and
+# expose vertical scrolling instead of compressing controls into unusable
+# strips, while the action dock remains fixed and clickable.
+window.show_section(1)
+previous_window_size = window.size()
+previous_window_minimum = window.minimumSize()
+window.setMinimumSize(1, 1)
+window.resize(1280, 720)
+main_scroll.verticalScrollBar().setValue(0)
+app.processEvents()
+app.processEvents()
+quote_page = window.stack.widget(1)
+quote_workspace = quote_page.findChild(QSplitter, "quoteWorkspace")
+quote_input_card = quote_page.findChild(QFrame, "quoteInputCard")
+assert quote_workspace is not None
+assert quote_workspace.orientation() == Qt.Orientation.Horizontal
+assert quote_workspace.minimumHeight() >= layout_refresh.QUOTE_HORIZONTAL_WORKSPACE_MIN_HEIGHT
+assert main_scroll.verticalScrollBar().maximum() > 0
+assert quote_input_card is not None
+for field_block in quote_input_card.findChildren(QFrame, "fieldBlock"):
+    direct_labels = field_block.findChildren(
+        QLabel,
+        "compactFieldLabel",
+        Qt.FindChildOption.FindDirectChildrenOnly,
+    )
+    if direct_labels:
+        assert field_block.height() >= layout_refresh.UI_FIELD_BLOCK_MIN_HEIGHT, (
+            direct_labels[0].text(),
+            field_block.height(),
+        )
+for control_name in (
+    "material_combo",
+    "coating_combo",
+    "quote_date",
+    "quantity_spin",
+    "freight_spin",
+):
+    control = getattr(window, control_name)
+    assert control.height() >= layout_refresh.UI_CONTROL_HEIGHT, (
+        control_name,
+        control.height(),
+    )
+advanced_toggle = quote_page.findChild(QAbstractButton, "advancedToggle")
+assert advanced_toggle is not None
+main_scroll.verticalScrollBar().setValue(main_scroll.verticalScrollBar().maximum())
+app.processEvents()
+assert not advanced_toggle.visibleRegion().isEmpty()
+assert quote_dock.isVisible()
+assert quote_dock.rect().contains(
+    window.findChild(QAbstractButton, "primaryQuoteAction").geometry()
+)
+main_scroll.verticalScrollBar().setValue(0)
+window.resize(previous_window_size)
+window.setMinimumSize(previous_window_minimum)
+app.processEvents()
+
 if artifact_dir is not None:
     candidate_table.setRowCount(0)
     layout_refresh._sync_recognition_action_state(window)
@@ -1989,6 +2257,7 @@ if artifact_dir is not None:
         "1366x768_scale200": (683, 384),
     }
     for case_name, logical_size in scaling_cases.items():
+        main_scroll.verticalScrollBar().setValue(0)
         window.resize(*logical_size)
         app.processEvents()
         app.processEvents()
@@ -2006,6 +2275,15 @@ if artifact_dir is not None:
         assert window.grab().save(
             str(artifact_dir / f"v3_quote_{case_name}.png")
         )
+        if case_name == "1920x1080_scale150":
+            assert main_scroll.verticalScrollBar().maximum() > 0
+            main_scroll.verticalScrollBar().setValue(
+                main_scroll.verticalScrollBar().maximum()
+            )
+            app.processEvents()
+            assert window.grab().save(
+                str(artifact_dir / "v3_quote_1920x1080_scale150_scrolled_bottom.png")
+            )
     window.setMinimumSize(previous_minimum)
 
 deadline = time.monotonic() + 5

@@ -127,7 +127,7 @@ const hasQuickOtherColumn = payload.items.some((item) => {
   return Math.abs(fee - listed) > 0.000001;
 });
 const quickCostHeaders = [
-  "成本计算公式", "柜体", ...quickAttachmentNames,
+  "原价单价", "折后单价", "柜体", ...quickAttachmentNames,
   ...(hasQuickOtherColumn ? ["其他附件/差额"] : []), "运费", "折扣",
 ];
 const quickNameColumnByName = new Map(
@@ -287,9 +287,9 @@ quickSheet.views = [{ showGridLines: false }];
 quickSheet.getRange("A1:Y20").copyFrom(formulaSheet.getRange("A1:Y20"), "all");
 applyTemplateGeometry(quickSheet, true);
 
-// Expand only the quick-quote audit area.  K is the requested formula box,
-// directly to the left of the cabinet price in L.  The right-side columns
-// retain original prices; the selected factor is shown separately in AF.
+// Expand only the quick-quote audit area. J and K show formula-driven original
+// and discounted prices, while L onward retains the auditable source amounts;
+// the selected factor remains visible in the final dynamic column.
 for (let targetIndex = 26; targetIndex <= quickDiscountColumnIndex; targetIndex += 1) {
   const targetLetter = col(targetIndex);
   quickSheet.getRange(`${targetLetter}1:${targetLetter}28`).copyFrom(
@@ -298,28 +298,30 @@ for (let targetIndex = 26; targetIndex <= quickDiscountColumnIndex; targetIndex 
   );
   quickSheet.getRange(`${targetLetter}1:${targetLetter}28`).format.columnWidth = 10.5;
 }
-quickSheet.getRange(`K1:${quickLastColumn}28`).format.font = {
+quickSheet.getRange(`J1:${quickLastColumn}28`).format.font = {
   name: "Microsoft YaHei", size: 10, color: "#1F2937",
 };
-quickSheet.getRange(`K10:${quickSetupEndColumn}18`).clear({ applyTo: "contents" });
+quickSheet.getRange(`J10:${quickSetupEndColumn}18`).clear({ applyTo: "contents" });
 if (quickDiscountColumnIndex < 25) {
   quickSheet.getRange(`${col(quickDiscountColumnIndex + 1)}10:Y18`).clear({ applyTo: "all" });
 }
-quickSheet.getRange(`K10:${quickLastColumn}10`).values = [quickCostHeaders];
-quickSheet.getRange(`K10:${quickLastColumn}10`).format.fill = "#EEF3F8";
-quickSheet.getRange(`K10:${quickLastColumn}10`).format.font = { bold: true, color: "#40566F" };
-quickSheet.getRange(`K10:${quickLastColumn}10`).format.horizontalAlignment = "center";
-quickSheet.getRange(`K10:${quickLastColumn}10`).format.verticalAlignment = "middle";
-quickSheet.getRange(`K10:${quickLastColumn}10`).format.wrapText = true;
-quickSheet.getRange(`K10:${quickLastColumn}10`).format.borders = {
+quickSheet.getRange(`J10:${quickLastColumn}10`).values = [quickCostHeaders];
+quickSheet.getRange("F10:G10").values = [["折后单价", "折后总价"]];
+quickSheet.getRange(`J10:${quickLastColumn}10`).format.fill = "#EEF3F8";
+quickSheet.getRange(`J10:${quickLastColumn}10`).format.font = { bold: true, color: "#40566F" };
+quickSheet.getRange(`J10:${quickLastColumn}10`).format.horizontalAlignment = "center";
+quickSheet.getRange(`J10:${quickLastColumn}10`).format.verticalAlignment = "middle";
+quickSheet.getRange(`J10:${quickLastColumn}10`).format.wrapText = true;
+quickSheet.getRange(`J10:${quickLastColumn}10`).format.borders = {
   preset: "all", style: "thin", color: "#CBD5E1",
 };
-quickSheet.getRange(`K11:${quickLastColumn}18`).format.horizontalAlignment = "center";
-quickSheet.getRange(`K11:${quickLastColumn}18`).format.verticalAlignment = "middle";
-quickSheet.getRange(`K11:${quickLastColumn}18`).format.borders = {
+quickSheet.getRange(`J11:${quickLastColumn}18`).format.horizontalAlignment = "center";
+quickSheet.getRange(`J11:${quickLastColumn}18`).format.verticalAlignment = "middle";
+quickSheet.getRange(`J11:${quickLastColumn}18`).format.borders = {
   preset: "all", style: "thin", color: "#CBD5E1",
 };
-quickSheet.getRange("K1:K28").format.columnWidth = 48;
+quickSheet.getRange("J1:J28").format.columnWidth = 13;
+quickSheet.getRange("K1:K28").format.columnWidth = 13;
 quickSheet.getRange("L1:L28").format.columnWidth = 12;
 for (let index = 13; index < 13 + quickAttachmentNames.length; index += 1) {
   quickSheet.getRange(`${col(index)}1:${col(index)}28`).format.columnWidth = 14;
@@ -782,6 +784,9 @@ function fillSheet(sheet, method) {
     const quickBreakdown = method === "quick"
       ? quickPublicLineBreakdown(item)
       : null;
+    const quickOriginalBreakdown = method === "quick"
+      ? quickPublicLineBreakdown({ ...item, quick_discount: 1 })
+      : null;
     const formulaBreakdown = method === "formula" ? formulaOrderLineBreakdown(item) : null;
     const unitCost = method === "quick"
       ? quickBreakdown.equivalentUnitTotal
@@ -862,10 +867,13 @@ function fillSheet(sheet, method) {
       }
       const discountedCells = populatedCellReferences(discountedColumns);
       const originalPriceCells = populatedCellReferences(originalColumns);
-      // K is a real, editable Excel formula. Every amount references its
-      // corresponding price cell; changing any original price or AF discount
-      // therefore recalculates the result in Excel/WPS automatically.
+      // J and K are real, editable Excel formulas. Every amount references its
+      // corresponding source cell; changing an original price or the discount
+      // therefore recalculates both comparisons in Excel/WPS automatically.
       const formulaParts = [];
+      const originalFormulaParts = [];
+      const originalCells = [...discountedCells, ...originalPriceCells];
+      if (originalCells.length) originalFormulaParts.push(originalCells.join("+"));
       if (discountedCells.length) {
         const discountedExpression = discountedCells.length === 1
           ? discountedCells[0]
@@ -875,12 +883,21 @@ function fillSheet(sheet, method) {
       if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
       if (quickBreakdown.freightTotal) {
         const freightCell = `${col(quickFreightColumnIndex)}${row}`;
-        formulaParts.push(isGanged ? freightCell : `${freightCell}/${qty || 1}`);
+        const freightExpression = isGanged ? freightCell : `${freightCell}/${qty || 1}`;
+        originalFormulaParts.push(freightExpression);
+        formulaParts.push(freightExpression);
       }
+      const originalFormula = originalFormulaParts.join("+") || "0";
       const formula = formulaParts.join("+") || "0";
+      const originalPriceFormula = isGanged ? `(${originalFormula})/D${row}` : originalFormula;
+      const discountedPriceFormula = isGanged ? `(${formula})/D${row}` : formula;
+      values[9] = {
+        formula: originalPriceFormula,
+        result: quickOriginalBreakdown.equivalentUnitTotal,
+      };
       values[10] = {
-        formula,
-        result: isGanged ? quickBreakdown.lineTotal : quickBreakdown.equivalentUnitTotal,
+        formula: discountedPriceFormula,
+        result: quickBreakdown.equivalentUnitTotal,
       };
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];
@@ -893,8 +910,8 @@ function fillSheet(sheet, method) {
   sheet.getRange(`F${firstRow}:G${subtotalRow}`).format.numberFormat = "#,##0.00";
   sheet.getRange(`L${firstRow}:${col(columnCount - 1)}${dataEnd}`).format.numberFormat = "#,##0.00";
   if (method === "quick") {
-    sheet.getRange(`K${firstRow}:K${dataEnd}`).format.numberFormat = "#,##0.00";
-    sheet.getRange(`K${firstRow}:K${dataEnd}`).format.horizontalAlignment = "center";
+    sheet.getRange(`J${firstRow}:K${dataEnd}`).format.numberFormat = "#,##0.00";
+    sheet.getRange(`J${firstRow}:K${dataEnd}`).format.horizontalAlignment = "center";
   }
   sheet.getRange(`${discountColumn}${firstRow}:${discountColumn}${dataEnd}`).format.numberFormat = "0.00";
 }
@@ -1239,13 +1256,16 @@ const assertNoWorkbookAnnotations = (buffer) => {
 const verifyWorkbookContents = (candidateWorkbook) => {
   attachWorkbookRangeApi(candidateWorkbook);
   const items = payload.items || [];
-  const publicHeaders = [
+  const formulaPublicHeaders = [
     "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "总价", "备注",
   ];
   const audit = {};
   for (const [sheetName, method] of [["公式法报价单", "formula"], ["快速报价单", "quick"]]) {
     const sheet = attachRangeApi(candidateWorkbook.getWorksheet(sheetName));
     if (!sheet) throw new Error(`saved workbook is missing sheet: ${sheetName}`);
+    const publicHeaders = method === "quick"
+      ? ["序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价", "备注"]
+      : formulaPublicHeaders;
     assertRow(rangePlainValues(sheet, "A10:H10")[0], publicHeaders, `${sheetName} public headers`);
     assertRow(
       rangePlainValues(sheet, "F4:F8").map((row) => row[0]),
@@ -1305,7 +1325,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
     "shifted formula attachment headers",
   );
   assertRow(
-    rangePlainValues(serializedQuickSheet, `K10:${quickLastColumn}10`)[0],
+    rangePlainValues(serializedQuickSheet, `J10:${quickLastColumn}10`)[0],
     quickCostHeaders,
     "quick cost headers",
   );

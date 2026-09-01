@@ -45,6 +45,21 @@ test('formula door counts keep their database template behavior', () => {
   );
 });
 
+test('every product accepts all five operator door combinations', () => {
+  for (const [single, double] of VALID_DOOR_COMBINATIONS) {
+    const normalized = normalizeDoorVariantInput({
+      product_code: 'JC_EXP',
+      variant_code: 'DEFAULT',
+      single_door_count: single,
+      double_door_count: double,
+    });
+    assert.equal(normalized.product_code, 'JC_EXP');
+    assert.equal(normalized.variant_code, single > 0 ? 'SINGLE' : 'DOUBLE');
+    assert.equal(normalized.single_door_count, single);
+    assert.equal(normalized.double_door_count, double);
+  }
+});
+
 test('quick quote reads SINGLE for all five JS/JP/JA/JE door combinations', () => {
   const expected = new Map([
     ['1/0', { JS: 'SINGLE', JP: 'SINGLE', JA: 'SINGLE', JE: 'SINGLE' }],
@@ -61,6 +76,14 @@ test('quick quote reads SINGLE for all five JS/JP/JA/JE door combinations', () =
         expected.get(key)[family],
         `${family} ${key}`,
       );
+      const normalized = normalizeQuickDoorVariantInput({
+        product_code: `${family}_${double > 0 && single === 0 ? 'DOUBLE' : 'SINGLE'}`,
+        variant_code: double > 0 && single === 0 ? 'DOUBLE' : 'SINGLE',
+        single_door_count: single,
+        double_door_count: double,
+      });
+      assert.equal(normalized.product_code, `${family}_SINGLE`, `${family} ${key} quick path`);
+      assert.equal(normalized.variant_code, 'SINGLE', `${family} ${key} quick variant`);
     }
   }
   assert.deepEqual(
@@ -70,6 +93,12 @@ test('quick quote reads SINGLE for all five JS/JP/JA/JE door combinations', () =
   assert.deepEqual(
     normalizeQuickDoorVariantInput({ product_code: 'JE_DOUBLE', variant_code: 'DOUBLE', single_door_count: 0, double_door_count: 2 }),
     { product_code: 'JE_SINGLE', variant_code: 'SINGLE', product_family: 'JE', single_door_count: 0, double_door_count: 2 },
+  );
+  assert.equal(
+    normalizeQuickDoorVariantInput({
+      product_code: 'JS', variant_code: 'DOUBLE', single_door_count: 0, double_door_count: 1,
+    }).product_code,
+    'JS_SINGLE',
   );
 });
 

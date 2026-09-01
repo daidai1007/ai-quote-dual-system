@@ -512,6 +512,129 @@ def _matching_candidates(items: Iterable[dict], source: dict) -> list[dict]:
     return candidates
 
 
+def match_installation_board_size(
+    items: Iterable[dict],
+    source: dict,
+    target_dimensions,
+    *,
+    required_name: str | None = None,
+) -> dict | None:
+    """Match installation boards by cabinet W/H and scale price by perimeter.
+
+    Installation boards are mounted on the cabinet face, so cabinet depth is
+    deliberately excluded from both the nearest-size choice and the price
+    ratio. Catalogue rows without a usable width and height are not eligible;
+    otherwise missing data could be mistaken for an exact match.
+    """
+
+    target = target_dimension_tuple(target_dimensions)
+    catalogue = list(items)
+    if required_name:
+        candidates = [
+            item for item in catalogue
+            if size_match_attachment_name(item) == required_name
+        ]
+        if size_match_attachment_name(source) == required_name:
+            grouped = _matching_candidates(candidates, source)
+            if grouped:
+                candidates = grouped
+    else:
+        candidates = _matching_candidates(catalogue, source)
+    if target is None or not candidates:
+        return None
+    target_width, target_height, target_depth = target
+    target_perimeter = 2.0 * (target_width + target_height)
+
+    eligible: list[tuple[dict, float, float]] = []
+    for item in candidates:
+        width = _number(item.get("width_mm"))
+        height = _number(item.get("height_mm"))
+        if width is None or width <= 0 or height is None or height <= 0:
+            continue
+        eligible.append((item, width, height))
+    if not eligible:
+        return None
+
+    def choice_key(candidate: tuple[dict, float, float]):
+        item, width, height = candidate
+        squared_distance = (
+            (width - target_width) ** 2
+            + (height - target_height) ** 2
+        )
+        perimeter = 2.0 * (width + height)
+        price_id = _number(item.get("attachment_price_id"))
+        return (
+            squared_distance,
+            abs(perimeter - target_perimeter),
+            width,
+            height,
+            _natural_text_key(item.get("model_code")),
+            _natural_text_key(item.get("variant")),
+            _natural_text_key(item.get("price_source")),
+            float("inf") if price_id is None else price_id,
+        )
+
+    matched, matched_width, matched_height = min(eligible, key=choice_key)
+    matched_perimeter = 2.0 * (matched_width + matched_height)
+    if matched_perimeter <= 0:
+        return None
+    exact = (
+        abs(matched_width - target_width) <= 0.0001
+        and abs(matched_height - target_height) <= 0.0001
+    )
+    ratio = 1.0 if exact else target_perimeter / matched_perimeter
+    selected = dict(matched)
+    matched_depth = _number(matched.get("depth_mm"))
+    original_price = _number(matched.get("price"))
+    selected.update({
+        "size_match_target_width_mm": target_width,
+        "size_match_target_height_mm": target_height,
+        "size_match_target_depth_mm": target_depth,
+        "size_match_width_mm": matched_width,
+        "size_match_height_mm": matched_height,
+        "size_match_depth_mm": target_depth if matched_depth is None else matched_depth,
+        "size_match_target_perimeter": target_perimeter,
+        "size_match_perimeter": matched_perimeter,
+        "size_match_ratio": ratio,
+        "size_match_exact": exact,
+    })
+    if original_price is None:
+        selected["size_match_warning"] = "原价格不是安全的单一数值，未执行周长比例折价"
+        return selected
+    selected["matched_price"] = original_price
+    selected["size_match_original_price"] = original_price
+    scaled_price = original_price if exact else round(original_price * ratio, 6)
+    if exact:
+        selected.pop("unit_price_override", None)
+    else:
+        selected["unit_price_override"] = scaled_price
+    selected.pop("size_match_warning", None)
+    return selected
+
+
+def installation_board_match_name_for_product(product_code) -> str:
+    """Return the only installation-board catalogue allowed for a product."""
+
+    code = str(product_code or "").strip().upper()
+    return "JK安装板" if code == "JK" or code.startswith("JK_") else "安装板"
+
+
+def match_installation_board_for_product(
+    items: Iterable[dict],
+    source: dict,
+    target_dimensions,
+    product_code,
+) -> dict | None:
+    """Apply product-family routing before the W/H installation-board match."""
+
+    return match_installation_board_size(
+        items,
+        source,
+        target_dimensions,
+        required_name=installation_board_match_name_for_product(product_code),
+    )
+
+
 def match_attachment_size(
     items: Iterable[dict],
     source: dict,
@@ -524,6 +647,9 @@ def match_attachment_size(
     the original database dimensions so later database lookup still identifies
     the source price record correctly.
     """
+
+    if "安装板" in str(size_match_attachment_name(source) or ""):
+        return match_installation_board_size(items, source, target_dimensions)
 
     target = target_dimension_tuple(target_dimensions)
     candidates = _matching_candidates(items, source)

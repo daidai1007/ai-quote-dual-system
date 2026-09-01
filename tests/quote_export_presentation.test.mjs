@@ -46,10 +46,20 @@ test("formal workbook replaces only the door phrase using current door counts", 
       ...structuredClone(base),
       source_pdf_name: `手工录入-${index + 1}.pdf`,
       product_code: double > 0 && single === 0 ? "JS_DOUBLE" : "JS_SINGLE",
-      variant_code: double > 0 && single === 0 ? "DOUBLE" : "SINGLE",
-      variant_name: `单门${single} 双门${double}`,
+      // Deliberately stale lower-priority variant metadata and a SINGLE quick
+      // database match prove that exported door wording comes from the current
+      // UI counts, not from the quick-quote record.
+      variant_code: "SINGLE",
+      variant_name: "数据库记录：单门",
       single_door_count: single,
       double_door_count: double,
+      quick: {
+        ...structuredClone(base.quick),
+        matched_experience: {
+          ...(base.quick?.matched_experience || {}),
+          product_code: "JS_SINGLE",
+        },
+      },
       final_remark: staleRemark,
       notes: staleRemark,
       source_ocr_remark: staleRemark,
@@ -193,7 +203,8 @@ test("formal workbook exports the revised presentation without changing quote de
       ["快速报价单", [[3200, 6400], [4100, 4100]]],
     ]) {
       const sheet = workbook.getWorksheet(sheetName);
-      assert.equal(sheet.getCell("G10").text, "总价");
+      assert.equal(sheet.getCell("F10").text, sheetName === "快速报价单" ? "折后单价" : "单价");
+      assert.equal(sheet.getCell("G10").text, sheetName === "快速报价单" ? "折后总价" : "总价");
       assert.deepEqual([4, 5, 6, 7, 8].map((row) => sheet.getCell(row, 6).text), expectedSeller);
       expectedAmounts.forEach(([unitPrice, totalPrice], index) => {
         closeTo(sheet.getCell(11 + index, 6).value, unitPrice, `${sheetName} unit price row ${11 + index}`);
@@ -202,6 +213,9 @@ test("formal workbook exports the revised presentation without changing quote de
     }
 
     const quickSheet = workbook.getWorksheet("快速报价单");
+    assert.equal(quickSheet.getCell("J10").text, "原价单价");
+    assert.equal(quickSheet.getCell("K10").text, "折后单价");
+    closeTo(quickSheet.getCell("J11").value.result, 3200, "quick original unit formula cached result");
     const quickFormulaCell = quickSheet.getCell("K11");
     const discountColumn = quickSheet.getRow(10).values.findIndex(
       (value) => value === "折扣",
@@ -244,15 +258,15 @@ test("quick workbook uses stable selected-name columns without obsolete configur
     const sheet = workbook.getWorksheet("快速报价单");
     const reversedSheet = reversedWorkbook.getWorksheet("快速报价单");
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    const headers = sheet.getRow(10).values.slice(11).filter((value) => value !== null && value !== undefined && value !== "");
-    const reversedHeaders = reversedSheet.getRow(10).values.slice(11).filter((value) => value !== null && value !== undefined && value !== "");
+    const headers = sheet.getRow(10).values.slice(10).filter((value) => value !== null && value !== undefined && value !== "");
+    const reversedHeaders = reversedSheet.getRow(10).values.slice(10).filter((value) => value !== null && value !== undefined && value !== "");
     assert.deepEqual(headers, reversedHeaders, "dynamic attachment order changed with quote row order");
-    assert.deepEqual(headers.slice(0, 2), ["成本计算公式", "柜体"]);
+    assert.deepEqual(headers.slice(0, 3), ["原价单价", "折后单价", "柜体"]);
     assert.deepEqual(headers.slice(-2), ["运费", "折扣"]);
     assert.ok(!headers.includes("其他附件/差额"));
     assert.ok(!headers.includes("配置变形说明"));
     assert.ok(!headers.includes("配置变形"));
-    const dynamicNames = headers.slice(2, -2);
+    const dynamicNames = headers.slice(3, -2);
     assert.deepEqual(new Set(dynamicNames), new Set([
       "固定底座100高", "标准安装板", "JA内门板", "JP通风顶罩", "KA2206风机", "门限位器",
       "侧板",
@@ -268,6 +282,8 @@ test("quick workbook uses stable selected-name columns without obsolete configur
     ];
     expected.forEach(([unitTotal, lineTotal], index) => {
       const row = 11 + index;
+      const originalBreakdown = [1100, 1050, 1260, 1770, 1400, 2180][index];
+      closeTo(sheet.getCell(row, 10).value.result, originalBreakdown, `door matrix original total row ${row}`);
       closeTo(sheet.getCell(row, 6).value, unitTotal, `door matrix quick unit total row ${row}`);
       closeTo(sheet.getCell(row, 7).value, lineTotal, `door matrix quick line total row ${row}`);
       const formula = sheet.getCell(row, 11).value.formula;
@@ -459,8 +475,9 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(quickSheet.getCell("F11").value, 2138, "ganged quick equivalent unit total with freight");
     closeTo(quickSheet.getCell("G11").value, 4276, "ganged quick line total with freight");
+    closeTo(quickSheet.getCell("J11").value.result, 2350, "ganged quick original unit price");
     closeTo(quickSheet.getCell("L11").value, 4000, "ganged quick cabinet order amount");
-    closeTo(quickSheet.getCell("K11").value.result, 4276, "ganged quick order formula result with freight");
+    closeTo(quickSheet.getCell("K11").value.result, 2138, "ganged quick discounted unit formula result with freight");
     closeTo(quickSheet.getCell(11, headerIndex("固定底座100高")).value, 240, "separately matched ganged base amount");
     closeTo(quickSheet.getCell(11, headerIndex("标准安装板")).value, -200, "ganged board amount");
     closeTo(quickSheet.getCell(11, headerIndex("侧板")).value, 200, "ganged side amount");

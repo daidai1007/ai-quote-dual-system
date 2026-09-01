@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import re
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -47,7 +48,7 @@ from quote_defaults import (
     DEFAULT_MATERIAL_CODE,
     restore_combo_selection,
 )
-from quote_remark_rules import replace_door_configuration_phrase
+from quote_remark_rules import door_phrase_for_item, replace_door_configuration_phrase
 from quick_discount_rules import (
     attachment_excluded_from_discount,
     effective_attachment_line_amount,
@@ -83,7 +84,9 @@ from attachment_category_browser import (
     is_automatic_attachment_selection,
     is_manual_attachment_selection,
     is_jp_product,
+    installation_board_match_name_for_product,
     match_attachment_size,
+    match_installation_board_for_product,
     match_default_a4_folder,
     match_default_door_reinforcement,
     match_default_door_limiter,
@@ -95,6 +98,7 @@ from attachment_category_browser import (
     match_jp_side_panel,
     parse_base_specification,
     SIZE_MATCH_METADATA_KEYS,
+    size_match_attachment_name,
     size_match_group_key,
     valid_selection_prefix,
     with_attachment_selection_source,
@@ -111,15 +115,21 @@ WIDGET_MAX = 16_777_215
 # 管理费固定为人工成本的 13%（见运行规则：管理费 = 人工成本 × 0.13）。
 MANAGEMENT_FEE_RATE = 0.13
 VALID_DOOR_COMBINATIONS = {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
-FORMULA_MULTI_DOOR_FAMILIES = {"JS", "JP", "JA", "JE"}
 QUOTE_WIDE_BREAKPOINT = 1280
 QUOTE_STACK_BREAKPOINT = 1050
 QUOTE_ACTION_DOCK_HEIGHT = 62
+QUOTE_HORIZONTAL_WORKSPACE_MIN_HEIGHT = 680
+QUOTE_HORIZONTAL_PAGE_CHROME_HEIGHT = 102
+QUOTE_SCROLL_CANVAS_VERTICAL_INSET = 30
 UI_SPACE_XS = 4
 UI_SPACE_SM = 8
 UI_SPACE_MD = 12
 UI_SPACE_LG = 16
 UI_CONTROL_HEIGHT = 34
+UI_COMPACT_LABEL_HEIGHT = 18
+UI_FIELD_BLOCK_MIN_HEIGHT = (
+    UI_COMPACT_LABEL_HEIGHT + UI_SPACE_XS + UI_CONTROL_HEIGHT
+)
 UI_PRIMARY_ACTION_HEIGHT = 40
 UI_CARD_RADIUS = 8
 ATTACHMENT_DIALOG_TARGET_WIDTH = 900
@@ -130,9 +140,106 @@ FORMULA_TEMPLATE_MAX_ATTEMPTS = 3
 FORMULA_TEMPLATE_RETRY_DELAYS_MS = (500, 1000)
 FORMULA_TEMPLATE_DEBOUNCE_MS = 420
 FORMULA_TEMPLATE_BUSY_RECHECK_MS = 160
+QUOTE_REQUEST_TIMEOUT_SECONDS = 90
+QUOTE_PROGRESS_INTERVAL_MS = 1000
 
 
 LOGGER = logging.getLogger("ai_quote.client")
+
+
+def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
+    """Add bounded, observable behavior to the ordinary dual-quote request.
+
+    The packaged client executes a recovered ``ApiWorker`` from ``v3_core``.
+    Patching only the source copy therefore leaves deployed clients unchanged;
+    install the request behavior on the runtime class as well.
+    """
+
+    worker_class = namespace.get("ApiWorker")
+    headers_factory = namespace.get("api_headers")
+    if worker_class is None or getattr(worker_class, "_quote_diagnostics_installed", False):
+        return
+    original_run = worker_class.run
+
+    def run_with_quote_diagnostics(self):
+        url = str(getattr(self, "url", "") or "")
+        if not url.rstrip("/").endswith("/api/quotes/calculate-dual"):
+            return original_run(self)
+
+        started = time.monotonic()
+        payload = getattr(self, "payload", {})
+        payload = payload if isinstance(payload, dict) else {}
+        LOGGER.info(
+            "dual quote request started product=%s quote_id=%s timeout=%ss",
+            payload.get("product_code"),
+            payload.get("quote_id"),
+            QUOTE_REQUEST_TIMEOUT_SECONDS,
+        )
+        try:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers = (
+                headers_factory(True)
+                if callable(headers_factory)
+                else {"Content-Type": "application/json; charset=utf-8"}
+            )
+            request = urllib.request.Request(
+                url,
+                data=body,
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(
+                request, timeout=QUOTE_REQUEST_TIMEOUT_SECONDS
+            ) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            if not isinstance(result, dict):
+                raise RuntimeError("报价服务返回了无效数据")
+            if not isinstance(result.get("formula_cost"), dict):
+                raise RuntimeError("报价服务返回结果缺少公式法报价")
+            if not isinstance(result.get("quick_quote"), dict):
+                raise RuntimeError("报价服务返回结果缺少快速报价")
+            LOGGER.info(
+                "dual quote request succeeded product=%s quote_id=%s elapsed=%.3fs",
+                payload.get("product_code"),
+                payload.get("quote_id"),
+                time.monotonic() - started,
+            )
+            self.succeeded.emit(result)
+        except urllib.error.HTTPError as error:
+            try:
+                detail = error.read().decode("utf-8")
+            except Exception:
+                detail = str(error)
+            message = detail or f"HTTP {error.code}"
+            LOGGER.warning(
+                "dual quote request failed product=%s quote_id=%s status=%s elapsed=%.3fs error=%s",
+                payload.get("product_code"),
+                payload.get("quote_id"),
+                error.code,
+                time.monotonic() - started,
+                _ganged_error_text(message),
+            )
+            self.failed.emit(message)
+        except Exception as error:
+            message = str(error) or error.__class__.__name__
+            LOGGER.warning(
+                "dual quote request failed product=%s quote_id=%s elapsed=%.3fs error=%s",
+                payload.get("product_code"),
+                payload.get("quote_id"),
+                time.monotonic() - started,
+                message,
+            )
+            self.failed.emit(message)
+        finally:
+            LOGGER.info(
+                "dual quote request finished product=%s quote_id=%s elapsed=%.3fs",
+                payload.get("product_code"),
+                payload.get("quote_id"),
+                time.monotonic() - started,
+            )
+
+    worker_class.run = run_with_quote_diagnostics
+    worker_class._quote_diagnostics_installed = True
 
 
 def _formula_template_error_text(error: Exception) -> str:
@@ -300,7 +407,9 @@ class _GangedQuoteWorker(QThread):
                     headers=headers,
                     method="POST",
                 )
-                with urllib.request.urlopen(request, timeout=30) as response:
+                with urllib.request.urlopen(
+                    request, timeout=QUOTE_REQUEST_TIMEOUT_SECONDS
+                ) as response:
                     result = json.loads(response.read().decode("utf-8"))
                 if not isinstance(result, dict):
                     raise RuntimeError(f"第 {len(results) + 1} 个子柜返回了无效数据")
@@ -1196,20 +1305,11 @@ def _sync_quote_specification(window, text: str, parser=None) -> bool:
 
 
 def _allowed_door_combinations(window) -> set[tuple[int, int]]:
-    product_combo = getattr(window, "product_combo", None)
-    if not isinstance(product_combo, QComboBox):
-        return set(VALID_DOOR_COMBINATIONS)
-    family = str(product_combo.currentData() or "").strip().upper()
-    if family in FORMULA_MULTI_DOOR_FAMILIES:
-        return set(VALID_DOOR_COMBINATIONS)
-    entry = getattr(window, "product_catalog", {}).get(product_combo.currentData() or "", {})
-    codes = entry.get("codes") or {}
-    allowed = set()
-    if "SINGLE" in codes:
-        allowed.add((1, 0))
-    if "DOUBLE" in codes:
-        allowed.add((0, 1))
-    return allowed
+    # Door configuration belongs to the quote item, not to the number of
+    # SINGLE/DOUBLE records exposed by the product catalogue.  The API keeps
+    # formula and quick-quote database paths separate after receiving these
+    # counts, so every product can use every approved operator combination.
+    return set(VALID_DOOR_COMBINATIONS)
 
 
 def _current_door_counts(window) -> tuple[int, int] | None:
@@ -2095,10 +2195,10 @@ def _configure_quote_rule_interactions(window, parser=None) -> None:
     double = getattr(window, "double_door_combo", None)
     if isinstance(single, QComboBox):
         single.setAccessibleName("单门数量")
-        single.setToolTip("单门数量；JS/JP/JA/JE 支持五种组合，其他产品按数据库单/双门记录选择")
+        single.setToolTip("所有产品均支持五种门型组合；门型会写入报价清单和正式报价单")
     if isinstance(double, QComboBox):
         double.setAccessibleName("双门数量")
-        double.setToolTip("双门数量；JS/JP/JA/JE 的五种组合在快速报价中均读取 SINGLE 记录")
+        double.setToolTip("JS/JP/JA/JE 无论选择哪种门型，快速报价均读取单门库")
     _set_default_door_combination(window)
 
     model_edit = getattr(window, "model_edit", None)
@@ -2704,6 +2804,33 @@ def _apply_quote_responsive_layout(window, *, force: bool = False) -> None:
         workspace.setStretchFactor(1, 1)
         target_sizes = [590, 520]
 
+    if mode in {"wide", "medium"}:
+        # At 150% Windows scaling a 1920×1080 monitor provides roughly
+        # 1280×720 logical pixels.  Keep the efficient two-column layout, but
+        # preserve its content height and let the main page scroll vertically
+        # instead of allowing Qt to crush field blocks and result rows.
+        panel_height_hints = [QUOTE_HORIZONTAL_WORKSPACE_MIN_HEIGHT]
+        for panel in (input_panel, result_panel):
+            panel_layout = panel.layout()
+            panel_height_hints.extend((
+                panel.minimumSizeHint().height(),
+                panel.sizeHint().height(),
+                panel_layout.minimumSize().height() if panel_layout is not None else 0,
+                panel_layout.sizeHint().height() if panel_layout is not None else 0,
+            ))
+        workspace_minimum_height = max(panel_height_hints)
+        workspace.setMinimumHeight(workspace_minimum_height)
+        input_panel.setMinimumHeight(workspace_minimum_height)
+        result_panel.setMinimumHeight(workspace_minimum_height)
+        page_minimum_height = max(
+            workspace_minimum_height + QUOTE_HORIZONTAL_PAGE_CHROME_HEIGHT,
+            page.minimumSizeHint().height(),
+            page.sizeHint().height(),
+        )
+        page.setMinimumHeight(page_minimum_height)
+    else:
+        page_minimum_height = 1220
+
     if force or previous_mode != mode:
         workspace.setSizes(target_sizes)
     workspace.setProperty("responsiveMode", mode)
@@ -2711,12 +2838,16 @@ def _apply_quote_responsive_layout(window, *, force: bool = False) -> None:
 
     main_scroll = _find(window, QScrollArea, "mainScroll")
     if main_scroll is not None and main_scroll.widget() is not None:
+        main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         quote_is_current = window.stack.currentIndex() == 1
         window.stack.setMinimumHeight(
-            1220 if mode == "stacked" and quote_is_current else 0
+            page_minimum_height if quote_is_current else 0
         )
         main_scroll.widget().setMinimumHeight(
-            1250 if mode == "stacked" and quote_is_current else 0
+            (
+                page_minimum_height + QUOTE_SCROLL_CANVAS_VERTICAL_INSET
+                if quote_is_current else 0
+            )
         )
     QTimer.singleShot(0, lambda: _position_quote_action_dock(window))
 
@@ -2827,8 +2958,8 @@ def _configure_quote_input_form(window) -> None:
         label = labels[0] if labels else None
         if isinstance(label, QLabel):
             label.setWordWrap(False)
-            label.setMinimumHeight(18)
-            label.setMaximumHeight(18)
+            label.setMinimumHeight(UI_COMPACT_LABEL_HEIGHT)
+            label.setMaximumHeight(UI_COMPACT_LABEL_HEIGHT)
             label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             controls = [
                 child
@@ -2837,6 +2968,7 @@ def _configure_quote_input_form(window) -> None:
             ]
             if controls:
                 label.setBuddy(controls[0])
+                block.setMinimumHeight(UI_FIELD_BLOCK_MIN_HEIGHT)
 
     controls = [
         getattr(window, name, None)
@@ -2936,8 +3068,9 @@ def _ensure_freight_field(window) -> None:
             label = QLabel("运费", block)
             label.setObjectName("compactFieldLabel")
             label.setBuddy(freight)
-            label.setMinimumHeight(18)
-            label.setMaximumHeight(18)
+            label.setMinimumHeight(UI_COMPACT_LABEL_HEIGHT)
+            label.setMaximumHeight(UI_COMPACT_LABEL_HEIGHT)
+            block.setMinimumHeight(UI_FIELD_BLOCK_MIN_HEIGHT)
             block_layout.addWidget(label)
             block_layout.addWidget(freight)
             form_grid.addWidget(block, 1, 2)
@@ -4058,9 +4191,21 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     original_init = dialog_class.__init__
     original_apply_filter = dialog_class.apply_filter
     original_rebuild_table = dialog_class.rebuild_table
+    original_format_size = dialog_class.format_size
     original_table_item_changed = dialog_class.table_item_changed
+    original_update_selection_hint = dialog_class.update_selection_hint
     original_accept_selection = dialog_class.accept_selection
     original_collect_attachments = dialog_class.collect_attachments
+
+    def format_attachment_size(item: dict) -> str:
+        if "安装板" in str(size_match_attachment_name(item) or ""):
+            values = (item.get("width_mm"), item.get("height_mm"))
+            if not any(value is not None for value in values):
+                return "通用"
+            return " × ".join(
+                "-" if value is None else str(value) for value in values
+            ) + " mm"
+        return original_format_size(item)
 
     def ensure_selection_status_bar(self) -> None:
         """Keep the blue selection summary inside its own white footer row."""
@@ -4116,6 +4261,42 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             table_index = layout.indexOf(table)
             if table_index >= 0 and hasattr(layout, "setStretch"):
                 layout.setStretch(table_index, 1)
+
+    def select_attachment_from_row_click(self, item) -> None:
+        """Make the full attachment row an additive selection target."""
+
+        table = getattr(self, "table", None)
+        if (
+            not isinstance(table, QTableWidget)
+            or item is None
+            or item.column() == self.COL_CHECK
+        ):
+            return
+        check_item = table.item(item.row(), self.COL_CHECK)
+        if (
+            check_item is not None
+            and check_item.flags() & Qt.ItemFlag.ItemIsEnabled
+            and check_item.checkState() != Qt.CheckState.Checked
+        ):
+            # Do not toggle an already checked row.  This preserves selection
+            # when the first click of a price/quantity double-click occurs.
+            check_item.setCheckState(Qt.CheckState.Checked)
+
+    def update_selection_hint_with_row_click(self):
+        original_update_selection_hint(self)
+        table = getattr(self, "table", None)
+        hint = getattr(self, "selection_hint", None)
+        if not isinstance(table, QTableWidget) or not isinstance(hint, QLabel):
+            return
+        count = sum(
+            1
+            for row in range(table.rowCount())
+            if table.item(row, self.COL_CHECK) is not None
+            and table.item(row, self.COL_CHECK).checkState() == Qt.CheckState.Checked
+        )
+        hint.setText(
+            f"已勾选 {count} 项；单击附件行可选中，单价和数量可双击修改"
+        )
 
     category_rules = {
         "底座": DEFAULT_FIXED_BASE,
@@ -4268,6 +4449,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 
     def quick_match_source(self, source: dict) -> dict | None:
         target = size_target_for_source(self, source)
+        if is_installation_board(source):
+            return match_installation_board_for_product(
+                getattr(self, "catalog", []),
+                source,
+                target,
+                selected_product_code(self),
+            )
         return match_attachment_size(getattr(self, "catalog", []), source, target)
 
     def build_default_matches(self) -> dict[str, dict | None]:
@@ -4499,7 +4687,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if target_unchanged:
                 rematched.append(selected)
                 continue
-            matched = match_attachment_size(getattr(self, "catalog", []), selected, target)
+            matched = quick_match_source(self, selected)
             if matched is None:
                 rematched.append(selected)
                 continue
@@ -5374,7 +5562,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                             )
                             if not isinstance(candidate_source, dict):
                                 continue
-                            same_group = size_match_group_key(candidate_source) == size_match_group_key(source)
+                            same_group = (
+                                size_match_group_key(candidate_source)
+                                == size_match_group_key(source)
+                            ) or (
+                                is_installation_board(candidate_source)
+                                and is_installation_board(source)
+                            )
                             same_record = (
                                 matched_id is not None
                                 and str(candidate_source.get("attachment_price_id")) == str(matched_id)
@@ -5401,17 +5595,42 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                         if warning:
                             quick_match_notice = f"尺寸已匹配；{warning}。请人工填写安全的单一数值价格。"
                         elif matched.get("size_match_exact"):
-                            quick_match_notice = "已精确匹配附件尺寸，保留数据库原价。"
-                        else:
                             quick_match_notice = (
-                                "已按 W+H+D 最近周长快速匹配并比例折价："
-                                f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                                "已按柜体宽、高精确匹配安装板，保留数据库原价。"
+                                if is_installation_board(matched)
+                                else "已精确匹配附件尺寸，保留数据库原价。"
                             )
+                        else:
+                            if is_installation_board(matched):
+                                quick_match_notice = (
+                                    "已按柜体宽、高匹配最相近安装板，并按周长比例折价："
+                                    f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                                )
+                            else:
+                                quick_match_notice = (
+                                    "已按 W+H+D 最近周长快速匹配并比例折价："
+                                    f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                                )
                         item = target_item
                         source = matched
                     finally:
                         self.table.blockSignals(False)
                         self._default_selection_guard = False
+                elif is_installation_board(source):
+                    expected_name = installation_board_match_name_for_product(
+                        selected_product_code(self)
+                    )
+                    self._default_selection_guard = True
+                    self.table.blockSignals(True)
+                    try:
+                        item.setCheckState(Qt.CheckState.Unchecked)
+                    finally:
+                        self.table.blockSignals(False)
+                        self._default_selection_guard = False
+                    quick_match_notice = (
+                        f"当前产品应匹配“{expected_name}”，但附件库中没有可用的宽、高尺寸记录，"
+                        "本次未选择安装板。"
+                    )
             if (
                 item.checkState() == Qt.CheckState.Checked
                 and isinstance(source, dict)
@@ -5628,6 +5847,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             ATTACHMENT_DIALOG_TARGET_HEIGHT,
         )
         ensure_selection_status_bar(self)
+        table = getattr(self, "table", None)
+        if isinstance(table, QTableWidget):
+            table.itemClicked.connect(self.select_attachment_from_row_click)
+            table.setToolTip("单击附件行即可选中；取消选择请点击第一列复选框")
         self.category_selection = []
         parent = self.parentWidget()
         self.default_selection_opt_outs = set(getattr(parent, "attachment_default_opt_outs", set()))
@@ -5746,10 +5969,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         refresh_category_browser(self)
 
     dialog_class.__init__ = init_with_default_filters
+    dialog_class.format_size = staticmethod(format_attachment_size)
     dialog_class.rebuild_table = rebuild_table_with_defaults
     dialog_class.apply_filter = apply_classification_filter
     dialog_class.collect_attachments = collect_attachments_with_metadata
     dialog_class.table_item_changed = table_item_changed_with_defaults
+    dialog_class.select_attachment_from_row_click = select_attachment_from_row_click
+    dialog_class.update_selection_hint = update_selection_hint_with_row_click
     dialog_class.accept_selection = accept_selection_with_defaults
     dialog_class.refresh_category_browser = refresh_category_browser
     dialog_class.open_attachment_category = open_attachment_category
@@ -5765,6 +5991,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 def install_layout_refresh(namespace: dict) -> None:
     """Install the layout pass on an extracted or packaged V3 namespace."""
 
+    _install_quote_api_worker_diagnostics(namespace)
     _install_formula_cell_reference_guard(namespace)
     _install_door_remark_sync(namespace)
     main_window = namespace["MainWindow"]
@@ -5798,6 +6025,17 @@ def install_layout_refresh(namespace: dict) -> None:
 
     def build_ui_with_refresh(self):
         original_build_ui(self)
+        summary_table = getattr(self, "summary_table", None)
+        self._summary_core_has_door_column = False
+        if isinstance(summary_table, QTableWidget):
+            self._summary_core_has_door_column = any(
+                summary_table.horizontalHeaderItem(column) is not None
+                and summary_table.horizontalHeaderItem(column).text() == "门型"
+                for column in range(summary_table.columnCount())
+            )
+            if not self._summary_core_has_door_column:
+                summary_table.insertColumn(5)
+                summary_table.setHorizontalHeaderItem(5, QTableWidgetItem("门型"))
         apply_layout_refresh(self)
         _ensure_history_price_panel(self, namespace.get("ApiWorker"))
         _configure_quote_rule_interactions(self, namespace.get("parse_review_specification"))
@@ -5912,6 +6150,14 @@ def install_layout_refresh(namespace: dict) -> None:
             _sync_recognition_action_state(self)
 
     def refresh_summary_with_action_state(self):
+        table = getattr(self, "summary_table", None)
+        native_door_column = bool(getattr(self, "_summary_core_has_door_column", False))
+        if isinstance(table, QTableWidget) and not native_door_column:
+            for column in range(table.columnCount()):
+                header = table.horizontalHeaderItem(column)
+                if header is not None and header.text() == "门型":
+                    table.removeColumn(column)
+                    break
         result = original_refresh_summary(self)
         formula_sum = 0.0
         quick_sum = 0.0
@@ -5919,6 +6165,17 @@ def install_layout_refresh(namespace: dict) -> None:
         formula_price_column = None
         quick_price_column = None
         if isinstance(table, QTableWidget):
+            if not native_door_column:
+                table.insertColumn(5)
+                table.setHorizontalHeaderItem(5, QTableWidgetItem("门型"))
+            door_column = next((
+                column for column in range(table.columnCount())
+                if table.horizontalHeaderItem(column) is not None
+                and table.horizontalHeaderItem(column).text() == "门型"
+            ), None)
+            if door_column is not None:
+                for row, item in enumerate(getattr(self, "draft_items", [])):
+                    table.setItem(row, door_column, QTableWidgetItem(door_phrase_for_item(item)))
             for column in range(table.columnCount()):
                 header = table.horizontalHeaderItem(column)
                 label = header.text() if header is not None else ""
@@ -6116,6 +6373,14 @@ def install_layout_refresh(namespace: dict) -> None:
                 coating_combo.currentData() if isinstance(coating_combo, QComboBox) else None
             )
             result = original_product_changed(self)
+            # The extracted runtime core may still contain the legacy rule
+            # that disables both selectors for DEFAULT-only products. Keep the
+            # runtime overlay aligned with the source implementation: every
+            # product owns an explicit operator-selected door configuration.
+            for combo_name in ("single_door_combo", "double_door_combo"):
+                combo = getattr(self, combo_name, None)
+                if isinstance(combo, QComboBox):
+                    combo.setEnabled(True)
             _restore_quote_selections_after_product_change(
                 self,
                 material_selected,
@@ -6341,6 +6606,14 @@ def install_layout_refresh(namespace: dict) -> None:
         main_window._start_formula_template_request = start_formula_template_request
     if callable(original_calculate):
         def calculate_with_ganged_cabinets(self):
+            if getattr(self, "quote_calculation_in_progress", False):
+                LOGGER.info("duplicate quote action ignored while request is running")
+                _set_ganged_calculation_state(
+                    self,
+                    "双报价正在计算，请稍候，不需要重复点击。",
+                    "loading",
+                )
+                return None
             LOGGER.info(
                 "calculation flow entered product=%s specification=%s",
                 self.product_combo.currentData(),
@@ -6380,7 +6653,164 @@ def install_layout_refresh(namespace: dict) -> None:
                     "loading",
                 )
                 return None
-            return original_calculate(self)
+
+            button = getattr(self, "calculate_button", None)
+            previous_worker = getattr(self, "worker", None)
+            previous_result = getattr(self, "current_result", None)
+            started = time.monotonic()
+            idle_text = "计算双报价"
+            if isinstance(button, QPushButton):
+                idle_text = str(
+                    button.property("quoteIdleText")
+                    or button.property("formulaIdleText")
+                    or button.property("gangedIdleText")
+                    or button.text()
+                    or "计算双报价"
+                )
+                if "正在" in idle_text or "读取" in idle_text or "准备" in idle_text:
+                    idle_text = "计算双报价"
+                button.setProperty("quoteIdleText", idle_text)
+                button.setText("正在计算双报价…")
+                button.setEnabled(False)
+            self.quote_calculation_in_progress = True
+            _set_ganged_calculation_state(
+                self,
+                "正在提交双报价计算，请稍候…",
+                "loading",
+            )
+
+            try:
+                result = original_calculate(self)
+            except Exception as error:
+                self.quote_calculation_in_progress = False
+                detail = _ganged_error_text(error)
+                rendered = f"双报价计算未启动：{detail}"
+                LOGGER.exception("dual quote calculation failed before request dispatch")
+                if isinstance(button, QPushButton):
+                    button.setText(idle_text)
+                    button.setEnabled(True)
+                show_error = getattr(self, "show_error", None)
+                if callable(show_error):
+                    show_error(rendered)
+                _set_ganged_calculation_state(self, rendered, "error")
+                return None
+
+            worker = getattr(self, "worker", None)
+            if worker is None or worker is previous_worker:
+                # The recovered implementation can return early after showing
+                # a validation message.  It did not dispatch a request, so do
+                # not leave the page in a false busy state.
+                self.quote_calculation_in_progress = False
+                if isinstance(button, QPushButton):
+                    button.setText(idle_text)
+                readiness = getattr(self, "update_quote_readiness", None)
+                if callable(readiness):
+                    readiness()
+                elif isinstance(button, QPushButton):
+                    button.setEnabled(True)
+                return result
+
+            _set_ganged_calculation_state(
+                self,
+                "正在提交双报价计算，请稍候…",
+                "loading",
+            )
+            outcome = {
+                "response": None,
+                "error": None,
+                "finalized": False,
+            }
+            timer = QTimer(self)
+            timer.setInterval(QUOTE_PROGRESS_INTERVAL_MS)
+            timer.setSingleShot(False)
+            self._quote_progress_timer = timer
+
+            def update_quote_progress():
+                if (
+                    not getattr(self, "quote_calculation_in_progress", False)
+                    or getattr(self, "worker", None) is not worker
+                ):
+                    timer.stop()
+                    return
+                elapsed = max(1, int(time.monotonic() - started))
+                if isinstance(button, QPushButton):
+                    button.setText(f"正在计算… {elapsed} 秒")
+                _set_ganged_calculation_state(
+                    self,
+                    f"报价服务正在计算，已等待 {elapsed} 秒，请勿重复点击…",
+                    "loading",
+                )
+
+            def quote_response_received(payload):
+                outcome["response"] = payload
+                LOGGER.info(
+                    "dual quote UI received response elapsed=%.3fs",
+                    time.monotonic() - started,
+                )
+
+            def quote_request_failed(message):
+                outcome["error"] = _ganged_error_text(message)
+
+            def finalize_quote_request():
+                if outcome["finalized"]:
+                    return
+                outcome["finalized"] = True
+                timer.stop()
+                elapsed = time.monotonic() - started
+                self.quote_calculation_in_progress = False
+                if getattr(self, "worker", None) is worker:
+                    self.worker = None
+                if getattr(self, "_quote_progress_timer", None) is timer:
+                    self._quote_progress_timer = None
+                if isinstance(button, QPushButton):
+                    button.setText(idle_text)
+
+                if outcome["error"] is not None:
+                    rendered = (
+                        f"双报价计算失败：{outcome['error']}。"
+                        "请检查网络后重试；若反复出现，请将客户端日志交给维护人员。"
+                    )
+                    show_error = getattr(self, "show_error", None)
+                    if callable(show_error):
+                        show_error(rendered)
+                    _set_ganged_calculation_state(self, rendered, "error")
+                elif outcome["response"] is None:
+                    rendered = (
+                        "双报价计算失败：计算线程已结束，但没有返回结果。"
+                        "请重试并保留客户端日志。"
+                    )
+                    show_error = getattr(self, "show_error", None)
+                    if callable(show_error):
+                        show_error(rendered)
+                    _set_ganged_calculation_state(self, rendered, "error")
+                elif getattr(self, "current_result", None) is previous_result:
+                    _set_ganged_calculation_state(
+                        self,
+                        "报价已返回，但计算期间输入发生变化，结果未采用；请重新计算。",
+                        "warning",
+                    )
+                else:
+                    _set_ganged_calculation_state(
+                        self,
+                        f"双报价计算完成，用时 {elapsed:.1f} 秒。",
+                        "success",
+                    )
+
+                readiness = getattr(self, "update_quote_readiness", None)
+                if callable(readiness):
+                    readiness()
+                elif isinstance(button, QPushButton):
+                    button.setEnabled(True)
+                worker.deleteLater()
+
+            worker.succeeded.connect(quote_response_received)
+            worker.failed.connect(quote_request_failed)
+            worker.finished.connect(
+                lambda: QTimer.singleShot(0, finalize_quote_request)
+            )
+            timer.timeout.connect(update_quote_progress)
+            timer.start()
+            return result
         main_window.calculate = calculate_with_ganged_cabinets
     if callable(original_product_catalog_loaded):
         def product_catalog_loaded_with_database_options(self, result):

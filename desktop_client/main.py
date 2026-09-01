@@ -57,7 +57,7 @@ from quote_defaults import (
     DEFAULT_MATERIAL_CODE,
     apply_default_quote_inputs,
 )
-from quote_remark_rules import replace_door_configuration_phrase
+from quote_remark_rules import door_phrase_for_item, replace_door_configuration_phrase
 from quick_discount_rules import (
     attachment_excluded_from_discount,
     quick_attachment_line_amount,
@@ -70,6 +70,7 @@ from attachment_category_browser import (
     is_base_selection,
     match_fixed_base,
     parse_base_specification,
+    size_match_attachment_name,
     valid_selection_prefix,
 )
 
@@ -849,6 +850,8 @@ class AttachmentDialog(QDialog):
         header.setSectionResizeMode(self.COL_PRICE, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(self.COL_QUANTITY, QHeaderView.ResizeToContents)
         self.table.itemChanged.connect(self.table_item_changed)
+        self.table.itemClicked.connect(self.table_item_clicked)
+        self.table.setToolTip("单击附件行即可选中；取消选择请点击第一列复选框")
 
         self.selection_status_frame = QFrame(self)
         self.selection_status_frame.setObjectName("attachmentSelectionStatusBar")
@@ -894,7 +897,9 @@ class AttachmentDialog(QDialog):
 
     @staticmethod
     def format_size(item: dict) -> str:
-        values = [item.get("width_mm"), item.get("height_mm"), item.get("depth_mm")]
+        values = [item.get("width_mm"), item.get("height_mm")]
+        if "安装板" not in str(size_match_attachment_name(item) or ""):
+            values.append(item.get("depth_mm"))
         if not any(value is not None for value in values):
             return "通用"
         return " × ".join("-" if value is None else str(value) for value in values) + " mm"
@@ -1333,6 +1338,23 @@ class AttachmentDialog(QDialog):
         if item.column() == self.COL_CHECK:
             self.update_selection_hint()
 
+    def table_item_clicked(self, item: QTableWidgetItem):
+        """Select an attachment when any non-checkbox cell in its row is clicked."""
+
+        if item is None or item.column() == self.COL_CHECK:
+            return
+        check_item = self.table.item(item.row(), self.COL_CHECK)
+        if (
+            check_item is not None
+            and check_item.flags() & Qt.ItemIsEnabled
+            and check_item.checkState() != Qt.Checked
+        ):
+            # Row clicks only add a selection.  An already selected row stays
+            # selected so clicking price/quantity before a double-click cannot
+            # accidentally remove it; the checkbox remains the explicit way
+            # to cancel a selection.
+            check_item.setCheckState(Qt.Checked)
+
     def update_selection_hint(self):
         count = sum(
             1
@@ -1340,7 +1362,9 @@ class AttachmentDialog(QDialog):
             if self.table.item(row, self.COL_CHECK)
             and self.table.item(row, self.COL_CHECK).checkState() == Qt.Checked
         )
-        self.selection_hint.setText(f"已勾选 {count} 项；单价和数量可直接双击修改")
+        self.selection_hint.setText(
+            f"已勾选 {count} 项；单击附件行可选中，单价和数量可双击修改"
+        )
 
     def collect_attachments(self, show_errors: bool = True) -> list[dict] | None:
         selected_rows: list[dict] = []
@@ -2569,7 +2593,7 @@ class MainWindow(QMainWindow):
         hint = QLabel("每个柜型分别保留附件、备注及公式法/快速报价折扣。确认后生成同一份 Excel 的两张固定格式报价表。")
         hint.setObjectName("sectionSubtitle"); hint.setWordWrap(True); layout.addWidget(hint)
         card = QGroupBox("当前报价柜型"); card.setObjectName("summaryCard"); card_layout = QVBoxLayout(card)
-        self.summary_table = QTableWidget(0, 12); self.summary_table.setHorizontalHeaderLabels(["序号", "名称", "规格型号", "尺寸", "材质", "数量", "公式法单价", "公式折扣", "快速单价", "快速折扣", "附件", "备注"])
+        self.summary_table = QTableWidget(0, 13); self.summary_table.setHorizontalHeaderLabels(["序号", "名称", "规格型号", "尺寸", "材质", "门型", "数量", "公式法单价", "公式折扣", "快速单价", "快速折扣", "附件", "备注"])
         self.summary_table.setSelectionBehavior(QTableWidget.SelectRows); self.summary_table.setEditTriggers(QTableWidget.NoEditTriggers); self.summary_table.setMinimumHeight(340); self.summary_table.horizontalHeader().setStretchLastSection(True)
         card_layout.addWidget(self.summary_table)
         actions = QHBoxLayout()
@@ -2842,14 +2866,13 @@ class MainWindow(QMainWindow):
 
     def product_changed(self):
         entry = self.product_catalog.get(self.product_combo.currentData() or "", {})
-        codes = entry.get("codes", {})
-        supports_door_counts = "SINGLE" in codes or "DOUBLE" in codes
-        self.single_door_combo.setEnabled(supports_door_counts)
-        self.double_door_combo.setEnabled(supports_door_counts)
-        if supports_door_counts:
-            if self.door_counts() not in self.VALID_DOOR_COMBINATIONS:
-                self.set_door_counts(1, 0)
-        else:
+        # Door configuration is an operator-owned property of every product.
+        # Database quote-source selection is normalized independently by the
+        # API, so products with only a DEFAULT database code must remain
+        # selectable here as well.
+        self.single_door_combo.setEnabled(True)
+        self.double_door_combo.setEnabled(True)
+        if self.door_counts() not in self.VALID_DOOR_COMBINATIONS:
             self.set_door_counts(1, 0)
         defaults = entry.get("defaults")
         if defaults:
@@ -3096,7 +3119,7 @@ class MainWindow(QMainWindow):
             )["discounted_total"] + freight_fee
             formula_sum += formula_unit * item["quantity"]; quick_sum += quick_unit * item["quantity"]
             dimensions = f"{item['width_mm']:g}×{item['height_mm']:g}×{item['depth_mm']:g}"
-            values = [row + 1, self.drawing_name_before_chinese(item["name"]), item.get("model_code") or "", dimensions, item["material_code"], item["quantity"], f"{formula_unit:,.2f}", f"{item['formula_discount']:.2f}", f"{quick_unit:,.2f}", f"{item['quick_discount']:.2f}", str(len(item["attachments"])), item["notes"]]
+            values = [row + 1, self.drawing_name_before_chinese(item["name"]), item.get("model_code") or "", dimensions, item["material_code"], door_phrase_for_item(item), item["quantity"], f"{formula_unit:,.2f}", f"{item['formula_discount']:.2f}", f"{quick_unit:,.2f}", f"{item['quick_discount']:.2f}", str(len(item["attachments"])), item["notes"]]
             for col, value in enumerate(values): self.summary_table.setItem(row, col, QTableWidgetItem(str(value)))
         self.summary_formula_total.setText(f"公式法：{formula_sum:,.2f} 元"); self.summary_quick_total.setText(f"快速报价：{quick_sum:,.2f} 元")
 

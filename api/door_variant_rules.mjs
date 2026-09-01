@@ -34,8 +34,8 @@ export function doorCountsFromInput(input = {}, { allowMissing = true, allowZero
 
   const single = integerCount(input.single_door_count, 'single_door_count');
   const double = integerCount(input.double_door_count, 'double_door_count');
-  // Non-door products in the existing desktop client send 0/0 while their
-  // two selectors are disabled. Keep that transport value as a no-op.
+  // Keep 0/0 as a backward-compatible no-op for drafts created by clients
+  // that predate door selection on every product.
   if (allowZeroPair && single === 0 && double === 0) return { single, double };
   if (!VALID_DOOR_KEYS.has(`${single}/${double}`)) {
     throw new Error(`door combination must be one of 1/0, 0/1, 0/2, 2/0 or 1/1; received ${single}/${double}`);
@@ -67,10 +67,6 @@ export function normalizeDoorVariantInput(input = {}) {
   const currentProduct = String(input.product_code || '').trim();
   const currentVariant = String(input.variant_code || '').trim().toUpperCase();
   const family = productFamily(currentProduct);
-  const key = `${counts.single}/${counts.double}`;
-  if (!FORMULA_MULTI_DOOR_FAMILY_SET.has(family) && key !== '1/0' && key !== '0/1') {
-    throw new Error(`${family || 'product'} door combination must be 1/0 or 0/1`);
-  }
   if (currentVariant === 'WIDE' || /_WIDE(?:_EXP)?$/i.test(currentProduct)) return input;
 
   // JA has one database formula template. All five JA door combinations are
@@ -106,9 +102,11 @@ export function normalizeQuickDoorVariantInput(input = {}) {
   const family = productFamily(currentProduct);
   if (currentVariant === 'WIDE' || /_WIDE(?:_EXP)?$/i.test(currentProduct)) return input;
   const variant = quickDoorVariantForCounts(counts, currentProduct);
-  const productCode = /_(?:SINGLE|DOUBLE)$/i.test(currentProduct)
-    ? currentProduct.replace(/_(?:SINGLE|DOUBLE)$/i, `_${variant}`)
-    : currentProduct;
+  const productCode = FORMULA_MULTI_DOOR_FAMILY_SET.has(family)
+    ? `${family}_SINGLE`
+    : /_(?:SINGLE|DOUBLE)$/i.test(currentProduct)
+      ? currentProduct.replace(/_(?:SINGLE|DOUBLE)$/i, `_${variant}`)
+      : currentProduct;
   return {
     ...input,
     product_code: productCode,
