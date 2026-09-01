@@ -35,6 +35,7 @@ DIRECT_ITEMS_LABEL = "本级附件"
 FIXED_BASE_CATEGORY = "底座"
 FIXED_BASE_SUBCATEGORY = "固定底座"
 DEFAULT_FIXED_BASE = "fixed_base"
+DEFAULT_INSTALLATION_BOARD = "installation_board"
 DEFAULT_LIGHT_SWITCH = "light_switch"
 DEFAULT_A4_FOLDER = "a4_folder"
 DEFAULT_DOOR_LIMITER = "door_limiter"
@@ -412,6 +413,8 @@ def default_rule_for_item(item: dict) -> str | None:
     model = str(item.get("model_code") or "").strip().upper()
     if category == "底座" or "底座" in name:
         return DEFAULT_FIXED_BASE
+    if size_match_attachment_name(item) in {"安装板", "JK安装板"}:
+        return DEFAULT_INSTALLATION_BOARD
     if category == "灯开关" or "开关" in name:
         return DEFAULT_LIGHT_SWITCH
     if category == "文件夹" or "资料盒" in name:
@@ -527,7 +530,24 @@ def match_installation_board_size(
     otherwise missing data could be mistaken for an exact match.
     """
 
-    target = target_dimension_tuple(target_dimensions)
+    target = None
+    if isinstance(target_dimensions, (list, tuple)) and len(target_dimensions) >= 2:
+        target_width = _number(target_dimensions[0])
+        target_height = _number(target_dimensions[1])
+        target_depth = (
+            _number(target_dimensions[2])
+            if len(target_dimensions) >= 3 else None
+        )
+        if target_depth is not None and target_depth <= 0:
+            target_depth = None
+        if (
+            target_width is not None and target_width > 0
+            and target_height is not None and target_height > 0
+        ):
+            # Depth is retained only as diagnostic metadata. It is neither a
+            # prerequisite nor an input to installation-board selection or
+            # perimeter price scaling.
+            target = (target_width, target_height, target_depth)
     catalogue = list(items)
     if required_name:
         candidates = [

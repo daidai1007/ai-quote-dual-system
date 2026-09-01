@@ -361,7 +361,7 @@ attachment_dialog.catalog = [
         "category_level1": "未来分类",
     },
 ]
-assert attachment_dialog.prepare_default_selections() == 8
+assert attachment_dialog.prepare_default_selections() == 9
 limiter_attachment = next(
     item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
 )
@@ -446,7 +446,7 @@ assert attachment_dialog.category_scroll_content.minimumHeight() >= (
 )
 assert attachment_dialog.table.isHidden()
 quick_match_buttons = attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
-assert len(quick_match_buttons) == 8
+assert len(quick_match_buttons) == 9
 assert any(button.text() == "默认已选择\n固定 · 高 100 mm" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\nA4资料盒" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择\n门加强筋 · 数量：1 个" for button in quick_match_buttons)
@@ -748,6 +748,25 @@ door_parent.close()
 # A non-JK product is routed to the ordinary installation-board library. The
 # selected board is summarized back on the first-level card, and its circular
 # sign toggle stores subtraction separately from the positive source price.
+attachment_dialog.prepare_default_selections()
+attachment_dialog.rebuild_table()
+while attachment_dialog.category_selection:
+    attachment_dialog.back_attachment_category()
+app.processEvents()
+automatic_board = next(
+    item for item in attachment_dialog.attachments
+    if item.get("item_name") == "安装板"
+)
+assert automatic_board["selection_source"] == "automatic"
+assert automatic_board["size_match_exact"] is True
+assert automatic_board["matched_price"] == 75
+assert any(
+    button.isVisible()
+    and button.text().startswith("默认已选择\n安装板 · 760×960 mm")
+    for button in attachment_dialog.findChildren(
+        QPushButton, "attachmentQuickMatchSelected"
+    )
+)
 attachment_category_button("安装板").click()
 app.processEvents()
 attachment_category_button("安装板").click()
@@ -756,7 +775,10 @@ board_row = next(
     row for row in range(attachment_dialog.table.rowCount())
     if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "安装板"
 )
-attachment_dialog.table.item(board_row, attachment_dialog.COL_CHECK).setCheckState(Qt.CheckState.Checked)
+board_check = attachment_dialog.table.item(board_row, attachment_dialog.COL_CHECK)
+board_check.setCheckState(Qt.CheckState.Unchecked)
+app.processEvents()
+board_check.setCheckState(Qt.CheckState.Checked)
 app.processEvents()
 assert "按柜体宽、高精确匹配安装板" in attachment_dialog.catalog_hint.text()
 board_spec_text = attachment_dialog.table.item(
@@ -929,7 +951,7 @@ app.processEvents()
 assert len([
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
     if button.isVisible()
-]) == 7
+]) == 8
 folder_cancelled = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchCancelled")
     if button.isVisible() and "A4资料盒" in button.text()
@@ -942,7 +964,7 @@ assert "a4_folder" not in attachment_dialog.default_selection_opt_outs
 assert len([
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
     if button.isVisible()
-]) == 8
+]) == 9
 if artifact_dir is not None:
     assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_categories.png"))
 
@@ -1119,7 +1141,9 @@ light_default = next(
 )
 light_default.click()
 attachment_dialog.accept_selection()
-assert attachment_parent.attachment_default_opt_outs == {"light_switch"}
+assert attachment_parent.attachment_default_opt_outs == {
+    "installation_board", "light_switch"
+}
 assert attachment_parent.attachment_default_quantity_overrides == set()
 attachment_parent.close()
 
@@ -1133,7 +1157,7 @@ plain_dialog = attachment_dialog_class(
     target_dimensions=(760, 960, 500),
 )
 plain_dialog.catalog = [dict(item) for item in attachment_dialog.catalog]
-assert plain_dialog.prepare_default_selections() == 6
+assert plain_dialog.prepare_default_selections() == 7
 plain_dialog.rebuild_table()
 plain_dialog.show()
 app.processEvents()
@@ -1143,7 +1167,7 @@ assert any(label.text() == "快速匹配\n仅 JP 默认匹配" for label in plai
 assert sum(
     plain_dialog.table.item(row, plain_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
     for row in range(plain_dialog.table.rowCount())
-) == 6
+) == 7
 plain_dialog.close()
 plain_parent.close()
 attachment_dialog_class.load_catalog = original_attachment_load

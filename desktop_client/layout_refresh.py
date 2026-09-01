@@ -66,6 +66,7 @@ from attachment_category_browser import (
     DEFAULT_COPPER_BUSBAR,
     DEFAULT_FIXED_BASE,
     DEFAULT_GROUND_WIRE,
+    DEFAULT_INSTALLATION_BOARD,
     DEFAULT_JP_SIDE_PANEL,
     DEFAULT_LIGHT_SWITCH,
     GANGED_FIXED_BASE_INDEX_KEY,
@@ -4300,6 +4301,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 
     category_rules = {
         "底座": DEFAULT_FIXED_BASE,
+        "安装板": DEFAULT_INSTALLATION_BOARD,
         "侧板": DEFAULT_JP_SIDE_PANEL,
         "灯开关": DEFAULT_LIGHT_SWITCH,
         "文件夹": DEFAULT_A4_FOLDER,
@@ -4506,8 +4508,25 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 )
                 if base_source is not None:
                     base = match_attachment_size(catalog, base_source, (width, parsed[3], depth))
-        side = None
         product_code = selected_product_code(self)
+        installation_board = None
+        if dimensions is not None:
+            required_board_name = installation_board_match_name_for_product(product_code)
+            board_source = next(
+                (
+                    item for item in catalog
+                    if size_match_attachment_name(item) == required_board_name
+                ),
+                None,
+            )
+            if board_source is not None:
+                installation_board = match_installation_board_for_product(
+                    catalog,
+                    board_source,
+                    dimensions,
+                    product_code,
+                )
+        side = None
         if is_jp_product(product_code) and dimensions is not None:
             exact_side = match_jp_side_panel(catalog, dimensions[1], dimensions[2])
             side_source = exact_side or next(
@@ -4518,6 +4537,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 side = match_attachment_size(catalog, side_source, dimensions)
         matches = {
             DEFAULT_FIXED_BASE: base,
+            DEFAULT_INSTALLATION_BOARD: installation_board,
             DEFAULT_LIGHT_SWITCH: match_default_light_switch(catalog),
             DEFAULT_A4_FOLDER: match_default_a4_folder(catalog),
             DEFAULT_DOOR_LIMITER: match_default_door_limiter(catalog),
@@ -4875,6 +4895,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 missing_tip = "附件库中没有与当前宽度、深度和底座高度完全一致的固定底座"
         elif rule == DEFAULT_LIGHT_SWITCH:
             detail = "灯开关"
+        elif rule == DEFAULT_INSTALLATION_BOARD:
+            expected_name = installation_board_match_name_for_product(product_code)
+            if dimensions is not None:
+                detail = f"{expected_name} · {dimensions[0]:g}×{dimensions[1]:g} mm"
+            else:
+                detail = f"{expected_name} · 宽、高尺寸无效"
+            missing_tip = f"附件库中没有可用于宽、高匹配的“{expected_name}”"
         elif rule == DEFAULT_A4_FOLDER:
             detail = "A4资料盒"
         elif rule == DEFAULT_DOOR_LIMITER:

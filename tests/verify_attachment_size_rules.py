@@ -11,7 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
 from attachment_category_browser import (  # noqa: E402
+    DEFAULT_INSTALLATION_BOARD,
     completed_size_dimensions,
+    default_rule_for_item,
     door_reinforcement_default_quantity,
     installation_board_match_name_for_product,
     match_attachment_size,
@@ -93,6 +95,18 @@ assert exact_board_match["size_match_target_perimeter"] == 6000
 assert exact_board_match["size_match_perimeter"] == 6000
 assert exact_board_match["matched_price"] == 160
 assert "unit_price_override" not in exact_board_match
+
+# Installation-board matching must not require or compare cabinet depth.
+depthless_exact = match_installation_board_size(
+    [board_source, board_exact],
+    board_source,
+    (1000, 2000, 0),
+)
+assert depthless_exact is not None
+assert depthless_exact["attachment_price_id"] == 41
+assert depthless_exact["size_match_exact"] is True
+assert depthless_exact["size_match_target_depth_mm"] is None
+assert default_rule_for_item(board_exact) == DEFAULT_INSTALLATION_BOARD
 
 nearest_board_match = match_attachment_size(
     [board_source, board_close_shape, board_same_perimeter_far_shape],

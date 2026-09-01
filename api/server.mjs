@@ -323,6 +323,12 @@ const addAttachmentCatalogSql = (input) => {
     unit: sqlUnicodeText(item.unit),
     source: sqlUnicodeText(item.price_source),
     notes: sqlUnicodeText(item.notes),
+    // The imported price table requires provenance for every row. Manual
+    // catalogue entries have no workbook, so use a stable API source and the
+    // operator's first-level category as the source sheet.
+    sourceFile: sqlUnicodeText('attachment_catalog_api'),
+    sourceSheet: sqlUnicodeText(item.category_level1),
+    sourceRow: '1',
   };
   return {
     item,
@@ -347,13 +353,15 @@ WITH existing AS (
   INSERT INTO calc.attachment_price (
     attachment_category, item_name, model_code, variant,
     width_mm, height_mm, depth_mm,
-    price, price_text, unit, price_source, notes, is_active
+    price, price_text, unit, price_source, notes,
+    source_file, source_sheet, source_row_no, is_active
   )
   SELECT ${values.attachmentCategory}, ${values.itemName},
          ${values.modelCode}, ${values.variant},
          ${values.width}, ${values.height}, ${values.depth},
          ${values.price}, ${values.priceText}, ${values.unit},
-         ${values.source}, ${values.notes}, TRUE
+         ${values.source}, ${values.notes},
+         ${values.sourceFile}, ${values.sourceSheet}, ${values.sourceRow}, TRUE
   WHERE NOT EXISTS (SELECT 1 FROM existing)
   RETURNING attachment_price_id
 ), chosen AS (

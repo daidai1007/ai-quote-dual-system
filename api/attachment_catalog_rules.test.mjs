@@ -49,6 +49,13 @@ test('catalog SQL writes the required legacy category and classification mapping
   });
   assert.equal(item.attachment_category, '安装板');
   assert.match(serverSource, /INSERT INTO calc\.attachment_price \(\s*attachment_category,/);
+  assert.match(serverSource, /source_file, source_sheet, source_row_no, is_active/);
+  assert.match(serverSource, /sqlUnicodeText\('attachment_catalog_api'\)/);
+  assert.match(serverSource, /sourceSheet: sqlUnicodeText\(item\.category_level1\)/);
+  assert.match(
+    serverSource,
+    /\$\{values\.sourceFile\}, \$\{values\.sourceSheet\}, \$\{values\.sourceRow\}, TRUE/,
+  );
   assert.match(serverSource, /AND attachment_category =/);
   assert.match(serverSource, /UPDATE calc\.attachment_classification classification/);
   assert.match(serverSource, /INSERT INTO calc\.attachment_classification \(/);
