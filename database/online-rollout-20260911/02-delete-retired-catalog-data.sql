@@ -96,16 +96,21 @@ WHERE p.attachment_price_id IN (SELECT attachment_price_id FROM purge_attachment
 DELETE FROM calc.attachment_catalog_version v
 WHERE v.data_version IN (SELECT data_version FROM purge_attachment_versions);
 
--- Replacement cabinet-material versions are snapshot based; deleting RETIRED versions
--- cascades only to their cabinet_material_rule and cabinet_material_fixed_rule children.
+-- Replacement cabinet catalogs are snapshot based. Keep the one ACTIVE target and
+-- delete every older non-active version, including versions that were staged but
+-- never activated. Child rules are removed by the catalog foreign keys.
 DELETE FROM calc.cabinet_material_catalog_version
-WHERE status='RETIRED';
+WHERE status<>'ACTIVE'
+  AND data_version<>'cabinet-material-4f8bf726efa6568d-v2';
 DELETE FROM calc.cabinet_spray_catalog_version
-WHERE status='RETIRED';
+WHERE status<>'ACTIVE'
+  AND data_version<>'cabinet-spray-4b3d73c9cb7a6f26-v2';
 DELETE FROM calc.cabinet_auxiliary_catalog_version
-WHERE status='RETIRED';
+WHERE status<>'ACTIVE'
+  AND data_version<>'cabinet-auxiliary-706c234a5de12a39-v2';
 DELETE FROM calc.cabinet_labor_catalog_version
-WHERE status='RETIRED';
+WHERE status<>'ACTIVE'
+  AND data_version<>'cabinet-labor-a3d12580527a3eb6-v1';
 
 DO $$
 BEGIN
@@ -120,6 +125,12 @@ BEGIN
     WHERE s.attachment_price_id IS NOT NULL AND p.attachment_price_id IS NULL
   ) THEN
     RAISE EXCEPTION 'Cleanup created an orphan attachment selection';
+  END IF;
+  IF (SELECT count(*) FROM calc.cabinet_material_catalog_version)<>1
+     OR (SELECT count(*) FROM calc.cabinet_spray_catalog_version)<>1
+     OR (SELECT count(*) FROM calc.cabinet_auxiliary_catalog_version)<>1
+     OR (SELECT count(*) FROM calc.cabinet_labor_catalog_version)<>1 THEN
+    RAISE EXCEPTION 'Cleanup postcondition failed; obsolete cabinet catalog versions remain';
   END IF;
 END $$;
 
