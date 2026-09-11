@@ -1,7 +1,19 @@
 {
-  "data_version": "cabinet-spray-13f257f440859e3b-v1",
-  "source_file": "JS,JP,JA,JE,JK,JM面积公式.xlsx",
-  "source_sha256": "13f257f440859e3b0922aa690241c1b43068d687042b9bd3b2eccc2aab051fd9",
+  "data_version": "cabinet-spray-4b3d73c9cb7a6f26-v2",
+  "source_file": "JS,JP,JA,JE,JK,JM面积公式.xlsx; 产品喷塑经验值表.xlsx",
+  "source_sha256": "4b3d73c9cb7a6f269ed4cbe7ea3880979550fece11ab5e527c295036a4581c30",
+  "source_files": [
+    {
+      "kind": "AREA_FORMULA",
+      "name": "JS,JP,JA,JE,JK,JM面积公式.xlsx",
+      "sha256": "13f257f440859e3b0922aa690241c1b43068d687042b9bd3b2eccc2aab051fd9"
+    },
+    {
+      "kind": "FIXED_PRICE",
+      "name": "产品喷塑经验值表.xlsx",
+      "sha256": "fc97a9fdbf2fa2b828add2397312a62471f4be7ba2cd1fabc5b751a93e352176"
+    }
+  ],
   "rules": [
     {
       "family": "JS",
@@ -3239,6 +3251,707 @@
       "source_sheet": "JK",
       "source_row_no": 8,
       "source_column": "A:D"
+    }
+  ],
+  "fixed_rules": [
+    {
+      "product_code": "JC_EXP",
+      "profile_code": "LUXURY",
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JC601660",
+      "width_mm": 600,
+      "height_mm": 1600,
+      "depth_mm": 600,
+      "spray_cost": 86,
+      "allow_dimension_scale": true,
+      "source_sheet": "JC（豪华型）",
+      "source_row_no": 3
+    },
+    {
+      "product_code": "JC_EXP",
+      "profile_code": "LUXURY",
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JC601680",
+      "width_mm": 600,
+      "height_mm": 1600,
+      "depth_mm": 800,
+      "spray_cost": 103,
+      "allow_dimension_scale": true,
+      "source_sheet": "JC（豪华型）",
+      "source_row_no": 4
+    },
+    {
+      "product_code": "JC_EXP",
+      "profile_code": "STANDARD",
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JC601660",
+      "width_mm": 600,
+      "height_mm": 1600,
+      "depth_mm": 600,
+      "spray_cost": 86,
+      "allow_dimension_scale": true,
+      "source_sheet": "JC（标配版）",
+      "source_row_no": 3
+    },
+    {
+      "product_code": "JC_EXP",
+      "profile_code": "STANDARD",
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JC601680",
+      "width_mm": 600,
+      "height_mm": 1600,
+      "depth_mm": 800,
+      "spray_cost": 103,
+      "allow_dimension_scale": true,
+      "source_sheet": "JC（标配版）",
+      "source_row_no": 4
+    },
+    {
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JQ609648",
+      "width_mm": 600,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "spray_cost": 49.5,
+      "allow_dimension_scale": true,
+      "source_sheet": "JQ",
+      "source_row_no": 3
+    },
+    {
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JQ809648",
+      "width_mm": 800,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "spray_cost": 60.6,
+      "allow_dimension_scale": true,
+      "source_sheet": "JQ",
+      "source_row_no": 4
+    },
+    {
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JQ109648",
+      "width_mm": 1000,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "spray_cost": 70.9,
+      "allow_dimension_scale": true,
+      "source_sheet": "JQ",
+      "source_row_no": 5
+    },
+    {
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JQ129648",
+      "width_mm": 1200,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "spray_cost": 82,
+      "allow_dimension_scale": true,
+      "source_sheet": "JQ",
+      "source_row_no": 6
+    },
+    {
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JQ609648",
+      "width_mm": 600,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "spray_cost": 34,
+      "allow_dimension_scale": true,
+      "source_sheet": "JQ",
+      "source_row_no": 7
+    },
+    {
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JQ809648",
+      "width_mm": 800,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "spray_cost": 45.9,
+      "allow_dimension_scale": true,
+      "source_sheet": "JQ",
+      "source_row_no": 8
+    },
+    {
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JQ109648",
+      "width_mm": 1000,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "spray_cost": 58.82,
+      "allow_dimension_scale": true,
+      "source_sheet": "JQ",
+      "source_row_no": 9
+    },
+    {
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JQ129648",
+      "width_mm": 1200,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "spray_cost": 68.34,
+      "allow_dimension_scale": true,
+      "source_sheet": "JQ",
+      "source_row_no": 10
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP131860",
+      "width_mm": 1300,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "spray_cost": 312,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 3
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP141860",
+      "width_mm": 1400,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "spray_cost": 329.6,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 4
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP151860",
+      "width_mm": 1500,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "spray_cost": 347.2,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 5
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP161860",
+      "width_mm": 1600,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "spray_cost": 364.8,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 6
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP132050",
+      "width_mm": 1300,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "spray_cost": 320,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 7
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP142050",
+      "width_mm": 1400,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "spray_cost": 337.6,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 8
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP152050",
+      "width_mm": 1500,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "spray_cost": 356.8,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 9
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP162050",
+      "width_mm": 1600,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "spray_cost": 374.4,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 10
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP132060",
+      "width_mm": 1300,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "spray_cost": 334.4,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 11
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP142060",
+      "width_mm": 1400,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "spray_cost": 353.6,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 12
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP152060",
+      "width_mm": 1500,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "spray_cost": 372.8,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 13
+    },
+    {
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP162060",
+      "width_mm": 1600,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "spray_cost": 390.4,
+      "allow_dimension_scale": true,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 14
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS131860",
+      "width_mm": 1300,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "spray_cost": 339.2,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 3
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS141860",
+      "width_mm": 1400,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "spray_cost": 356.8,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 4
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS151860",
+      "width_mm": 1500,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "spray_cost": 374.4,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 5
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS161860",
+      "width_mm": 1600,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "spray_cost": 392,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 6
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS132050",
+      "width_mm": 1300,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "spray_cost": 339.2,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 7
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS142050",
+      "width_mm": 1400,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "spray_cost": 358.4,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 8
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS152050",
+      "width_mm": 1500,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "spray_cost": 376,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 9
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS162050",
+      "width_mm": 1600,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "spray_cost": 393.6,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 10
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS132060",
+      "width_mm": 1300,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "spray_cost": 366.4,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 11
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS142060",
+      "width_mm": 1400,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "spray_cost": 384,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 12
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS152060",
+      "width_mm": 1500,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "spray_cost": 400,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 13
+    },
+    {
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS162060",
+      "width_mm": 1600,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "spray_cost": 424,
+      "allow_dimension_scale": true,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 14
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM601210",
+      "width_mm": 600,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 49.5,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 3
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM801210",
+      "width_mm": 800,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 60.6,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 4
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM101210",
+      "width_mm": 1000,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 60.6,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 5
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM121210",
+      "width_mm": 1200,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 70.9,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 6
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM151210",
+      "width_mm": 1500,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 82,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 7
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM601210",
+      "width_mm": 600,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 34,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 8
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM801210",
+      "width_mm": 800,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 45.9,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 9
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM101210",
+      "width_mm": 1000,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 58.82,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 10
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM121210",
+      "width_mm": 1200,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 68.34,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 11
+    },
+    {
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM151210",
+      "width_mm": 1500,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "spray_cost": 89.1,
+      "allow_dimension_scale": true,
+      "source_sheet": "操作台",
+      "source_row_no": 12
     }
   ]
 }

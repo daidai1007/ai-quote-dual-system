@@ -1,7 +1,8 @@
 {
-  "version": "cabinet-spray-13f257f440859e3b-v1",
-  "sourceSha256": "13f257f440859e3b0922aa690241c1b43068d687042b9bd3b2eccc2aab051fd9",
-  "total": 202,
+  "version": "cabinet-spray-4b3d73c9cb7a6f26-v2",
+  "sourceSha256": "4b3d73c9cb7a6f269ed4cbe7ea3880979550fece11ab5e527c295036a4581c30",
+  "area_rules": 202,
+  "fixed_rules": 46,
   "counts": {
     "JS": 112,
     "JP": 46,
@@ -9,6 +10,13 @@
     "JE": 11,
     "JM": 5,
     "JK": 6
+  },
+  "fixedCounts": {
+    "JC_EXP": 4,
+    "JQ_EXP": 8,
+    "JP_WIDE_EXP": 12,
+    "JS_WIDE_EXP": 12,
+    "OP_TABLE_EXP": 10
   },
   "issues": []
 }

@@ -83,3 +83,29 @@ test('workbook exports cabinet material and spray calculations per part',async()
     assert.ok(laborPart.some(value=>value.includes('计人工重量已扣除：安装板')));
   } finally {await fs.rm(dir,{recursive:true,force:true});}
 });
+
+test('workbook labels experience weight as not using the waste factor',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'cabinet-material-fixed-export-'));
+  try{
+    const payload=JSON.parse(await fs.readFile(path.join(root,'tests/fixtures/export_formula_cost_detail.json'),'utf8'));
+    const item=payload.items[0];
+    item.formula.material_cost=270;
+    item.formula.net_material_weight_kg=54;
+    item.formula.corrected_material_weight_kg=54;
+    item.formula.waste_factor=1;
+    item.formula.requested_waste_factor=1.8;
+    item.formula.waste_factor_applied=false;
+    item.formula.cabinet_material_version='cabinet-material-fixed-test-v2';
+    item.formula.cabinet_material_part_details=[];
+    item.formula.material_details=[{material_code:'SECC',net_weight_kg:54,billable_weight_kg:54,
+      material_unit_price:5,material_cost:270}];
+    const input=path.join(dir,'input.json'),output=path.join(dir,'output.xlsx');
+    await fs.writeFile(input,JSON.stringify(payload),'utf8');await run(input,output);
+    const workbook=new ExcelJS.Workbook();await workbook.xlsx.readFile(output);
+    const rows=[];workbook.getWorksheet('成本明细').eachRow(row=>rows.push(row.values.slice(1).map(value=>String(value??''))));
+    const material=rows.find(row=>row.includes('SECC板材'));
+    assert.ok(material,'missing fixed material row');
+    assert.ok(material.some(value=>value.includes('经验重量 54.000000 kg（不乘损耗系数）')));
+    assert.ok(material.some(value=>value.includes('cabinet-material-fixed-test-v2')));
+  } finally {await fs.rm(dir,{recursive:true,force:true});}
+});

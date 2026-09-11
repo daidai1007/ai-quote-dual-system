@@ -29,9 +29,12 @@ FROM calc.attachment_selection
 WHERE calculation_status='ERROR' AND coalesce(btrim(error_message),'')='';
 
 SELECT v.data_version,v.status,v.default_waste_factor,
-       count(r.rule_id) AS rules,count(DISTINCT r.family) AS families
+       count(DISTINCT r.rule_id) AS area_rules,count(DISTINCT r.family) AS families,
+       count(DISTINCT f.fixed_rule_id) AS fixed_rules,count(DISTINCT f.product_code) AS fixed_products,
+       bool_or(f.apply_waste_factor) AS any_experience_waste_factor
 FROM calc.cabinet_material_catalog_version v
 LEFT JOIN calc.cabinet_material_rule r USING(data_version)
+LEFT JOIN calc.cabinet_material_fixed_rule f USING(data_version)
 GROUP BY v.data_version,v.status,v.default_waste_factor,v.created_at
 ORDER BY v.created_at;
 
@@ -40,9 +43,18 @@ FROM calc.cabinet_material_rule r
 LEFT JOIN calc.material m ON m.material_code=r.fixed_material_code
 WHERE r.fixed_material_code IS NOT NULL AND m.material_code IS NULL;
 
-SELECT v.data_version,v.status,count(r.rule_id) AS rules,count(DISTINCT r.family) AS families
+SELECT count(*) AS duplicate_material_fixed_identities FROM (
+  SELECT product_code,profile_code,material_codes,model_code,width_mm,height_mm,depth_mm
+  FROM calc.cabinet_material_fixed_rule r JOIN calc.cabinet_material_catalog_version v USING(data_version)
+  WHERE v.status='ACTIVE'
+  GROUP BY product_code,profile_code,material_codes,model_code,width_mm,height_mm,depth_mm HAVING count(*)>1
+) duplicates;
+
+SELECT v.data_version,v.status,count(DISTINCT r.rule_id) AS area_rules,count(DISTINCT r.family) AS families,
+       count(DISTINCT f.fixed_rule_id) AS fixed_rules,count(DISTINCT f.product_code) AS fixed_products
 FROM calc.cabinet_spray_catalog_version v
 LEFT JOIN calc.cabinet_spray_rule r USING(data_version)
+LEFT JOIN calc.cabinet_spray_fixed_rule f USING(data_version)
 GROUP BY v.data_version,v.status,v.created_at ORDER BY v.created_at;
 
 SELECT count(*) AS duplicate_spray_part_identities
@@ -54,10 +66,20 @@ FROM (
   HAVING count(*)>1
 ) duplicates;
 
-SELECT v.data_version,v.status,count(DISTINCT p.profile_id) AS profiles,count(l.line_id) AS lines
+SELECT count(*) AS duplicate_spray_fixed_identities
+FROM (
+  SELECT product_code,profile_code,material_codes,model_code,width_mm,height_mm,depth_mm
+  FROM calc.cabinet_spray_fixed_rule r JOIN calc.cabinet_spray_catalog_version v USING(data_version)
+  WHERE v.status='ACTIVE'
+  GROUP BY product_code,profile_code,material_codes,model_code,width_mm,height_mm,depth_mm HAVING count(*)>1
+) duplicates;
+
+SELECT v.data_version,v.status,count(DISTINCT p.profile_id) AS profiles,
+       count(DISTINCT l.line_id) AS lines,count(DISTINCT r.rule_id) AS fixed_rules
 FROM calc.cabinet_auxiliary_catalog_version v
 LEFT JOIN calc.cabinet_auxiliary_profile p USING(data_version)
 LEFT JOIN calc.cabinet_auxiliary_line l USING(profile_id)
+LEFT JOIN calc.cabinet_auxiliary_fixed_rule r ON r.data_version=v.data_version
 GROUP BY v.data_version,v.status,v.created_at ORDER BY v.created_at;
 
 SELECT v.data_version,v.status,v.management_fee_rate,count(r.rule_id) AS rules

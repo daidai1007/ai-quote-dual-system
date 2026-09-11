@@ -14,10 +14,10 @@ const sprayBundle=JSON.parse(fs.readFileSync(path.join(root,'database/cabinet-sp
 const auxiliaryBundle=JSON.parse(fs.readFileSync(path.join(root,'database/cabinet-auxiliary/generated/cabinet-auxiliary-bundle.json')));
 const laborBundle=JSON.parse(fs.readFileSync(path.join(root,'database/cabinet-labor/generated/cabinet-labor-bundle.json')));
 const fixture=JSON.parse(fs.readFileSync(path.join(root,'tests/fixtures/export_formula_cost_detail.json')));
-const outputDir=path.join(root,'test-output/cabinet-material-v1');fs.mkdirSync(outputDir,{recursive:true});
+const outputDir=path.join(root,'test-output/cabinet-material-v2');fs.mkdirSync(outputDir,{recursive:true});
 const materials=[{material_code:'SECC',density_g_cm3:7.85,material_unit_price:5},{material_code:'SUS304',density_g_cm3:7.93,material_unit_price:20}];
 const base=fixture.items[0];
-fixture.quote_no='LOCAL-CABINET-MATERIAL-V1';
+fixture.quote_no='LOCAL-CABINET-MATERIAL-V2';
 fixture.items=[
   {material_code:'SECC',waste_factor:1.2,name:'JS 本地验证 SECC',quote_id:'LOCAL-JS-SECC'},
   {material_code:'SUS304',waste_factor:1.3,name:'JS 本地验证 SUS304（含固定SECC零件）',quote_id:'LOCAL-JS-SUS304'},

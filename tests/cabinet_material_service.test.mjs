@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import {calculateCabinetMaterial,applyCabinetMaterial} from '../api/cabinet_material_service.mjs';
+import {calculateCabinetMaterial,calculateCabinetMaterialFixed,applyCabinetMaterial} from '../api/cabinet_material_service.mjs';
 import {calculateAttachment} from '../api/attachment_cost.mjs';
 
 const materials=[
   {material_code:'SECC',density_g_cm3:7.85,material_unit_price:5},
   {material_code:'SUS304',density_g_cm3:7.93,material_unit_price:20},
+  {material_code:'SUS316',density_g_cm3:7.98,material_unit_price:30},
 ];
 const rules=[
   {rule_id:1,family:'JS',body_thickness_profile_mm:1.5,single_door_count:1,double_door_count:0,
@@ -68,9 +69,54 @@ test('wide product codes are not collapsed into ordinary JS or JP material rules
   assert.throws(()=>calculateCabinetMaterial(rules,{...environment,product_code:'JS_WIDE_EXP'}),/最新柜体材料表没有 JS_WIDE_EXP/);
 });
 
+test('experience weight is billed directly without applying the requested waste factor',()=>{
+  const fixed=[{fixed_rule_id:1,product_code:'JQ_EXP',profile_code:null,material_codes:['SECC'],model_code:'JQ609648',
+    width_mm:600,height_mm:960,depth_mm:480,material_weight_kg:54,allow_dimension_scale:true,
+    apply_waste_factor:false,source_sheet:'JQ',source_row_no:3}];
+  const result=calculateCabinetMaterialFixed(fixed,{...environment,product_code:'JQ_EXP',model_code:'JQ609648',
+    material_code:'SECC',width_mm:600,height_mm:960,depth_mm:480,waste_factor:1.8});
+  assert.equal(result.net_material_weight_kg,54);
+  assert.equal(result.corrected_material_weight_kg,54);
+  assert.equal(result.material_cost,270);
+  assert.equal(result.waste_factor,1);
+  assert.equal(result.requested_waste_factor,1.8);
+  assert.equal(result.waste_factor_applied,false);
+  assert.equal(result.match_method,'FIXED_EXACT');
+});
+
+test('experience weight uses nearest perimeter scaling and SECC density fallback only when needed',()=>{
+  const fixed=[{fixed_rule_id:1,product_code:'JP_WIDE_EXP',profile_code:null,material_codes:['SECC'],model_code:'JP131860',
+    width_mm:1300,height_mm:1800,depth_mm:600,material_weight_kg:224.4,allow_dimension_scale:true,
+    apply_waste_factor:false,source_sheet:'JP超宽柜',source_row_no:3}];
+  const result=calculateCabinetMaterialFixed(fixed,{...environment,product_code:'JP_WIDE_EXP',model_code:'CUSTOM',
+    material_code:'SUS304',width_mm:1400,height_mm:1800,depth_mm:600,waste_factor:1.6});
+  const expected=224.4*(3800/3700)*(7.93/7.85);
+  assert.ok(Math.abs(result.corrected_material_weight_kg-expected)<1e-7);
+  assert.equal(result.waste_factor,1);
+  assert.equal(result.match_method,'FIXED_DIMENSION_SCALE');
+  assert.equal(result.density_converted_from,'SECC');
+});
+
+test('explicit stainless experience row has priority over SECC density conversion',()=>{
+  const fixed=[
+    {fixed_rule_id:1,product_code:'JQ_EXP',profile_code:null,material_codes:['SECC'],model_code:'JQ609648',width_mm:600,height_mm:960,depth_mm:480,material_weight_kg:54,allow_dimension_scale:true,source_sheet:'JQ',source_row_no:3},
+    {fixed_rule_id:2,product_code:'JQ_EXP',profile_code:null,material_codes:['SUS304','SUS316'],model_code:'JQ609648',width_mm:600,height_mm:960,depth_mm:480,material_weight_kg:44,allow_dimension_scale:true,source_sheet:'JQ',source_row_no:7},
+  ];
+  const result=calculateCabinetMaterialFixed(fixed,{...environment,product_code:'JQ_EXP',model_code:'JQ609648',
+    material_code:'SUS304',width_mm:600,height_mm:960,depth_mm:480});
+  assert.equal(result.corrected_material_weight_kg,44);
+  assert.equal(result.density_converted_from,null);
+});
+
 test('all 241 workbook rows execute for every imported product/profile/door group',()=>{
   const bundle=JSON.parse(fs.readFileSync(new URL('../database/cabinet-material/generated/cabinet-material-bundle.json',import.meta.url)));
   assert.equal(bundle.rules.length,241);
+  assert.equal(bundle.fixed_rules.length,46);
+  assert.ok(bundle.fixed_rules.every(rule=>rule.apply_waste_factor===false));
+  assert.equal(bundle.fixed_rules.find(rule=>rule.product_code==='JQ_EXP'&&rule.model_code==='JQ609648'&&rule.material_codes.includes('SECC')).material_weight_kg,54);
+  assert.equal(bundle.fixed_rules.find(rule=>rule.product_code==='JQ_EXP'&&rule.model_code==='JQ609648'&&rule.material_codes.includes('SUS304')).material_weight_kg,44);
+  assert.equal(bundle.fixed_rules.find(rule=>rule.product_code==='OP_TABLE_EXP'&&rule.model_code==='JM601210'&&rule.material_codes.includes('SUS316')).material_weight_kg,77.3);
+  assert.deepEqual([...new Set(bundle.fixed_rules.filter(rule=>rule.product_code==='JC_EXP').map(rule=>rule.profile_code))].sort(),['LUXURY','STANDARD']);
   const groups=new Map();
   for(const rule of bundle.rules){
     const key=[rule.family,rule.body_thickness_profile_mm,rule.single_door_count,rule.double_door_count].join('|');

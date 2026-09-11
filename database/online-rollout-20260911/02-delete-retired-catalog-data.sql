@@ -14,16 +14,16 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM calc.cabinet_material_catalog_version
                  WHERE status='ACTIVE'
-                   AND data_version='cabinet-material-91cc0a5f841b7455-v1') THEN
-    RAISE EXCEPTION 'Refusing cleanup: expected cabinet material v1 ACTIVE';
+                   AND data_version='cabinet-material-4f8bf726efa6568d-v2') THEN
+    RAISE EXCEPTION 'Refusing cleanup: expected cabinet material v2 ACTIVE';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM calc.cabinet_spray_catalog_version
-                 WHERE status='ACTIVE' AND data_version='cabinet-spray-13f257f440859e3b-v1') THEN
-    RAISE EXCEPTION 'Refusing cleanup: expected cabinet spray v1 ACTIVE';
+                 WHERE status='ACTIVE' AND data_version='cabinet-spray-4b3d73c9cb7a6f26-v2') THEN
+    RAISE EXCEPTION 'Refusing cleanup: expected cabinet spray v2 ACTIVE';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM calc.cabinet_auxiliary_catalog_version
-                 WHERE status='ACTIVE' AND data_version='cabinet-auxiliary-1dc400290ae91924-v1') THEN
-    RAISE EXCEPTION 'Refusing cleanup: expected cabinet auxiliary v1 ACTIVE';
+                 WHERE status='ACTIVE' AND data_version='cabinet-auxiliary-706c234a5de12a39-v2') THEN
+    RAISE EXCEPTION 'Refusing cleanup: expected cabinet auxiliary v2 ACTIVE';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM calc.cabinet_labor_catalog_version
                  WHERE status='ACTIVE' AND data_version='cabinet-labor-a3d12580527a3eb6-v1') THEN
@@ -97,7 +97,7 @@ DELETE FROM calc.attachment_catalog_version v
 WHERE v.data_version IN (SELECT data_version FROM purge_attachment_versions);
 
 -- Replacement cabinet-material versions are snapshot based; deleting RETIRED versions
--- cascades only to their cabinet_material_rule children.
+-- cascades only to their cabinet_material_rule and cabinet_material_fixed_rule children.
 DELETE FROM calc.cabinet_material_catalog_version
 WHERE status='RETIRED';
 DELETE FROM calc.cabinet_spray_catalog_version

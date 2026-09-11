@@ -16,10 +16,10 @@ WHERE table_schema='calc'
     'attachment_cost_rule_product','attachment_cost_rule_material',
     'attachment_cost_rule_binding','attachment_cost_rule_parameter',
     'attachment_quote_line','cabinet_material_catalog_version',
-    'cabinet_material_rule','cabinet_spray_catalog_version','cabinet_spray_rule',
+    'cabinet_material_rule','cabinet_material_fixed_rule','cabinet_spray_catalog_version','cabinet_spray_rule','cabinet_spray_fixed_rule',
     'cabinet_labor_catalog_version','cabinet_labor_rule',
-    'cabinet_auxiliary_catalog_version','cabinet_auxiliary_profile','cabinet_auxiliary_line',
-    'cabinet_part_rule','dual_quote_result'
+    'cabinet_auxiliary_catalog_version','cabinet_auxiliary_profile','cabinet_auxiliary_line','cabinet_auxiliary_fixed_rule',
+    'experience_spray_price','cabinet_part_rule','dual_quote_result'
   )
 ORDER BY table_name;
 

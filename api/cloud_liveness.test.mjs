@@ -88,8 +88,8 @@ test('Docker-compatible server starts and serves a database-free health check', 
   assert.equal(response.status, 200);
   const health = await response.json();
   assert.equal(health.ok, true);
-  assert.equal(health.build, '2026-09-11-formula-cost-catalogs-v2');
-  assert.equal(health.deployment, '20260911-formula-cost-catalogs-v2');
+  assert.equal(health.build, '2026-09-11-complete-cost-catalogs-v5');
+  assert.equal(health.deployment, '20260911-complete-cost-catalogs-v5');
   assert.equal(health.database_checked, false);
   assert.equal(health.attachment_ganged_ready, true);
 

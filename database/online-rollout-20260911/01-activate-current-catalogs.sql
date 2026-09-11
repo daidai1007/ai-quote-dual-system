@@ -1,5 +1,5 @@
 -- Run only after the matching Render API and 2026.09.11 client are deployed.
--- All five catalog switches are atomic: any failed assertion rolls back all.
+-- Safe when an expected target is already ACTIVE; remaining switches are atomic.
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='120s';
@@ -11,9 +11,9 @@ BEGIN
     SELECT 1 FROM calc.attachment_catalog_version
     WHERE data_version='xlsx-7b6fcb18de6f8969-r4'
       AND source_sha256='7b6fcb18de6f896942a627f70abbd91ba4e5587ed87e57abe837b4c03f043a64'
-      AND status='STAGED'
+      AND status IN ('STAGED','ACTIVE')
   ) THEN
-    RAISE EXCEPTION 'Attachment r4 is not the expected STAGED source';
+    RAISE EXCEPTION 'Attachment r4 is not the expected STAGED/ACTIVE source';
   END IF;
   IF (SELECT count(*) FROM calc.attachment_price
       WHERE data_version='xlsx-7b6fcb18de6f8969-r4')<>226 THEN
@@ -21,55 +21,78 @@ BEGIN
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM calc.cabinet_material_catalog_version
-    WHERE data_version='cabinet-material-91cc0a5f841b7455-v1'
-      AND source_sha256='91cc0a5f841b74559a34a7408a604e41d5fe76e8db3743b20a32ff657c2b2151'
-      AND status='STAGED' AND default_waste_factor=1.2
+    WHERE data_version='cabinet-material-4f8bf726efa6568d-v2'
+      AND source_sha256='4f8bf726efa6568df4ea540f162598f49b09f0174f61c3578ac5189721f17a7f'
+      AND status IN ('STAGED','ACTIVE') AND default_waste_factor=1.2
   ) THEN
-    RAISE EXCEPTION 'Cabinet material v1 is not the expected STAGED source';
+    RAISE EXCEPTION 'Cabinet material v2 is not the expected STAGED/ACTIVE source';
   END IF;
   IF (SELECT count(*) FROM calc.cabinet_material_rule
-      WHERE data_version='cabinet-material-91cc0a5f841b7455-v1')<>241 THEN
-    RAISE EXCEPTION 'Cabinet material v1 must contain exactly 241 rules';
+      WHERE data_version='cabinet-material-4f8bf726efa6568d-v2')<>241
+     OR (SELECT count(*) FROM calc.cabinet_material_fixed_rule
+      WHERE data_version='cabinet-material-4f8bf726efa6568d-v2')<>46 THEN
+    RAISE EXCEPTION 'Cabinet material v2 must contain exactly 241 area rules and 46 fixed rules';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM calc.cabinet_spray_catalog_version
-    WHERE data_version='cabinet-spray-13f257f440859e3b-v1'
-      AND source_sha256='13f257f440859e3b0922aa690241c1b43068d687042b9bd3b2eccc2aab051fd9'
-      AND status='STAGED'
+    WHERE data_version='cabinet-spray-4b3d73c9cb7a6f26-v2'
+      AND source_sha256='4b3d73c9cb7a6f269ed4cbe7ea3880979550fece11ab5e527c295036a4581c30'
+      AND status IN ('STAGED','ACTIVE')
   ) THEN
-    RAISE EXCEPTION 'Cabinet spray v1 is not the expected STAGED source';
+    RAISE EXCEPTION 'Cabinet spray v2 is not the expected STAGED/ACTIVE source';
   END IF;
   IF (SELECT count(*) FROM calc.cabinet_spray_rule
-      WHERE data_version='cabinet-spray-13f257f440859e3b-v1')<>202 THEN
-    RAISE EXCEPTION 'Cabinet spray v1 must contain exactly 202 rules';
+      WHERE data_version='cabinet-spray-4b3d73c9cb7a6f26-v2')<>202
+     OR (SELECT count(*) FROM calc.cabinet_spray_fixed_rule
+      WHERE data_version='cabinet-spray-4b3d73c9cb7a6f26-v2')<>46 THEN
+    RAISE EXCEPTION 'Cabinet spray v2 must contain 202 area rules and 46 fixed rules';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM calc.cabinet_auxiliary_catalog_version
-    WHERE data_version='cabinet-auxiliary-1dc400290ae91924-v1'
-      AND source_sha256='1dc400290ae9192473d61a4dafb3545ba744eb0eb8a62650448a6219b0f7840a'
-      AND status='STAGED'
+    WHERE data_version='cabinet-auxiliary-706c234a5de12a39-v2'
+      AND source_sha256='706c234a5de12a39ec5f32ab0ce8174066c94317d467cedcbb62843b728c214f'
+      AND status IN ('STAGED','ACTIVE')
   ) OR (SELECT count(*) FROM calc.cabinet_auxiliary_profile
-        WHERE data_version='cabinet-auxiliary-1dc400290ae91924-v1')<>16
+        WHERE data_version='cabinet-auxiliary-706c234a5de12a39-v2')<>16
      OR (SELECT count(*) FROM calc.cabinet_auxiliary_line l JOIN calc.cabinet_auxiliary_profile p USING(profile_id)
-        WHERE p.data_version='cabinet-auxiliary-1dc400290ae91924-v1')<>255 THEN
-    RAISE EXCEPTION 'Cabinet auxiliary v1 is not the expected complete STAGED source';
+        WHERE p.data_version='cabinet-auxiliary-706c234a5de12a39-v2')<>255
+     OR (SELECT count(*) FROM calc.cabinet_auxiliary_fixed_rule
+        WHERE data_version='cabinet-auxiliary-706c234a5de12a39-v2')<>72 THEN
+    RAISE EXCEPTION 'Cabinet auxiliary v2 is not the expected complete STAGED/ACTIVE source';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM calc.cabinet_labor_catalog_version
     WHERE data_version='cabinet-labor-a3d12580527a3eb6-v1'
       AND source_sha256='a3d12580527a3eb69eedd47b35107b0c8577333d1a52a7331ce8730dd866d1bd'
-      AND status='STAGED' AND management_fee_rate=0.13
+      AND status IN ('STAGED','ACTIVE') AND management_fee_rate=0.13
   ) OR (SELECT count(*) FROM calc.cabinet_labor_rule
         WHERE data_version='cabinet-labor-a3d12580527a3eb6-v1')<>57 THEN
-    RAISE EXCEPTION 'Cabinet labor v1 is not the expected complete STAGED source';
+    RAISE EXCEPTION 'Cabinet labor v1 is not the expected complete STAGED/ACTIVE source';
   END IF;
 END $$;
 
-SELECT calc.switch_attachment_catalog_v2('xlsx-7b6fcb18de6f8969-r4');
-SELECT calc.activate_cabinet_material_catalog_v1('cabinet-material-91cc0a5f841b7455-v1');
-SELECT calc.activate_cabinet_spray_catalog_v1('cabinet-spray-13f257f440859e3b-v1');
-SELECT calc.activate_cabinet_auxiliary_catalog_v1('cabinet-auxiliary-1dc400290ae91924-v1');
-SELECT calc.activate_cabinet_labor_catalog_v1('cabinet-labor-a3d12580527a3eb6-v1');
+DO $$ BEGIN
+  IF EXISTS(SELECT 1 FROM calc.attachment_catalog_version
+            WHERE data_version='xlsx-7b6fcb18de6f8969-r4' AND status='STAGED') THEN
+    PERFORM calc.switch_attachment_catalog_v2('xlsx-7b6fcb18de6f8969-r4');
+  END IF;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_material_catalog_version
+            WHERE data_version='cabinet-material-4f8bf726efa6568d-v2' AND status='STAGED') THEN
+    PERFORM calc.activate_cabinet_material_catalog_v2('cabinet-material-4f8bf726efa6568d-v2');
+  END IF;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_spray_catalog_version
+            WHERE data_version='cabinet-spray-4b3d73c9cb7a6f26-v2' AND status='STAGED') THEN
+    PERFORM calc.activate_cabinet_spray_catalog_v2('cabinet-spray-4b3d73c9cb7a6f26-v2');
+  END IF;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_auxiliary_catalog_version
+            WHERE data_version='cabinet-auxiliary-706c234a5de12a39-v2' AND status='STAGED') THEN
+    PERFORM calc.activate_cabinet_auxiliary_catalog_v2('cabinet-auxiliary-706c234a5de12a39-v2');
+  END IF;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_labor_catalog_version
+            WHERE data_version='cabinet-labor-a3d12580527a3eb6-v1' AND status='STAGED') THEN
+    PERFORM calc.activate_cabinet_labor_catalog_v1('cabinet-labor-a3d12580527a3eb6-v1');
+  END IF;
+END $$;
 
 DO $$
 BEGIN
@@ -85,17 +108,17 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM calc.cabinet_material_catalog_version WHERE status='ACTIVE')<>1
      OR NOT EXISTS (SELECT 1 FROM calc.cabinet_material_catalog_version
-                    WHERE status='ACTIVE' AND data_version='cabinet-material-91cc0a5f841b7455-v1') THEN
+                    WHERE status='ACTIVE' AND data_version='cabinet-material-4f8bf726efa6568d-v2') THEN
     RAISE EXCEPTION 'Post-switch cabinet material version assertion failed';
   END IF;
   IF (SELECT count(*) FROM calc.cabinet_spray_catalog_version WHERE status='ACTIVE')<>1
      OR NOT EXISTS (SELECT 1 FROM calc.cabinet_spray_catalog_version
-                    WHERE status='ACTIVE' AND data_version='cabinet-spray-13f257f440859e3b-v1') THEN
+                    WHERE status='ACTIVE' AND data_version='cabinet-spray-4b3d73c9cb7a6f26-v2') THEN
     RAISE EXCEPTION 'Post-switch cabinet spray version assertion failed';
   END IF;
   IF (SELECT count(*) FROM calc.cabinet_auxiliary_catalog_version WHERE status='ACTIVE')<>1
      OR NOT EXISTS (SELECT 1 FROM calc.cabinet_auxiliary_catalog_version
-                    WHERE status='ACTIVE' AND data_version='cabinet-auxiliary-1dc400290ae91924-v1') THEN
+                    WHERE status='ACTIVE' AND data_version='cabinet-auxiliary-706c234a5de12a39-v2') THEN
     RAISE EXCEPTION 'Post-switch cabinet auxiliary version assertion failed';
   END IF;
   IF (SELECT count(*) FROM calc.cabinet_labor_catalog_version WHERE status='ACTIVE')<>1

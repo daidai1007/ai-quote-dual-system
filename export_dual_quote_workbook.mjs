@@ -983,17 +983,22 @@ function buildFormulaCostDetailSheet() {
         const netWeight = optionalNumber(material.net_weight_kg);
         const billableWeight = optionalNumber(material.billable_weight_kg);
         const wasteFactor = optionalNumber(quote.waste_factor ?? material.waste_factor);
+        const appliesWasteFactor = quote.waste_factor_applied !== false;
         const unitPrice = optionalNumber(material.material_unit_price);
         const amount = asNumber(material.material_cost);
         addDetail(
           itemIndex, item, "材料成本", `${material.material_code || "材料"}板材`,
           material.material_code || "",
           netWeight !== null && billableWeight !== null && unitPrice !== null
-            ? `净重 ${netWeight.toFixed(6)} kg × 废料系数 ${(wasteFactor ?? 1).toFixed(3)} = 计价重 ${billableWeight.toFixed(6)} kg；× ${unitPrice.toFixed(4)} 元/kg = ${amount.toFixed(2)} 元`
-            : "净材料重量 × 废料系数 × 材料单价",
+            ? (appliesWasteFactor
+              ? `净重 ${netWeight.toFixed(6)} kg × 废料系数 ${(wasteFactor ?? 1).toFixed(3)} = 计价重 ${billableWeight.toFixed(6)} kg；× ${unitPrice.toFixed(4)} 元/kg = ${amount.toFixed(2)} 元`
+              : `经验重量 ${netWeight.toFixed(6)} kg（不乘损耗系数）× ${unitPrice.toFixed(4)} 元/kg = ${amount.toFixed(2)} 元`)
+            : (appliesWasteFactor ? "净材料重量 × 废料系数 × 材料单价" : "经验重量（不乘损耗系数）× 材料单价"),
           billableWeight, "kg", unitPrice, amount,
           quote.cabinet_material_version || "最新柜体材料明细 / 数据库材料价格历史",
-          "最终用量为每台柜体计价材料重量；柜体数量在行金额中另乘。",
+          appliesWasteFactor
+            ? "最终用量为每台柜体计价材料重量；柜体数量在行金额中另乘。"
+            : "经验重量按源表或非标尺寸周长比例计算，不乘损耗系数；柜体数量在行金额中另乘。",
         );
       }
     } else {

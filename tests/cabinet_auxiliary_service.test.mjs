@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import {applyCabinetAuxiliary,calculateCabinetAuxiliary} from '../api/cabinet_auxiliary_service.mjs';
+import {applyCabinetAuxiliary,calculateCabinetAuxiliary,calculateCabinetAuxiliaryFixed} from '../api/cabinet_auxiliary_service.mjs';
 
 const bundle=JSON.parse(fs.readFileSync(new URL('../database/cabinet-auxiliary/generated/cabinet-auxiliary-bundle.json',import.meta.url)));
 const get=(product,single,double)=>{const profile=bundle.profiles.find(p=>p.product_code===product&&p.single_door_count===single&&p.double_door_count===double);return [profile,bundle.lines.filter(l=>l.profile_key===profile.profile_key)];};
@@ -50,8 +50,53 @@ test('all 16 profiles and 255 BOM rows execute',()=>{
   }
 });
 
-test('wide product code cannot reuse ordinary JP BOM',()=>{
+test('all 72 fixed auxiliary prices execute from the complete price workbook',()=>{
+  assert.equal(bundle.fixed_rules.length,72);
+  for(const rule of bundle.fixed_rules){
+    for(const material_code of rule.material_codes){
+      const model_code=rule.product_code==='JC_EXP'?`${rule.model_code}-${rule.profile_code==='LUXURY'?1:2}`:rule.model_code;
+      const result=calculateCabinetAuxiliaryFixed(bundle.fixed_rules,{data_version:bundle.data_version,
+        product_code:rule.product_code,model_code,variant_code:null,material_code,
+        width_mm:rule.width_mm,height_mm:rule.height_mm,depth_mm:rule.depth_mm});
+      assert.equal(result.match_method,'FIXED_EXACT',`${rule.source_sheet}!${rule.source_row_no}`);
+      assert.equal(result.auxiliary_cost,Math.round(Number(rule.auxiliary_cost)*100)/100);
+    }
+  }
+});
+
+test('JK and JC use material and configuration specific fixed prices',()=>{
+  const base={data_version:bundle.data_version,variant_code:null};
+  const jk=calculateCabinetAuxiliaryFixed(bundle.fixed_rules,{...base,product_code:'JK',model_code:'',material_code:'SECC',width_mm:300,height_mm:200,depth_mm:80});
+  const jkStainless=calculateCabinetAuxiliaryFixed(bundle.fixed_rules,{...base,product_code:'JK',model_code:'',material_code:'SUS316',width_mm:300,height_mm:200,depth_mm:80});
+  assert.equal(jk.auxiliary_cost,8.3);assert.equal(jkStainless.auxiliary_cost,30.29);
+  const luxury=calculateCabinetAuxiliaryFixed(bundle.fixed_rules,{...base,product_code:'JC_EXP',model_code:'JC601660-1',material_code:'SECC',width_mm:600,height_mm:1600,depth_mm:600});
+  const standard=calculateCabinetAuxiliaryFixed(bundle.fixed_rules,{...base,product_code:'JC_EXP',model_code:'JC601660-2',material_code:'SECC',width_mm:600,height_mm:1600,depth_mm:600});
+  assert.equal(luxury.auxiliary_cost,652.5);assert.equal(standard.auxiliary_cost,501);
+});
+
+test('fixed auxiliary nonstandard dimensions keep the existing perimeter scaling rule',()=>{
+  const result=calculateCabinetAuxiliaryFixed(bundle.fixed_rules,{data_version:bundle.data_version,product_code:'JQ_EXP',
+    model_code:'CUSTOM',variant_code:null,material_code:'SECC',width_mm:700,height_mm:960,depth_mm:480});
+  assert.equal(result.match_method,'FIXED_DIMENSION_SCALE');
+  assert.equal(result.reference_width_mm,800);
+  assert.equal(result.auxiliary_cost,Math.round(136.7*((700+960+480)/(800+960+480))*100)/100);
+});
+
+test('wide products use only their fixed rules and do not reuse ordinary BOM',()=>{
   const [profile,lines]=get('JP',1,0);
   assert.notEqual(profile.product_code,'JP_WIDE_EXP');
   assert.equal(lines.every(line=>line.profile_key.startsWith('JP:')),true);
+  assert.throws(()=>calculateCabinetAuxiliaryFixed(bundle.fixed_rules,{data_version:bundle.data_version,product_code:'JP_WIDE_EXP',
+    model_code:'JP131860',variant_code:'WIDE',material_code:'SUS304',width_mm:1300,height_mm:1800,depth_mm:600}),/没有适用的最新辅材价格/);
+});
+
+test('legacy auxiliary cleanup is guarded by a complete active V2 catalog',()=>{
+  const migration=fs.readFileSync(new URL('../database/migrations/cabinet_auxiliary_v2.sql',import.meta.url),'utf8');
+  const cleanup=fs.readFileSync(new URL('../database/online-rollout-20260911/auxiliary-cleanup/01-delete-legacy-auxiliary.sql',import.meta.url),'utf8');
+  assert.match(migration,/stage_cabinet_auxiliary_catalog_v2/);
+  assert.match(migration,/fixed_rules[^]*<>72/);
+  assert.match(migration,/CREATE OR REPLACE FUNCTION calc\.get_auxiliary_cost/);
+  assert.match(cleanup,/v_profiles<>16 OR v_lines<>255 OR v_fixed<>72/);
+  assert.match(cleanup,/DROP TABLE IF EXISTS calc\.auxiliary_experience_price/);
+  assert.doesNotMatch(cleanup,/\bCASCADE\b/i);
 });

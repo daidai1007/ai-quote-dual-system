@@ -1,5 +1,5 @@
 -- Run only after 05-verify.sql and representative API quotes pass.
--- Deletes superseded rows from the replacement cabinet-material catalog only.
+-- Deletes superseded area and fixed-weight rows from the replacement cabinet-material catalog only.
 -- Historical quotes remain because they read cabinet_material_snapshot.
 BEGIN;
 SET LOCAL lock_timeout='5s';

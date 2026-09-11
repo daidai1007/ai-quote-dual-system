@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import {applyCabinetSpray,calculateCabinetSpray} from '../api/cabinet_spray_service.mjs';
+import {applyCabinetSpray,calculateCabinetSpray,calculateCabinetSprayFixed} from '../api/cabinet_spray_service.mjs';
 
 const rules=[
   {rule_id:1,family:'JS',body_thickness_profile_mm:1.5,single_door_count:1,double_door_count:0,
@@ -63,4 +63,50 @@ test('all 202 workbook spray rules execute for every imported product/profile/do
 
 test('wide product codes are not collapsed into ordinary JS or JP spray rules',()=>{
   assert.throws(()=>calculateCabinetSpray(rules,{...environment,product_code:'JS_WIDE_EXP'}),/JS_WIDE_EXP/);
+});
+
+test('all 46 experience spray prices are imported from the complete workbook',()=>{
+  const bundle=JSON.parse(fs.readFileSync(new URL('../database/cabinet-spray/generated/cabinet-spray-bundle.json',import.meta.url)));
+  assert.equal(bundle.fixed_rules.length,46);
+  assert.deepEqual(Object.fromEntries(['JC_EXP','JQ_EXP','JP_WIDE_EXP','JS_WIDE_EXP','OP_TABLE_EXP'].map(code=>
+    [code,bundle.fixed_rules.filter(rule=>rule.product_code===code).length])),
+    {JC_EXP:4,JQ_EXP:8,JP_WIDE_EXP:12,JS_WIDE_EXP:12,OP_TABLE_EXP:10});
+});
+
+test('fixed experience spray uses exact dimensions and material',()=>{
+  const fixed=[{fixed_rule_id:1,product_code:'JQ_EXP',profile_code:null,material_codes:['SECC'],model_code:'JQ609648',
+    width_mm:600,height_mm:960,depth_mm:480,spray_cost:49.5,allow_dimension_scale:true,source_sheet:'JQ',source_row_no:3}];
+  const result=calculateCabinetSprayFixed(fixed,{...environment,product_code:'JQ_EXP',material_code:'SECC',width_mm:600,height_mm:960,depth_mm:480});
+  assert.equal(result.spray_cost,49.5);assert.equal(result.match_method,'FIXED_EXACT');assert.equal(result.reference_model_code,'JQ609648');
+});
+
+test('fixed experience spray keeps established nearest-dimension perimeter scaling',()=>{
+  const fixed=[{fixed_rule_id:1,product_code:'JP_WIDE_EXP',profile_code:null,material_codes:['SECC'],model_code:'JP131860',
+    width_mm:1300,height_mm:1800,depth_mm:600,spray_cost:312,allow_dimension_scale:true,source_sheet:'JP超宽柜',source_row_no:3}];
+  const result=calculateCabinetSprayFixed(fixed,{...environment,product_code:'JP_WIDE_EXP',material_code:'SECC',width_mm:1400,height_mm:1800,depth_mm:600});
+  assert.equal(result.match_method,'FIXED_DIMENSION_SCALE');
+  assert.equal(result.spray_cost,Math.round(312*(3800/3700)*100)/100);
+});
+
+test('JC fixed spray selects the explicit luxury or standard profile',()=>{
+  const fixed=[
+    {fixed_rule_id:1,product_code:'JC_EXP',profile_code:'LUXURY',material_codes:['SECC'],model_code:'JC601660',width_mm:600,height_mm:1600,depth_mm:600,spray_cost:86,allow_dimension_scale:true,source_sheet:'JC（豪华型）',source_row_no:3},
+    {fixed_rule_id:2,product_code:'JC_EXP',profile_code:'STANDARD',material_codes:['SECC'],model_code:'JC601660',width_mm:600,height_mm:1600,depth_mm:600,spray_cost:86,allow_dimension_scale:true,source_sheet:'JC（标配版）',source_row_no:3},
+  ];
+  assert.equal(calculateCabinetSprayFixed(fixed,{...environment,product_code:'JC_EXP',material_code:'SECC',model_code:'JC601660-1',width_mm:600,height_mm:1600,depth_mm:600}).source_sheet,'JC（豪华型）');
+  assert.equal(calculateCabinetSprayFixed(fixed,{...environment,product_code:'JC_EXP',material_code:'SECC',model_code:'JC601660-2',width_mm:600,height_mm:1600,depth_mm:600}).source_sheet,'JC（标配版）');
+});
+
+test('no-spray selection makes fixed experience spray zero',()=>{
+  const fixed=[{fixed_rule_id:1,product_code:'JQ_EXP',profile_code:null,material_codes:['SECC'],model_code:'JQ609648',width_mm:600,height_mm:960,depth_mm:480,spray_cost:49.5,allow_dimension_scale:true,source_sheet:'JQ',source_row_no:3}];
+  const result=calculateCabinetSprayFixed(fixed,{...environment,coating_type:'不喷塑',product_code:'JQ_EXP',material_code:'SECC',width_mm:600,height_mm:960,depth_mm:480});
+  assert.equal(result.spray_cost,0);
+});
+
+test('fixed spray replacement preserves base area and unit price fields',()=>{
+  const result=applyCabinetSpray({formula_cost:{product_area_m2:3.2,spray_unit_price:12,spray_cost:80,total_cost:500},quick_quote:{total_cost:700}},
+    {data_version:'spray-v2',method:'FIXED',match_method:'FIXED_EXACT',product_code:'JQ_EXP',product_area_m2:null,spray_unit_price:null,
+      spray_cost:49.5,part_details:[],source_sheet:'JQ',source_row_no:3});
+  assert.equal(result.formula_cost.product_area_m2,3.2);assert.equal(result.formula_cost.spray_unit_price,12);
+  assert.equal(result.formula_cost.total_cost,469.5);assert.equal(result.quick_quote.total_cost,700);
 });

@@ -20,8 +20,8 @@ const PORT = RUNTIME_CONFIG.port;
 const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
-const API_BUILD = '2026-09-11-formula-cost-catalogs-v2';
-const DEPLOYMENT_BUILD = '20260911-formula-cost-catalogs-v2';
+const API_BUILD = '2026-09-11-complete-cost-catalogs-v5';
+const DEPLOYMENT_BUILD = '20260911-complete-cost-catalogs-v5';
 const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -101,7 +101,7 @@ const dateValue = (value) => {
 
 const clientErrorStatus = (error) => {
   const message = String(error?.message || '');
-  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only|报价日期无效|柜体料厚|废料系数|并柜|最新柜体材料表没有|缺少材质.+密度或有效材料单价|人工成本必须|没有适用人工|人工公式|辅材 BOM|辅材数量规则/i.test(message)
+  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only|报价日期无效|柜体料厚|废料系数|并柜|材料重量|最新柜体材料表没有|缺少材质.+密度或有效材料单价|人工成本必须|没有适用人工|人工公式|辅材 BOM|辅材数量规则/i.test(message)
     ? 400 : 500;
 };
 
@@ -783,34 +783,14 @@ const runWorkbookExporter = async (payload) => {
   }
 };
 
-const auxiliaryLookupKey = (item = {}) => {
-  const normalizedItem = normalizeProductVariant(item);
-  const productCode = productCodeValue(normalizedItem.product_code);
-  const variant = String(normalizedItem.variant_code || '').trim().toUpperCase();
-  const mappedProduct = {
-    JS_SINGLE: 'JS', JS_DOUBLE: 'JS',
-    JP_SINGLE: 'JP', JP_DOUBLE: 'JP',
-    JA_SINGLE: 'JA', JE_SINGLE: 'JE', JE_DOUBLE: 'JE',
-  }[productCode] || productCode;
-  const mappedVariant = variant || ({
-    JS_SINGLE: 'SINGLE', JS_DOUBLE: 'DOUBLE',
-    JP_SINGLE: 'SINGLE', JP_DOUBLE: 'DOUBLE',
-    JA_SINGLE: 'DEFAULT', JE_SINGLE: 'SINGLE', JE_DOUBLE: 'DOUBLE',
-    JP_WIDE_EXP: 'WIDE', JS_WIDE_EXP: 'WIDE',
-  }[productCode] || 'DEFAULT');
-  return { product_code: mappedProduct, variant_code: mappedVariant };
-};
-
 // Cost-detail export enrichment is intentionally read-only.  It exposes the
-// database-owned prices and BOM rows used to explain an already calculated
-// formula quotation; it never recalculates or overwrites the quote itself.
+// database-owned material and spray prices used to explain an already
+// calculated formula quotation. Auxiliary details come from the versioned
+// calculation snapshot already present in the formula result.
 const exportCostDetailSql = (payload) => {
   const requests = (payload.items || []).map((item, itemIndex) => {
-    const key = auxiliaryLookupKey(item);
     return {
       item_index: itemIndex,
-      product_code: key.product_code,
-      variant_code: key.variant_code,
       material_code: item.material_code || 'SECC',
       coating_type: item.coating_type || DEFAULT_COATING_TYPE,
       quote_date: dateValue(item.quote_date || payload.quote_date),
@@ -820,50 +800,17 @@ const exportCostDetailSql = (payload) => {
   return `WITH requested AS (
     SELECT
       (value->>'item_index')::integer AS item_index,
-      value->>'product_code' AS product_code,
-      value->>'variant_code' AS variant_code,
       value->>'material_code' AS material_code,
       value->>'coating_type' AS coating_type,
       (value->>'quote_date')::date AS quote_date
     FROM jsonb_array_elements(${requestJson}::jsonb)
-  ), enriched AS (
-    SELECT r.*, b.auxiliary_bom_id, b.source_total, b.source_file, b.source_sheet
-    FROM requested r
-    LEFT JOIN LATERAL (
-      SELECT b0.*
-      FROM calc.auxiliary_bom b0
-      WHERE b0.product_code = r.product_code
-        AND b0.variant_code = r.variant_code
-      ORDER BY b0.updated_at DESC NULLS LAST, b0.auxiliary_bom_id DESC
-      LIMIT 1
-    ) b ON TRUE
   )
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
-    'item_index', e.item_index,
-    'material_unit_price', calc.get_material_unit_price(e.material_code, e.quote_date),
-    'spray_unit_price', calc.get_spray_unit_price(e.quote_date, e.coating_type),
-    'auxiliary_method', CASE WHEN e.auxiliary_bom_id IS NULL THEN 'experience' ELSE 'bom' END,
-    'auxiliary_source_total', e.source_total,
-    'auxiliary_source_file', e.source_file,
-    'auxiliary_source_sheet', e.source_sheet,
-    'auxiliary_lines', COALESCE((
-      SELECT jsonb_agg(jsonb_build_object(
-        'line_no', l.line_no,
-        'item_code', l.item_code,
-        'item_name', l.item_name,
-        'spec_model', l.spec_model,
-        'material_name', l.material_name,
-        'quantity', COALESCE(l.qty_per_unit, l.source_quantity, 0),
-        'unit_price', l.unit_price,
-        'line_total', l.line_total,
-        'source_sheet', l.source_sheet,
-        'source_row_no', l.source_row_no
-      ) ORDER BY l.line_no, l.auxiliary_bom_line_id)
-      FROM calc.auxiliary_bom_line l
-      WHERE l.auxiliary_bom_id = e.auxiliary_bom_id
-    ), '[]'::jsonb)
-  ) ORDER BY e.item_index), '[]'::jsonb)::text
-  FROM enriched e;`;
+    'item_index', r.item_index,
+    'material_unit_price', calc.get_material_unit_price(r.material_code, r.quote_date),
+    'spray_unit_price', calc.get_spray_unit_price(r.quote_date, r.coating_type)
+  ) ORDER BY r.item_index), '[]'::jsonb)::text
+  FROM requested r;`;
 };
 
 const enrichExportCostDetails = async (payload) => {
@@ -890,11 +837,13 @@ const enrichExportCostDetails = async (payload) => {
         ...item,
         formula,
         auxiliary_detail: {
-          method: detail.auxiliary_method || 'experience',
-          source_total: detail.auxiliary_source_total,
-          source_file: detail.auxiliary_source_file,
-          source_sheet: detail.auxiliary_source_sheet,
-          lines: Array.isArray(detail.auxiliary_lines) ? detail.auxiliary_lines : [],
+          method: formula.cabinet_auxiliary_method || 'fixed',
+          source_total: formula.auxiliary_cost,
+          source_file: null,
+          source_sheet: formula.cabinet_auxiliary_source_sheet || null,
+          source_row_no: formula.cabinet_auxiliary_source_row_no || null,
+          data_version: formula.cabinet_auxiliary_version || null,
+          lines: Array.isArray(formula.cabinet_auxiliary_lines) ? formula.cabinet_auxiliary_lines : [],
         },
       };
     }),
@@ -908,7 +857,8 @@ SELECT jsonb_build_object(
     OR to_regclass('calc.experience_product') IS NOT NULL,
   'material_ready', to_regclass('calc.material') IS NOT NULL,
   'spray_ready', to_regclass('calc.spray_price') IS NOT NULL,
-  'auxiliary_ready', to_regclass('calc.auxiliary_bom') IS NOT NULL,
+  'auxiliary_ready', to_regclass('calc.cabinet_auxiliary_catalog_version') IS NOT NULL
+    AND to_regclass('calc.cabinet_auxiliary_fixed_rule') IS NOT NULL,
   'attachment_ready', to_regclass('calc.attachment_price') IS NOT NULL,
   'attachment_classification_ready', to_regclass('calc.attachment_classification') IS NOT NULL,
   'calculation_ready', EXISTS (
