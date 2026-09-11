@@ -29,7 +29,7 @@ from recognition_repair import install_recognition_repair
 
 
 _DLL_DIRECTORY_HANDLES = []
-_REQUIRED_CLOUD_API_BUILD = "2026-09-11-formula-cost-catalogs-v2"
+_REQUIRED_CLOUD_API_BUILD = "2026-09-11-complete-cost-catalogs-v5"
 _DEFAULT_RENDER_API_URL = "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual"
 _FONT_SIZE_PATTERN = re.compile(
     r"font-size\s*:\s*(?P<size>\d+(?:\.\d+)?)\s*(?P<unit>pt|px)",
@@ -269,7 +269,7 @@ def _install_cloud_export_validation(namespace: dict) -> None:
             ) from exc
 
         build = str(health.get("build") or "") if isinstance(health, dict) else ""
-        if health.get("ok") is not True or build != _REQUIRED_CLOUD_API_BUILD:
+        if not isinstance(health, dict) or health.get("ok") is not True or build != _REQUIRED_CLOUD_API_BUILD:
             raise RuntimeError(
                 "双报价接口版本不兼容"
                 f"（当前：{build or '未知'}，需要：{_REQUIRED_CLOUD_API_BUILD}）。"
@@ -283,11 +283,11 @@ def _install_cloud_export_validation(namespace: dict) -> None:
                 "云端数据库状态检查失败，请稍后重试或联系维护人员。"
             ) from exc
 
-        checks = database_health.get("checks") or {}
-        checks_ready = isinstance(checks, dict) and all(
+        checks = database_health.get("checks") if isinstance(database_health, dict) else None
+        checks_ready = isinstance(checks, dict) and bool(checks) and all(
             value is True for value in checks.values()
         )
-        if database_health.get("ready") is not True or not checks_ready:
+        if not checks_ready or database_health.get("ready") is not True:
             raise RuntimeError(
                 "云端数据库尚未准备好，暂不能确认或导出报价。"
             )

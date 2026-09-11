@@ -35,7 +35,7 @@
 
 | 接口 | 行为 |
 |---|---|
-| `GET /health` | build 为 `2026-09-11-formula-cost-catalogs-v2`；返回 `attachment_contract:2`、`attachment_ganged_ready:true`，不查询数据库 |
+| `GET /health` | build 为 `2026-09-11-complete-cost-catalogs-v5`；返回 `attachment_contract:2`、`attachment_ganged_ready:true`，不查询数据库 |
 | `GET /api/attachments/catalog?v=2` | 当前版本精确面价及绑定规则；无已启用目录时返回409 |
 | `POST /api/attachments/preview` | 返回规则所需人工参数、各组成、两种金额、状态和错误；不保存选择 |
 | `POST /api/quotes/calculate-dual` | `attachment_contract:2`启用V2；只传一个attachments数组；返回UUID报价行及附件选择ID |

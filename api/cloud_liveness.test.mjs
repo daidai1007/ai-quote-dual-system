@@ -89,6 +89,17 @@ test('Docker-compatible server starts and serves a database-free health check', 
   const health = await response.json();
   assert.equal(health.ok, true);
   assert.equal(health.build, '2026-09-11-complete-cost-catalogs-v5');
+  await t.test('live API health build matches both desktop client requirements', async () => {
+    for (const [file, constant] of [
+      ['v3_launcher.py', '_REQUIRED_CLOUD_API_BUILD'],
+      ['main.py', 'REQUIRED_EXPORT_API_BUILD'],
+    ]) {
+      const source = await fs.readFile(path.join(projectRoot, 'desktop_client', file), 'utf8');
+      const match = source.match(new RegExp(`^${constant}\\s*=\\s*["']([^"']+)["']`, 'm'));
+      assert.ok(match, `${file}: missing ${constant}`);
+      assert.equal(match[1], health.build, `${file}: ${constant} must match GET /health build`);
+    }
+  });
   assert.equal(health.deployment, '20260911-complete-cost-catalogs-v5');
   assert.equal(health.database_checked, false);
   assert.equal(health.attachment_ganged_ready, true);

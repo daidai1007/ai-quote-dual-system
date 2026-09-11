@@ -128,7 +128,7 @@ API_URL = str(
     or DEFAULT_RENDER_API_URL
 ).strip()
 API_KEY = str(os.getenv("AI_QUOTE_API_KEY") or CLIENT_CONFIG.get("api_key") or "").strip()
-REQUIRED_EXPORT_API_BUILD = "2026-09-11-formula-cost-catalogs-v2"
+REQUIRED_EXPORT_API_BUILD = "2026-09-11-complete-cost-catalogs-v5"
 
 
 def api_headers(has_json_body: bool = False) -> dict[str, str]:
@@ -3235,11 +3235,30 @@ class MainWindow(QMainWindow):
             raise RuntimeError(
                 "双报价接口没有运行。请先启动 start_api.ps1，再重新导出。"
             ) from exc
-        build = str(health.get("build") or "")
-        if build != REQUIRED_EXPORT_API_BUILD:
+        build = str(health.get("build") or "") if isinstance(health, dict) else ""
+        if not isinstance(health, dict) or health.get("ok") is not True or build != REQUIRED_EXPORT_API_BUILD:
             raise RuntimeError(
-                f"双报价接口版本过旧（当前：{build or '未知'}）。"
-                "请关闭占用 8080 端口的旧接口，重新运行 start_api.ps1。"
+                "双报价接口版本不兼容"
+                f"（当前：{build or '未知'}，需要：{REQUIRED_EXPORT_API_BUILD}）。"
+                "请更新客户端或联系维护人员。"
+            )
+        try:
+            request = urllib.request.Request(
+                self.base_url() + "/api/health/database", headers=api_headers(), method="GET"
+            )
+            with urllib.request.urlopen(request, timeout=60) as response:
+                database_health = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            raise RuntimeError(
+                "云端数据库状态检查失败，请稍后重试或联系维护人员。"
+            ) from exc
+        checks = database_health.get("checks") if isinstance(database_health, dict) else None
+        checks_ready = isinstance(checks, dict) and bool(checks) and all(
+            value is True for value in checks.values()
+        )
+        if not checks_ready or database_health.get("ready") is not True:
+            raise RuntimeError(
+                "云端数据库尚未准备好，暂不能确认或导出报价。"
             )
 
     def confirm_and_export(self):
