@@ -126,7 +126,7 @@ $manifest = [ordered]@{
     signature_status = "NotSigned"
     package_file_count = $files.Count
     package_bytes = [long](($files | Measure-Object Length -Sum).Sum)
-    note = "2026.09.11 formula-cost catalogs: attachments, cabinet material, spray, auxiliary BOM, labor, snapshots and detailed export."
+    note = "2026.09.11 formula-cost catalogs: attachments, cabinet material, spray, auxiliary BOM, labor, V2 ganged attachment snapshots and detailed export."
     critical_files = @(
         [ordered]@{ path = "AIQuoteDualSystem_layout_v6.exe"; bytes = (Get-Item -LiteralPath $entryPath).Length; sha256 = $entryHash },
         [ordered]@{ path = "AIQuoteDualSystem.ico"; bytes = (Get-Item -LiteralPath $iconPath).Length; sha256 = $iconHash }

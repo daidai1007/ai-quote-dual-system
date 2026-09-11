@@ -383,6 +383,7 @@ class _GangedQuoteWorker(QThread):
         weight_total: float | None,
         area_total: float | None,
         parent=None,
+        attachment_payload: dict | None = None,
     ):
         super().__init__(parent)
         self.url = url
@@ -391,6 +392,7 @@ class _GangedQuoteWorker(QThread):
         self.headers_factory = headers_factory
         self.weight_total = weight_total
         self.area_total = area_total
+        self.attachment_payload = dict(attachment_payload) if attachment_payload else None
 
     @staticmethod
     def _sum(results: list[dict], section: str, key: str) -> float | None:
@@ -481,7 +483,7 @@ class _GangedQuoteWorker(QThread):
             risks = []
             for result in results:
                 risks.extend(result.get("risk_flags") or [])
-            self.succeeded.emit({
+            aggregate = {
                 "quote_id": self.payloads[0].get("quote_id", "") if self.payloads else "",
                 "formula_cost": formula,
                 "quick_quote": quick,
@@ -489,7 +491,22 @@ class _GangedQuoteWorker(QThread):
                 "ganged_cabinet_results": results,
                 "ganged_weight_kg": self.weight_total,
                 "ganged_area_m2": formula.get("product_area_m2"),
-            })
+            }
+            if self.attachment_payload:
+                snapshot_payload = {**self.attachment_payload, "base_result": aggregate}
+                body = json.dumps(snapshot_payload, ensure_ascii=False).encode("utf-8")
+                headers = (
+                    self.headers_factory(True)
+                    if callable(self.headers_factory)
+                    else {"Content-Type": "application/json; charset=utf-8"}
+                )
+                snapshot_url = self.url.split("/api/", 1)[0].rstrip("/") + "/api/attachments/snapshot-ganged"
+                request = urllib.request.Request(snapshot_url, data=body, headers=headers, method="POST")
+                with urllib.request.urlopen(request, timeout=QUOTE_REQUEST_TIMEOUT_SECONDS) as response:
+                    aggregate = json.loads(response.read().decode("utf-8"))
+                if not isinstance(aggregate, dict) or aggregate.get("attachment_contract") != 2:
+                    raise RuntimeError("并柜附件V2快照返回了无效数据")
+            self.succeeded.emit(aggregate)
         except urllib.error.HTTPError as exc:
             try:
                 detail = exc.read().decode("utf-8")
@@ -1996,6 +2013,54 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
     )
 
 
+def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | None:
+    rows = [item for item in getattr(window, "attachments", []) if isinstance(item, dict)]
+    v2_rows = [item for item in rows if item.get("catalog_version")]
+    if not v2_rows:
+        return None
+    if len(v2_rows) != len(rows):
+        raise ValueError("并柜附件同时包含新旧目录数据，请重新打开附件选择")
+    ganged_rows = _ganged_rows(window)
+    model = getattr(window, "model_edit", None)
+    material = getattr(window, "material_combo", None)
+    coating = getattr(window, "coating_combo", None)
+    quote_date = getattr(window, "quote_date", None)
+    selected_code = getattr(window, "selected_product_code", None)
+    def value(name, fallback):
+        control = getattr(window, name, None)
+        return float(control.value()) if control is not None else fallback
+    attachments = []
+    for item in v2_rows:
+        selected = {
+            "attachment_price_id": item.get("attachment_price_id"),
+            "quantity": item.get("quantity", 1),
+            "attachment_price_sign": item.get("attachment_price_sign", 1),
+            "manual_inputs": dict(item.get("manual_inputs") or {}),
+        }
+        ganged_index = item.get("ganged_cabinet_index", item.get(GANGED_FIXED_BASE_INDEX_KEY))
+        if ganged_index is not None:
+            selected["ganged_cabinet_index"] = int(ganged_index)
+        attachments.append(selected)
+    return {
+        "quote_id": payloads[0].get("quote_id", "") if payloads else "",
+        "product_code": selected_code() if callable(selected_code) else None,
+        "model_code": model.text().strip() if model is not None else "",
+        "material_code": material.currentData() if material is not None else None,
+        "width_mm": value("width_spin", sum(float(row["width_mm"]) for row in ganged_rows)),
+        "height_mm": value("height_spin", float(ganged_rows[0]["height_mm"])),
+        "depth_mm": value("depth_spin", float(ganged_rows[0]["depth_mm"])),
+        "coating_type": coating.currentData() if coating is not None else None,
+        "quote_date": quote_date.date().toString("yyyy-MM-dd") if quote_date is not None else None,
+        "cabinet_body_thickness_mm": value("cabinet_body_thickness_spin", 1.5),
+        "waste_factor": value("waste_factor_spin", 1.2),
+        "attachments": attachments,
+        "attachment_contract": 2,
+        "ganged_cabinet_count": len(ganged_rows),
+        "ganged_cabinets": ganged_rows,
+        "ganged_cabinet_inputs": payloads,
+    }
+
+
 def _start_ganged_formula_template_preparation(
     window,
     product_codes: list[str],
@@ -2168,6 +2233,7 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         api_url = str(api_field.text() if api_field is not None else "").strip()
         if not api_url:
             raise ValueError("报价接口地址为空")
+        attachment_payload = _build_ganged_attachment_payload(window, payloads)
     except Exception as exc:
         message = _ganged_error_text(exc)
         _set_ganged_calculation_state(window, f"并柜计算未启动：{message}", "error")
@@ -2183,6 +2249,7 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         weight_total,
         area_total,
         window,
+        attachment_payload=attachment_payload,
     )
     signature_builder = getattr(window, "quote_input_signature", None)
     if callable(signature_builder):

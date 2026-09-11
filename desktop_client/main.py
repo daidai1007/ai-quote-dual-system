@@ -128,7 +128,7 @@ API_URL = str(
     or DEFAULT_RENDER_API_URL
 ).strip()
 API_KEY = str(os.getenv("AI_QUOTE_API_KEY") or CLIENT_CONFIG.get("api_key") or "").strip()
-REQUIRED_EXPORT_API_BUILD = "2026-09-11-formula-cost-catalogs-v1"
+REQUIRED_EXPORT_API_BUILD = "2026-09-11-formula-cost-catalogs-v2"
 
 
 def api_headers(has_json_body: bool = False) -> dict[str, str]:

@@ -1,7 +1,7 @@
 """Shared V2 attachment integration for source MainWindow and recovered V3 classes.
 
 The existing catalogue browser and ganged workflow retain their layout/rules.
-Only single-cabinet V2 selections use server previews and immutable quote rows.
+Single-cabinet and ganged V2 selections share server previews and immutable quote rows.
 """
 from __future__ import annotations
 import copy
@@ -36,15 +36,33 @@ def ganged(window):
         return bool(control and control.value() > 1)
 
 def environment(window, attachments):
+    ganged_rows = [dict(row) for row in getattr(window, "ganged_cabinets", []) if isinstance(row, dict)]
+    if len(ganged_rows) <= 1:
+        ganged_rows = []
+    child_inputs = []
+    if ganged_rows:
+        product_key = getattr(getattr(window, "product_combo", None), "currentData", lambda: None)() or ""
+        codes = (getattr(window, "product_catalog", {}).get(product_key, {}) or {}).get("codes") or {}
+        fallback_code = window.selected_product_code()
+        for row in ganged_rows:
+            wanted = "SINGLE" if int(row.get("single_door_count") or 0) > 0 else "DOUBLE"
+            code = next((codes.get(key) for key in (wanted, "DEFAULT", "SINGLE", "DOUBLE") if codes.get(key)), fallback_code)
+            child_inputs.append({**row, "product_code": code})
     return {"quote_id": "PREVIEW", "product_code": window.selected_product_code(), "model_code": window.model_edit.text().strip() if hasattr(window, "model_edit") else "",
             "material_code": window.material_combo.currentData(),
             "width_mm": window.width_spin.value(), "height_mm": window.height_spin.value(), "depth_mm": window.depth_spin.value(),
             "coating_type": window.coating_combo.currentData(), "quote_date": window.quote_date.date().toString("yyyy-MM-dd"),
-            "attachments": attachments, "attachment_contract": 2}
+            "attachments": attachments, "attachment_contract": 2,
+            "ganged_cabinet_count": len(ganged_rows) if ganged_rows else 1, "ganged_cabinets": ganged_rows,
+            "ganged_cabinet_inputs": child_inputs}
 
 def selected_input(item):
-    return {"attachment_price_id": item.get("attachment_price_id"), "quantity": item.get("quantity", 1),
-            "attachment_price_sign": item.get("attachment_price_sign", 1), "manual_inputs": copy.deepcopy(item.get("manual_inputs") or {})}
+    selected = {"attachment_price_id": item.get("attachment_price_id"), "quantity": item.get("quantity", 1),
+                "attachment_price_sign": item.get("attachment_price_sign", 1), "manual_inputs": copy.deepcopy(item.get("manual_inputs") or {})}
+    ganged_index = item.get("ganged_cabinet_index", item.get("ganged_fixed_base_index"))
+    if ganged_index is not None:
+        selected["ganged_cabinet_index"] = int(ganged_index)
+    return selected
 
 def install_attachment_v2(namespace):
     window_class, dialog_class, worker_class = (namespace.get(n) for n in ("MainWindow", "AttachmentDialog", "ApiWorker"))
@@ -125,7 +143,7 @@ def install_attachment_v2(namespace):
 
     def load(dialog, api_url):
         parent = dialog.parentWidget()
-        dialog._v2_mode = parent is not None and not ganged(parent) and all(hasattr(parent, key) for key in ("material_combo", "width_spin", "height_spin", "depth_spin", "coating_combo", "quote_date"))
+        dialog._v2_mode = parent is not None and all(hasattr(parent, key) for key in ("material_combo", "width_spin", "height_spin", "depth_spin", "coating_combo", "quote_date"))
         if not dialog._v2_mode:
             return originals["load_catalog"](dialog, api_url)
         dialog.catalog_hint.setText("正在读取附件面价及成本规则…")
@@ -311,8 +329,8 @@ def install_attachment_v2(namespace):
         return result
     dialog_class.refresh_category_browser = refresh_browser_v2
 
-    # ApiWorker is shared by source and recovered clients. Capture only ordinary
-    # single-cabinet requests; _GangedQuoteWorker is a separate unchanged class.
+    # ApiWorker handles ordinary requests. The existing ganged worker keeps its
+    # child-cabinet flow and commits one aggregate V2 attachment snapshot.
     worker_init = worker_class.__init__
     def init_worker(worker, url, payload, parent=None, *args, **kwargs):
         if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent) and (payload.get("attachment_contract") == 2 or any(row.get("catalog_version") for row in payload.get("attachments", []))):
@@ -378,19 +396,11 @@ def install_attachment_v2(namespace):
         return refresh(window)
     window_class.refresh_discounted_totals = refresh_v2
 
-    calculate = window_class.calculate
-    def calculate_v2(window, *args, **kwargs):
-        if ganged(window) and any(row.get("catalog_version") for row in window.attachments):
-            QMessageBox.information(window, "并柜兼容尚未启用", "当前包含新版附件。请先移除新版附件，再按原并柜流程操作；本次不改变并柜规则。")
-            return
-        return calculate(window, *args, **kwargs)
-    window_class.calculate = calculate_v2
-
     open_dialog = window_class.open_attachment_dialog
     def open_dialog_v2(window, *args, **kwargs):
         before = json.dumps([selected_input(x) for x in window.attachments], sort_keys=True)
         result = open_dialog(window, *args, **kwargs)
-        if not ganged(window) and before != json.dumps([selected_input(x) for x in window.attachments], sort_keys=True):
+        if before != json.dumps([selected_input(x) for x in window.attachments], sort_keys=True):
             window._attachment_v2_line_id = None
             window.current_result = None
             for labels in (window.formula_labels, window.quick_labels):
@@ -403,10 +413,9 @@ def install_attachment_v2(namespace):
     def add_to_summary(window, *args, **kwargs):
         before = len(window.draft_items)
         line_id = getattr(window, "_attachment_v2_line_id", None)
-        is_ganged = ganged(window)
         quote_date = window.quote_date.date().toString("yyyy-MM-dd")
         result = add(window, *args, **kwargs)
-        if line_id and not is_ganged and len(window.draft_items) == before + 1:
+        if line_id and len(window.draft_items) == before + 1:
             window.draft_items[-1].update(attachment_contract=2, quote_line_id=line_id, quote_date=quote_date)
         return result
     window_class.add_current_to_summary = add_to_summary
@@ -442,7 +451,7 @@ def install_attachment_v2(namespace):
         timer.setInterval(PREVIEW_DELAY_MS)
         window._v2_environment_timer = timer
         def changed(*_):
-            if ganged(window) or getattr(window, "_attachment_v2_restoring", False) or not any(row.get("catalog_version") for row in getattr(window, "attachments", [])):
+            if getattr(window, "_attachment_v2_restoring", False) or not any(row.get("catalog_version") for row in getattr(window, "attachments", [])):
                 return
             window._attachment_v2_line_id = None
             window.current_result = None
@@ -452,7 +461,7 @@ def install_attachment_v2(namespace):
             timer.start()
         def recalculate():
             rows = getattr(window, "attachments", [])
-            if not any(row.get("catalog_version") for row in rows) or ganged(window):
+            if not any(row.get("catalog_version") for row in rows):
                 return
             old = getattr(window, "_v2_environment_worker", None)
             if old and old.isRunning():

@@ -20,8 +20,8 @@ const PORT = RUNTIME_CONFIG.port;
 const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
-const API_BUILD = '2026-09-11-formula-cost-catalogs-v1';
-const DEPLOYMENT_BUILD = '20260911-formula-cost-catalogs-v1';
+const API_BUILD = '2026-09-11-formula-cost-catalogs-v2';
+const DEPLOYMENT_BUILD = '20260911-formula-cost-catalogs-v2';
 const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -101,7 +101,7 @@ const dateValue = (value) => {
 
 const clientErrorStatus = (error) => {
   const message = String(error?.message || '');
-  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only|报价日期无效|柜体料厚|废料系数|最新柜体材料表没有|缺少材质.+密度或有效材料单价|人工成本必须|没有适用人工|人工公式|辅材 BOM|辅材数量规则/i.test(message)
+  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only|报价日期无效|柜体料厚|废料系数|并柜|最新柜体材料表没有|缺少材质.+密度或有效材料单价|人工成本必须|没有适用人工|人工公式|辅材 BOM|辅材数量规则/i.test(message)
     ? 400 : 500;
 };
 
@@ -936,7 +936,7 @@ const server = http.createServer(async (req, res) => {
       deployment: DEPLOYMENT_BUILD,
       database_checked: false,
       attachment_contract: 2,
-      attachment_ganged_ready: false,
+      attachment_ganged_ready: true,
     });
   }
   if (API_KEY && req.url?.startsWith('/api/') && String(req.headers['x-ai-quote-key'] || '') !== API_KEY) {
@@ -1048,6 +1048,13 @@ const server = http.createServer(async (req, res) => {
       return json(res,200,await attachmentService.preview(input));
     } catch(error) { return json(res,400,{error:'attachment_preview_failed',message:error.message}); }
   }
+  if (req.method === 'POST' && req.url === '/api/attachments/snapshot-ganged') {
+    try {
+      const input=normalizeProductVariant(validateRequest(await readBody(req)));
+      input.quote_date=dateValue(input.quote_date);input.coating_type ||= DEFAULT_COATING_TYPE;
+      return json(res,200,await attachmentService.snapshotGanged(input));
+    } catch(error) { return json(res,clientErrorStatus(error),{error:'attachment_ganged_snapshot_failed',message:error.message}); }
+  }
   if (req.method === 'GET' && req.url === '/api/attachments/catalog') {
     try {
       if(await attachmentService.hasActive()) return json(res,426,{error:'client_upgrade_required',message:'新附件目录需要升级客户端'});
@@ -1121,7 +1128,7 @@ const server = http.createServer(async (req, res) => {
     }
     if((input.attachments||[]).length && (await attachmentService.hasActive()
       ||input.attachments.some(a=>a.catalog_version||a.data_version||a.status))) {
-      return json(res,426,{error:'client_upgrade_required',message:'当前附件需要V2计算接口，请升级客户端；并柜兼容尚未启用'});
+      return json(res,426,{error:'client_upgrade_required',message:'当前附件需要V2计算接口，请升级客户端'});
     }
     const quoteInput={...input,quote_date:dateValue(input.quote_date)};
     const [cabinetMaterial,cabinetSpray,cabinetAuxiliary]=await Promise.all([

@@ -54,8 +54,34 @@ test('实际HTTP API与本地PostgreSQL：V2持久化、基础计算回滚及旧
     assert.equal(historic.body.payload.attachments[0].attachment_selection_id,response.body.attachments[0].attachment_selection_id);
     const invalid=await call('/api/attachments/preview',{...input,attachments:[{attachment_price_id:99999,quantity:1}]});
     assert.equal(invalid.status,400);assert.match(invalid.body.message,/不属于当前目录/);
-    const ganged=await call('/api/attachments/preview',{...input,ganged_cabinet_count:2});
-    assert.equal(ganged.status,400);assert.match(ganged.body.message,/并柜兼容尚未启用/);
+    const gangedCabinets=[
+      {width_mm:400,height_mm:2000,depth_mm:600,single_door_count:1,double_door_count:0},
+      {width_mm:600,height_mm:2000,depth_mm:600,single_door_count:0,double_door_count:1},
+    ];
+    const gangedInput={...input,quote_id:'HTTP_GANGED',ganged_cabinet_count:2,ganged_cabinets:gangedCabinets,
+      ganged_cabinet_inputs:gangedCabinets.map((row,index)=>({...input,...row,quote_id:`HTTP_GANGED-${index+1}`,
+        product_code:index?'JP_DOUBLE':'JP_SINGLE',attachments:[]})),
+      attachments:[{attachment_price_id:price,quantity:2,ganged_cabinet_index:1}]};
+    const gangedPreview=await call('/api/attachments/preview',gangedInput);
+    assert.equal(gangedPreview.status,200,JSON.stringify(gangedPreview));
+    assert.equal(gangedPreview.body.attachments[0].ganged_cabinet_index,1);
+    assert.equal(gangedPreview.body.attachments[0].environment.width_mm,600);
+    const ganged=await call('/api/attachments/snapshot-ganged',{...gangedInput,base_result:{
+      quote_id:'HTTP_GANGED-1',formula_cost:{total_cost:200,attachment_fee:0,labor_cost:20,management_fee:2.6},
+      quick_quote:{base_price:400,total_cost:400,attachment_fee:0},risk_flags:[],ganged_cabinet_results:[],
+    }});
+    assert.equal(ganged.status,200,JSON.stringify(ganged));
+    assert.equal(ganged.body.formula_cost.total_cost,212);assert.equal(ganged.body.quick_quote.total_cost,440);
+    assert.equal(ganged.body.attachments[0].ganged_cabinet_index,1);assert.ok(ganged.body.quote_line_id);
+    assert.equal(sql("SELECT count(*) FROM calc.attachment_selection WHERE quote_id='HTTP_GANGED';",target),'1');
+    const gangedDocument={quote_id:'HTTP_GANGED_DOCUMENT',company_code:'LOCAL',company_name:'本地并柜测试',quote_date:input.quote_date,
+      items:[{...gangedInput,quote_line_id:ganged.body.quote_line_id,attachments:ganged.body.attachments,quantity:1,
+        formula:ganged.body.formula_cost,quick:ganged.body.quick_quote}]};
+    const gangedChecked=await call('/api/quotes/confirm-check',gangedDocument);
+    assert.equal(gangedChecked.status,200,JSON.stringify(gangedChecked));
+    const changedGanged=structuredClone(gangedDocument);changedGanged.items[0].ganged_cabinets[1].width_mm=601;
+    const changedChecked=await call('/api/quotes/confirm-check',changedGanged);
+    assert.equal(changedChecked.status,400);assert.match(changedChecked.body.message,/并柜明细已变化/);
     sql(`BEGIN; SET LOCAL calc.attachment_v2_api_ready='on'; SELECT calc.switch_attachment_catalog_v2('${original.data_version}'); COMMIT;`,target);
     assert.equal((await call('/api/attachments/catalog')).status,426);
     assert.equal((await call('/api/quotes/calculate-dual',{...input,attachment_contract:undefined,attachments:[{item_name:'门限位器',quantity:1}]})).status,426);
@@ -81,6 +107,26 @@ test('V2服务读取STAGED预览、按ID双金额、人工错误阻断和历史�
   const result=await service.calculate(input);
   assert.equal(result.formula_cost.total_cost,112);assert.equal(result.quick_quote.total_cost,240);
   assert.ok(result.attachments[0].attachment_selection_id);
+  const gangedRows=[
+    {width_mm:400,height_mm:2000,depth_mm:600,single_door_count:1,double_door_count:0},
+    {width_mm:600,height_mm:2000,depth_mm:600,single_door_count:0,double_door_count:1},
+  ];
+  const ganged=await service.snapshotGanged({...input,quote_id:'SERVICE_GANGED',ganged_cabinet_count:2,
+    ganged_cabinets:gangedRows,ganged_cabinet_inputs:gangedRows.map((row,index)=>({...input,...row,
+      product_code:index?'JP_DOUBLE':'JP_SINGLE',attachments:[]})),
+    attachments:[{attachment_price_id:price,quantity:2,ganged_cabinet_index:1}],base_result:{
+      quote_id:'SERVICE_GANGED-1',formula_cost:{total_cost:200,attachment_fee:0,labor_cost:20,management_fee:2.6},
+      quick_quote:{base_price:400,total_cost:400,attachment_fee:0},risk_flags:[],ganged_cabinet_results:[],
+    }});
+  assert.equal(ganged.formula_cost.total_cost,212);assert.equal(ganged.quick_quote.total_cost,440);
+  assert.equal(ganged.attachments[0].ganged_cabinet_index,1);
+  assert.equal(ganged.attachments[0].product_code,'JP_DOUBLE');assert.equal(ganged.attachments[0].environment.width_mm,600);
+  const gangedDocument={items:[{...input,quote_id:'SERVICE_GANGED',ganged_cabinet_count:2,ganged_cabinets:gangedRows,
+    attachments:ganged.attachments,quote_line_id:ganged.quote_line_id,attachment_contract:2,
+    formula:ganged.formula_cost,quick:ganged.quick_quote}]};
+  assert.equal((await service.hydrateDocument(gangedDocument)).items[0].formula.total_cost,212);
+  const changedGanged=structuredClone(gangedDocument);changedGanged.items[0].ganged_cabinets[0].width_mm=401;
+  await assert.rejects(()=>service.hydrateDocument(changedGanged),/并柜明细已变化/);
   const again=await service.calculate(input);assert.notEqual(again.quote_line_id,result.quote_line_id);
   const document={items:[{...input,attachments:result.attachments,quote_line_id:result.quote_line_id,attachment_contract:2,formula:result.formula_cost,quick:result.quick_quote}]};
   await service.hydrateDocument(document);

@@ -195,12 +195,22 @@ assert window.current_result["formula"]["total_cost"] is None
 window.add_current_to_summary()
 assert len(window.draft_items) == before
 
-# The unchanged ganged calculation cannot accidentally consume V2 amounts.
+# Ganged selection uses the same V2 catalog and preserves the target child index.
 window.ganged_cabinet_count = 2
-window.ganged_cabinets = [{"width_mm":400}, {"width_mm":400}]
-before = len(requests)
-window.calculate()
-assert len(requests) == before and "并柜" in messages[-1]
+window.ganged_cabinets = [
+    {"width_mm": 400, "height_mm": 2000, "depth_mm": 600, "single_door_count": 1, "double_door_count": 0},
+    {"width_mm": 400, "height_mm": 2000, "depth_mm": 600, "single_door_count": 0, "double_door_count": 1},
+]
+ganged_selection = copy.deepcopy(fixture["result"]["attachments"][0])
+ganged_selection["ganged_fixed_base_index"] = 1
+window.attachments = [ganged_selection]
+ganged_dialog = Dialog(window.attachments, window.api_url.text(), window, target_dimensions=(400, 2000, 600))
+ganged_dialog.show()
+spin_until(lambda: len(ganged_dialog.catalog) == len(catalog["items"]), "ganged V2 catalog did not load")
+assert ganged_dialog._v2_mode
+assert selected_input(ganged_selection)["ganged_cabinet_index"] == 1
+assert environment(window, [selected_input(ganged_selection)])["ganged_cabinet_count"] == 2
+ganged_dialog.close()
 window.close()
 app.processEvents()
-print(f"PASS {mode}: V2 catalog, exact IDs, manual dimensions, dual amounts, snapshot reopen, invalidation, ERROR and ganged gate")
+print(f"PASS {mode}: V2 catalog, exact IDs, manual dimensions, dual amounts, snapshot reopen, invalidation, ERROR and ganged selection")

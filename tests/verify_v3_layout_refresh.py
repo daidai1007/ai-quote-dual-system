@@ -1548,6 +1548,85 @@ if artifact_dir is not None:
     assert window.grab().save(str(artifact_dir / "v3_ganged_quote_success.png"))
 window.freight_spin.setValue(0)
 
+# Adding a V2 attachment keeps the two original child requests unchanged and
+# appends one aggregate snapshot request. The snapshot may return distinct
+# formula and quick attachment amounts without changing child split rules.
+v2_attachment = {
+    "attachment_price_id": 9001,
+    "item_name": "固定底座",
+    "category_level1": "底座",
+    "catalog_version": "attachment-test-v2",
+    "quantity": 2,
+    "attachment_price_sign": 1,
+    "manual_inputs": {"底座高度": 100},
+    "ganged_fixed_base_index": 1,
+    "unit_price": 20,
+    "price": 20,
+}
+window.attachments = [v2_attachment]
+ganged_attachment_requests = []
+
+def successful_ganged_attachment_urlopen(request, timeout=0):
+    del timeout
+    payload = json.loads(request.data.decode("utf-8"))
+    ganged_attachment_requests.append((request.full_url, payload))
+    if request.full_url.endswith("/api/attachments/snapshot-ganged"):
+        base = payload["base_result"]
+        formula = dict(base["formula_cost"])
+        quick = dict(base["quick_quote"])
+        formula["total_cost"] = formula["total_cost"] - formula["attachment_fee"] + 12
+        formula["attachment_fee"] = 12
+        quick["total_cost"] = quick["total_cost"] - quick["attachment_fee"] + 40
+        quick["attachment_fee"] = 40
+        return MockHttpResponse({
+            **base,
+            "formula_cost": formula,
+            "quick_quote": quick,
+            "attachment_contract": 2,
+            "quote_line_id": "00000000-0000-4000-8000-000000000001",
+            "attachments": [{
+                **v2_attachment,
+                "ganged_cabinet_index": 1,
+                "attachment_selection_id": 1,
+                "status": "FIXED",
+                "formula_unit_cost": 6,
+                "formula_amount": 12,
+                "face_price": 20,
+                "quick_amount": 40,
+            }],
+        })
+    child_index = len([url for url, _ in ganged_attachment_requests if url.endswith("/api/quotes/calculate-dual")]) - 1
+    return MockHttpResponse(child_results[child_index])
+
+layout_refresh.urllib.request.urlopen = successful_ganged_attachment_urlopen
+window.update_quote_readiness()
+window.calculate_button.click()
+deadline = time.monotonic() + 5
+while window.worker is not None and time.monotonic() < deadline:
+    app.processEvents()
+    time.sleep(0.01)
+app.processEvents()
+assert window.worker is None
+child_requests = [payload for url, payload in ganged_attachment_requests if url.endswith("/api/quotes/calculate-dual")]
+snapshot_requests = [payload for url, payload in ganged_attachment_requests if url.endswith("/api/attachments/snapshot-ganged")]
+assert len(child_requests) == 2 and len(snapshot_requests) == 1, ganged_attachment_requests
+assert [payload["attachments"] for payload in child_requests] == [[], []]
+snapshot_request = snapshot_requests[0]
+assert snapshot_request["ganged_cabinet_count"] == 2
+assert [row["width_mm"] for row in snapshot_request["ganged_cabinet_inputs"]] == [600.0, 900.0]
+assert snapshot_request["attachments"] == [{
+    "attachment_price_id": 9001,
+    "quantity": 2,
+    "attachment_price_sign": 1,
+    "manual_inputs": {"底座高度": 100},
+    "ganged_cabinet_index": 1,
+}]
+assert window.current_result["formula"]["attachment_fee"] == 12
+assert window.current_result["quick"]["attachment_fee"] == 40
+assert window._attachment_v2_line_id == "00000000-0000-4000-8000-000000000001"
+assert window.attachments[0]["ganged_fixed_base_index"] == 1
+assert window.attachments[0]["ganged_cabinet_index"] == 1
+
 # A failed request must be explicit and must restore both button and worker.
 def failed_urlopen(_request, timeout=0):
     del timeout
@@ -1584,6 +1663,7 @@ def ordinary_urlopen(request, timeout=0):
 layout_refresh.urllib.request.urlopen = ordinary_urlopen
 window.ganged_cabinets = []
 window.ganged_cabinet_count = 1
+window.attachments = []
 window.product_catalog["JP"]["method"] = "manual"
 window.set_door_counts(1, 0)
 window.width_spin.setValue(600)

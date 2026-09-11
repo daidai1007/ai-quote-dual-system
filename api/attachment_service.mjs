@@ -22,7 +22,11 @@ export const attachmentInput = a => {
   if(!Number.isFinite(quantity)||quantity<=0||![1,-1].includes(sign)) throw new Error('附件数量必须为正数，加减符号必须为1或-1');
   const manual=a.manual_inputs??{};
   if(!manual||typeof manual!=='object'||Array.isArray(manual)) throw new Error('人工尺寸必须是对象');
-  return {attachment_price_id:id(a.attachment_price_id),quantity,attachment_price_sign:sign,manual_inputs:manual};
+  const rawIndex=a.ganged_cabinet_index??a.ganged_fixed_base_index;
+  const gangedIndex=rawIndex===undefined||rawIndex===null||rawIndex===''?null:Number(rawIndex);
+  if(gangedIndex!==null&&(!Number.isSafeInteger(gangedIndex)||gangedIndex<0||gangedIndex>19)) throw new Error('并柜附件子柜序号无效');
+  return {attachment_price_id:id(a.attachment_price_id),quantity,attachment_price_sign:sign,
+    manual_inputs:manual,...(gangedIndex===null?{}:{ganged_cabinet_index:gangedIndex})};
 };
 export function applyAttachmentTotals(base,rows) {
   const totals=attachmentTotals(rows),formula={...(base.formula_cost||{})},quick={...(base.quick_quote||{})};
@@ -56,8 +60,12 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
     return {items,data_version:v.data_version,status:v.status,attachment_contract:2};
   }
   async function preview(input) {
-    if(Number(input.ganged_cabinet_count||1)>1 || input.ganged_cabinets?.length>1) throw new Error('附件V2并柜兼容尚未启用');
     if(!Array.isArray(input.attachments)||input.attachments.length>100) throw new Error('attachments必须为不超过100项的数组');
+    const gangedCount=Number(input.ganged_cabinet_count||1);
+    const gangedCabinets=Array.isArray(input.ganged_cabinets)?input.ganged_cabinets:[];
+    const gangedInputs=Array.isArray(input.ganged_cabinet_inputs)?input.ganged_cabinet_inputs:gangedCabinets;
+    if(!Number.isSafeInteger(gangedCount)||gangedCount<1||gangedCount>20) throw new Error('并柜数量必须为1至20的整数');
+    if(gangedCount>1&&gangedCabinets.length!==gangedCount) throw new Error('并柜明细数量与并柜数量不一致');
     const selections=input.attachments.map(attachmentInput),data=await catalog();
     const quoteDate=input.quote_date;
     if(!/^\d{4}-\d{2}-\d{2}$/.test(quoteDate||'')) throw new Error('报价日期无效');
@@ -71,19 +79,24 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
       width_mm:Number(input.width_mm),height_mm:Number(input.height_mm),depth_mm:Number(input.depth_mm),
       coating_type:input.coating_type,quote_date:quoteDate,
       cabinet_body_thickness_mm:Number(input.cabinet_body_thickness_mm??1.5),
-      waste_factor:Number(input.waste_factor??1.2),...prices};
+      waste_factor:Number(input.waste_factor??1.2),ganged_cabinet_count:gangedCount,
+      ganged_cabinets:gangedCabinets,...prices};
     const attachments=selections.map(selection=>{
       const item=data.items.find(a=>Number(a.attachment_price_id)===selection.attachment_price_id);
       if(!item) throw new Error(`附件ID ${selection.attachment_price_id} 不属于当前目录，请重新选择`);
-      return calculateAttachment(selection,item,item.rules,environment);
+      const child=selection.ganged_cabinet_index===undefined?null:gangedInputs[selection.ganged_cabinet_index];
+      if(selection.ganged_cabinet_index!==undefined&&!child) throw new Error(`第 ${selection.ganged_cabinet_index+1} 个子柜不存在`);
+      const attachmentEnvironment=child?{...environment,...child,quote_line_id:environment.quote_line_id,
+        material_code:environment.material_code,coating_type:environment.coating_type,quote_date:environment.quote_date,
+        density_g_cm3:environment.density_g_cm3,material_unit_price:environment.material_unit_price,
+        spray_unit_price:environment.spray_unit_price}:environment;
+      return {...calculateAttachment(selection,item,item.rules,attachmentEnvironment),
+        ...(selection.ganged_cabinet_index===undefined?{}:{ganged_cabinet_index:selection.ganged_cabinet_index})};
     });
     return {attachments,environment,attachment_contract:2,catalog_version:data.data_version,...attachmentTotals(attachments)};
   }
-  async function calculate(input) {
-    const previewed=await preview(input),lineId=previewed.environment.quote_line_id;
-    // Each base calculation has a fresh private quote id and NO attachment inserts.
-    // Existing product and ganged formulas are never altered by this service.
-    const base=await calculateBase({...input,quote_id:`AV2_${lineId}`,attachments:[]});
+  async function persistCalculated(input,previewed,base) {
+    const lineId=previewed.environment.quote_line_id;
     const result={...applyAttachmentTotals(base,previewed.attachments),quote_id:input.quote_id,quote_line_id:lineId};
     const environment={...previewed.environment,model_code:input.model_code||'',quote_result:{...result,attachments:undefined}};
     const rows=previewed.attachments;
@@ -102,6 +115,21 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
     const saved=await query(`BEGIN;\n${commands.join('\n')}\n${snapshotSql(lineId)}\nCOMMIT;`);
     result.attachments=saved.attachments;return result;
   }
+  async function calculate(input) {
+    const previewed=await preview(input),lineId=previewed.environment.quote_line_id;
+    // Each base calculation has a fresh private quote id and NO attachment inserts.
+    const base=await calculateBase({...input,quote_id:`AV2_${lineId}`,attachments:[]});
+    return persistCalculated(input,previewed,base);
+  }
+  async function snapshotGanged(input) {
+    if(Number(input.ganged_cabinet_count||1)<=1) throw new Error('并柜附件快照要求至少两个子柜');
+    const base=input.base_result;
+    if(!base||typeof base!=='object'||Array.isArray(base)
+      ||!base.formula_cost||typeof base.formula_cost!=='object'
+      ||!base.quick_quote||typeof base.quick_quote!=='object') throw new Error('并柜基础报价结果无效');
+    const previewed=await preview(input);
+    return persistCalculated(input,previewed,{...base,formula_cost:{...base.formula_cost},quick_quote:{...base.quick_quote}});
+  }
   function snapshotSql(lineId) {return `SELECT jsonb_build_object('environment',l.environment_snapshot,
     'attachments',coalesce((SELECT jsonb_agg(s.cost_snapshot||jsonb_build_object('attachment_selection_id',s.attachment_selection_id,'quote_line_id',s.quote_line_id) ORDER BY s.attachment_selection_id)
       FROM calc.attachment_selection s WHERE s.quote_line_id=l.quote_line_id),'[]'))
@@ -116,13 +144,14 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
         if(ids.length && await query(`SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_price WHERE attachment_price_id IN (${ids.join(',')}) AND data_version IS NOT NULL));`)) throw new Error('附件V2报价缺少服务端报价行ID');
         items.push(item);continue;
       }
-      if(Number(item.ganged_cabinet_count||1)>1 || item.ganged_cabinets?.length>1) throw new Error('附件V2并柜兼容尚未启用');
       const saved=await query(snapshotSql(item.quote_line_id));
       if(!saved) throw new Error('附件报价行不存在，请重新计算');
       for(const key of ['product_code','material_code','width_mm','height_mm','depth_mm','coating_type','quote_date','model_code'])
         if(String(item[key]??'')!==String(saved.environment[key]??'')) throw new Error(`报价环境已变化（${key}），请重新计算附件`);
       for(const key of ['cabinet_body_thickness_mm','waste_factor'])
         if(item[key]!=null && String(item[key])!==String(saved.environment[key]??'')) throw new Error(`报价环境已变化（${key}），请重新计算附件`);
+      if(Number(item.ganged_cabinet_count||1)!==Number(saved.environment.ganged_cabinet_count||1)
+        ||canonical(item.ganged_cabinets||[])!==canonical(saved.environment.ganged_cabinets||[])) throw new Error('并柜明细已变化，请重新计算附件');
       if(canonical((item.attachments||[]).map(attachmentInput))!==canonical(saved.attachments.map(attachmentInput))) throw new Error('附件选择或人工参数已变化，请重新计算');
       if(saved.attachments.some(a=>a.status==='ERROR')) throw new Error('附件成本存在错误，不能确认或导出');
       const result=saved.environment.quote_result;
@@ -142,5 +171,5 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
     }
     return {...input,items};
   }
-  return {catalog,preview,calculate,hydrateDocument,hasActive:async()=>query("SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_catalog_version WHERE status='ACTIVE'));")};
+  return {catalog,preview,calculate,snapshotGanged,hydrateDocument,hasActive:async()=>query("SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_catalog_version WHERE status='ACTIVE'));")};
 }
