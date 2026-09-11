@@ -29,7 +29,7 @@ from recognition_repair import install_recognition_repair
 
 
 _DLL_DIRECTORY_HANDLES = []
-_REQUIRED_CLOUD_API_BUILD = "2026-08-26-signed-attachments-v1"
+_REQUIRED_CLOUD_API_BUILD = "2026-09-11-formula-cost-catalogs-v1"
 _DEFAULT_RENDER_API_URL = "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual"
 _FONT_SIZE_PATTERN = re.compile(
     r"font-size\s*:\s*(?P<size>\d+(?:\.\d+)?)\s*(?P<unit>pt|px)",

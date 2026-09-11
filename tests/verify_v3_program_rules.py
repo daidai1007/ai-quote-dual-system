@@ -173,6 +173,8 @@ from ganged_cabinet_rules import (  # noqa: E402
     subcabinet_specification,
 )
 from quick_discount_rules import (  # noqa: E402
+    attachment_excluded_from_discount,
+    formula_attachment_excluded,
     quick_order_line_breakdown,
     quick_discount_breakdown,
     quick_discount_category,
@@ -635,18 +637,32 @@ class DoorRuleWindow:
         self.refreshed += 1
 
 
-ja_window = DoorRuleWindow("JA", {"SINGLE": "JA_SINGLE"}, (0, 2))
-assert layout_refresh._allowed_door_combinations(ja_window) == layout_refresh.VALID_DOOR_COMBINATIONS
-assert not layout_refresh._enforce_product_door_combination(ja_window, "double")
+for family in ("JS", "JP"):
+    full_window = DoorRuleWindow(family, {"SINGLE": f"{family}_SINGLE"}, (0, 2))
+    assert layout_refresh._allowed_door_combinations(full_window) == layout_refresh.VALID_DOOR_COMBINATIONS
+    assert not layout_refresh._enforce_product_door_combination(full_window, "double")
+for family in ("JA", "JE"):
+    limited_window = DoorRuleWindow(family, {"SINGLE": f"{family}_SINGLE"}, (0, 2))
+    assert layout_refresh._allowed_door_combinations(limited_window) == {(1, 0), (0, 1)}
+    assert layout_refresh._enforce_product_door_combination(limited_window, "double")
+    assert limited_window.door_counts() == (1, 0)
+    limited_window._counts = (1, 1)
+    assert layout_refresh._enforce_product_door_combination(limited_window, "double")
+    assert limited_window.door_counts() == (0, 1)
+for family in ("JK", "JM"):
+    fixed_window = DoorRuleWindow(family, {"DEFAULT": family}, (0, 1))
+    assert layout_refresh._allowed_door_combinations(fixed_window) == {(1, 0)}
+    assert layout_refresh._enforce_product_door_combination(fixed_window, "double")
+    assert fixed_window.door_counts() == (1, 0)
 other_window = DoorRuleWindow("XX", {"SINGLE": "XX_SINGLE", "DOUBLE": "XX_DOUBLE"}, (1, 1))
-assert layout_refresh._allowed_door_combinations(other_window) == layout_refresh.VALID_DOOR_COMBINATIONS
-assert not layout_refresh._enforce_product_door_combination(other_window, "double")
-assert other_window.door_counts() == (1, 1)
-assert other_window.refreshed == 0
+assert layout_refresh._allowed_door_combinations(other_window) == {(1, 0)}
+assert layout_refresh._enforce_product_door_combination(other_window, "double")
+assert other_window.door_counts() == (1, 0)
+assert other_window.refreshed == 2
 default_window = DoorRuleWindow("JC", {"DEFAULT": "JC_EXP"}, (0, 2))
-assert layout_refresh._allowed_door_combinations(default_window) == layout_refresh.VALID_DOOR_COMBINATIONS
-assert not layout_refresh._enforce_product_door_combination(default_window, "double")
-assert default_window.door_counts() == (0, 2)
+assert layout_refresh._allowed_door_combinations(default_window) == {(1, 0)}
+assert layout_refresh._enforce_product_door_combination(default_window, "double")
+assert default_window.door_counts() == (1, 0)
 
 
 class DoorLimiterWindow:
@@ -807,6 +823,24 @@ for item_name, category in approved_quick_categories.items():
     assert quick_discount_category({"item_name": item_name}) == category
 for item_name in ("风机", "门限位器", "接地线", "铜排", "文件夹", "三排纵梁", "安装板单发", "JK安装板单发", "运费"):
     assert quick_discount_category({"item_name": item_name}) is None
+other_attachment_named_like_eligible = {
+    "category_level1": "其他附件",
+    "item_name": "侧板",
+}
+assert quick_discount_category(other_attachment_named_like_eligible) is None
+assert attachment_excluded_from_discount(other_attachment_named_like_eligible)
+assert formula_attachment_excluded({
+    "category_level1": "门变形",
+    "category_level2": "JS、JP后背板改为单开门",
+})
+assert not formula_attachment_excluded({
+    "category_level1": "其他附件",
+    "item_name": "人工门变形补差",
+})
+assert not formula_attachment_excluded({
+    "category_level1": "配置变形",
+    "category_level2": "门变形",
+})
 
 quick_breakdown = quick_discount_breakdown(
     {"total_cost": 4406.29, "attachment_fee": 392},
@@ -822,6 +856,18 @@ assert math.isclose(quick_breakdown["base_price"], 4014.29)
 assert math.isclose(quick_breakdown["eligible_attachment_total"], 300)
 assert math.isclose(quick_breakdown["original_price_attachment_total"], 92)
 assert math.isclose(quick_breakdown["discounted_total"], 4190.5755)
+
+other_attachment_breakdown = quick_discount_breakdown(
+    {"total_cost": 1210, "base_price": 1000, "attachment_fee": 210},
+    [
+        {"item_name": "侧门", "category_level1": "其他附件", "quantity": 1, "unit_price": 150},
+        {"item_name": "隔板", "category_level1": "其他附件", "quantity": 1, "unit_price": 60},
+    ],
+    0.8,
+)
+assert math.isclose(other_attachment_breakdown["eligible_attachment_total"], 0)
+assert math.isclose(other_attachment_breakdown["original_price_attachment_total"], 210)
+assert math.isclose(other_attachment_breakdown["discounted_total"], 1010)
 
 negative_board = quick_discount_breakdown(
     {"total_cost": 900, "base_price": 1000, "attachment_fee": -100},

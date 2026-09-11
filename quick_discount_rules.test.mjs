@@ -5,11 +5,29 @@ import {
   effectiveAttachmentLineAmount,
   effectiveAttachmentQuantity,
   attachmentExcludedFromDiscount,
+  formulaAttachmentExcluded,
   quickAttachmentLineAmount,
   quickDiscountBreakdown,
   quickDiscountCategory,
   quickOrderLineBreakdown,
 } from "./quick_discount_rules.mjs";
+
+test("formula-only exclusion uses the exact first-level door-transformation category", () => {
+  assert.equal(formulaAttachmentExcluded({
+    category_level1: "门变形",
+    category_level2: "JS、JP后背板改为单开门",
+    item_name: "JS、JP后背板改为单开门",
+  }), true);
+  assert.equal(formulaAttachmentExcluded({
+    category_level1: "其他附件",
+    item_name: "人工门变形补差",
+  }), false);
+  assert.equal(formulaAttachmentExcluded({
+    category_level1: "配置变形",
+    category_level2: "门变形",
+    item_name: "门变形",
+  }), false);
+});
 
 test("missing numeric quote fields and attachment quantities keep fallback semantics", () => {
   const attachment = { item_name: "固定底座", quantity: null, unit_price: 100 };
@@ -54,6 +72,28 @@ test("quick quote discounts only the nine approved attachment categories", () =>
   }
   assert.equal(attachmentExcludedFromDiscount({ category_level1: "门安装条" }), true);
   assert.equal(attachmentExcludedFromDiscount({ item_name: "安装板" }), false);
+  const otherAttachmentNamedLikeEligible = {
+    category_level1: "其他附件",
+    item_name: "侧板",
+  };
+  assert.equal(quickDiscountCategory(otherAttachmentNamedLikeEligible), null);
+  assert.equal(attachmentExcludedFromDiscount(otherAttachmentNamedLikeEligible), true);
+});
+
+test("other attachments remain at original price in both quotation methods", () => {
+  const attachments = [
+    { item_name: "侧门", category_level1: "其他附件", quantity: 1, unit_price: 150 },
+    { item_name: "隔板", category_level1: "其他附件", quantity: 1, unit_price: 60 },
+  ];
+  const unit = quickDiscountBreakdown({
+    quote: { base_price: 1000, attachment_fee: 210, total_cost: 1210 },
+    attachments,
+    discount: 0.8,
+  });
+  assert.equal(unit.eligibleAttachmentTotal, 0);
+  assert.equal(unit.originalPriceAttachmentTotal, 210);
+  assert.equal(unit.discountedTotal, 1010);
+  assert.equal(attachments.every(attachmentExcludedFromDiscount), true);
 });
 
 test("door installation strip remains at original price in quick quote", () => {

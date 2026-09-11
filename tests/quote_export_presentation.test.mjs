@@ -390,8 +390,8 @@ test("workbook uses final attachment quantities with the three manual exceptions
     );
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 957.4, "formula unit keeps door strip outside discount");
-    closeTo(formulaSheet.getCell("G11").value, 2872.2, "formula line keeps door strip outside discount");
+    closeTo(formulaSheet.getCell("F11").value, 744.4, "formula unit excludes door transformation");
+    closeTo(formulaSheet.getCell("G11").value, 2233.2, "formula line excludes door transformation");
     closeTo(formulaSheet.getCell("AB11").value, 150, "formula final freight");
     [360, 90, 180, 72, 23.4].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
@@ -407,10 +407,16 @@ test("workbook uses final attachment quantities with the three manual exceptions
     const detailSheet = workbook.getWorksheet("成本明细");
     const quantityByName = new Map();
     let doorStripNote = "";
+    let doorTransformationAmount = null;
+    let doorTransformationNote = "";
     detailSheet.eachRow((row) => {
       const name = row.getCell(5).text;
       if (name) quantityByName.set(name, Number(row.getCell(8).value));
       if (name === "门安装条") doorStripNote = row.getCell(15).text;
+      if (name === "JS、JP后背板改为单开门") {
+        doorTransformationAmount = Number(row.getCell(11).value);
+        doorTransformationNote = row.getCell(15).text;
+      }
     });
     assert.equal(quantityByName.get("标准安装板"), 3);
     assert.equal(quantityByName.get("侧板"), 2);
@@ -418,6 +424,8 @@ test("workbook uses final attachment quantities with the three manual exceptions
     assert.equal(quantityByName.get("JS、JP后背板改为单开门"), 1);
     assert.equal(quantityByName.get("门安装条"), 3);
     assert.match(doorStripNote, /不参与公式法或快速报价折扣/);
+    assert.equal(doorTransformationAmount, 0);
+    assert.match(doorTransformationNote, /仅快速报价计费；公式法附件费用为 0/);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
@@ -486,8 +494,8 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     closeTo(quickSheet.getCell(11, headerIndex("运费")).value, 100, "ganged freight ignores split count");
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 1045.4, "ganged formula equivalent unit total with freight");
-    closeTo(formulaSheet.getCell("G11").value, 2090.8, "ganged formula line total with freight");
+    closeTo(formulaSheet.getCell("F11").value, 910.4, "ganged formula equivalent unit excludes door transformation");
+    closeTo(formulaSheet.getCell("G11").value, 1820.8, "ganged formula line excludes door transformation");
     closeTo(formulaSheet.getCell("AB11").value, 100, "ganged formula freight ignores split count");
     [720, 180, 360, 144, 46.8].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
@@ -548,6 +556,65 @@ test("formula export falls back from null attachment fees and leaves missing wei
     assert.ok(sprayRow, "spray detail row is missing");
     assert.match(sprayRow.getCell(5).text, /经验值/);
     assert.equal(sprayRow.getCell(9).text, "项", "null spray area was displayed as square metres");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("other attachments stay at original price in both exported quotations", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-other-attachment-original-price-"));
+  const inputPath = path.join(tempDir, "other-attachment-input.json");
+  const outputPath = path.join(tempDir, "other-attachment-output.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8"));
+    const item = structuredClone(payload.items[0]);
+    item.quantity = 1;
+    item.freight_fee = 0;
+    item.formula_discount = 0.8;
+    item.quick_discount = 0.8;
+    item.attachments = [{
+      item_name: "侧门",
+      category_level1: "其他附件",
+      quantity: 1,
+      unit_price: 150,
+      unit: "扇",
+    }];
+    item.quick = { base_price: 1000, attachment_fee: 150, total_cost: 1150 };
+    item.formula = {
+      material_cost: 400,
+      auxiliary_cost: 200,
+      labor_cost: 200,
+      spray_cost: 174,
+      management_fee: 26,
+      attachment_fee: 150,
+      total_cost: 1150,
+    };
+    payload.items = [item];
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    const quickSheet = workbook.getWorksheet("快速报价单");
+    closeTo(formulaSheet.getCell("F11").value, 950, "formula keeps other attachment outside discount");
+    closeTo(quickSheet.getCell("F11").value, 950, "quick keeps other attachment outside discount");
+
+    const quickHeaders = quickSheet.getRow(10).values;
+    const sideDoorColumn = quickHeaders.findIndex((value) => value === "侧门");
+    assert.ok(sideDoorColumn > 0, "selected other-attachment column is missing");
+    closeTo(quickSheet.getCell(11, sideDoorColumn).value, 150, "other attachment original amount");
+    assert.match(
+      quickSheet.getCell("K11").value.formula,
+      new RegExp(`\\+${quickSheet.getColumn(sideDoorColumn).letter}11`),
+    );
+
+    const detailSheet = workbook.getWorksheet("成本明细");
+    let sideDoorNote = "";
+    detailSheet.eachRow((row) => {
+      if (row.getCell(5).text === "侧门") sideDoorNote = row.getCell(15).text;
+    });
+    assert.match(sideDoorNote, /不参与公式法或快速报价折扣/);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

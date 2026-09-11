@@ -1,0 +1,14 @@
+{
+  "version": "cabinet-spray-13f257f440859e3b-v1",
+  "sourceSha256": "13f257f440859e3b0922aa690241c1b43068d687042b9bd3b2eccc2aab051fd9",
+  "total": 202,
+  "counts": {
+    "JS": 112,
+    "JP": 46,
+    "JA": 22,
+    "JE": 11,
+    "JM": 5,
+    "JK": 6
+  },
+  "issues": []
+}

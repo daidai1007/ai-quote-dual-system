@@ -21,8 +21,19 @@ def _number(value: Any, fallback: float = 0.0) -> float:
         return fallback
 
 
+def _top_level_category(item: Mapping[str, Any] | None) -> str:
+    item = item or {}
+    for key in ("category_level1", "attachment_category", "category"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def quick_discount_category(item: Mapping[str, Any] | None) -> str | None:
     item = item or {}
+    if _top_level_category(item) == "其他附件":
+        return None
     candidates = [
         item.get("category_level3"),
         item.get("category_level2"),
@@ -49,6 +60,8 @@ def attachment_excluded_from_discount(item: Mapping[str, Any] | None) -> bool:
     """Return whether an attachment stays at original price in both methods."""
 
     item = item or {}
+    if _top_level_category(item) == "其他附件":
+        return True
     candidates = (
         item.get("category_level3"), item.get("category_level2"),
         item.get("category_level1"), item.get("attachment_category"),
@@ -57,8 +70,38 @@ def attachment_excluded_from_discount(item: Mapping[str, Any] | None) -> bool:
     return any(str(value).strip() == "门安装条" for value in candidates if value)
 
 
+def formula_attachment_excluded(item: Mapping[str, Any] | None) -> bool:
+    """Return whether an attachment is omitted only from formula quotations.
+
+    门变形 is a closed first-level catalogue in the attachment database.  Use
+    that authoritative classification exactly; names and lower-level labels
+    are deliberately not fuzzy-matched.
+    """
+
+    if (item or {}).get("catalog_version"):
+        return item.get("status") == "QUICK_ONLY"
+    return _top_level_category(item) == "门变形"
+
+
+def formula_attachment_line_amount(item):
+    if (item or {}).get("catalog_version"):
+        if item.get("status") == "QUICK_ONLY":
+            return 0.0
+        if item.get("status") == "ERROR" or item.get("formula_amount") is None:
+            raise ValueError("附件公式成本未完成，不能汇总")
+        return float(item["formula_amount"])
+    return quick_attachment_line_amount(item)
+
+
+def effective_formula_attachment_line_amount(item, cabinet_quantity, ganged_cabinet_count=1):
+    selected = _number((item or {}).get("quantity"), 1.0)
+    return formula_attachment_line_amount(item) * effective_attachment_quantity(item, cabinet_quantity, ganged_cabinet_count) / selected
+
+
 def quick_attachment_line_amount(item: Mapping[str, Any] | None) -> float:
     item = item or {}
+    if item.get("catalog_version") and item.get("quick_amount") is not None:
+        return float(item["quick_amount"])
     sign = -1.0 if _number(item.get("attachment_price_sign"), 1.0) == -1.0 else 1.0
     for key in ("total_price", "total_cost", "amount", "subtotal"):
         if item.get(key) is not None:

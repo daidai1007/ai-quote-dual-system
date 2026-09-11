@@ -1,7 +1,7 @@
 param(
     [string]$NsisRoot = "G:\gongsi\banjinxitong\板件后续二次修改\.installer-tools\nsis-3.12\nsis-3.12",
     [string]$OutputRoot = "G:\gongsi\banjinxitong\板件后续二次修改\AIQuoteDualSystem_Installer",
-    [string]$Version = "2026.08.29",
+    [string]$Version = "2026.09.11",
     [string]$PythonExe = "G:\gongsi\banjinxitong\desktop_client\.venv64\Scripts\python.exe"
 )
 
@@ -126,7 +126,7 @@ $manifest = [ordered]@{
     signature_status = "NotSigned"
     package_file_count = $files.Count
     package_bytes = [long](($files | Measure-Object Length -Sum).Sum)
-    note = "Branded installer build of the validated unified-door V3 client; application logic and cloud API contract are unchanged."
+    note = "2026.09.11 formula-cost catalogs: attachments, cabinet material, spray, auxiliary BOM, labor, snapshots and detailed export."
     critical_files = @(
         [ordered]@{ path = "AIQuoteDualSystem_layout_v6.exe"; bytes = (Get-Item -LiteralPath $entryPath).Length; sha256 = $entryHash },
         [ordered]@{ path = "AIQuoteDualSystem.ico"; bytes = (Get-Item -LiteralPath $iconPath).Length; sha256 = $iconHash }

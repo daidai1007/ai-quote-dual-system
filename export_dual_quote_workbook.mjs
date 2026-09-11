@@ -10,6 +10,7 @@
 import ExcelJS from "@excel.js/exceljs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import {addAttachmentSnapshotSheet} from "./attachment_snapshot_export.mjs";
 import {
   attachRangeApi,
   attachWorkbookRangeApi,
@@ -24,7 +25,10 @@ import {
   attachmentExcludedFromDiscount,
   attachmentUsesCabinetQuantity,
   effectiveAttachmentLineAmount,
+  effectiveFormulaAttachmentLineAmount,
+  formulaAttachmentLineAmount,
   effectiveAttachmentQuantity,
+  formulaAttachmentExcluded,
   quickDiscountBreakdown,
   quickDiscountCategory,
   quickOrderLineBreakdown,
@@ -423,6 +427,7 @@ const attachmentUnitPrice = (item = {}) => {
   return 0;
 };
 const attachmentLineAmount = (item = {}) => {
+  if(item.catalog_version && item.quick_amount != null) return Number(item.quick_amount);
   const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
   for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
     if (item[key] !== null && item[key] !== undefined && Number.isFinite(Number(item[key]))) {
@@ -437,6 +442,7 @@ const attachmentAmounts = (
 ) => {
   const out = {};
   for (const item of attachments) {
+    if (method === "formula" && formulaAttachmentExcluded(item)) continue;
     let index = attachmentColumn(item.item_name || item.model_code);
     if (method === "formula") {
       // “柜体” is replaced by formula cost components; all real attachment
@@ -447,7 +453,8 @@ const attachmentAmounts = (
     const factor = method === "formula" && attachmentExcludedFromDiscount(item)
       ? 1 : discount;
     if (index) out[index] = (out[index] || 0)
-      + effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount) * factor;
+      + (method === 'formula' ? effectiveFormulaAttachmentLineAmount(item, cabinetQuantity, gangedCount)
+        : effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount)) * factor;
   }
   return out;
 };
@@ -481,9 +488,15 @@ const formulaOrderLineBreakdown = (item = {}) => {
   const discount = asNumber(item.formula_discount) || 1;
   const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
   const freightTotal = freightFee * cabinetQuantity;
-  const listedAttachmentTotal = attachmentTotalFromItems(attachments);
+  const listedAttachmentTotal = attachments.reduce((sum,row)=>sum+formulaAttachmentLineAmount(row),0);
   const attachmentFee = hasFiniteNumber(quote.attachment_fee)
     ? Number(quote.attachment_fee) : listedAttachmentTotal;
+  const excludedFormulaAttachmentTotal = attachments.reduce(
+    (sum, attachment) => sum + (!attachment.catalog_version && formulaAttachmentExcluded(attachment)
+      ? attachmentLineAmount(attachment) : 0),
+    0,
+  );
+  const formulaAttachmentFee = attachmentFee - excludedFormulaAttachmentTotal;
   const componentKeys = [
     "material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee",
   ];
@@ -494,41 +507,26 @@ const formulaOrderLineBreakdown = (item = {}) => {
     ? componentKeys.reduce((sum, key) => sum + asNumber(quote[key]), 0)
     : asNumber(quote.total_cost) - attachmentFee;
   const originalPriceAttachmentTotal = attachments.reduce(
-    (sum, attachment) => sum + (attachmentExcludedFromDiscount(attachment)
-      ? effectiveAttachmentLineAmount(attachment, cabinetQuantity, gangedCount) : 0),
+    (sum, attachment) => sum + (!formulaAttachmentExcluded(attachment)
+      && attachmentExcludedFromDiscount(attachment)
+      ? effectiveFormulaAttachmentLineAmount(attachment, cabinetQuantity, gangedCount) : 0),
     0,
   );
-  if (gangedCount <= 1) {
-    const effectiveAttachmentTotal = attachmentFee * cabinetQuantity;
-    const discountedAttachmentTotal = effectiveAttachmentTotal - originalPriceAttachmentTotal;
-    const lineTotal = (basePrice * cabinetQuantity + discountedAttachmentTotal) * discount
-      + originalPriceAttachmentTotal + freightTotal;
-    const equivalentUnitTotal = cabinetQuantity ? lineTotal / cabinetQuantity : lineTotal;
-    return {
-      basePrice,
-      attachmentFee,
-      listedAttachmentTotal,
-      effectiveAttachmentTotal,
-      discountedAttachmentTotal,
-      originalPriceAttachmentTotal,
-      cabinetQuantity,
-      gangedCabinetCount: gangedCount,
-      discount,
-      freightFee,
-      freightTotal,
-      lineTotal,
-      equivalentUnitTotal,
-    };
-  }
-  const effectiveAttachmentTotal = effectiveAttachmentTotalFromItems(
-    attachments, cabinetQuantity, gangedCount,
-  ) + (attachmentFee - listedAttachmentTotal) * cabinetQuantity * gangedCount;
-  const discountedAttachmentTotal = effectiveAttachmentTotal - originalPriceAttachmentTotal;
+  const effectiveAttachmentTotal = attachments.filter((attachment) => !formulaAttachmentExcluded(attachment))
+    .reduce((sum,row)=>sum+effectiveFormulaAttachmentLineAmount(row,cabinetQuantity,gangedCount),0)
+    + (attachmentFee - listedAttachmentTotal) * cabinetQuantity;
+  const discountedAttachmentTotal = attachments.reduce(
+    (sum, attachment) => sum + (!formulaAttachmentExcluded(attachment)
+      && !attachmentExcludedFromDiscount(attachment)
+      ? effectiveFormulaAttachmentLineAmount(attachment, cabinetQuantity, gangedCount) : 0),
+    0,
+  ) + (attachmentFee - listedAttachmentTotal) * cabinetQuantity;
   const lineTotal = (basePrice * cabinetQuantity + discountedAttachmentTotal) * discount
     + originalPriceAttachmentTotal + freightTotal;
   return {
     basePrice,
-    attachmentFee,
+    attachmentFee: formulaAttachmentFee,
+    excludedFormulaAttachmentTotal,
     listedAttachmentTotal,
     effectiveAttachmentTotal,
     discountedAttachmentTotal,
@@ -961,26 +959,66 @@ function buildFormulaCostDetailSheet() {
   items.forEach((item, itemIndex) => {
     const quote = item.formula || {};
     const materialCost = asNumber(quote.material_cost);
-    const materialUnitPrice = optionalNumber(quote.material_unit_price);
-    const correctedWeight = optionalNumber(quote.corrected_material_weight_kg);
-    const weight = correctedWeight !== null
-      ? correctedWeight
-      : (materialUnitPrice !== null && materialUnitPrice > 0 ? materialCost / materialUnitPrice : null);
-    addDetail(
-      itemIndex, item, "材料成本", `${item.material_code || "材料"}板材`,
-      item.material_code || "", weight !== null && materialUnitPrice !== null
-        ? `${weight.toFixed(6)} kg × ${materialUnitPrice.toFixed(4)} 元/kg = ${materialCost.toFixed(2)} 元`
-        : "修正后材料重量 × 材料单价",
-      weight, "kg", materialUnitPrice,
-      materialCost, "数据库材料价格历史", "材料重量为公式法修正后重量",
-    );
+    const materialPartDetails = Array.isArray(quote.cabinet_material_part_details)
+      ? quote.cabinet_material_part_details : [];
+    const materialDetails = Array.isArray(quote.material_details) ? quote.material_details : [];
+    if (materialPartDetails.length) {
+      for (const part of materialPartDetails) {
+        const netWeight = optionalNumber(part.net_weight_kg);
+        const billableWeight = optionalNumber(part.billable_weight_kg);
+        const wasteFactor = optionalNumber(part.waste_factor ?? quote.waste_factor);
+        const unitPrice = optionalNumber(part.material_unit_price);
+        const amount = asNumber(part.material_cost);
+        addDetail(
+          itemIndex, item, "材料成本", part.part_name || `${part.material_code || "材料"}零件`,
+          `${part.material_code || ""} / ${part.sheet_thickness_mm ?? ""} mm`,
+          `面积 ${part.area_m2 ?? ""} m² × 料厚 ${part.sheet_thickness_mm ?? ""} mm × 内部数量 ${part.internal_quantity ?? ""} × 密度 ${part.density_g_cm3 ?? ""} g/cm³ = 净重 ${(netWeight ?? 0).toFixed(6)} kg；× 废料系数 ${(wasteFactor ?? 1).toFixed(3)} = 计价重 ${(billableWeight ?? 0).toFixed(6)} kg；× ${(unitPrice ?? 0).toFixed(4)} 元/kg = ${amount.toFixed(2)} 元`,
+          billableWeight, "kg", unitPrice, amount,
+          `${quote.cabinet_material_version || "最新柜体材料明细"} / ${part.source_sheet || ""} 第 ${part.source_row_no || ""} 行`,
+          `面积公式：${part.area_formula || ""}；最终用量为每台柜体计价重量。`,
+        );
+      }
+    } else if (materialDetails.length) {
+      for (const material of materialDetails) {
+        const netWeight = optionalNumber(material.net_weight_kg);
+        const billableWeight = optionalNumber(material.billable_weight_kg);
+        const wasteFactor = optionalNumber(quote.waste_factor ?? material.waste_factor);
+        const unitPrice = optionalNumber(material.material_unit_price);
+        const amount = asNumber(material.material_cost);
+        addDetail(
+          itemIndex, item, "材料成本", `${material.material_code || "材料"}板材`,
+          material.material_code || "",
+          netWeight !== null && billableWeight !== null && unitPrice !== null
+            ? `净重 ${netWeight.toFixed(6)} kg × 废料系数 ${(wasteFactor ?? 1).toFixed(3)} = 计价重 ${billableWeight.toFixed(6)} kg；× ${unitPrice.toFixed(4)} 元/kg = ${amount.toFixed(2)} 元`
+            : "净材料重量 × 废料系数 × 材料单价",
+          billableWeight, "kg", unitPrice, amount,
+          quote.cabinet_material_version || "最新柜体材料明细 / 数据库材料价格历史",
+          "最终用量为每台柜体计价材料重量；柜体数量在行金额中另乘。",
+        );
+      }
+    } else {
+      const materialUnitPrice = optionalNumber(quote.material_unit_price);
+      const correctedWeight = optionalNumber(quote.corrected_material_weight_kg);
+      const weight = correctedWeight !== null
+        ? correctedWeight
+        : (materialUnitPrice !== null && materialUnitPrice > 0 ? materialCost / materialUnitPrice : null);
+      addDetail(
+        itemIndex, item, "材料成本", `${item.material_code || "材料"}板材`,
+        item.material_code || "", weight !== null && materialUnitPrice !== null
+          ? `${weight.toFixed(6)} kg × ${materialUnitPrice.toFixed(4)} 元/kg = ${materialCost.toFixed(2)} 元`
+          : "修正后材料重量 × 材料单价",
+        weight, "kg", materialUnitPrice,
+        materialCost, "历史公式法快照", "旧报价缺少新版柜体材料分材质明细",
+      );
+    }
 
     const auxiliaryCost = asNumber(quote.auxiliary_cost);
     const auxiliary = item.auxiliary_detail || {};
-    const auxiliaryLines = Array.isArray(auxiliary.lines) ? auxiliary.lines : [];
+    const auxiliaryLines = Array.isArray(quote.cabinet_auxiliary_lines)
+      ? quote.cabinet_auxiliary_lines : (Array.isArray(auxiliary.lines) ? auxiliary.lines : []);
     let auxiliaryLineSum = 0;
     for (const line of auxiliaryLines) {
-      const quantity = asNumber(line.quantity);
+      const quantity = asNumber(line.internal_quantity ?? line.quantity);
       const price = Number(line.unit_price);
       const amount = Number.isFinite(Number(line.line_total))
         ? Number(line.line_total)
@@ -989,10 +1027,16 @@ function buildFormulaCostDetailSheet() {
       addDetail(
         itemIndex, item, "辅材成本", line.item_name || line.item_code || "辅材",
         [line.spec_model, line.material_name].filter(Boolean).join(" / "),
-        Number.isFinite(price) ? `${quantity} × ${price.toFixed(4)} = ${amount.toFixed(2)} 元` : "BOM 用量 × 辅材单价",
-        quantity, "件", Number.isFinite(price) ? price : null, amount,
-        [auxiliary.source_file, auxiliary.source_sheet || line.source_sheet].filter(Boolean).join(" / ") || "数据库辅材 BOM",
-        line.source_row_no ? `源表第 ${line.source_row_no} 行` : "",
+        line.length_per_piece_m == null
+          ? `${quantity} 件 × ${Number.isFinite(price) ? price.toFixed(4) : ""} 元/件 = ${amount.toFixed(2)} 元`
+          : `${line.length_per_piece_m} m/件 × ${quantity} 件 × ${Number.isFinite(price) ? price.toFixed(4) : ""} 元/m`
+            + (asNumber(line.spray_area_m2) > 0 ? `；喷塑 ${line.spray_area_m2} m² × ${asNumber(line.spray_unit_price).toFixed(4)} 元/m²` : "")
+            + ` = ${amount.toFixed(2)} 元`,
+        quantity, line.unit || "件", Number.isFinite(price) ? price : null, amount,
+        quote.cabinet_auxiliary_version
+          ? `${quote.cabinet_auxiliary_version} / ${line.source_sheet || ""} 第 ${line.source_row_no || ""} 行`
+          : ([auxiliary.source_file, auxiliary.source_sheet || line.source_sheet].filter(Boolean).join(" / ") || "数据库辅材 BOM"),
+        [line.length_formula ? `长度公式：${line.length_formula}` : "", line.notes || ""].filter(Boolean).join("；"),
       );
     }
     if (!auxiliaryLines.length) {
@@ -1013,13 +1057,30 @@ function buildFormulaCostDetailSheet() {
     }
 
     const laborCost = asNumber(quote.labor_cost);
-    addDetail(
-      itemIndex, item, "人工成本", "人工成本（经验值）", "同柜型/同材质/最近尺寸",
-      "数据库人工经验值（已含人工成本修正系数）", 1, "项", laborCost, laborCost,
-      "数据库人工经验值", "非精确尺寸按同柜型最近尺寸及周长比例修正",
-    );
+    if (quote.cabinet_labor_version) {
+      const laborWeight = optionalNumber(quote.labor_billable_weight_kg);
+      addDetail(
+        itemIndex, item, "人工成本", "柜体人工成本", quote.labor_method || "最新人工规则",
+        quote.labor_source_formula
+          ? `${quote.labor_source_formula}；计人工重量 ${laborWeight?.toFixed(6) ?? ""} kg`
+          : (quote.labor_perimeter_ratio
+            ? `固定人工按非标尺寸周长比例 ${asNumber(quote.labor_perimeter_ratio).toFixed(6)} 修正`
+            : "产品、型号、材质及尺寸固定人工"),
+        1, "项", laborCost, laborCost,
+        `${quote.cabinet_labor_version} / ${quote.labor_source_sheet || ""} 第 ${quote.labor_source_row_no || ""} 行`,
+        (quote.labor_excluded_part_names || []).length
+          ? `计人工重量已扣除：${quote.labor_excluded_part_names.join("、")}` : "",
+      );
+    } else {
+      addDetail(
+        itemIndex, item, "人工成本", "人工成本（经验值）", "同柜型/同材质/最近尺寸",
+        "数据库人工经验值（已含人工成本修正系数）", 1, "项", laborCost, laborCost,
+        "数据库人工经验值", "非精确尺寸按同柜型最近尺寸及周长比例修正",
+      );
+    }
 
-    const attachmentCost = formulaOrderLineBreakdown(item).attachmentFee;
+    const lineBreakdown = formulaOrderLineBreakdown(item);
+    const attachmentCost = lineBreakdown.attachmentFee;
     const attachments = Array.isArray(item.attachments) ? item.attachments : [];
     let attachmentLineSum = 0;
     for (const attachment of attachments) {
@@ -1029,22 +1090,30 @@ function buildFormulaCostDetailSheet() {
         attachment, item.quantity || 1, splitCount,
       );
       const price = attachmentUnitPrice(attachment);
-      const selectedAmount = attachmentLineAmount(attachment);
-      const amount = effectiveAttachmentLineAmount(
+      const selectedAmount = formulaAttachmentLineAmount(attachment);
+      const amount = effectiveFormulaAttachmentLineAmount(
         attachment, item.quantity || 1, splitCount,
       );
-      attachmentLineSum += selectedAmount;
+      const omittedFromFormula = formulaAttachmentExcluded(attachment);
+      const formulaSelectedAmount = omittedFromFormula ? 0 : selectedAmount;
+      const formulaAmount = omittedFromFormula ? 0 : amount;
+      attachmentLineSum += formulaSelectedAmount;
       const multiplier = selectedQuantity ? quantity / selectedQuantity : 1;
-      const signedPrice = quantity ? amount / quantity : price;
+      const signedPrice = quantity ? formulaAmount / quantity : (omittedFromFormula ? 0 : price);
       addDetail(
         itemIndex, item, "附件成本", attachment.item_name || attachment.model_code || "附件",
         [attachment.model_code, attachment.variant, attachment.notes].filter(Boolean).join(" / "),
-        `${selectedQuantity} × 柜体倍率 ${multiplier} = 最终数量 ${quantity}；`
-          + `${quantity} × ${signedPrice.toFixed(2)} = ${amount.toFixed(2)} 元`,
-        quantity, "件", signedPrice, amount,
+        omittedFromFormula
+          ? (attachment.catalog_version ? '当前产品无适用成本规则，仅快速报价；见附件双报价明细'
+            : `原附件金额 ${amount.toFixed(2)} 元；一级分类为门变形，公式法不计费`)
+          : `${selectedQuantity} × 柜体倍率 ${multiplier} = 最终数量 ${quantity}；`
+            + `${quantity} × ${signedPrice.toFixed(2)} = ${formulaAmount.toFixed(2)} 元`,
+        quantity, attachment.unit || "件", signedPrice, formulaAmount,
         attachment.price_source || "数据库附件价格表",
-        attachmentExcludedFromDiscount(attachment)
-          ? "门安装条按原价计入，不参与公式法或快速报价折扣"
+        omittedFromFormula
+          ? "仅快速报价计费；公式法附件费用为 0"
+          : attachmentExcludedFromDiscount(attachment)
+          ? "原价附件：不参与公式法或快速报价折扣"
           : attachment.ganged_fixed_base_match
           ? "按子柜分别匹配；仅随整套柜体数量变化"
           : (attachmentUsesCabinetQuantity(attachment)
@@ -1071,11 +1140,31 @@ function buildFormulaCostDetailSheet() {
     const sprayCost = asNumber(quote.spray_cost);
     const productArea = optionalNumber(quote.product_area_m2);
     const sprayUnitPrice = optionalNumber(quote.spray_unit_price);
-    if (productArea !== null && sprayUnitPrice !== null) {
+    const sprayPartDetails = Array.isArray(quote.cabinet_spray_part_details)
+      ? quote.cabinet_spray_part_details : [];
+    if (sprayPartDetails.length && sprayUnitPrice !== null) {
+      let allocatedSprayCost = 0;
+      sprayPartDetails.forEach((part, partIndex) => {
+        const areaPerPiece = asNumber(part.area_per_piece_m2);
+        const internalQuantity = asNumber(part.internal_quantity);
+        const totalArea = asNumber(part.total_area_m2);
+        const calculatedAmount = totalArea * sprayUnitPrice;
+        const amount = partIndex === sprayPartDetails.length - 1
+          ? sprayCost - allocatedSprayCost : calculatedAmount;
+        allocatedSprayCost += amount;
+        addDetail(
+          itemIndex, item, "喷塑费用", part.part_name || "柜体零件", "面积公式 × 内部数量",
+          `${areaPerPiece.toFixed(8)} m²/件 × ${internalQuantity} 件 × ${sprayUnitPrice.toFixed(4)} 元/m² = ${amount.toFixed(2)} 元`,
+          totalArea, "m²", sprayUnitPrice, amount,
+          `${quote.cabinet_spray_version || "最新柜体喷塑明细"} / ${part.source_sheet || ""} 第 ${part.source_row_no || ""} 行`,
+          `面积公式：${part.area_formula || ""}；最终一行包含整柜喷塑成本的舍入差额。`,
+        );
+      });
+    } else if (productArea !== null && sprayUnitPrice !== null) {
       addDetail(
         itemIndex, item, "喷塑费用", `${item.coating_type || "喷塑"}`, "产品喷涂面积",
         `${productArea.toFixed(6)} m² × ${sprayUnitPrice.toFixed(4)} 元/m² = ${sprayCost.toFixed(2)} 元`,
-        productArea, "m²", sprayUnitPrice, sprayCost, "数据库喷塑单价历史", "产品面积由公式模板计算",
+        productArea, "m²", sprayUnitPrice, sprayCost, "数据库喷塑单价历史", "产品面积由柜体喷塑目录计算",
       );
     } else {
       addDetail(
@@ -1086,10 +1175,11 @@ function buildFormulaCostDetailSheet() {
     }
 
     const managementCost = asNumber(quote.management_fee);
+    const managementRate = asNumber(quote.management_fee_rate ?? 0.13);
     addDetail(
       itemIndex, item, "管理费用", "管理费用", "人工成本的 13%",
-      `${laborCost.toFixed(2)} × 0.13 = ${managementCost.toFixed(2)} 元`,
-      laborCost, "元", 0.13, managementCost, "系统统一公式", "管理费用＝人工成本×0.13",
+      `${laborCost.toFixed(2)} × ${managementRate} = ${managementCost.toFixed(2)} 元`,
+      laborCost, "元", managementRate, managementCost, "系统统一公式", `管理费用＝人工成本×${managementRate}`,
     );
 
     const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
@@ -1103,7 +1193,7 @@ function buildFormulaCostDetailSheet() {
     }
 
     const componentTotal = materialCost + auxiliaryCost + laborCost + attachmentCost + sprayCost + managementCost;
-    const formulaCost = asNumber(quote.total_cost);
+    const formulaCost = asNumber(quote.total_cost) - lineBreakdown.excludedFormulaAttachmentTotal;
     if (Math.abs(formulaCost - componentTotal) > 0.01) {
       const adjustment = formulaCost - componentTotal;
       addDetail(
@@ -1113,11 +1203,10 @@ function buildFormulaCostDetailSheet() {
       );
     }
     const discount = asNumber(item.formula_discount) || 1;
-    const lineBreakdown = formulaOrderLineBreakdown(item);
     addDetail(
       itemIndex, item, "柜型小计", "公式法成本", `折扣 ${discount.toFixed(2)}`,
       `柜体基础成本按 ${lineBreakdown.cabinetQuantity} 台计算；附件按最终数量计价；`
-        + `门安装条 ${lineBreakdown.originalPriceAttachmentTotal.toFixed(2)} 元按原价计入；`
+        + `原价附件 ${lineBreakdown.originalPriceAttachmentTotal.toFixed(2)} 元不参与折扣；`
         + `运费 ${lineBreakdown.freightFee.toFixed(2)} 元/台且不参与折扣；`
         + `订单行合计 ${lineBreakdown.lineTotal.toFixed(2)} 元`,
       1, "台", formulaCost, lineBreakdown.equivalentUnitTotal, "公式法报价结果",
@@ -1355,6 +1444,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
 
 // Verify before serialization, then verify the serialized temporary file again
 // before publishing it to the user-selected path.
+addAttachmentSnapshotSheet(workbook,payload);
 verifyWorkbookContents(workbook);
 // Generate beside the destination first and publish only after the workbook
 // is complete. A crash can no longer leave a zero-byte or half-written final

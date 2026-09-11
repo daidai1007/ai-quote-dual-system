@@ -1,0 +1,4364 @@
+{
+  "data_version": "cabinet-material-91cc0a5f841b7455-v1",
+  "source_file": "JS,JP,JA,JE,JK,JM材料明细-面积公式.xlsx",
+  "source_sha256": "91cc0a5f841b74559a34a7408a604e41d5fe76e8db3743b20a32ff657c2b2151",
+  "default_waste_factor": 1.2,
+  "rules": [
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 3,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 4,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 5,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 6,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 7,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 8,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 9,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "后背板",
+      "area_formula": "(高度+9.5)*(宽度+26.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 10,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "后背板加强筋",
+      "area_formula": "(高度-200)*168.5*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 1,
+        "when_false": 0
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 11,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-52)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 12,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 13,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 14,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 15,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 16,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 17,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 18,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 19,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 20,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 21,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 22,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 23,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "后背板",
+      "area_formula": "(高度+9.5)*(宽度+26.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 24,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "后背板加强筋",
+      "area_formula": "(高度-200)*168.5*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 1,
+        "when_false": 0
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 25,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 26,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 27,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 28,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 29,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 30,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 31,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 32,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 33,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 34,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 35,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 36,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 37,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 38,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-52)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 39,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 40,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 41,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 42,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 43,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 44,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 45,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 46,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 47,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 48,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 49,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 50,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 51,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 52,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 53,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 54,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 55,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 56,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 57,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 58,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 59,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 60,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 61,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 62,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 63,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-52)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 64,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 65,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 66,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 67,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 68,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 69,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 70,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 3,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 4,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 5,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 6,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 7,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 8,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 9,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "后背板",
+      "area_formula": "(高度+9.5)*(宽度+26.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 10,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "后背板加强筋",
+      "area_formula": "(高度-200)*168.5*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 1,
+        "when_false": 0
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 11,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-52)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 12,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 13,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 14,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 15,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 16,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 17,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 18,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 19,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 20,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 21,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 22,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 23,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "后背板",
+      "area_formula": "(高度+9.5)*(宽度+26.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 24,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "后背板加强筋",
+      "area_formula": "(高度-200)*168.5*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 1,
+        "when_false": 0
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 25,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 26,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 27,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 28,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 29,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 30,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 31,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 32,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 33,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 34,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 35,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 36,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 37,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 38,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-52)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 39,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 40,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 41,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 42,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 43,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 44,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 45,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 46,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 47,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 48,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 49,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 50,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 51,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 52,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 53,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 54,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 55,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 56,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 57,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "左右侧板-1",
+      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 58,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "顶板件-1",
+      "area_formula": "(宽度-3)*(深度+64)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 59,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "底板件-1",
+      "area_formula": "(宽度-3)*146*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 60,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-98)*170*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 61,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 62,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 63,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-52)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JS",
+      "source_row_no": 64,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "上纵梁",
+      "area_formula": "(深度-65)*94.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 65,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 66,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 67,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 68,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "左右侧板-2",
+      "area_formula": "(高度-91)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 69,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JS",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "顶底板件-2",
+      "area_formula": "(宽度-88)*73.5*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JS",
+      "source_row_no": 70,
+      "source_column": "H:M"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 3,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-99)*115*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 4,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "顶盖",
+      "area_formula": "(宽度+31.5)*(深度-16)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 5,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "底板1",
+      "area_formula": "(宽度-204)*106*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 6,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "底板2",
+      "area_formula": "(深度-15.5)*117*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 7,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 8,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 9,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "后背板",
+      "area_formula": "(高度+9.5)*(宽度+26.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 10,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "后背板加强筋",
+      "area_formula": "(高度-200)*168.5*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 1,
+        "when_false": 0
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 11,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 12,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 13,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 14,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-99)*115*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 15,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "顶盖",
+      "area_formula": "(宽度+31.5)*(深度-16)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 16,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "底板1",
+      "area_formula": "(宽度-204)*106*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 17,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "底板2",
+      "area_formula": "(深度-15.5)*117*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 18,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 19,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 20,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "后背板",
+      "area_formula": "(高度+9.5)*(宽度+26.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 21,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "后背板加强筋",
+      "area_formula": "(高度-200)*168.5*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 1,
+        "when_false": 0
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 22,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 23,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 24,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 25,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 26,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-99)*115*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 27,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "顶盖",
+      "area_formula": "(宽度+31.5)*(深度-16)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 28,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "底板1",
+      "area_formula": "(宽度-204)*106*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 29,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "底板2",
+      "area_formula": "(深度-15.5)*117*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 30,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 31,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 32,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 33,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 2,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 34,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 35,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-99)*115*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 36,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "顶盖",
+      "area_formula": "(宽度+31.5)*(深度-16)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 37,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "底板1",
+      "area_formula": "(宽度-204)*106*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 38,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "底板2",
+      "area_formula": "(深度-15.5)*117*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 39,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 40,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 41,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 42,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 43,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 2,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 44,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-72)*(宽度-26.6)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 45,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "下纵梁",
+      "area_formula": "(深度-99)*115*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 46,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "顶盖",
+      "area_formula": "(宽度+31.5)*(深度-16)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 47,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "底板1",
+      "area_formula": "(宽度-204)*106*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 48,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "底板2",
+      "area_formula": "(深度-15.5)*117*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 49,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "活动板1",
+      "area_formula": "(宽度-172)*(深度-17)*0.581780538302*0.000001/2",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 50,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "活动板2",
+      "area_formula": "(宽度-172)*(深度-17)*0.418219461697*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 51,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "安装纵梁",
+      "area_formula": "(深度-55)*38.4*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JP",
+      "source_row_no": 52,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "前单门",
+      "area_formula": "(高度+8)*(宽度+25)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 53,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+8)*(宽度/2+44.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 54,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JP",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+8)*(宽度/2+27.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JP",
+      "source_row_no": 55,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-25)*(宽度-46)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JA",
+      "source_row_no": 3,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体（上下堵头）",
+      "area_formula": "高度*(宽度+深度*2+25)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 4,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体顶板",
+      "area_formula": "(宽度-3)*(深度+13.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 5,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体底板",
+      "area_formula": "(宽度-3)*(深度+13.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 6,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "走线弯角件",
+      "area_formula": "(高度-60)*34*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 7,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+18.4)*(宽度+21.4)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 8,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-25)*(宽度-46)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JA",
+      "source_row_no": 9,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体（上下堵头）",
+      "area_formula": "高度*(宽度+深度*2+25)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 10,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体顶板",
+      "area_formula": "(宽度-3)*(深度+13.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 11,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体底板",
+      "area_formula": "(宽度-3)*(深度+13.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 12,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "走线弯角件",
+      "area_formula": "(高度-60)*34*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 13,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+18.4)*(宽度/2+39.95)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 14,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 1.5,
+      "profile_label": "标准箱体1.5",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+18.4)*(宽度/2+20.9)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 15,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-25)*(宽度-46)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JA",
+      "source_row_no": 19,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体（上下堵头）",
+      "area_formula": "高度*(宽度+深度*2+19.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 20,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体顶板",
+      "area_formula": "(宽度-4)*(深度+11)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 21,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体底板",
+      "area_formula": "(宽度-4)*(深度+11)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 22,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "走线弯角件",
+      "area_formula": "(高度-60)*34*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 23,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+18.4)*(宽度+21.4)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 24,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-25)*(宽度-46)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JA",
+      "source_row_no": 25,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体（上下堵头）",
+      "area_formula": "高度*(宽度+深度*2+19.5)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 26,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体顶板",
+      "area_formula": "(宽度-4)*(深度+11)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 27,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体底板",
+      "area_formula": "(宽度-4)*(深度+11)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 28,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "走线弯角件",
+      "area_formula": "(高度-60)*34*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 29,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+18.4)*(宽度/2+39.95)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 30,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JA",
+      "body_thickness_profile_mm": 2,
+      "profile_label": "箱体料厚改2",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+18.4)*(宽度/2+20.9)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JA",
+      "source_row_no": 31,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-30)*(宽度-44)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JE",
+      "source_row_no": 3,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体（上下堵头）",
+      "area_formula": "高度*(宽度+深度*2+25)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 4,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体顶板",
+      "area_formula": "(宽度-3)*(深度+13.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 5,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体底板",
+      "area_formula": "(宽度-3)*(深度+13.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 6,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "走线弯角件",
+      "area_formula": "(高度-60)*34*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 7,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "走线弯角件2",
+      "area_formula": "(宽度-89)*35*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "JE_REINFORCEMENT",
+        "when_true": 2,
+        "when_false": 0
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 8,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+18.4)*(宽度+21.4)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 9,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "安装板",
+      "area_formula": "(高度-30)*(宽度-44)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JE",
+      "source_row_no": 10,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体（上下堵头）",
+      "area_formula": "高度*(宽度+深度*2+25)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 11,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体顶板",
+      "area_formula": "(宽度-3)*(深度+13.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 12,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "箱体底板",
+      "area_formula": "(宽度-3)*(深度+13.5)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 13,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "走线弯角件1",
+      "area_formula": "(高度-60)*34*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 14,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "左门",
+      "area_formula": "(高度+18.4)*(宽度/2+39.95)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 15,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JE",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 0,
+      "double_door_count": 1,
+      "part_name": "右门",
+      "area_formula": "(高度+18.4)*(宽度/2+20.9)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JE",
+      "source_row_no": 16,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JM",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装板",
+      "area_formula": "(高度-45)*(宽度-32)*0.000001",
+      "sheet_thickness_mm": 2.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": "SECC",
+      "source_sheet": "JM",
+      "source_row_no": 3,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JM",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体（上下堵头）",
+      "area_formula": "高度*(宽度+深度*2+37.1)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JM",
+      "source_row_no": 4,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JM",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体顶板",
+      "area_formula": "(宽度-3)*(深度+19.6)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JM",
+      "source_row_no": 5,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JM",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体底板",
+      "area_formula": "(宽度-3)*(深度+19.6)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JM",
+      "source_row_no": 6,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JM",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "走线弯角件",
+      "area_formula": "(高度-130)*55*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JM",
+      "source_row_no": 7,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JM",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "前单门",
+      "area_formula": "(高度+18.4)*(宽度+21.4)*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JM",
+      "source_row_no": 8,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JK",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体",
+      "area_formula": "高度*(宽度+深度*2-8)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JK",
+      "source_row_no": 3,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JK",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体上顶板",
+      "area_formula": "(宽度-3)*(深度-3)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JK",
+      "source_row_no": 4,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JK",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "箱体下顶板",
+      "area_formula": "(宽度-3)*(深度-3)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JK",
+      "source_row_no": 5,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JK",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "盒盖",
+      "area_formula": "(高度+23)*(宽度+23)*0.000001",
+      "sheet_thickness_mm": 1.5,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 1
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JK",
+      "source_row_no": 6,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JK",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装支架",
+      "area_formula": "((MIN(高度,宽度))-1)*29.7*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 2
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JK",
+      "source_row_no": 7,
+      "source_column": "A:F"
+    },
+    {
+      "family": "JK",
+      "body_thickness_profile_mm": null,
+      "profile_label": "标准",
+      "single_door_count": 1,
+      "double_door_count": 0,
+      "part_name": "安装角",
+      "area_formula": "27.5*49.2*0.000001",
+      "sheet_thickness_mm": 2,
+      "quantity_rule": {
+        "kind": "CONSTANT",
+        "value": 4
+      },
+      "fixed_material_code": null,
+      "source_sheet": "JK",
+      "source_row_no": 8,
+      "source_column": "A:F"
+    }
+  ]
+}

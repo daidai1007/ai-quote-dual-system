@@ -61,6 +61,7 @@ from quote_remark_rules import door_phrase_for_item, replace_door_configuration_
 from quick_discount_rules import (
     attachment_excluded_from_discount,
     quick_attachment_line_amount,
+    formula_attachment_line_amount,
     quick_discount_breakdown,
 )
 from attachment_category_browser import (
@@ -127,7 +128,7 @@ API_URL = str(
     or DEFAULT_RENDER_API_URL
 ).strip()
 API_KEY = str(os.getenv("AI_QUOTE_API_KEY") or CLIENT_CONFIG.get("api_key") or "").strip()
-REQUIRED_EXPORT_API_BUILD = "2026-08-26-signed-attachments-v1"
+REQUIRED_EXPORT_API_BUILD = "2026-09-11-formula-cost-catalogs-v1"
 
 
 def api_headers(has_json_body: bool = False) -> dict[str, str]:
@@ -2529,6 +2530,21 @@ class MainWindow(QMainWindow):
         self.weight_edit = QLineEdit(); self.weight_edit.setReadOnly(True); self.weight_edit.setPlaceholderText("数据库公式计算后自动带入")
         self.area_edit = QLineEdit(); self.area_edit.setReadOnly(True); self.area_edit.setPlaceholderText("数据库公式计算后自动带入")
         field(10, "公式基准重量（kg）", self.weight_edit); field(11, "公式喷涂面积（m²）", self.area_edit)
+        cabinet_material_panel = QWidget(); cabinet_material_layout = QHBoxLayout(cabinet_material_panel)
+        cabinet_material_layout.setContentsMargins(0, 0, 0, 0); cabinet_material_layout.setSpacing(10)
+        self.cabinet_body_thickness_spin = QDoubleSpinBox(); self.cabinet_body_thickness_spin.setRange(0.1, 20)
+        self.cabinet_body_thickness_spin.setDecimals(1); self.cabinet_body_thickness_spin.setSingleStep(0.5)
+        self.cabinet_body_thickness_spin.setValue(1.5); self.cabinet_body_thickness_spin.setSuffix(" mm")
+        self.cabinet_body_thickness_spin.setToolTip("用于选择最新柜体材料明细中的箱体料厚版本；不改变各零件自身料厚")
+        self.waste_factor_spin = QDoubleSpinBox(); self.waste_factor_spin.setRange(0.01, 10)
+        self.waste_factor_spin.setDecimals(3); self.waste_factor_spin.setSingleStep(0.05)
+        self.waste_factor_spin.setValue(1.2); self.waste_factor_spin.setSuffix(" ×")
+        self.waste_factor_spin.setToolTip("计价材料重量＝净材料重量×废料系数；默认 1.2，可按本次报价修改")
+        cabinet_material_layout.addWidget(QLabel("箱体料厚")); cabinet_material_layout.addWidget(self.cabinet_body_thickness_spin, 1)
+        cabinet_material_layout.addWidget(QLabel("废料系数")); cabinet_material_layout.addWidget(self.waste_factor_spin, 1)
+        self.cabinet_body_thickness_spin.valueChanged.connect(self.cabinet_material_input_changed)
+        self.waste_factor_spin.valueChanged.connect(self.cabinet_material_input_changed)
+        field(12, "柜体材料参数", cabinet_material_panel)
         attachment_panel = QWidget(); attachment_layout = QVBoxLayout(attachment_panel); attachment_layout.setContentsMargins(0, 0, 0, 0)
         self.attachment_recommendation = QLabel("OCR 推荐附件：—")
         self.attachment_recommendation.setWordWrap(True)
@@ -2996,21 +3012,37 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.attachments = dialog.attachments; self.update_attachment_view()
 
+    def cabinet_material_input_changed(self, *_args):
+        """Invalidate a displayed quote when a cabinet material input changes."""
+        if not hasattr(self, "risk_label"):
+            return
+        if self.current_result is not None:
+            self.current_result = None
+            self._formula_base_result = None
+            for label in getattr(self, "formula_labels", {}).values():
+                label.setText("—")
+            for label in getattr(self, "quick_labels", {}).values():
+                label.setText("—")
+            self.risk_label.setStyleSheet("color:#b45309;")
+            self.risk_label.setText("柜体料厚或废料系数已改变，请重新计算。")
+
     def calculate(self):
         code = self.selected_product_code()
         if not code:
             QMessageBox.warning(self, "产品未选择", "请选择数据库中的产品型号和变体。"); return
         entry = self.product_catalog.get(self.product_combo.currentData() or "", {})
-        if entry.get("method") == "formula" and (not self.weight_edit.text().strip() or not self.area_edit.text().strip()):
+        if entry.get("method") == "formula" and not self.area_edit.text().strip():
             QMessageBox.information(self, "公式数据读取中", "正在从数据库读取公式模板，请稍后再次计算。"); return
         quote_id = "TMP" + datetime.now().strftime("%Y%m%d%H%M%S%f")[-12:]
         single_count, double_count = self.door_counts()
-        payload = {"quote_id": quote_id, "product_code": code, "model_code": self.model_edit.text().strip(), "material_code": self.material_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "base_material_weight_kg": float(self.weight_edit.text()) if self.weight_edit.text().strip() else None, "product_area_m2": float(self.area_edit.text()) if self.area_edit.text().strip() else None, "coating_type": self.coating_combo.currentData(), "variant_code": self.selected_variant_code(), "single_door_count": single_count, "double_door_count": double_count, "quote_date": self.quote_date.date().toString("yyyy-MM-dd"), "attachments": self.attachments}
+        payload = {"quote_id": quote_id, "product_code": code, "model_code": self.model_edit.text().strip(), "material_code": self.material_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "base_material_weight_kg": float(self.weight_edit.text()) if self.weight_edit.text().strip() else None, "product_area_m2": float(self.area_edit.text()) if self.area_edit.text().strip() else None, "coating_type": self.coating_combo.currentData(), "variant_code": self.selected_variant_code(), "single_door_count": single_count, "double_door_count": double_count, "cabinet_body_thickness_mm": self.cabinet_body_thickness_spin.value(), "waste_factor": self.waste_factor_spin.value(), "quote_date": self.quote_date.date().toString("yyyy-MM-dd"), "attachments": self.attachments}
         self.calculate_button.setEnabled(False); self.worker = ApiWorker(self.api_url.text().strip() or API_URL, payload, self)
         self.worker.succeeded.connect(self.show_result); self.worker.failed.connect(self.show_error); self.worker.finished.connect(lambda: self.calculate_button.setEnabled(True)); self.worker.start()
 
     def show_result(self, result):
         formula = dict(result.get("formula_cost") or {}); quick = dict(result.get("quick_quote") or {})
+        if formula.get("corrected_material_weight_kg") is not None:
+            self.weight_edit.setText(formula_display_number(formula["corrected_material_weight_kg"]))
         self._formula_base_result = dict(formula)
         self.current_result = {"formula": dict(formula), "quick": quick, "risk_flags": result.get("risk_flags") or [], "quote_id": result.get("quote_id")}
         self.refresh_discounted_totals()
@@ -3039,7 +3071,7 @@ class MainWindow(QMainWindow):
         area = formula.get("product_area_m2"); self.formula_labels["area"].setText("—" if area is None else f"{float(area):,.1f} m²")
         if "freight" in self.formula_labels: self.formula_labels["freight"].setText(money(freight))
         excluded_attachment_total = sum(
-            quick_attachment_line_amount(item)
+            formula_attachment_line_amount(item)
             for item in self.attachments
             if attachment_excluded_from_discount(item)
         )
@@ -3091,7 +3123,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "数据待补充", "公式法或快速报价存在缺失数据，不能加入正式汇总清单。"); return
         source_ocr_remark = self.notes_text.toPlainText().strip()
         single_count, double_count = self.door_counts()
-        item = {"name": self.cabinet_name(), "model_code": self.model_edit.text().strip(), "product_code": self.selected_product_code(), "product_family": self.product_combo.currentText(), "variant_code": self.selected_variant_code(), "variant_name": self.selected_variant_name(), "single_door_count": single_count, "double_door_count": double_count, "material_code": self.material_combo.currentData(), "coating_type": self.coating_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "quantity": self.quantity_spin.value(), "freight_fee": self.freight_spin.value(), "attachments": [dict(x) for x in self.attachments], "source_ocr_remark": source_ocr_remark, "source_pdf_name": self.active_drawing.get("name") if self.active_drawing else None, "formula": dict(self.current_result["formula"]), "formula_base": dict(self._formula_base_result or self.current_result["formula"]), "quick": dict(self.current_result["quick"]), "formula_discount": self.formula_discount.value(), "quick_discount": self.quick_discount.value(), "labor_multiplier": self.labor_multiplier.value()}
+        item = {"name": self.cabinet_name(), "model_code": self.model_edit.text().strip(), "product_code": self.selected_product_code(), "product_family": self.product_combo.currentText(), "variant_code": self.selected_variant_code(), "variant_name": self.selected_variant_name(), "single_door_count": single_count, "double_door_count": double_count, "material_code": self.material_combo.currentData(), "coating_type": self.coating_combo.currentData(), "width_mm": self.width_spin.value(), "height_mm": self.height_spin.value(), "depth_mm": self.depth_spin.value(), "cabinet_body_thickness_mm": self.cabinet_body_thickness_spin.value(), "waste_factor": self.waste_factor_spin.value(), "quantity": self.quantity_spin.value(), "freight_fee": self.freight_spin.value(), "attachments": [dict(x) for x in self.attachments], "source_ocr_remark": source_ocr_remark, "source_pdf_name": self.active_drawing.get("name") if self.active_drawing else None, "formula": dict(self.current_result["formula"]), "formula_base": dict(self._formula_base_result or self.current_result["formula"]), "quick": dict(self.current_result["quick"]), "formula_discount": self.formula_discount.value(), "quick_discount": self.quick_discount.value(), "labor_multiplier": self.labor_multiplier.value()}
         final_remark = replace_door_configuration_phrase(
             build_standardized_quote_remark(item, source_ocr_remark),
             item,
@@ -3104,7 +3136,7 @@ class MainWindow(QMainWindow):
         self.summary_table.setRowCount(len(self.draft_items)); formula_sum = quick_sum = 0.0
         for row, item in enumerate(self.draft_items):
             excluded_attachment_total = sum(
-                quick_attachment_line_amount(attachment)
+                formula_attachment_line_amount(attachment)
                 for attachment in item.get("attachments", [])
                 if attachment_excluded_from_discount(attachment)
             )
@@ -3154,10 +3186,10 @@ class MainWindow(QMainWindow):
         mi = self.material_combo.findData(item["material_code"]); ci = self.coating_combo.findData(item["coating_type"])
         if mi >= 0: self.material_combo.setCurrentIndex(mi)
         if ci >= 0: self.coating_combo.setCurrentIndex(ci)
-        self.attachments = [dict(x) for x in item["attachments"]]; self.notes_text.setPlainText(item.get("final_remark", item.get("notes", ""))); self.formula_discount.setValue(item["formula_discount"]); self.quick_discount.setValue(item["quick_discount"]); self.labor_multiplier.setValue(item.get("labor_multiplier", 1.0)); self.freight_spin.setValue(float(item.get("freight_fee", 0) or 0)); self.update_attachment_view(); self._formula_base_result = dict(item.get("formula_base") or item["formula"]); self.current_result = {"formula": dict(item["formula"]), "quick": dict(item["quick"]), "risk_flags": []}; self.refresh_discounted_totals(); self.refresh_formula_inputs()
+        self.attachments = [dict(x) for x in item["attachments"]]; self.notes_text.setPlainText(item.get("final_remark", item.get("notes", ""))); self.formula_discount.setValue(item["formula_discount"]); self.quick_discount.setValue(item["quick_discount"]); self.labor_multiplier.setValue(item.get("labor_multiplier", 1.0)); self.freight_spin.setValue(float(item.get("freight_fee", 0) or 0)); self.cabinet_body_thickness_spin.setValue(float(item.get("cabinet_body_thickness_mm", 1.5) or 1.5)); self.waste_factor_spin.setValue(float(item.get("waste_factor", 1.2) or 1.2)); self.update_attachment_view(); self._formula_base_result = dict(item.get("formula_base") or item["formula"]); self.current_result = {"formula": dict(item["formula"]), "quick": dict(item["quick"]), "risk_flags": []}; self.refresh_discounted_totals(); self.refresh_formula_inputs()
 
     def reset_current_cabinet(self, keep_company=False):
-        self.model_edit.clear(); self.width_spin.setValue(1000); self.height_spin.setValue(1800); self.depth_spin.setValue(600); self.quantity_spin.setValue(1); self.freight_spin.setValue(0); apply_default_quote_inputs(self); self.labor_multiplier.setValue(1); self.formula_discount.setValue(1); self.quick_discount.setValue(1); self.attachments = []; self.notes_text.clear(); self.active_drawing = None; self.recommended_attachments = []; self.attachment_recommendation.setText("OCR 推荐附件：—"); self._formula_base_result = None; self.current_result = None; self.weight_edit.clear(); self.area_edit.clear(); self.update_attachment_view()
+        self.model_edit.clear(); self.width_spin.setValue(1000); self.height_spin.setValue(1800); self.depth_spin.setValue(600); self.quantity_spin.setValue(1); self.freight_spin.setValue(0); self.cabinet_body_thickness_spin.setValue(1.5); self.waste_factor_spin.setValue(1.2); apply_default_quote_inputs(self); self.labor_multiplier.setValue(1); self.formula_discount.setValue(1); self.quick_discount.setValue(1); self.attachments = []; self.notes_text.clear(); self.active_drawing = None; self.recommended_attachments = []; self.attachment_recommendation.setText("OCR 推荐附件：—"); self._formula_base_result = None; self.current_result = None; self.weight_edit.clear(); self.area_edit.clear(); self.update_attachment_view()
         for label in self.formula_labels.values(): label.setText("—")
         for label in self.quick_labels.values(): label.setText("—")
         self.risk_label.setStyleSheet(""); self.risk_label.setText("尚未计算")
@@ -3621,6 +3653,9 @@ def main() -> int:
     window.show()
     return app.exec()
 
+
+from attachment_v2_client import install_attachment_v2
+install_attachment_v2(globals())
 
 if __name__ == "__main__":
     raise SystemExit(main())

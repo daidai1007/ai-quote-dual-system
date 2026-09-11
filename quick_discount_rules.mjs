@@ -29,8 +29,15 @@ const categoryCandidates = (item = {}) => [
   item.model_code,
 ].map((value) => String(value || "").trim()).filter(Boolean);
 
+const topLevelCategory = (item = {}) => [
+  item.category_level1,
+  item.attachment_category,
+  item.category,
+].map((value) => String(value || "").trim()).find(Boolean) || "";
+
 /** Return the approved quick-quote discount category, or null. */
 export function quickDiscountCategory(item = {}) {
+  if (topLevelCategory(item) === "其他附件") return null;
   const candidates = categoryCandidates(item);
   const combined = candidates.join(" ");
   if (combined.includes("安装板单发")) return null;
@@ -44,10 +51,20 @@ export function quickDiscountCategory(item = {}) {
 
 /** Attachments that remain at original price in both quotation methods. */
 export function attachmentExcludedFromDiscount(item = {}) {
+  if (topLevelCategory(item) === "其他附件") return true;
   return categoryCandidates(item).some((value) => value === "门安装条");
 }
 
+/** Attachments omitted only from formula quotations. */
+export function formulaAttachmentExcluded(item = {}) {
+  if(item.catalog_version) return item.status === 'QUICK_ONLY';
+  // 门变形 is a closed first-level database catalogue. Keep this exact so an
+  // unrelated attachment whose name merely contains the words is not omitted.
+  return topLevelCategory(item) === "门变形";
+}
+
 export function quickAttachmentLineAmount(item = {}) {
+  if(item.catalog_version && item.quick_amount != null) return Number(item.quick_amount);
   const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
   for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
     if (hasFiniteNumber(item[key])) {
@@ -94,6 +111,16 @@ export function effectiveAttachmentLineAmount(
   return lineAmount * effectiveAttachmentQuantity(
     item, cabinetQuantity, gangedCabinetCount,
   ) / selected;
+}
+
+export function formulaAttachmentLineAmount(item = {}) {
+  if(!item.catalog_version) return quickAttachmentLineAmount(item);
+  if(item.status==='QUICK_ONLY') return 0;
+  if(item.status==='ERROR'||item.formula_amount==null) throw new Error('附件公式成本未完成，不能汇总');
+  return Number(item.formula_amount);
+}
+export function effectiveFormulaAttachmentLineAmount(item={},cabinetQuantity=1,gangedCabinetCount=1) {
+  return formulaAttachmentLineAmount(item)*effectiveAttachmentQuantity(item,cabinetQuantity,gangedCabinetCount)/Number(item.quantity||1);
 }
 
 /**

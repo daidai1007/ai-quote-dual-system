@@ -9,14 +9,19 @@ import { attachmentCatalogSql, decodeAttachmentCatalog } from './attachment_cata
 import { normalizeDoorVariantInput, normalizeQuickDoorVariantInput } from './door_variant_rules.mjs';
 import { historyPriceMatchSql } from './history_price_query.mjs';
 import { buildPsqlArgs, resolveRuntimeConfig } from './runtime_config.mjs';
+import { createAttachmentService } from './attachment_service.mjs';
+import { applyCabinetMaterial, createCabinetMaterialService } from './cabinet_material_service.mjs';
+import { applyCabinetSpray, createCabinetSprayService } from './cabinet_spray_service.mjs';
+import { applyCabinetLabor, createCabinetLaborService } from './cabinet_labor_service.mjs';
+import { applyCabinetAuxiliary, createCabinetAuxiliaryService } from './cabinet_auxiliary_service.mjs';
 
 const RUNTIME_CONFIG = resolveRuntimeConfig();
 const PORT = RUNTIME_CONFIG.port;
 const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
-const API_BUILD = '2026-08-26-signed-attachments-v1';
-const DEPLOYMENT_BUILD = '20260826-signed-attachments-v4';
+const API_BUILD = '2026-09-11-formula-cost-catalogs-v1';
+const DEPLOYMENT_BUILD = '20260911-formula-cost-catalogs-v1';
 const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -96,7 +101,7 @@ const dateValue = (value) => {
 
 const clientErrorStatus = (error) => {
   const message = String(error?.message || '');
-  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only/i.test(message)
+  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only|报价日期无效|柜体料厚|废料系数|最新柜体材料表没有|缺少材质.+密度或有效材料单价|人工成本必须|没有适用人工|人工公式|辅材 BOM|辅材数量规则/i.test(message)
     ? 400 : 500;
 };
 
@@ -110,6 +115,19 @@ const validateRequest = (input) => {
     const n = Number(input[key]);
     if (!Number.isFinite(n) || n <= 0) throw new Error(`${key} must be a positive number`);
   }
+  if (input.waste_factor !== undefined && input.waste_factor !== null && input.waste_factor !== '') {
+    const wasteFactor = Number(input.waste_factor);
+    if (!Number.isFinite(wasteFactor) || wasteFactor <= 0 || wasteFactor > 10) {
+      throw new Error('waste_factor must be a positive number no greater than 10');
+    }
+  }
+  if (input.cabinet_body_thickness_mm !== undefined && input.cabinet_body_thickness_mm !== null
+      && input.cabinet_body_thickness_mm !== '') {
+    const bodyThickness = Number(input.cabinet_body_thickness_mm);
+    if (!Number.isFinite(bodyThickness) || bodyThickness <= 0 || bodyThickness > 20) {
+      throw new Error('cabinet_body_thickness_mm must be a positive number no greater than 20');
+    }
+  }
   if (input.attachments !== undefined && !Array.isArray(input.attachments)) {
     throw new Error('attachments must be an array');
   }
@@ -117,11 +135,33 @@ const validateRequest = (input) => {
   return {
     ...input,
     product_code: productCode,
-    attachments: (input.attachments || []).map((attachment) => (
-      attachment?.product_code
+    attachments: (input.attachments || []).map((attachment, index) => {
+      if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
+        throw new Error(`attachments[${index}] must be an object`);
+      }
+      const quantity = Number(attachment.quantity ?? 1);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        throw new Error(`attachments[${index}].quantity must be a positive number`);
+      }
+      for (const dimension of ['width_mm', 'height_mm', 'depth_mm']) {
+        if (attachment[dimension] !== undefined && attachment[dimension] !== null && attachment[dimension] !== '') {
+          const value = Number(attachment[dimension]);
+          if (!Number.isFinite(value) || value <= 0) {
+            throw new Error(`attachments[${index}].${dimension} must be a positive number`);
+          }
+        }
+      }
+      if (attachment.unit_price_override !== undefined && attachment.unit_price_override !== null
+          && attachment.unit_price_override !== '') {
+        const override = Number(attachment.unit_price_override);
+        if (!Number.isFinite(override) || override < 0) {
+          throw new Error(`attachments[${index}].unit_price_override must be a non-negative number`);
+        }
+      }
+      return attachment.product_code
         ? { ...attachment, product_code: productCodeValue(attachment.product_code, 'attachment product_code') }
-        : attachment
-    )),
+        : attachment;
+    }),
   };
 };
 
@@ -304,6 +344,24 @@ const runPsql = (sql, clientEncoding = 'UTF8') => new Promise((resolve, reject) 
   // limit and makes spawn fail with ENAMETOOLONG.
   child.stdin.end(`${sql}\n`, 'utf8');
 });
+
+const cabinetMaterialService = createCabinetMaterialService({runPsql});
+const cabinetSprayService = createCabinetSprayService({runPsql});
+const cabinetLaborService = createCabinetLaborService({runPsql});
+const cabinetAuxiliaryService = createCabinetAuxiliaryService({runPsql});
+const calculateBaseQuote = async input => {
+  const [material,spray,auxiliary] = await Promise.all([
+    cabinetMaterialService.calculate(input),cabinetSprayService.calculate(input),cabinetAuxiliaryService.calculate(input),
+  ]);
+  const labor=await cabinetLaborService.calculate(input,material);
+  const databaseInput = material
+    ? {...input, base_material_weight_kg: material.corrected_material_weight_kg}
+    : input;
+  const output=await runPsql(`BEGIN;\n${buildSql(databaseInput)}\nROLLBACK;`);
+  const result = JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).at(-1));
+  return applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(applyCabinetMaterial(result,material),spray),auxiliary),labor);
+};
+const attachmentService = createAttachmentService({runPsql, calculateBase: calculateBaseQuote});
 
 const addAttachmentCatalogSql = (input) => {
   const item = normalizeCatalogAttachment(input);
@@ -877,6 +935,8 @@ const server = http.createServer(async (req, res) => {
       build: API_BUILD,
       deployment: DEPLOYMENT_BUILD,
       database_checked: false,
+      attachment_contract: 2,
+      attachment_ganged_ready: false,
     });
   }
   if (API_KEY && req.url?.startsWith('/api/') && String(req.headers['x-ai-quote-key'] || '') !== API_KEY) {
@@ -931,6 +991,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/api/company-history') {
     try {
       const input = await readBody(req);
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
+      const historyItem=input.payload||input;
+      const hydrated=await attachmentService.hydrateDocument({items:[historyItem]});
+      if(input.payload) input.payload=hydrated.items[0];
+      else Object.assign(input,hydrated.items[0]);
       const output = await runPsql(companyHistoryInsertSql(input));
       return json(res, 200, output ? JSON.parse(output) : { saved: false });
     } catch (error) {
@@ -942,7 +1007,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && req.url === '/api/quotes/confirm') {
     try {
-      const input = await readBody(req);
+      const input = await attachmentService.hydrateDocument(await readBody(req));
       const output = await runPsql(confirmQuoteSql(input));
       return json(res, 200, output ? JSON.parse(output) : { confirmed: false });
     } catch (error) {
@@ -951,7 +1016,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && req.url === '/api/quotes/confirm-check') {
     try {
-      const input = await readBody(req);
+      const input = await attachmentService.hydrateDocument(await readBody(req));
       // Exercise the real inserts, constraints and UTF-8/jsonb conversion,
       // then roll everything back. This endpoint is used by the desktop
       // client's export preflight and by regression tests.
@@ -972,8 +1037,20 @@ const server = http.createServer(async (req, res) => {
       return json(res, 500, { error: 'product_catalog_failed', message: error.message });
     }
   }
+  if (req.method === 'GET' && req.url === '/api/attachments/catalog?v=2') {
+    try { return json(res,200,await attachmentService.catalog()); }
+    catch(error) { return json(res,409,{error:'attachment_v2_unavailable',message:error.message}); }
+  }
+  if (req.method === 'POST' && req.url === '/api/attachments/preview') {
+    try {
+      const input=normalizeProductVariant(validateRequest(await readBody(req)));
+      input.quote_date=dateValue(input.quote_date);input.coating_type ||= DEFAULT_COATING_TYPE;
+      return json(res,200,await attachmentService.preview(input));
+    } catch(error) { return json(res,400,{error:'attachment_preview_failed',message:error.message}); }
+  }
   if (req.method === 'GET' && req.url === '/api/attachments/catalog') {
     try {
+      if(await attachmentService.hasActive()) return json(res,426,{error:'client_upgrade_required',message:'新附件目录需要升级客户端'});
       // Old attachment imports contain a small number of non-UTF8 bytes.
       // The SQL response is base64-only, so SQL_ASCII is safe here and avoids
       // psql failing before Node can restore those legacy values.
@@ -987,6 +1064,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const input = await readBody(req);
       const command = addAttachmentCatalogSql(input);
+      if(await attachmentService.hasActive()) return json(res,409,{error:'catalog_version_managed',message:'当前附件目录以已确认Excel为依据，请通过版本导入更新'});
       const output = await runPsql(command.sql);
       const saved = output ? JSON.parse(output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)) : {};
       return json(res, 200, { ...saved, item: command.item, source: 'postgresql' });
@@ -1019,7 +1097,8 @@ const server = http.createServer(async (req, res) => {
       if (!Array.isArray(input.items) || input.items.length === 0) {
         return json(res, 400, { error: 'quote_export_failed', message: 'items are required' });
       }
-      const enrichedInput = await enrichExportCostDetails(input);
+      const hydratedInput=await attachmentService.hydrateDocument(input);
+      const enrichedInput = await enrichExportCostDetails(hydratedInput);
       const workbook = await runWorkbookExporter(enrichedInput);
       res.writeHead(200, {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -1036,13 +1115,35 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     const input = normalizeProductVariant(validateRequest(await readBody(req)));
-    const output = await runPsql(buildSql(input));
+    if(input.attachment_contract===2) {
+      input.quote_date=dateValue(input.quote_date);input.coating_type ||= DEFAULT_COATING_TYPE;
+      return json(res,200,await attachmentService.calculate(input));
+    }
+    if((input.attachments||[]).length && (await attachmentService.hasActive()
+      ||input.attachments.some(a=>a.catalog_version||a.data_version||a.status))) {
+      return json(res,426,{error:'client_upgrade_required',message:'当前附件需要V2计算接口，请升级客户端；并柜兼容尚未启用'});
+    }
+    const quoteInput={...input,quote_date:dateValue(input.quote_date)};
+    const [cabinetMaterial,cabinetSpray,cabinetAuxiliary]=await Promise.all([
+      cabinetMaterialService.calculate(quoteInput),cabinetSprayService.calculate(quoteInput),cabinetAuxiliaryService.calculate(quoteInput),
+    ]);
+    const cabinetLabor=await cabinetLaborService.calculate(quoteInput,cabinetMaterial);
+    const legacySql=buildSql(cabinetMaterial
+      ? {...input, base_material_weight_kg: cabinetMaterial.corrected_material_weight_kg}
+      : input);
+    const output = await runPsql(legacySql);
     if (!output) throw new Error('database returned no quote result');
     // Attachment selection adds one INSERT result before the final JSON row.
     // Parse the final non-empty line so both empty-attachment and selected-
     // attachment requests use the same response path.
     const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
-    json(res, 200, JSON.parse(jsonLine));
+    const result = applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(
+      applyCabinetMaterial(JSON.parse(jsonLine),cabinetMaterial),cabinetSpray),cabinetAuxiliary),cabinetLabor);
+    await cabinetMaterialService.persist(input.quote_id, result, cabinetMaterial);
+    await cabinetSprayService.persist(input.quote_id, result, cabinetSpray);
+    await cabinetAuxiliaryService.persist(input.quote_id,result,cabinetAuxiliary);
+    await cabinetLaborService.persist(input.quote_id,result,cabinetLabor);
+    json(res, 200, result);
   } catch (error) {
     json(res, clientErrorStatus(error), {
       error: 'dual_quote_failed',

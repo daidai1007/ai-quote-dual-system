@@ -455,6 +455,20 @@ def size_match_attachment_name(item: dict) -> str | None:
     return None
 
 
+def installation_board_catalogue_name(item: dict) -> str | None:
+    """Return the installation-board branch for a valid catalogue row.
+
+    Automatic installation-board matching is intentionally restricted to the
+    catalogue hierarchy whose first-level category is ``安装板``.  This keeps
+    a same-named record under another business category from being selected.
+    """
+
+    if category_value(item, 0) != "安装板":
+        return None
+    name = size_match_attachment_name(item)
+    return name if name in {"安装板", "JK安装板"} else None
+
+
 def size_match_group_key(item: dict) -> tuple[str, str, str, str] | None:
     """Keep nearest-size selection inside one attachment name/category path."""
 
@@ -552,14 +566,24 @@ def match_installation_board_size(
     if required_name:
         candidates = [
             item for item in catalogue
-            if size_match_attachment_name(item) == required_name
+            if installation_board_catalogue_name(item) == required_name
         ]
-        if size_match_attachment_name(source) == required_name:
+        if installation_board_catalogue_name(source) == required_name:
             grouped = _matching_candidates(candidates, source)
             if grouped:
                 candidates = grouped
     else:
-        candidates = _matching_candidates(catalogue, source)
+        source_name = installation_board_catalogue_name(source)
+        candidates = (
+            _matching_candidates(
+                [
+                    item for item in catalogue
+                    if installation_board_catalogue_name(item) == source_name
+                ],
+                source,
+            )
+            if source_name is not None else []
+        )
     if target is None or not candidates:
         return None
     target_width, target_height, target_depth = target

@@ -52,6 +52,9 @@ from quote_remark_rules import door_phrase_for_item, replace_door_configuration_
 from quick_discount_rules import (
     attachment_excluded_from_discount,
     effective_attachment_line_amount,
+    formula_attachment_excluded,
+    formula_attachment_line_amount,
+    effective_formula_attachment_line_amount,
     quick_attachment_line_amount,
     quick_discount_breakdown,
     quick_order_line_breakdown,
@@ -85,6 +88,7 @@ from attachment_category_browser import (
     is_automatic_attachment_selection,
     is_manual_attachment_selection,
     is_jp_product,
+    installation_board_catalogue_name,
     installation_board_match_name_for_product,
     match_attachment_size,
     match_installation_board_for_product,
@@ -116,6 +120,8 @@ WIDGET_MAX = 16_777_215
 # 管理费固定为人工成本的 13%（见运行规则：管理费 = 人工成本 × 0.13）。
 MANAGEMENT_FEE_RATE = 0.13
 VALID_DOOR_COMBINATIONS = {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
+JA_JE_DOOR_COMBINATIONS = {(1, 0), (0, 1)}
+SINGLE_DOOR_ONLY_COMBINATIONS = {(1, 0)}
 QUOTE_WIDE_BREAKPOINT = 1280
 QUOTE_STACK_BREAKPOINT = 1050
 QUOTE_ACTION_DOCK_HEIGHT = 62
@@ -170,6 +176,13 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
         started = time.monotonic()
         payload = getattr(self, "payload", {})
         payload = payload if isinstance(payload, dict) else {}
+        owner = self.parent()
+        waste_widget = getattr(owner, "waste_factor_spin", None)
+        thickness_widget = getattr(owner, "cabinet_body_thickness_spin", None)
+        if isinstance(waste_widget, QDoubleSpinBox):
+            payload["waste_factor"] = float(waste_widget.value())
+        if isinstance(thickness_widget, QDoubleSpinBox):
+            payload["cabinet_body_thickness_mm"] = float(thickness_widget.value())
         LOGGER.info(
             "dual quote request started product=%s quote_id=%s timeout=%ss",
             payload.get("product_code"),
@@ -1211,25 +1224,28 @@ def _ganged_formula_metrics(window) -> list[tuple[float, float]]:
     return metrics
 
 
-def _normalize_door_pair(single: int, double: int, source: str) -> tuple[int, int]:
+def _normalize_door_pair(
+    single: int,
+    double: int,
+    source: str,
+    allowed: set[tuple[int, int]] | None = None,
+) -> tuple[int, int]:
     single, double = int(single), int(double)
-    if (single, double) in VALID_DOOR_COMBINATIONS:
+    approved = set(allowed or VALID_DOOR_COMBINATIONS)
+    if (single, double) in approved:
         return single, double
-    if source == "single":
-        if single == 0:
-            double = double if double in (1, 2) else 1
-        elif single == 1:
-            double = double if double in (0, 1) else 0
-        else:
-            double = 0
-    else:
-        if double == 0:
-            single = single if single in (1, 2) else 1
-        elif double == 1:
-            single = single if single in (0, 1) else 0
-        else:
-            single = 0
-    return (single, double) if (single, double) in VALID_DOOR_COMBINATIONS else (1, 0)
+    matching = sorted(
+        pair
+        for pair in approved
+        if pair[0 if source == "single" else 1] == (single if source == "single" else double)
+    )
+    if matching:
+        return matching[0]
+    if (1, 0) in approved:
+        return 1, 0
+    if (0, 1) in approved:
+        return 0, 1
+    return min(approved) if approved else (1, 0)
 
 
 def _door_transform_matches_for_window(window, catalog: list[dict]) -> dict[str, dict]:
@@ -1306,11 +1322,61 @@ def _sync_quote_specification(window, text: str, parser=None) -> bool:
 
 
 def _allowed_door_combinations(window) -> set[tuple[int, int]]:
-    # Door configuration belongs to the quote item, not to the number of
-    # SINGLE/DOUBLE records exposed by the product catalogue.  The API keeps
-    # formula and quick-quote database paths separate after receiving these
-    # counts, so every product can use every approved operator combination.
-    return set(VALID_DOOR_COMBINATIONS)
+    family = str(_current_product_selection(window) or "").strip().upper()
+    family = family.split("_", 1)[0]
+    if family in {"JS", "JP"}:
+        return set(VALID_DOOR_COMBINATIONS)
+    if family in {"JA", "JE"}:
+        return set(JA_JE_DOOR_COMBINATIONS)
+    return set(SINGLE_DOOR_ONLY_COMBINATIONS)
+
+
+def _door_combination_tooltip(window) -> str:
+    family = str(_current_product_selection(window) or "").strip().upper()
+    family = family.split("_", 1)[0]
+    if family in {"JS", "JP"}:
+        return "可选门型：单门/双门 1/0、0/1、2/0、1/1、0/2"
+    if family in {"JA", "JE"}:
+        return "可选门型：单门/双门 1/0、0/1；2/0、1/1、0/2 已禁用"
+    return "该产品门型固定为：单门/双门 1/0"
+
+
+def _configure_door_combo_options(
+    window,
+    single: QComboBox,
+    double: QComboBox,
+    *,
+    locked: bool = False,
+) -> None:
+    """Expose only count values that participate in an allowed door pair."""
+
+    allowed = _allowed_door_combinations(window)
+    permitted_values = (
+        {pair[0] for pair in allowed},
+        {pair[1] for pair in allowed},
+    )
+    for combo, permitted in zip((single, double), permitted_values):
+        model = combo.model()
+        for index in range(combo.count()):
+            item = model.item(index) if hasattr(model, "item") else None
+            if item is None:
+                continue
+            try:
+                value = int(combo.itemData(index))
+            except (TypeError, ValueError):
+                value = -1
+            item.setEnabled(value in permitted)
+        combo.setEnabled(not locked)
+        combo.setToolTip(_door_combination_tooltip(window))
+
+
+def _sync_main_door_combo_options(window, *, locked: bool = False) -> None:
+    single = getattr(window, "single_door_combo", None)
+    double = getattr(window, "double_door_combo", None)
+    if not isinstance(single, QComboBox) or not isinstance(double, QComboBox):
+        return
+    _set_default_door_combination(window)
+    _configure_door_combo_options(window, single, double, locked=locked)
 
 
 def _current_door_counts(window) -> tuple[int, int] | None:
@@ -1408,27 +1474,29 @@ def _sync_door_limiter_default_quantity(
 
 
 def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
-    """Return a formula-quote line total with attachment quantity exceptions."""
+    """Return a formula line total, omitting exact 门变形 catalogue rows."""
 
     quote = item.get("formula") or {}
     attachments = [row for row in item.get("attachments", []) if isinstance(row, dict)]
     cabinets = _safe_float(item.get("quantity")) or 1.0
     split_count = float(ganged_split_count(item))
     discount = _safe_float(item.get("formula_discount")) or 1.0
-    listed = sum(quick_attachment_line_amount(row) for row in attachments)
+    listed = sum(formula_attachment_line_amount(row) for row in attachments)
     attachment_fee = _safe_float(quote.get("attachment_fee"))
     if attachment_fee is None:
         attachment_fee = listed
     base = (_safe_float(quote.get("total_cost")) or 0.0) - attachment_fee
     original_price_attachment_total = sum(
-        effective_attachment_line_amount(row, cabinets, split_count)
+        effective_formula_attachment_line_amount(row, cabinets, split_count)
         for row in attachments
-        if attachment_excluded_from_discount(row)
+        if not formula_attachment_excluded(row)
+        and attachment_excluded_from_discount(row)
     )
     discounted_attachment_total = sum(
-        effective_attachment_line_amount(row, cabinets, split_count)
+        effective_formula_attachment_line_amount(row, cabinets, split_count)
         for row in attachments
-        if not attachment_excluded_from_discount(row)
+        if not formula_attachment_excluded(row)
+        and not attachment_excluded_from_discount(row)
     )
     discounted_attachment_total += (attachment_fee - listed) * cabinets
     effective = discounted_attachment_total + original_price_attachment_total
@@ -1570,9 +1638,16 @@ def _restore_quote_selections_after_product_change(
 
 def _current_product_selection(window):
     combo = getattr(window, "product_combo", None)
-    if not isinstance(combo, QComboBox) or combo.currentIndex() < 0:
+    if combo is None:
         return None
-    return combo.currentData() or combo.currentText().strip() or None
+    current_index = getattr(combo, "currentIndex", None)
+    if callable(current_index) and current_index() < 0:
+        return None
+    current_data = getattr(combo, "currentData", None)
+    data = current_data() if callable(current_data) else None
+    current_text = getattr(combo, "currentText", None)
+    label = str(current_text() or "").strip() if callable(current_text) else ""
+    return data or label or None
 
 
 def _restore_product_selection(window, selection) -> bool:
@@ -1602,12 +1677,7 @@ def _enforce_product_door_combination(window, source: str) -> bool:
     allowed = _allowed_door_combinations(window)
     if not allowed or counts in allowed:
         return False
-    if source == "double" and (0, 1) in allowed and counts[1] > 0:
-        target = (0, 1)
-    elif source == "single" and (1, 0) in allowed and counts[0] > 0:
-        target = (1, 0)
-    else:
-        target = (1, 0) if (1, 0) in allowed else (0, 1)
+    target = _normalize_door_pair(counts[0], counts[1], source, allowed)
     setter(*target)
     for method_name in ("refresh_formula_inputs", "request_history_match"):
         method = getattr(window, method_name, None)
@@ -1678,6 +1748,22 @@ def _render_ganged_cabinet_table(window) -> None:
     if not isinstance(table, QTableWidget):
         return
     rows = _ganged_rows(window)
+    allowed = _allowed_door_combinations(window)
+    normalized_rows = []
+    for row in rows:
+        normalized = dict(row)
+        single, double = _normalize_door_pair(
+            int(row.get("single_door_count") or 0),
+            int(row.get("double_door_count") or 0),
+            "single",
+            allowed,
+        )
+        normalized["single_door_count"] = single
+        normalized["double_door_count"] = double
+        normalized_rows.append(normalized)
+    if normalized_rows != rows:
+        window.ganged_cabinets = normalized_rows
+        rows = normalized_rows
     table.blockSignals(True)
     # Recreating rows also disposes the previous combo-box cell widgets.
     # Merely setting the same row count leaves stale widgets over the index
@@ -1704,6 +1790,11 @@ def _render_ganged_cabinet_table(window) -> None:
                 lambda _index, r=row_index, s=source: _ganged_door_changed(window, r, s)
             )
             table.setCellWidget(row_index, column, combo)
+        _configure_door_combo_options(
+            window,
+            table.cellWidget(row_index, 2),
+            table.cellWidget(row_index, 3),
+        )
     table.blockSignals(False)
     table.setFixedHeight(min(42 + 34 * len(rows), 246))
     hint = getattr(window, "ganged_cabinet_hint", None)
@@ -1719,23 +1810,7 @@ def _set_ganged_controls_enabled(window, ganged: bool) -> None:
         field = getattr(window, name, None)
         if isinstance(field, QDoubleSpinBox):
             field.setEnabled(not ganged)
-    single = getattr(window, "single_door_combo", None)
-    double = getattr(window, "double_door_combo", None)
-    if ganged:
-        if isinstance(single, QComboBox):
-            single.setEnabled(False)
-        if isinstance(double, QComboBox):
-            double.setEnabled(False)
-        return
-    entry = getattr(window, "product_catalog", {}).get(
-        getattr(getattr(window, "product_combo", None), "currentData", lambda: None)() or "",
-        {},
-    )
-    enabled = bool(set((entry.get("codes") or {}).keys()) & {"SINGLE", "DOUBLE"})
-    if isinstance(single, QComboBox):
-        single.setEnabled(enabled)
-    if isinstance(double, QComboBox):
-        double.setEnabled(enabled)
+    _sync_main_door_combo_options(window, locked=ganged)
 
 
 def _sync_ganged_specification(window, text: str) -> bool:
@@ -1838,6 +1913,7 @@ def _ganged_door_changed(window, row_index: int, source: str) -> None:
         int(single_combo.currentData() or 0),
         int(double_combo.currentData() or 0),
         source,
+        _allowed_door_combinations(window),
     )
     window.ganged_cabinets = cascade_door_counts(rows, row_index, single, double)
     if row_index == 0:
@@ -1901,6 +1977,12 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
             "variant_code": variant,
             "single_door_count": single,
             "double_door_count": double,
+            "cabinet_body_thickness_mm": float(
+                getattr(getattr(window, "cabinet_body_thickness_spin", None), "value", lambda: 1.5)()
+            ),
+            "waste_factor": float(
+                getattr(getattr(window, "waste_factor_spin", None), "value", lambda: 1.2)()
+            ),
             "quote_date": quote_date.date().toString("yyyy-MM-dd") if quote_date is not None else None,
             # Attachments are priced once in the aggregate result.  Sending
             # them in every child request would duplicate the three manual
@@ -2196,11 +2278,9 @@ def _configure_quote_rule_interactions(window, parser=None) -> None:
     double = getattr(window, "double_door_combo", None)
     if isinstance(single, QComboBox):
         single.setAccessibleName("单门数量")
-        single.setToolTip("所有产品均支持五种门型组合；门型会写入报价清单和正式报价单")
     if isinstance(double, QComboBox):
         double.setAccessibleName("双门数量")
-        double.setToolTip("JS/JP/JA/JE 无论选择哪种门型，快速报价均读取单门库")
-    _set_default_door_combination(window)
+    _sync_main_door_combo_options(window)
 
     model_edit = getattr(window, "model_edit", None)
     if isinstance(model_edit, QLineEdit):
@@ -2987,6 +3067,8 @@ def _configure_quote_input_form(window) -> None:
             "double_door_combo",
             "quantity_spin",
             "freight_spin",
+            "cabinet_body_thickness_spin",
+            "waste_factor_spin",
         )
     ]
     for control in controls:
@@ -3012,6 +3094,8 @@ def _configure_quote_input_form(window) -> None:
         "double_door_combo": "双门数量",
         "quantity_spin": "柜体数量（必填）",
         "freight_spin": "运费",
+        "cabinet_body_thickness_spin": "箱体料厚版本（毫米）",
+        "waste_factor_spin": "柜体材料废料系数",
     }
     for name, accessible_name in accessible_names.items():
         control = getattr(window, name, None)
@@ -3152,6 +3236,67 @@ def _ensure_freight_field(window) -> None:
             row_layout.addWidget(value, 1)
             layout.addWidget(row_widget)
         labels["freight"] = value
+
+
+def _ensure_cabinet_material_fields(window) -> None:
+    """Expose inputs consumed by the versioned cabinet-material rules."""
+
+    stack = getattr(window, "stack", None)
+    page = stack.widget(1) if stack is not None and stack.count() > 1 else None
+    card = _find(page, QFrame, "quoteInputCard") if page is not None else None
+    quantity = getattr(window, "quantity_spin", None)
+    quantity_block = quantity.parentWidget() if isinstance(quantity, QWidget) else None
+    form_grid = _layout_containing_widget(card.layout() if card is not None else None, quantity_block)
+    specs = (
+        ("cabinet_body_thickness_spin", "cabinetBodyThicknessSpin", "箱体料厚", 1.5, 0.1, 20.0, 1, 0.5, " mm",
+         "用于选择最新柜体材料明细中的箱体料厚版本；不改变零件自身料厚"),
+        ("waste_factor_spin", "cabinetWasteFactorSpin", "废料系数", 1.2, 0.01, 10.0, 3, 0.05, " ×",
+         "计价材料重量＝净材料重量×废料系数；默认 1.2，可按本次报价修改"),
+    )
+    new_widgets = []
+    for attr, object_name, caption, default, minimum, maximum, decimals, step, suffix, tip in specs:
+        widget = getattr(window, attr, None)
+        if not isinstance(widget, QDoubleSpinBox):
+            widget = QDoubleSpinBox(card)
+            widget.setValue(default)
+            setattr(window, attr, widget)
+            new_widgets.append((caption, widget))
+        widget.setObjectName(object_name)
+        widget.setRange(minimum, maximum)
+        widget.setDecimals(decimals)
+        widget.setSingleStep(step)
+        widget.setSuffix(suffix)
+        widget.setToolTip(tip)
+        widget.setMinimumHeight(UI_CONTROL_HEIGHT)
+        if not getattr(widget, "_cabinet_material_change_connected", False):
+            def invalidate(_value, owner=window):
+                if getattr(owner, "current_result", None) is None:
+                    return
+                owner.current_result = None
+                owner._formula_base_result = None
+                risk = getattr(owner, "risk_label", None)
+                if isinstance(risk, QLabel):
+                    risk.setText("柜体料厚或废料系数已改变，请重新计算。")
+            widget.valueChanged.connect(invalidate)
+            widget._cabinet_material_change_connected = True
+
+    if new_widgets and isinstance(form_grid, QGridLayout) and card is not None:
+        row = form_grid.rowCount()
+        for column, (caption, widget) in enumerate(new_widgets):
+            block = QFrame(card)
+            block.setObjectName("fieldBlock")
+            layout = QVBoxLayout(block)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(UI_SPACE_XS)
+            label = QLabel(caption, block)
+            label.setObjectName("compactFieldLabel")
+            label.setBuddy(widget)
+            layout.addWidget(label)
+            layout.addWidget(widget)
+            form_grid.addWidget(block, row, column)
+    elif new_widgets and card is not None and isinstance(card.layout(), QFormLayout):
+        for caption, widget in new_widgets:
+            card.layout().addRow(caption, widget)
 
 
 def _ensure_labor_multiplier_field(window) -> None:
@@ -3489,6 +3634,7 @@ def apply_layout_refresh(window) -> None:
 
     _refresh_recognition_page(window)
     _ensure_freight_field(window)
+    _ensure_cabinet_material_fields(window)
     _ensure_labor_multiplier_field(window)
     _configure_quote_input_form(window)
     _refresh_quote_page(window)
@@ -3632,6 +3778,10 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             formula = result.get("formula_cost") if isinstance(result, dict) else None
             self._formula_base_result = dict(formula) if isinstance(formula, dict) else None
             original_show_result(self, result)
+            corrected_weight = formula.get("corrected_material_weight_kg") if isinstance(formula, dict) else None
+            weight_edit = getattr(self, "weight_edit", None)
+            if corrected_weight is not None and isinstance(weight_edit, QLineEdit):
+                weight_edit.setText(f"{float(corrected_weight):.8f}".rstrip("0").rstrip("."))
             if not isinstance(getattr(self, "current_result", None), dict):
                 self._formula_base_result = None
                 return
@@ -3650,6 +3800,12 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             freight_widget = getattr(self, "freight_spin", None)
             if isinstance(freight_widget, QDoubleSpinBox):
                 freight_widget.setValue(0)
+            thickness_widget = getattr(self, "cabinet_body_thickness_spin", None)
+            if isinstance(thickness_widget, QDoubleSpinBox):
+                thickness_widget.setValue(1.5)
+            waste_widget = getattr(self, "waste_factor_spin", None)
+            if isinstance(waste_widget, QDoubleSpinBox):
+                waste_widget.setValue(1.2)
             _restore_product_selection(self, retained_product)
             self._formula_base_result = None
             self.attachment_default_opt_outs = set()
@@ -3752,6 +3908,10 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
                 0.0,
                 _safe_float(getattr(freight_widget, "value", lambda: 0.0)()) or 0.0,
             )
+            thickness_widget = getattr(self, "cabinet_body_thickness_spin", None)
+            body_thickness = _safe_float(getattr(thickness_widget, "value", lambda: 1.5)()) or 1.5
+            waste_widget = getattr(self, "waste_factor_spin", None)
+            waste_factor = _safe_float(getattr(waste_widget, "value", lambda: 1.2)()) or 1.2
             before = len(getattr(self, "draft_items", []))
             result = original_add(self)
             items = getattr(self, "draft_items", [])
@@ -3761,6 +3921,8 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
                     item["formula_base"] = dict(base)
                 item["labor_multiplier"] = multiplier
                 item["freight_fee"] = freight_fee
+                item["cabinet_body_thickness_mm"] = body_thickness
+                item["waste_factor"] = waste_factor
                 item["attachment_default_opt_outs"] = sorted(default_opt_outs)
                 item["attachment_default_quantity_overrides"] = sorted(
                     quantity_overrides
@@ -3793,6 +3955,16 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             multiplier_widget = getattr(self, "labor_multiplier", None)
             if isinstance(multiplier_widget, QDoubleSpinBox):
                 multiplier_widget.setValue(float(item.get("labor_multiplier", 1.0)))
+            thickness_widget = getattr(self, "cabinet_body_thickness_spin", None)
+            waste_widget = getattr(self, "waste_factor_spin", None)
+            if isinstance(thickness_widget, QDoubleSpinBox):
+                thickness_widget.blockSignals(True)
+                thickness_widget.setValue(float(item.get("cabinet_body_thickness_mm", 1.5) or 1.5))
+                thickness_widget.blockSignals(False)
+            if isinstance(waste_widget, QDoubleSpinBox):
+                waste_widget.blockSignals(True)
+                waste_widget.setValue(float(item.get("waste_factor", 1.2) or 1.2))
+                waste_widget.blockSignals(False)
             opt_outs = set(item.get("attachment_default_opt_outs", [])) if isinstance(item, dict) else set()
             quantity_overrides = (
                 set(item.get("attachment_default_quantity_overrides", []))
@@ -4515,7 +4687,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             board_source = next(
                 (
                     item for item in catalog
-                    if size_match_attachment_name(item) == required_board_name
+                    if installation_board_catalogue_name(item) == required_board_name
                 ),
                 None,
             )
@@ -6400,20 +6572,12 @@ def install_layout_refresh(namespace: dict) -> None:
                 coating_combo.currentData() if isinstance(coating_combo, QComboBox) else None
             )
             result = original_product_changed(self)
-            # The extracted runtime core may still contain the legacy rule
-            # that disables both selectors for DEFAULT-only products. Keep the
-            # runtime overlay aligned with the source implementation: every
-            # product owns an explicit operator-selected door configuration.
-            for combo_name in ("single_door_combo", "double_door_combo"):
-                combo = getattr(self, combo_name, None)
-                if isinstance(combo, QComboBox):
-                    combo.setEnabled(True)
             _restore_quote_selections_after_product_change(
                 self,
                 material_selected,
                 coating_selected,
             )
-            _set_default_door_combination(self)
+            _sync_main_door_combo_options(self, locked=_ganged_count(self) > 1)
             _sync_door_limiter_default_quantity(self, previous_door_counts)
             _sync_door_transform_defaults(self)
             _refresh_model_suggestions(self)
@@ -6866,3 +7030,5 @@ def install_layout_refresh(namespace: dict) -> None:
             return loaded
         main_window.formula_template_loaded = formula_template_loaded_with_perimeter_rule
     main_window._layout_refresh_installed = True
+    from attachment_v2_client import install_attachment_v2
+    install_attachment_v2(namespace)

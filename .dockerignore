@@ -3,6 +3,13 @@
 !package-lock.json
 !api/
 !api/server.mjs
+!api/attachment_service.mjs
+!api/attachment_cost.mjs
+!api/attachment_formula.mjs
+!api/cabinet_material_service.mjs
+!api/cabinet_spray_service.mjs
+!api/cabinet_labor_service.mjs
+!api/cabinet_auxiliary_service.mjs
 !api/attachment_rules.mjs
 !api/attachment_catalog_rules.mjs
 !api/attachment_catalog_query.mjs
@@ -13,3 +20,4 @@
 !quote_export_contract.mjs
 !quick_discount_rules.mjs
 !export_dual_quote_workbook.mjs
+!attachment_snapshot_export.mjs

@@ -1199,9 +1199,8 @@ for name in (
     assert control.minimumHeight() >= layout_refresh.UI_CONTROL_HEIGHT, (name, control.minimumHeight())
     assert control.accessibleName(), name
 
-# A product with only one DEFAULT database code must still expose all five
-# operator door configurations. Database source mapping happens after the UI
-# choice is captured and must not disable these controls.
+# Products outside JS/JP/JA/JE are fixed to the single-door 1/0 combination.
+# Keep the selectors visible and readable, but disable every alternative item.
 saved_refresh_formula_inputs = window.refresh_formula_inputs
 saved_request_history_match = window.request_history_match
 window.refresh_formula_inputs = lambda: None
@@ -1216,9 +1215,26 @@ window.product_combo.blockSignals(False)
 window.product_changed()
 assert window.single_door_combo.isEnabled()
 assert window.double_door_combo.isEnabled()
+assert window.door_counts() == (1, 0)
+assert window.single_door_combo.model().item(window.single_door_combo.findData(1)).isEnabled()
+assert not window.single_door_combo.model().item(window.single_door_combo.findData(0)).isEnabled()
+assert not window.single_door_combo.model().item(window.single_door_combo.findData(2)).isEnabled()
+assert window.double_door_combo.model().item(window.double_door_combo.findData(0)).isEnabled()
+assert not window.double_door_combo.model().item(window.double_door_combo.findData(1)).isEnabled()
+assert not window.double_door_combo.model().item(window.double_door_combo.findData(2)).isEnabled()
+layout_refresh._set_ganged_controls_enabled(window, False)
+assert window.single_door_combo.isEnabled()
+assert window.double_door_combo.isEnabled()
+layout_refresh._set_ganged_controls_enabled(window, True)
+assert not window.single_door_combo.isEnabled()
+assert not window.double_door_combo.isEnabled()
+layout_refresh._set_ganged_controls_enabled(window, False)
+assert window.single_door_combo.isEnabled()
+assert window.double_door_combo.isEnabled()
 window.set_door_counts(1, 1)
 assert window.door_counts() == (1, 1)
-assert not layout_refresh._enforce_product_door_combination(window, "double")
+assert layout_refresh._enforce_product_door_combination(window, "double")
+assert window.door_counts() == (1, 0)
 window.refresh_formula_inputs = saved_refresh_formula_inputs
 window.request_history_match = saved_request_history_match
 
@@ -1481,6 +1497,51 @@ door_strip_formula_order = layout_refresh._formula_order_line_breakdown({
 assert door_strip_formula_order["discounted_attachment_total"] == 0
 assert door_strip_formula_order["original_price_attachment_total"] == 60
 assert door_strip_formula_order["line_total"] == 2460
+other_attachment = {
+    "item_name": "侧门",
+    "category_level1": "其他附件",
+    "quantity": 1,
+    "unit_price": 150,
+}
+other_attachment_formula_order = layout_refresh._formula_order_line_breakdown({
+    "formula": {"attachment_fee": 150, "total_cost": 1150},
+    "attachments": [other_attachment],
+    "quantity": 3,
+    "formula_discount": 0.8,
+})
+assert other_attachment_formula_order["discounted_attachment_total"] == 0
+assert other_attachment_formula_order["original_price_attachment_total"] == 450
+assert other_attachment_formula_order["line_total"] == 2850
+door_transformation = {
+    "item_name": "JS、JP后背板改为单开门",
+    "category_level1": "门变形",
+    "category_level2": "JS、JP后背板改为单开门",
+    "quantity": 1,
+    "unit_price": 150,
+}
+formula_door_transform_order = layout_refresh._formula_order_line_breakdown({
+    "formula": {"attachment_fee": 200, "total_cost": 1200},
+    "attachments": [
+        door_transformation,
+        {"item_name": "固定底座", "category_level1": "底座", "quantity": 1, "unit_price": 50},
+    ],
+    "quantity": 1,
+    "formula_discount": 0.8,
+})
+assert formula_door_transform_order["attachment_total"] == 50
+assert formula_door_transform_order["discounted_attachment_total"] == 50
+assert formula_door_transform_order["original_price_attachment_total"] == 0
+assert formula_door_transform_order["line_total"] == 840
+quick_door_transform_order = layout_refresh.quick_order_line_breakdown(
+    {"base_price": 1000, "attachment_fee": 200, "total_cost": 1200},
+    [
+        door_transformation,
+        {"item_name": "固定底座", "category_level1": "底座", "quantity": 1, "unit_price": 50},
+    ],
+    0.8,
+    1,
+)
+assert quick_door_transform_order["line_total"] == 990
 if artifact_dir is not None:
     window.show_section(1)
     app.processEvents()
@@ -1888,6 +1949,69 @@ assert window.summary_table.item(0, quick_price_columns[0]).text() == "4,200.58"
     window.summary_table.item(0, quick_price_columns[0]).text()
 )
 assert "8,401.15" in window.summary_quick_total.text(), window.summary_quick_total.text()
+
+# An exact first-level 门变形 row remains selected and priced for quick quote,
+# while formula UI and summary omit only that row's fee.
+window.attachments = [
+    {
+        "item_name": "JS、JP后背板改为单开门",
+        "category_level1": "门变形",
+        "category_level2": "JS、JP后背板改为单开门",
+        "quantity": 1,
+        "unit_price": 150,
+    },
+    {"item_name": "固定底座", "category_level1": "底座", "quantity": 1, "unit_price": 50},
+]
+window._formula_base_result = {
+    "material_cost": 400,
+    "auxiliary_cost": 200,
+    "labor_cost": 200,
+    "attachment_fee": 200,
+    "spray_cost": 174,
+    "management_fee": 26,
+    "total_cost": 1200,
+}
+window.current_result = {
+    "formula": dict(window._formula_base_result),
+    "quick": {"base_price": 1000, "attachment_fee": 200, "total_cost": 1200},
+}
+window.formula_discount.setValue(1)
+window.quick_discount.setValue(1)
+window.refresh_discounted_totals()
+assert window.formula_labels["attachment"].text() == "50.00 元"
+assert window.formula_labels["total"].text() == "1,050.00 元"
+assert window.quick_labels["attachment"].text() == "200.00 元"
+assert window.quick_labels["total"].text() == "1,200.00 元"
+window.draft_items = [{
+    "name": "门变形公式排除测试柜",
+    "model_code": "MODEL-DOOR-TRANSFORM",
+    "width_mm": 1000,
+    "height_mm": 1800,
+    "depth_mm": 600,
+    "material_code": "SECC",
+    "single_door_count": 2,
+    "double_door_count": 0,
+    "quantity": 1,
+    "attachments": [dict(item) for item in window.attachments],
+    "formula": dict(window._formula_base_result),
+    "formula_discount": 1,
+    "quick": {"base_price": 1000, "attachment_fee": 200, "total_cost": 1200},
+    "quick_discount": 1,
+    "notes": "门变形公式排除测试",
+}]
+window.refresh_summary()
+formula_price_columns = [
+    column
+    for column in range(window.summary_table.columnCount())
+    if window.summary_table.horizontalHeaderItem(column) is not None
+    and "公式" in window.summary_table.horizontalHeaderItem(column).text()
+    and "折扣" not in window.summary_table.horizontalHeaderItem(column).text()
+]
+assert formula_price_columns
+assert window.summary_table.item(0, formula_price_columns[0]).text() == "1,050.00"
+assert window.summary_table.item(0, quick_price_columns[0]).text() == "1,200.00"
+assert "1,050.00" in window.summary_formula_total.text()
+assert "1,200.00" in window.summary_quick_total.text()
 window.draft_items = []
 window.refresh_summary()
 
@@ -2100,6 +2224,8 @@ assert history_state.text() == "完全匹配 1 条（源表 2 行）"
 assert window.single_door_combo.isEnabled()
 assert window.double_door_combo.isEnabled()
 assert window.door_counts() == (1, 0), window.door_counts()
+assert not window.single_door_combo.model().item(window.single_door_combo.findData(0)).isEnabled()
+assert not window.double_door_combo.model().item(window.double_door_combo.findData(1)).isEnabled()
 material_index = window.material_combo.findData("SUS304")
 coating_index = window.coating_combo.findData("平光")
 assert material_index >= 0 and coating_index >= 0
@@ -2134,8 +2260,21 @@ window.product_combo.addItem("JA", "JA")
 window.single_door_combo.setEnabled(True)
 window.double_door_combo.setEnabled(True)
 window.set_door_counts(0, 0)
-layout_refresh._set_default_door_combination(window)
+layout_refresh._sync_main_door_combo_options(window)
 assert window.door_counts() == (1, 0), window.door_counts()
+assert window.single_door_combo.model().item(window.single_door_combo.findData(0)).isEnabled()
+assert window.single_door_combo.model().item(window.single_door_combo.findData(1)).isEnabled()
+assert not window.single_door_combo.model().item(window.single_door_combo.findData(2)).isEnabled()
+assert window.double_door_combo.model().item(window.double_door_combo.findData(0)).isEnabled()
+assert window.double_door_combo.model().item(window.double_door_combo.findData(1)).isEnabled()
+assert not window.double_door_combo.model().item(window.double_door_combo.findData(2)).isEnabled()
+
+# Door-limiter quantity tests need a family that intentionally supports all
+# five combinations, independently of the JA/JE selector restrictions above.
+window.product_catalog = {"JS": {"codes": {"SINGLE": "JS_SINGLE"}, "method": "formula"}}
+window.product_combo.clear()
+window.product_combo.addItem("JS", "JS")
+layout_refresh._sync_main_door_combo_options(window)
 
 window.attachments = [
     {"item_name": "门限位器", "category_level1": "门限位器", "quantity": 1},

@@ -1,0 +1,1172 @@
+{
+  "data_version": "cabinet-labor-a3d12580527a3eb6-v1",
+  "source_file": "人工公式xlsx.xlsx",
+  "source_sha256": "a3d12580527a3eb69eedd47b35107b0c8577333d1a52a7331ce8730dd866d1bd",
+  "management_fee_rate": 0.13,
+  "rules": [
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JS",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 283.3905,
+      "slope": 0.367734,
+      "excluded_part_names": [],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 283.3905 + 0.367734 × 计价材料重量",
+      "source_sheet": "JS",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JS",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 547.4286,
+      "slope": 4.697963,
+      "excluded_part_names": [
+        "安装纵梁",
+        "安装板"
+      ],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 547.4286 + 4.697963 × 计价材料重量（去掉安装纵梁和安装板的重量）",
+      "source_sheet": "JS",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 276.9326,
+      "slope": 0.601407,
+      "excluded_part_names": [],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 276.9326 + 0.601407 × 计价材料重量",
+      "source_sheet": "JP",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 595.8205,
+      "slope": 2.657353,
+      "excluded_part_names": [
+        "安装纵梁",
+        "安装板"
+      ],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 595.8205 + 2.657353 × 计价材料重量（去掉安装纵梁和安装板的重量）",
+      "source_sheet": "JP",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JA",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 66.2737,
+      "slope": 4.507871,
+      "excluded_part_names": [],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 66.2737 + 4.507871 × 计价材料重量",
+      "source_sheet": "JA",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JA",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 172.3497,
+      "slope": 4.771904,
+      "excluded_part_names": [
+        "安装板"
+      ],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 172.3497 + 4.771904 × 计价材料重量（去掉安装板的重量）",
+      "source_sheet": "JA",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JE",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 160.7556,
+      "slope": 1.685943,
+      "excluded_part_names": [],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 160.7556 + 1.685943 × 计价材料重量",
+      "source_sheet": "JE",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JE",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 217.5626,
+      "slope": 2.898569,
+      "excluded_part_names": [
+        "安装板"
+      ],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 217.5626+2.898569*计价材料重量（去掉安装板的重量）",
+      "source_sheet": "JE",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JK",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 47.1526,
+      "slope": 11.720875,
+      "excluded_part_names": [],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 =47.1526 + 11.720875 × 计价材料重量",
+      "source_sheet": "JK",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JK",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 122.207,
+      "slope": 16.120888,
+      "excluded_part_names": [],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 122.2070 + 16.120888 × 计价材料重量",
+      "source_sheet": "JK",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "LINEAR_WEIGHT",
+      "product_code": "JM",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": null,
+      "width_mm": null,
+      "height_mm": null,
+      "depth_mm": null,
+      "intercept": 197.2715,
+      "slope": 1.423229,
+      "excluded_part_names": [],
+      "labor_cost": null,
+      "allow_dimension_scale": false,
+      "source_formula": "人工 = 197.2715 + 1.423229 × 计价材料重量",
+      "source_sheet": "JM",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JC_EXP",
+      "profile_code": "LUXURY",
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JC601660",
+      "width_mm": 600,
+      "height_mm": 1600,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1220,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JC（豪华型）",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JC_EXP",
+      "profile_code": "LUXURY",
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JC601680",
+      "width_mm": 600,
+      "height_mm": 1600,
+      "depth_mm": 800,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1371,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JC（豪华型）",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JC_EXP",
+      "profile_code": "STANDARD",
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JC601660",
+      "width_mm": 600,
+      "height_mm": 1600,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 980,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JC（标配型）",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JC_EXP",
+      "profile_code": "STANDARD",
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JC601680",
+      "width_mm": 600,
+      "height_mm": 1600,
+      "depth_mm": 800,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1130,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JC（标配型）",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JQ609648-1",
+      "width_mm": 600,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 792,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JQ",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JQ809648-1",
+      "width_mm": 800,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 823,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JQ",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JQ109648-1",
+      "width_mm": 1000,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 875,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JQ",
+      "source_row_no": 5
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JQ129648-1",
+      "width_mm": 1200,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 913,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JQ",
+      "source_row_no": 6
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JQ609648-2",
+      "width_mm": 600,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1210,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JQ",
+      "source_row_no": 7
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JQ809648-2",
+      "width_mm": 800,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1340,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JQ",
+      "source_row_no": 8
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JQ109648-2",
+      "width_mm": 1000,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1560,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JQ",
+      "source_row_no": 9
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JQ_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JQ129648-2",
+      "width_mm": 1200,
+      "height_mm": 960,
+      "depth_mm": 480,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1690,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JQ",
+      "source_row_no": 10
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP131860",
+      "width_mm": 1300,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 540,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP141860",
+      "width_mm": 1400,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 555,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP151860",
+      "width_mm": 1500,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 570,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 5
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP161860",
+      "width_mm": 1600,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 585,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 6
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP132050",
+      "width_mm": 1300,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 540,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 7
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP142050",
+      "width_mm": 1400,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 555,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 8
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP152050",
+      "width_mm": 1500,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 570,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 9
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP162050",
+      "width_mm": 1600,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 585,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 10
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP132060",
+      "width_mm": 1300,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 555,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 11
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP142060",
+      "width_mm": 1400,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 570,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 12
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP152060",
+      "width_mm": 1500,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 585,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 13
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JP_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JP162060",
+      "width_mm": 1600,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 600,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JP超宽柜",
+      "source_row_no": 14
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS131860",
+      "width_mm": 1300,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 390,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS141860",
+      "width_mm": 1400,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 410,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS151860",
+      "width_mm": 1500,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 430,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 5
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS161860",
+      "width_mm": 1600,
+      "height_mm": 1800,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 450,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 6
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS132050",
+      "width_mm": 1300,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 390,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 7
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS142050",
+      "width_mm": 1400,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 410,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 8
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS152050",
+      "width_mm": 1500,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 430,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 9
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS162050",
+      "width_mm": 1600,
+      "height_mm": 2000,
+      "depth_mm": 500,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 450,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 10
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS132060",
+      "width_mm": 1300,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 410,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 11
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS142060",
+      "width_mm": 1400,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 430,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 12
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS152060",
+      "width_mm": 1500,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 450,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 13
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "JS_WIDE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JS162060",
+      "width_mm": 1600,
+      "height_mm": 2000,
+      "depth_mm": 600,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 470,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "JS超宽柜",
+      "source_row_no": 14
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM601210",
+      "width_mm": 600,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 958,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 3
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM801210",
+      "width_mm": 800,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 971,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 4
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM101210",
+      "width_mm": 1000,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1060,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 5
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM121210",
+      "width_mm": 1200,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1120,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 6
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SECC"
+      ],
+      "model_code": "JM151210",
+      "width_mm": 1500,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1460,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 7
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM601210",
+      "width_mm": 600,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1580,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 8
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM801210",
+      "width_mm": 800,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1650,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 9
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM101210",
+      "width_mm": 1000,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1720,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 10
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM121210",
+      "width_mm": 1200,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1850,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 11
+    },
+    {
+      "rule_kind": "FIXED",
+      "product_code": "OP_TABLE_EXP",
+      "profile_code": null,
+      "material_codes": [
+        "SUS304",
+        "SUS316"
+      ],
+      "model_code": "JM151210",
+      "width_mm": 1500,
+      "height_mm": 1200,
+      "depth_mm": 1000,
+      "intercept": null,
+      "slope": null,
+      "excluded_part_names": [],
+      "labor_cost": 1998,
+      "allow_dimension_scale": true,
+      "source_formula": null,
+      "source_sheet": "操作台",
+      "source_row_no": 12
+    }
+  ]
+}

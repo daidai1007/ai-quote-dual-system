@@ -15,6 +15,7 @@ from attachment_category_browser import (  # noqa: E402
     completed_size_dimensions,
     default_rule_for_item,
     door_reinforcement_default_quantity,
+    installation_board_catalogue_name,
     installation_board_match_name_for_product,
     match_attachment_size,
     match_installation_board_for_product,
@@ -130,11 +131,18 @@ assert match_installation_board_size(
 # product is isolated to the ordinary installation-board library, even when
 # the operator clicked a row from the opposite branch.
 jk_board = row(45, "JK安装板", 1000, 2000, 123, 260, "JK-BOARD")
+jk_board["category_level1"] = "安装板"
+jk_board["category_level2"] = "JK安装板"
+jk_impostor = row(46, "JK安装板", 1000, 2000, 123, 1, "JK-IMPOSTOR")
+jk_impostor["category_level1"] = "其他附件"
+jk_impostor["category_level2"] = "JK安装板"
 assert installation_board_match_name_for_product("JK") == "JK安装板"
 assert installation_board_match_name_for_product("JK_SINGLE") == "JK安装板"
 assert installation_board_match_name_for_product("JP_SINGLE") == "安装板"
+assert installation_board_catalogue_name(jk_board) == "JK安装板"
+assert installation_board_catalogue_name(jk_impostor) is None
 jk_routed = match_installation_board_for_product(
-    [board_exact, jk_board], board_exact, (1000, 2000, 600), "JK"
+    [board_exact, jk_impostor, jk_board], board_exact, (1000, 2000, 600), "JK"
 )
 ordinary_routed = match_installation_board_for_product(
     [board_exact, jk_board], jk_board, (1000, 2000, 600), "JP_SINGLE"

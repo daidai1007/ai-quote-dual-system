@@ -1,0 +1,1792 @@
+{
+  "role": "neondb_owner",
+  "views": [
+    {
+      "viewname": "v_attachment_selection_cost",
+      "definition": " SELECT s.attachment_selection_id,\n s.quote_id,\n s.product_code,\n s.model_code,\n s.attachment_price_id,\n s.item_name,\n s.variant,\n s.price_source,\n s.quantity,\n s.unit_price,\n s.price_text,\n s.cost_method,\n COALESCE(s.unit_price, p.price) AS effective_unit_price,\n CASE\n WHEN (COALESCE(s.unit_price, p.price) IS NULL) THEN NULL::numeric\n ELSE round(((s.quantity * COALESCE(s.unit_price, p.price)) * (s.price_sign)::numeric), 2)\n END AS line_cost,\n s.notes,\n s.created_at,\n s.updated_at,\n s.price_sign\n FROM (calc.attachment_selection s\n LEFT JOIN calc.attachment_price p ON ((p.attachment_price_id = s.attachment_price_id)));"
+    },
+    {
+      "viewname": "v_attachment_price",
+      "definition": " SELECT attachment_price_id,\n attachment_category,\n item_name,\n model_code,\n variant,\n material_code,\n width_mm,\n height_mm,\n depth_mm,\n unit,\n price,\n price_text,\n price_source,\n notes,\n source_file,\n source_sheet,\n source_row_no,\n effective_from,\n effective_to,\n is_active,\n created_at,\n updated_at,\n cost_method\n FROM calc.attachment_price\n WHERE (is_active = true);"
+    },
+    {
+      "viewname": "v_attachment_price_classified",
+      "definition": " SELECT p.attachment_price_id,\n p.attachment_category,\n p.item_name,\n p.model_code,\n p.variant,\n p.material_code,\n p.width_mm,\n p.height_mm,\n p.depth_mm,\n p.unit,\n p.price,\n p.price_text,\n p.price_source,\n p.notes,\n p.source_file,\n p.source_sheet,\n p.source_row_no,\n p.effective_from,\n p.effective_to,\n p.is_active,\n p.created_at,\n p.updated_at,\n p.cost_method,\n c.category_level1,\n c.category_level2,\n c.category_level3,\n c.classification_source,\n c.updated_at AS classification_updated_at\n FROM (calc.attachment_price p\n LEFT JOIN calc.attachment_classification c ON ((c.attachment_price_id = p.attachment_price_id)));"
+    }
+  ],
+  "access": [
+    {
+      "owner": "neondb_owner",
+      "relacl": null,
+      "relname": "attachment_price",
+      "can_insert": true,
+      "can_select": true,
+      "can_update": true,
+      "relrowsecurity": false,
+      "relforcerowsecurity": false
+    },
+    {
+      "owner": "neondb_owner",
+      "relacl": null,
+      "relname": "attachment_classification",
+      "can_insert": true,
+      "can_select": true,
+      "can_update": true,
+      "relrowsecurity": false,
+      "relforcerowsecurity": false
+    },
+    {
+      "owner": "neondb_owner",
+      "relacl": null,
+      "relname": "attachment_selection",
+      "can_insert": true,
+      "can_select": true,
+      "can_update": true,
+      "relrowsecurity": false,
+      "relforcerowsecurity": false
+    }
+  ],
+  "server": "PostgreSQL 18.6 (2078fcb) on aarch64-unknown-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",
+  "columns": [
+    {
+      "udt_name": "int8",
+      "data_type": "bigint",
+      "table_name": "attachment_classification",
+      "column_name": "attachment_price_id",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": 0,
+      "column_default": null,
+      "numeric_precision": 64,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_classification",
+      "column_name": "category_level1",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 80
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_classification",
+      "column_name": "category_level2",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 160
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_classification",
+      "column_name": "category_level3",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 200
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_classification",
+      "column_name": "classification_source",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "'attachment-catalog-20260824'::character varying",
+      "numeric_precision": null,
+      "character_maximum_length": 120
+    },
+    {
+      "udt_name": "timestamptz",
+      "data_type": "timestamp with time zone",
+      "table_name": "attachment_classification",
+      "column_name": "created_at",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "now()",
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "timestamptz",
+      "data_type": "timestamp with time zone",
+      "table_name": "attachment_classification",
+      "column_name": "updated_at",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "now()",
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "int8",
+      "data_type": "bigint",
+      "table_name": "attachment_price",
+      "column_name": "attachment_price_id",
+      "is_identity": "YES",
+      "is_nullable": "NO",
+      "numeric_scale": 0,
+      "column_default": null,
+      "numeric_precision": 64,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "attachment_category",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 40
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "item_name",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 160
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "model_code",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 100
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "variant",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 80
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "material_code",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 30
+    },
+    {
+      "udt_name": "int4",
+      "data_type": "integer",
+      "table_name": "attachment_price",
+      "column_name": "width_mm",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": 0,
+      "column_default": null,
+      "numeric_precision": 32,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "int4",
+      "data_type": "integer",
+      "table_name": "attachment_price",
+      "column_name": "height_mm",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": 0,
+      "column_default": null,
+      "numeric_precision": 32,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "int4",
+      "data_type": "integer",
+      "table_name": "attachment_price",
+      "column_name": "depth_mm",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": 0,
+      "column_default": null,
+      "numeric_precision": 32,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "unit",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 20
+    },
+    {
+      "udt_name": "numeric",
+      "data_type": "numeric",
+      "table_name": "attachment_price",
+      "column_name": "price",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": 4,
+      "column_default": null,
+      "numeric_precision": 14,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "price_text",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 120
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "price_source",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "'表格价'::character varying",
+      "numeric_precision": null,
+      "character_maximum_length": 40
+    },
+    {
+      "udt_name": "text",
+      "data_type": "text",
+      "table_name": "attachment_price",
+      "column_name": "notes",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "source_file",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 255
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "source_sheet",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 80
+    },
+    {
+      "udt_name": "int4",
+      "data_type": "integer",
+      "table_name": "attachment_price",
+      "column_name": "source_row_no",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": 0,
+      "column_default": null,
+      "numeric_precision": 32,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "date",
+      "data_type": "date",
+      "table_name": "attachment_price",
+      "column_name": "effective_from",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "CURRENT_DATE",
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "date",
+      "data_type": "date",
+      "table_name": "attachment_price",
+      "column_name": "effective_to",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "bool",
+      "data_type": "boolean",
+      "table_name": "attachment_price",
+      "column_name": "is_active",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "true",
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "timestamptz",
+      "data_type": "timestamp with time zone",
+      "table_name": "attachment_price",
+      "column_name": "created_at",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "now()",
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "timestamptz",
+      "data_type": "timestamp with time zone",
+      "table_name": "attachment_price",
+      "column_name": "updated_at",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "now()",
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_price",
+      "column_name": "cost_method",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "'experience'::character varying",
+      "numeric_precision": null,
+      "character_maximum_length": 20
+    },
+    {
+      "udt_name": "int8",
+      "data_type": "bigint",
+      "table_name": "attachment_selection",
+      "column_name": "attachment_selection_id",
+      "is_identity": "YES",
+      "is_nullable": "NO",
+      "numeric_scale": 0,
+      "column_default": null,
+      "numeric_precision": 64,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_selection",
+      "column_name": "quote_id",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 80
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_selection",
+      "column_name": "product_code",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 40
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_selection",
+      "column_name": "model_code",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 100
+    },
+    {
+      "udt_name": "int8",
+      "data_type": "bigint",
+      "table_name": "attachment_selection",
+      "column_name": "attachment_price_id",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": 0,
+      "column_default": null,
+      "numeric_precision": 64,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_selection",
+      "column_name": "item_name",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 160
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_selection",
+      "column_name": "variant",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 80
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_selection",
+      "column_name": "price_source",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 40
+    },
+    {
+      "udt_name": "numeric",
+      "data_type": "numeric",
+      "table_name": "attachment_selection",
+      "column_name": "quantity",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": 4,
+      "column_default": "1",
+      "numeric_precision": 14,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "numeric",
+      "data_type": "numeric",
+      "table_name": "attachment_selection",
+      "column_name": "unit_price",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": 4,
+      "column_default": null,
+      "numeric_precision": 14,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_selection",
+      "column_name": "price_text",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": 120
+    },
+    {
+      "udt_name": "varchar",
+      "data_type": "character varying",
+      "table_name": "attachment_selection",
+      "column_name": "cost_method",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "'experience'::character varying",
+      "numeric_precision": null,
+      "character_maximum_length": 20
+    },
+    {
+      "udt_name": "text",
+      "data_type": "text",
+      "table_name": "attachment_selection",
+      "column_name": "notes",
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "numeric_scale": null,
+      "column_default": null,
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "timestamptz",
+      "data_type": "timestamp with time zone",
+      "table_name": "attachment_selection",
+      "column_name": "created_at",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "now()",
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "timestamptz",
+      "data_type": "timestamp with time zone",
+      "table_name": "attachment_selection",
+      "column_name": "updated_at",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": null,
+      "column_default": "now()",
+      "numeric_precision": null,
+      "character_maximum_length": null
+    },
+    {
+      "udt_name": "int2",
+      "data_type": "smallint",
+      "table_name": "attachment_selection",
+      "column_name": "price_sign",
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "numeric_scale": 0,
+      "column_default": "1",
+      "numeric_precision": 16,
+      "character_maximum_length": null
+    }
+  ],
+  "indexes": [
+    {
+      "indexdef": "CREATE UNIQUE INDEX attachment_classification_pkey ON calc.attachment_classification USING btree (attachment_price_id)",
+      "indexname": "attachment_classification_pkey",
+      "tablename": "attachment_classification"
+    },
+    {
+      "indexdef": "CREATE INDEX idx_attachment_classification_levels ON calc.attachment_classification USING btree (category_level1, category_level2, category_level3)",
+      "indexname": "idx_attachment_classification_levels",
+      "tablename": "attachment_classification"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX attachment_price_pkey ON calc.attachment_price USING btree (attachment_price_id)",
+      "indexname": "attachment_price_pkey",
+      "tablename": "attachment_price"
+    },
+    {
+      "indexdef": "CREATE INDEX idx_attachment_price_dims ON calc.attachment_price USING btree (attachment_category, width_mm, height_mm, depth_mm, is_active)",
+      "indexname": "idx_attachment_price_dims",
+      "tablename": "attachment_price"
+    },
+    {
+      "indexdef": "CREATE INDEX idx_attachment_price_item ON calc.attachment_price USING btree (item_name, variant, price_source, is_active)",
+      "indexname": "idx_attachment_price_item",
+      "tablename": "attachment_price"
+    },
+    {
+      "indexdef": "CREATE INDEX idx_attachment_price_model ON calc.attachment_price USING btree (model_code, attachment_category, is_active)",
+      "indexname": "idx_attachment_price_model",
+      "tablename": "attachment_price"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX uq_attachment_price_source ON calc.attachment_price USING btree (source_file, source_sheet, source_row_no, price_source)",
+      "indexname": "uq_attachment_price_source",
+      "tablename": "attachment_price"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX attachment_selection_pkey ON calc.attachment_selection USING btree (attachment_selection_id)",
+      "indexname": "attachment_selection_pkey",
+      "tablename": "attachment_selection"
+    },
+    {
+      "indexdef": "CREATE INDEX idx_attachment_selection_model ON calc.attachment_selection USING btree (model_code, item_name)",
+      "indexname": "idx_attachment_selection_model",
+      "tablename": "attachment_selection"
+    },
+    {
+      "indexdef": "CREATE INDEX idx_attachment_selection_quote ON calc.attachment_selection USING btree (quote_id, product_code)",
+      "indexname": "idx_attachment_selection_quote",
+      "tablename": "attachment_selection"
+    }
+  ],
+  "database": "neondb",
+  "policies": [],
+  "triggers": [],
+  "functions": [
+    {
+      "signature": "calc.add_attachment_selection(character varying,character varying,character varying,character varying,numeric,integer,integer,integer,character varying,character varying,numeric,text)",
+      "definition": "CREATE OR REPLACE FUNCTION calc.add_attachment_selection(p_quote_id character varying, p_product_code character varying DEFAULT NULL::character varying, p_model_code character varying DEFAULT NULL::character varying, p_item_name character varying DEFAULT NULL::character varying, p_quantity numeric DEFAULT 1, p_width_mm integer DEFAULT NULL::integer, p_height_mm integer DEFAULT NULL::integer, p_depth_mm integer DEFAULT NULL::integer, p_variant character varying DEFAULT NULL::character varying, p_price_source character varying DEFAULT NULL::character varying, p_unit_price_override numeric DEFAULT NULL::numeric, p_notes text DEFAULT NULL::text)\n RETURNS bigint\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n v_price calc.attachment_price%ROWTYPE;\n v_selection_id BIGINT;\nBEGIN\n IF p_quote_id IS NULL OR btrim(p_quote_id) = '' THEN\n RAISE EXCEPTION 'quote_id is required';\n END IF;\n IF p_model_code IS NULL AND p_item_name IS NULL THEN\n RAISE EXCEPTION 'model_code or item_name is required';\n END IF;\n IF p_quantity IS NULL OR p_quantity < 0 THEN\n RAISE EXCEPTION 'quantity must be non-negative';\n END IF;\n\n SELECT ap.*\n INTO v_price\n FROM calc.attachment_price ap\n WHERE ap.is_active = TRUE\n AND (p_model_code IS NULL OR ap.model_code = p_model_code OR ap.model_code IS NULL OR ap.model_code = '所有型号')\n AND (p_item_name IS NULL OR ap.item_name = p_item_name)\n AND (p_width_mm IS NULL OR ap.width_mm = p_width_mm)\n AND (p_height_mm IS NULL OR ap.height_mm = p_height_mm)\n AND (p_depth_mm IS NULL OR ap.depth_mm = p_depth_mm)\n AND (p_variant IS NULL OR ap.variant = p_variant OR ap.variant IS NULL)\n AND (p_price_source IS NULL OR ap.price_source = p_price_source)\n ORDER BY\n CASE WHEN ap.model_code = p_model_code THEN 0 ELSE 1 END,\n CASE WHEN ap.item_name = p_item_name THEN 0 ELSE 1 END,\n ap.attachment_price_id DESC\n LIMIT 1;\n\n IF NOT FOUND THEN\n RAISE EXCEPTION 'attachment price not found: model=%, item=%, variant=%, source=%',\n p_model_code, p_item_name, p_variant, p_price_source;\n END IF;\n\n INSERT INTO calc.attachment_selection (\n quote_id, product_code, model_code, attachment_price_id,\n item_name, variant, price_source, quantity, unit_price,\n price_text, cost_method, notes\n )\n VALUES (\n p_quote_id, p_product_code, v_price.model_code, v_price.attachment_price_id,\n v_price.item_name, v_price.variant, v_price.price_source, p_quantity,\n COALESCE(p_unit_price_override, v_price.price), v_price.price_text,\n 'experience', p_notes\n )\n RETURNING attachment_selection_id INTO v_selection_id;\n\n RETURN v_selection_id;\nEND;\n$function$\n"
+    },
+    {
+      "signature": "calc.calculate_dual_quote(character varying,character varying,character varying,character varying,numeric,numeric,numeric,numeric,numeric,character varying,character varying,date)",
+      "definition": "CREATE OR REPLACE FUNCTION calc.calculate_dual_quote(p_quote_id character varying, p_product_code character varying, p_model_code character varying, p_material_code character varying, p_width_mm numeric, p_height_mm numeric, p_depth_mm numeric, p_base_material_weight_kg numeric DEFAULT NULL::numeric, p_product_area_m2 numeric DEFAULT NULL::numeric, p_coating_type character varying DEFAULT '平光'::character varying, p_variant_code character varying DEFAULT NULL::character varying, p_quote_date date DEFAULT CURRENT_DATE)\n RETURNS TABLE(quote_id character varying, product_code character varying, model_code character varying, material_code character varying, formula_material_cost numeric, formula_auxiliary_cost numeric, formula_labor_cost numeric, formula_attachment_fee numeric, formula_product_area_m2 numeric, formula_spray_cost numeric, formula_management_fee numeric, formula_total_cost numeric, quick_rule_id bigint, quick_match_method character varying, quick_match_distance numeric, quick_material_cost numeric, quick_auxiliary_cost numeric, quick_labor_cost numeric, quick_attachment_fee numeric, quick_spray_cost numeric, quick_management_fee numeric, quick_total_cost numeric, difference_cost numeric, risk_flags jsonb)\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n v_formula RECORD;\n v_quick RECORD;\n v_risks JSONB := '[]'::jsonb;\n v_product_code VARCHAR;\n v_quick_attachment NUMERIC := 0;\n v_quick_base NUMERIC;\n v_quick_total NUMERIC;\n v_difference NUMERIC;\nBEGIN\n IF p_quote_id IS NULL OR btrim(p_quote_id) = '' THEN\n RAISE EXCEPTION 'quote_id is required';\n END IF;\n IF p_material_code NOT IN ('SECC','SUS304','SUS316') THEN\n RAISE EXCEPTION 'unsupported material_code: %', p_material_code;\n END IF;\n IF p_width_mm IS NULL OR p_height_mm IS NULL OR p_depth_mm IS NULL\n OR p_width_mm <= 0 OR p_height_mm <= 0 OR p_depth_mm <= 0 THEN\n RAISE EXCEPTION 'width, height and depth must be positive';\n END IF;\n\n v_product_code := CASE p_product_code\n WHEN 'JC' THEN 'JC_EXP'\n WHEN 'JQ' THEN 'JQ_EXP'\n WHEN U&'\\8D85\\5BBDJP' THEN 'JP_WIDE_EXP'\n WHEN U&'\\8D85\\5BBDJS' THEN 'JS_WIDE_EXP'\n WHEN U&'\\64CD\\4F5C\\53F0' THEN 'OP_TABLE_EXP'\n ELSE p_product_code END;\n\n /* Formula quotation remains the existing DB-owned calculation. */\n SELECT * INTO v_formula\n FROM calc.calculate_quote_total(\n p_quote_id, v_product_code, COALESCE(p_model_code,''), p_material_code,\n p_width_mm, p_height_mm, p_depth_mm, p_base_material_weight_kg,\n p_product_area_m2, p_coating_type, p_variant_code, p_quote_date);\n\n IF v_formula.material_cost IS NULL THEN\n v_risks := v_risks || jsonb_build_array(jsonb_build_object(\n 'code','formula_material_cost_missing','severity','blocker'));\n END IF;\n\n /* Quick quotation reads experience values only. */\n SELECT * INTO v_quick\n FROM calc.match_quick_quote(\n v_product_code, p_model_code, p_material_code,\n p_width_mm, p_height_mm, p_depth_mm, p_quote_date);\n\n IF NOT FOUND THEN\n v_risks := v_risks || jsonb_build_array(jsonb_build_object(\n 'code','quick_quote_missing','severity','blocker',\n 'message',U&'\\5F85\\8865\\5145\\7ECF\\9A8C\\503C'));\n v_quick_total := NULL;\n ELSE\n /* match_quick_quote returns the direct quick base in quick_total_cost.\n It intentionally does not expose formula-derived components. */\n v_quick_base := v_quick.quick_total_cost;\n v_quick_attachment := COALESCE(calc.get_attachment_fee(p_quote_id, v_product_code), 0);\n v_quick_total := v_quick_base + v_quick_attachment;\n END IF;\n\n IF v_formula.total_cost IS NOT NULL AND v_quick_total IS NOT NULL THEN\n v_difference := ROUND(v_quick_total - v_formula.total_cost, 2);\n END IF;\n\n /* A quote_id is the logical version key. Replace the previous snapshot\n before writing the new one; this also makes repeated smoke tests safe. */\n DELETE FROM calc.dual_quote_result\n WHERE calc.dual_quote_result.quote_id = $1;\n\n INSERT INTO calc.dual_quote_result(\n quote_id,product_code,model_code,material_code,\n input_width_mm,input_height_mm,input_depth_mm,quote_date,\n formula_material_cost,formula_auxiliary_cost,formula_labor_cost,\n formula_attachment_fee,formula_product_area_m2,formula_spray_cost,\n formula_management_fee,formula_total_cost,\n quick_rule_id,quick_match_method,quick_match_distance,\n quick_material_cost,quick_auxiliary_cost,quick_labor_cost,\n quick_attachment_fee,quick_spray_cost,quick_management_fee,quick_base_price,\n quick_total_cost,difference_cost,risk_flags,updated_at)\n VALUES(\n p_quote_id,v_product_code,p_model_code,p_material_code,\n p_width_mm,p_height_mm,p_depth_mm,p_quote_date,\n v_formula.material_cost,v_formula.auxiliary_cost,v_formula.labor_cost,\n v_formula.attachment_fee,v_formula.product_area_m2,v_formula.spray_cost,\n v_formula.management_fee,v_formula.total_cost,\n v_quick.quick_rule_id,v_quick.match_method,v_quick.dimension_distance,\n v_quick.quick_material_cost,v_quick.quick_auxiliary_cost,v_quick.quick_labor_cost,\n v_quick_attachment,v_quick.quick_spray_cost,v_quick.quick_management_fee,v_quick_base,\n v_quick_total,v_difference,v_risks,now());\n\n RETURN QUERY SELECT\n p_quote_id,v_product_code,p_model_code,p_material_code,\n v_formula.material_cost,v_formula.auxiliary_cost,v_formula.labor_cost,\n v_formula.attachment_fee,v_formula.product_area_m2,v_formula.spray_cost,\n v_formula.management_fee,v_formula.total_cost,\n v_quick.quick_rule_id,v_quick.match_method,v_quick.dimension_distance,\n v_quick.quick_material_cost,v_quick.quick_auxiliary_cost,v_quick.quick_labor_cost,\n v_quick_attachment,v_quick.quick_spray_cost,v_quick.quick_management_fee,\n v_quick_total,v_difference,v_risks;\nEND;\n$function$\n"
+    },
+    {
+      "signature": "calc.calculate_total_cost_for_quote(character varying,numeric,numeric,numeric,numeric,numeric,character varying)",
+      "definition": "CREATE OR REPLACE FUNCTION calc.calculate_total_cost_for_quote(p_quote_id character varying, p_corrected_material_weight_kg numeric, p_material_price_per_kg numeric, p_auxiliary_cost numeric DEFAULT 0, p_labor_cost numeric DEFAULT 0, p_spray_cost numeric DEFAULT 0, p_product_code character varying DEFAULT NULL::character varying)\n RETURNS TABLE(material_cost numeric, auxiliary_cost numeric, labor_cost numeric, attachment_fee numeric, spray_cost numeric, management_fee numeric, total_cost numeric)\n LANGUAGE sql\n STABLE\nAS $function$\n SELECT *\n FROM calc.calculate_total_cost_by_spray_cost(\n p_corrected_material_weight_kg,\n p_material_price_per_kg,\n p_auxiliary_cost,\n p_labor_cost,\n calc.get_attachment_fee(p_quote_id, p_product_code),\n p_spray_cost\n );\n$function$\n"
+    },
+    {
+      "signature": "calc.get_attachment_fee(character varying,character varying)",
+      "definition": "CREATE OR REPLACE FUNCTION calc.get_attachment_fee(p_quote_id character varying, p_product_code character varying DEFAULT NULL::character varying)\n RETURNS numeric\n LANGUAGE sql\n STABLE\nAS $function$\n SELECT COALESCE(ROUND(SUM(v.line_cost), 2), 0)\n FROM calc.v_attachment_selection_cost v\n WHERE v.quote_id = p_quote_id\n AND (p_product_code IS NULL OR v.product_code = p_product_code);\n$function$\n"
+    },
+    {
+      "signature": "calc.get_attachment_price(character varying,character varying,integer,integer,integer,character varying,character varying)",
+      "definition": "CREATE OR REPLACE FUNCTION calc.get_attachment_price(p_model_code character varying DEFAULT NULL::character varying, p_item_name character varying DEFAULT NULL::character varying, p_width_mm integer DEFAULT NULL::integer, p_height_mm integer DEFAULT NULL::integer, p_depth_mm integer DEFAULT NULL::integer, p_variant character varying DEFAULT NULL::character varying, p_price_source character varying DEFAULT NULL::character varying)\n RETURNS numeric\n LANGUAGE sql\n STABLE\nAS $function$\n SELECT ap.price\n FROM calc.attachment_price ap\n WHERE ap.is_active = TRUE\n AND ap.price IS NOT NULL\n AND (p_model_code IS NULL OR ap.model_code = p_model_code OR ap.model_code IS NULL OR ap.model_code = '所有型号')\n AND (p_item_name IS NULL OR ap.item_name = p_item_name)\n AND (p_width_mm IS NULL OR ap.width_mm = p_width_mm)\n AND (p_height_mm IS NULL OR ap.height_mm = p_height_mm)\n AND (p_depth_mm IS NULL OR ap.depth_mm = p_depth_mm)\n AND (p_variant IS NULL OR ap.variant = p_variant OR ap.variant IS NULL)\n AND (p_price_source IS NULL OR ap.price_source = p_price_source)\n ORDER BY\n CASE WHEN ap.model_code = p_model_code THEN 0 ELSE 1 END,\n CASE WHEN ap.item_name = p_item_name THEN 0 ELSE 1 END,\n ap.attachment_price_id DESC\n LIMIT 1;\n$function$\n"
+    },
+    {
+      "signature": "calc.add_attachment_selection(character varying,character varying,character varying,character varying,numeric,integer,integer,integer,character varying,character varying,numeric,text,smallint)",
+      "definition": "CREATE OR REPLACE FUNCTION calc.add_attachment_selection(p_quote_id character varying, p_product_code character varying DEFAULT NULL::character varying, p_model_code character varying DEFAULT NULL::character varying, p_item_name character varying DEFAULT NULL::character varying, p_quantity numeric DEFAULT 1, p_width_mm integer DEFAULT NULL::integer, p_height_mm integer DEFAULT NULL::integer, p_depth_mm integer DEFAULT NULL::integer, p_variant character varying DEFAULT NULL::character varying, p_price_source character varying DEFAULT NULL::character varying, p_unit_price_override numeric DEFAULT NULL::numeric, p_notes text DEFAULT NULL::text, p_price_sign smallint DEFAULT 1)\n RETURNS bigint\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n v_price calc.attachment_price%ROWTYPE;\n v_selection_id BIGINT;\n v_attachment_text TEXT;\nBEGIN\n IF p_quote_id IS NULL OR btrim(p_quote_id) = '' THEN\n RAISE EXCEPTION 'quote_id is required';\n END IF;\n IF p_model_code IS NULL AND p_item_name IS NULL THEN\n RAISE EXCEPTION 'model_code or item_name is required';\n END IF;\n IF p_quantity IS NULL OR p_quantity < 0 THEN\n RAISE EXCEPTION 'quantity must be non-negative';\n END IF;\n IF p_price_sign NOT IN (-1, 1) THEN\n RAISE EXCEPTION 'price_sign must be 1 or -1';\n END IF;\n\n v_attachment_text := COALESCE(p_item_name, '') || ' ' || COALESCE(p_model_code, '');\n IF p_price_sign = -1\n AND (position('安装板' IN v_attachment_text) = 0 OR position('安装板单发' IN v_attachment_text) > 0) THEN\n RAISE EXCEPTION 'negative price_sign is allowed only for an installation board';\n END IF;\n\n SELECT ap.*\n INTO v_price\n FROM calc.attachment_price ap\n WHERE ap.is_active = TRUE\n AND (p_model_code IS NULL OR ap.model_code = p_model_code OR ap.model_code IS NULL OR ap.model_code = '所有型号')\n AND (p_item_name IS NULL OR ap.item_name = p_item_name)\n AND (p_width_mm IS NULL OR ap.width_mm = p_width_mm)\n AND (p_height_mm IS NULL OR ap.height_mm = p_height_mm)\n AND (p_depth_mm IS NULL OR ap.depth_mm = p_depth_mm)\n AND (p_variant IS NULL OR ap.variant = p_variant OR ap.variant IS NULL)\n AND (p_price_source IS NULL OR ap.price_source = p_price_source)\n ORDER BY\n CASE WHEN ap.model_code = p_model_code THEN 0 ELSE 1 END,\n CASE WHEN ap.item_name = p_item_name THEN 0 ELSE 1 END,\n ap.attachment_price_id DESC\n LIMIT 1;\n\n IF NOT FOUND THEN\n RAISE EXCEPTION 'attachment price not found: model=%, item=%, variant=%, source=%',\n p_model_code, p_item_name, p_variant, p_price_source;\n END IF;\n\n INSERT INTO calc.attachment_selection (\n quote_id, product_code, model_code, attachment_price_id,\n item_name, variant, price_source, quantity, unit_price,\n price_text, cost_method, notes, price_sign\n )\n VALUES (\n p_quote_id, p_product_code, v_price.model_code, v_price.attachment_price_id,\n v_price.item_name, v_price.variant, v_price.price_source, p_quantity,\n COALESCE(p_unit_price_override, v_price.price), v_price.price_text,\n 'experience', p_notes, p_price_sign\n )\n RETURNING attachment_selection_id INTO v_selection_id;\n\n RETURN v_selection_id;\nEND;\n$function$\n"
+    }
+  ],
+  "constraints": [
+    {
+      "conname": "attachment_classification_attachment_price_id_fkey",
+      "contype": "f",
+      "definition": "FOREIGN KEY (attachment_price_id) REFERENCES calc.attachment_price(attachment_price_id) ON DELETE CASCADE",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "calc.attachment_price"
+    },
+    {
+      "conname": "attachment_classification_attachment_price_id_not_null",
+      "contype": "n",
+      "definition": "NOT NULL attachment_price_id",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_category_level1_check",
+      "contype": "c",
+      "definition": "CHECK ((btrim((category_level1)::text) <> ''::text))",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_category_level1_check1",
+      "contype": "c",
+      "definition": "CHECK (((category_level1)::text <> '26'::text))",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_category_level1_not_null",
+      "contype": "n",
+      "definition": "NOT NULL category_level1",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_category_level2_check",
+      "contype": "c",
+      "definition": "CHECK (((category_level2 IS NULL) OR ((category_level2)::text <> '26'::text)))",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_category_level3_check",
+      "contype": "c",
+      "definition": "CHECK (((category_level3 IS NULL) OR ((category_level3)::text <> '26'::text)))",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_classification_source_not_null",
+      "contype": "n",
+      "definition": "NOT NULL classification_source",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_created_at_not_null",
+      "contype": "n",
+      "definition": "NOT NULL created_at",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_pkey",
+      "contype": "p",
+      "definition": "PRIMARY KEY (attachment_price_id)",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_classification_updated_at_not_null",
+      "contype": "n",
+      "definition": "NOT NULL updated_at",
+      "source_table": "calc.attachment_classification",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_attachment_category_not_null",
+      "contype": "n",
+      "definition": "NOT NULL attachment_category",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_attachment_price_id_not_null",
+      "contype": "n",
+      "definition": "NOT NULL attachment_price_id",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_cost_method_not_null",
+      "contype": "n",
+      "definition": "NOT NULL cost_method",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_created_at_not_null",
+      "contype": "n",
+      "definition": "NOT NULL created_at",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_effective_from_not_null",
+      "contype": "n",
+      "definition": "NOT NULL effective_from",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_is_active_not_null",
+      "contype": "n",
+      "definition": "NOT NULL is_active",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_item_name_not_null",
+      "contype": "n",
+      "definition": "NOT NULL item_name",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_pkey",
+      "contype": "p",
+      "definition": "PRIMARY KEY (attachment_price_id)",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_price_source_not_null",
+      "contype": "n",
+      "definition": "NOT NULL price_source",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_source_file_not_null",
+      "contype": "n",
+      "definition": "NOT NULL source_file",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_source_row_no_not_null",
+      "contype": "n",
+      "definition": "NOT NULL source_row_no",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_source_sheet_not_null",
+      "contype": "n",
+      "definition": "NOT NULL source_sheet",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_price_updated_at_not_null",
+      "contype": "n",
+      "definition": "NOT NULL updated_at",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "ck_attachment_price_nonnegative",
+      "contype": "c",
+      "definition": "CHECK (((price IS NULL) OR (price >= (0)::numeric)))",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "ck_attachment_price_period",
+      "contype": "c",
+      "definition": "CHECK (((effective_to IS NULL) OR (effective_to > effective_from)))",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "uq_attachment_price_source",
+      "contype": "u",
+      "definition": "UNIQUE (source_file, source_sheet, source_row_no, price_source)",
+      "source_table": "calc.attachment_price",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_attachment_price_id_fkey",
+      "contype": "f",
+      "definition": "FOREIGN KEY (attachment_price_id) REFERENCES calc.attachment_price(attachment_price_id)",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "calc.attachment_price"
+    },
+    {
+      "conname": "attachment_selection_attachment_selection_id_not_null",
+      "contype": "n",
+      "definition": "NOT NULL attachment_selection_id",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_cost_method_not_null",
+      "contype": "n",
+      "definition": "NOT NULL cost_method",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_created_at_not_null",
+      "contype": "n",
+      "definition": "NOT NULL created_at",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_pkey",
+      "contype": "p",
+      "definition": "PRIMARY KEY (attachment_selection_id)",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_price_sign_check",
+      "contype": "c",
+      "definition": "CHECK ((price_sign = ANY (ARRAY['-1'::integer, 1])))",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_price_sign_not_null",
+      "contype": "n",
+      "definition": "NOT NULL price_sign",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_quantity_check",
+      "contype": "c",
+      "definition": "CHECK ((quantity >= (0)::numeric))",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_quantity_not_null",
+      "contype": "n",
+      "definition": "NOT NULL quantity",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_quote_id_not_null",
+      "contype": "n",
+      "definition": "NOT NULL quote_id",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_unit_price_check",
+      "contype": "c",
+      "definition": "CHECK (((unit_price IS NULL) OR (unit_price >= (0)::numeric)))",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    },
+    {
+      "conname": "attachment_selection_updated_at_not_null",
+      "contype": "n",
+      "definition": "NOT NULL updated_at",
+      "source_table": "calc.attachment_selection",
+      "referenced_table": "-"
+    }
+  ],
+  "dependencies": [
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_attachment_price_id_fkey on table calc.attachment_classification",
+      "referenced": "column attachment_price_id of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_classification_attachment_price_id_fkey on table calc.attachment_classification",
+      "referenced": "column attachment_price_id of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_attachment_price_id_not_null on table calc.attachment_classification",
+      "referenced": "column attachment_price_id of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_category_level1_check on table calc.attachment_classification",
+      "referenced": "column category_level1 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_classification_category_level1_check on table calc.attachment_classification",
+      "referenced": "column category_level1 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_category_level1_check1 on table calc.attachment_classification",
+      "referenced": "column category_level1 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_classification_category_level1_check1 on table calc.attachment_classification",
+      "referenced": "column category_level1 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_category_level1_not_null on table calc.attachment_classification",
+      "referenced": "column category_level1 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_category_level2_check on table calc.attachment_classification",
+      "referenced": "column category_level2 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_classification_category_level2_check on table calc.attachment_classification",
+      "referenced": "column category_level2 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_category_level3_check on table calc.attachment_classification",
+      "referenced": "column category_level3 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_classification_category_level3_check on table calc.attachment_classification",
+      "referenced": "column category_level3 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_classification_source_not_null on table calc.attachment_classification",
+      "referenced": "column classification_source of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_created_at_not_null on table calc.attachment_classification",
+      "referenced": "column created_at of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_pkey on table calc.attachment_classification",
+      "referenced": "column attachment_price_id of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_classification_updated_at_not_null on table calc.attachment_classification",
+      "referenced": "column updated_at of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_attachment_category_not_null on table calc.attachment_price",
+      "referenced": "column attachment_category of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_attachment_price_id_not_null on table calc.attachment_price",
+      "referenced": "column attachment_price_id of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_cost_method_not_null on table calc.attachment_price",
+      "referenced": "column cost_method of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_created_at_not_null on table calc.attachment_price",
+      "referenced": "column created_at of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_effective_from_not_null on table calc.attachment_price",
+      "referenced": "column effective_from of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_is_active_not_null on table calc.attachment_price",
+      "referenced": "column is_active of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_item_name_not_null on table calc.attachment_price",
+      "referenced": "column item_name of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_pkey on table calc.attachment_price",
+      "referenced": "column attachment_price_id of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_price_source_not_null on table calc.attachment_price",
+      "referenced": "column price_source of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_source_file_not_null on table calc.attachment_price",
+      "referenced": "column source_file of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_source_row_no_not_null on table calc.attachment_price",
+      "referenced": "column source_row_no of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_source_sheet_not_null on table calc.attachment_price",
+      "referenced": "column source_sheet of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_price_updated_at_not_null on table calc.attachment_price",
+      "referenced": "column updated_at of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_selection_attachment_price_id_fkey on table calc.attachment_selection",
+      "referenced": "column attachment_price_id of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_attachment_price_id_fkey on table calc.attachment_selection",
+      "referenced": "column attachment_price_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_attachment_selection_id_not_null on table calc.attachment_selection",
+      "referenced": "column attachment_selection_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_cost_method_not_null on table calc.attachment_selection",
+      "referenced": "column cost_method of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_created_at_not_null on table calc.attachment_selection",
+      "referenced": "column created_at of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_pkey on table calc.attachment_selection",
+      "referenced": "column attachment_selection_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_price_sign_check on table calc.attachment_selection",
+      "referenced": "column price_sign of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_selection_price_sign_check on table calc.attachment_selection",
+      "referenced": "column price_sign of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_price_sign_not_null on table calc.attachment_selection",
+      "referenced": "column price_sign of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_quantity_check on table calc.attachment_selection",
+      "referenced": "column quantity of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_selection_quantity_check on table calc.attachment_selection",
+      "referenced": "column quantity of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_quantity_not_null on table calc.attachment_selection",
+      "referenced": "column quantity of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_quote_id_not_null on table calc.attachment_selection",
+      "referenced": "column quote_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_unit_price_check on table calc.attachment_selection",
+      "referenced": "column unit_price of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint attachment_selection_unit_price_check on table calc.attachment_selection",
+      "referenced": "column unit_price of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint attachment_selection_updated_at_not_null on table calc.attachment_selection",
+      "referenced": "column updated_at of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint ck_attachment_price_nonnegative on table calc.attachment_price",
+      "referenced": "column price of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint ck_attachment_price_nonnegative on table calc.attachment_price",
+      "referenced": "column price of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint ck_attachment_price_period on table calc.attachment_price",
+      "referenced": "column effective_from of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint ck_attachment_price_period on table calc.attachment_price",
+      "referenced": "column effective_from of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint ck_attachment_price_period on table calc.attachment_price",
+      "referenced": "column effective_to of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "constraint ck_attachment_price_period on table calc.attachment_price",
+      "referenced": "column effective_to of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint uq_attachment_price_source on table calc.attachment_price",
+      "referenced": "column price_source of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint uq_attachment_price_source on table calc.attachment_price",
+      "referenced": "column source_file of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint uq_attachment_price_source on table calc.attachment_price",
+      "referenced": "column source_row_no of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "constraint uq_attachment_price_source on table calc.attachment_price",
+      "referenced": "column source_sheet of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column classification_source of table calc.attachment_classification",
+      "referenced": "column classification_source of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column cost_method of table calc.attachment_price",
+      "referenced": "column cost_method of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column cost_method of table calc.attachment_selection",
+      "referenced": "column cost_method of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column created_at of table calc.attachment_classification",
+      "referenced": "column created_at of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column created_at of table calc.attachment_price",
+      "referenced": "column created_at of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column created_at of table calc.attachment_selection",
+      "referenced": "column created_at of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column effective_from of table calc.attachment_price",
+      "referenced": "column effective_from of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column is_active of table calc.attachment_price",
+      "referenced": "column is_active of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column price_sign of table calc.attachment_selection",
+      "referenced": "column price_sign of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column price_source of table calc.attachment_price",
+      "referenced": "column price_source of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column quantity of table calc.attachment_selection",
+      "referenced": "column quantity of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column updated_at of table calc.attachment_classification",
+      "referenced": "column updated_at of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column updated_at of table calc.attachment_price",
+      "referenced": "column updated_at of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "default value for column updated_at of table calc.attachment_selection",
+      "referenced": "column updated_at of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_classification_levels",
+      "referenced": "column category_level1 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_classification_levels",
+      "referenced": "column category_level2 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_classification_levels",
+      "referenced": "column category_level3 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_dims",
+      "referenced": "column attachment_category of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_dims",
+      "referenced": "column depth_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_dims",
+      "referenced": "column height_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_dims",
+      "referenced": "column is_active of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_dims",
+      "referenced": "column width_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_item",
+      "referenced": "column is_active of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_item",
+      "referenced": "column item_name of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_item",
+      "referenced": "column price_source of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_item",
+      "referenced": "column variant of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_model",
+      "referenced": "column attachment_category of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_model",
+      "referenced": "column is_active of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_price_model",
+      "referenced": "column model_code of table calc.attachment_price"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_selection_model",
+      "referenced": "column item_name of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_selection_model",
+      "referenced": "column model_code of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_selection_quote",
+      "referenced": "column product_code of table calc.attachment_selection"
+    },
+    {
+      "deptype": "a",
+      "dependent": "index calc.idx_attachment_selection_quote",
+      "referenced": "column quote_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column attachment_category of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column attachment_price_id of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column cost_method of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column created_at of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column depth_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column effective_from of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column effective_to of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column height_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column is_active of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column item_name of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column material_code of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column model_code of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column notes of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column price of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column price_source of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column price_text of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column source_file of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column source_row_no of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column source_sheet of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column unit of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column updated_at of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column variant of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price",
+      "referenced": "column width_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column attachment_category of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column attachment_price_id of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column attachment_price_id of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column category_level1 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column category_level2 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column category_level3 of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column classification_source of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column cost_method of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column created_at of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column depth_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column effective_from of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column effective_to of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column height_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column is_active of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column item_name of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column material_code of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column model_code of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column notes of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column price of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column price_source of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column price_text of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column source_file of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column source_row_no of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column source_sheet of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column unit of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column updated_at of table calc.attachment_classification"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column updated_at of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column variant of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_price_classified",
+      "referenced": "column width_mm of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column attachment_price_id of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column attachment_price_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column attachment_selection_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column cost_method of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column created_at of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column item_name of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column model_code of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column notes of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column price of table calc.attachment_price"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column price_sign of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column price_source of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column price_text of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column product_code of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column quantity of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column quote_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column unit_price of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column updated_at of table calc.attachment_selection"
+    },
+    {
+      "deptype": "n",
+      "dependent": "rule _RETURN on view calc.v_attachment_selection_cost",
+      "referenced": "column variant of table calc.attachment_selection"
+    },
+    {
+      "deptype": "i",
+      "dependent": "sequence calc.attachment_price_attachment_price_id_seq",
+      "referenced": "column attachment_price_id of table calc.attachment_price"
+    },
+    {
+      "deptype": "i",
+      "dependent": "sequence calc.attachment_selection_attachment_selection_id_seq",
+      "referenced": "column attachment_selection_id of table calc.attachment_selection"
+    },
+    {
+      "deptype": "i",
+      "dependent": "toast table pg_toast.pg_toast_24622",
+      "referenced": "table calc.attachment_price"
+    },
+    {
+      "deptype": "i",
+      "dependent": "toast table pg_toast.pg_toast_24648",
+      "referenced": "table calc.attachment_selection"
+    },
+    {
+      "deptype": "i",
+      "dependent": "toast table pg_toast.pg_toast_73728",
+      "referenced": "table calc.attachment_classification"
+    },
+    {
+      "deptype": "i",
+      "dependent": "type calc.attachment_classification",
+      "referenced": "table calc.attachment_classification"
+    },
+    {
+      "deptype": "i",
+      "dependent": "type calc.attachment_price",
+      "referenced": "table calc.attachment_price"
+    },
+    {
+      "deptype": "i",
+      "dependent": "type calc.attachment_selection",
+      "referenced": "table calc.attachment_selection"
+    }
+  ]
+}

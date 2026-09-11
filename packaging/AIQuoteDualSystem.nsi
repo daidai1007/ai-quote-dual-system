@@ -10,10 +10,10 @@ Unicode True
   !error "OutputDir must be supplied by the build script"
 !endif
 !ifndef AppVersion
-  !define AppVersion "2026.08.29"
+  !define AppVersion "2026.09.11"
 !endif
 !ifndef AppVersionNumeric
-  !define AppVersionNumeric "2026.8.29.0"
+  !define AppVersionNumeric "2026.9.11.0"
 !endif
 
 !define APP_NAME "AI 双报价系统"

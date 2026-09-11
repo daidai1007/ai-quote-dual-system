@@ -26,6 +26,7 @@ output/
 outputs/
 *.log
 *.tmp
+/test-output/
 
 # Business/private data (not part of the public source tree)
 *.pdf

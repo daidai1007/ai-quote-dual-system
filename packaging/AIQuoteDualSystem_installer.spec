@@ -6,7 +6,7 @@ from pathlib import Path
 
 packaging_dir = Path(SPEC).resolve().parent
 repo_root = packaging_dir.parent
-build_version = os.environ.get('AI_QUOTE_BUILD_VERSION', '2026.08.29')
+build_version = os.environ.get('AI_QUOTE_BUILD_VERSION', '2026.09.11')
 version_parts = [int(part) for part in build_version.split('.')]
 while len(version_parts) < 4:
     version_parts.append(0)
