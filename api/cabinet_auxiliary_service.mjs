@@ -90,11 +90,11 @@ export function createCabinetAuxiliaryService({runPsql}){
     try{data=await query(`SELECT jsonb_build_object('data_version',v.data_version,
       'profile',(SELECT to_jsonb(p) FROM calc.cabinet_auxiliary_profile p WHERE p.data_version=v.data_version
         AND p.product_code=${valueSql(family)} AND p.single_door_count=${Number(input.single_door_count||0)}
-        AND p.double_door_count=${Number(input.double_door_count||0)}),
+        AND p.double_door_count=${Number(input.double_door_count||0)} AND p.material_codes ? ${valueSql(input.material_code)}),
       'lines',(SELECT coalesce(jsonb_agg(to_jsonb(l) ORDER BY l.line_no,l.line_id),'[]') FROM calc.cabinet_auxiliary_line l
         JOIN calc.cabinet_auxiliary_profile p USING(profile_id) WHERE p.data_version=v.data_version
         AND p.product_code=${valueSql(family)} AND p.single_door_count=${Number(input.single_door_count||0)}
-        AND p.double_door_count=${Number(input.double_door_count||0)}),
+        AND p.double_door_count=${Number(input.double_door_count||0)} AND p.material_codes ? ${valueSql(input.material_code)}),
       'fixed_rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no),'[]')
         FROM calc.cabinet_auxiliary_fixed_rule r WHERE r.data_version=v.data_version AND r.product_code=${valueSql(product)}),
       'spray_unit_price',CASE WHEN ${valueSql(input.coating_type)}='不喷塑' THEN 0
