@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
+import {
+  attachmentImageCatalogSql,
+  attachmentImageTablesExistSql,
+  normalizeAttachmentImages,
+} from './attachment_image_query.mjs';
 
 // SQL values are always UTF-8 hex literals; formulas are evaluated only by attachment_cost.
 export const sqlValue = value => value == null ? 'NULL' : typeof value === 'number'
@@ -57,7 +62,11 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
         p.quick_face_price AS price,p.data_version,p.source_file,p.source_sheet,p.source_row_no
         FROM calc.attachment_price p JOIN calc.attachment_classification c USING(attachment_price_id)
         WHERE p.data_version=${sqlValue(v.data_version)}${v.status==='ACTIVE'?' AND p.is_active':''}) a;`);
-    return {items,data_version:v.data_version,status:v.status,attachment_contract:2};
+    const imageTablesExist=await query(attachmentImageTablesExistSql);
+    const attachmentImages=imageTablesExist
+      ? normalizeAttachmentImages(await query(attachmentImageCatalogSql))
+      : [];
+    return {items,attachment_images:attachmentImages,data_version:v.data_version,status:v.status,attachment_contract:2};
   }
   async function preview(input) {
     if(!Array.isArray(input.attachments)||input.attachments.length>100) throw new Error('attachments必须为不超过100项的数组');
