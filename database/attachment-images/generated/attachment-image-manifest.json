@@ -1,0 +1,531 @@
+{
+  "source_document": "线上附件名称与图片汇总.docx",
+  "source_document_sha256": "2eeaf27a213cc98b32c5629f5d94bb036479b05bf86b3030b4052c69925cf861",
+  "catalog_count": 50,
+  "image_count": 28,
+  "missing_image_count": 24,
+  "items": [
+    {
+      "source_row_no": 1,
+      "item_name": "JP控制柜侧板",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image1.png",
+          "mime_type": "image/png",
+          "sha256": "ee56a56f945b583aded40f16350c6f9ba4fc5cf23d8afff599f86f9897b8a5eb",
+          "size_bytes": 19942
+        }
+      ]
+    },
+    {
+      "source_row_no": 2,
+      "item_name": "安装板",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image2.png",
+          "mime_type": "image/png",
+          "sha256": "e6b9b50e63d335a1a432eddbe690bbb81963319edbe8b41920e90e0fe82e971d",
+          "size_bytes": 82559
+        }
+      ]
+    },
+    {
+      "source_row_no": 3,
+      "item_name": "固定立柱",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image3.png",
+          "mime_type": "image/png",
+          "sha256": "314d9967950f5893a2615c745a3106c2a5f3fb36dd980c24698ad6b803d926c1",
+          "size_bytes": 32469
+        }
+      ]
+    },
+    {
+      "source_row_no": 4,
+      "item_name": "三排安装梁",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image4.png",
+          "mime_type": "image/png",
+          "sha256": "abf572782511b7537ff0734480db3049b1fed251363c16791bbfcf6f15b8d752",
+          "size_bytes": 42047
+        }
+      ]
+    },
+    {
+      "source_row_no": 5,
+      "item_name": "分段板",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image5.png",
+          "mime_type": "image/png",
+          "sha256": "3e637ca37a532d1b0a036edf60dcdfa4169259017539d850f62237784b2dffd9",
+          "size_bytes": 27391
+        }
+      ]
+    },
+    {
+      "source_row_no": 6,
+      "item_name": "绑线条",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 7,
+      "item_name": "固定底座",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image6.png",
+          "mime_type": "image/png",
+          "sha256": "9e72f723bbb3a3ffb6dbf2cce25f0509c27ce1b86feb583f90f2f3567ef92e79",
+          "size_bytes": 50144
+        }
+      ]
+    },
+    {
+      "source_row_no": 8,
+      "item_name": "活动底座",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image7.png",
+          "mime_type": "image/png",
+          "sha256": "12fb9444197c8db493a9272f2192793ea9731ddb7a319c4a3dbd265a231be069",
+          "size_bytes": 45015
+        }
+      ]
+    },
+    {
+      "source_row_no": 9,
+      "item_name": "照明灯/行程开关",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image8.png",
+          "mime_type": "image/png",
+          "sha256": "26948bd2101d1c06f9bb3f6681b3a713b4420581dc556702a635aaf97bcee005",
+          "size_bytes": 53179
+        },
+        {
+          "image_order": 2,
+          "filename": "image9.png",
+          "mime_type": "image/png",
+          "sha256": "7f92b950a43f7d80b328f96dbf9b5daba811baeff97c12c30af35cc5a8533e85",
+          "size_bytes": 83297
+        }
+      ]
+    },
+    {
+      "source_row_no": 10,
+      "item_name": "A3资料盒",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 11,
+      "item_name": "A4资料盒",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image10.png",
+          "mime_type": "image/png",
+          "sha256": "ab43a5476f01f9a79cb2deb84580db20a3374e684a43590aa3dae6867a5eccb6",
+          "size_bytes": 33388
+        }
+      ]
+    },
+    {
+      "source_row_no": 12,
+      "item_name": "风机",
+      "match_mode": "PREFIX",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image11.png",
+          "mime_type": "image/png",
+          "sha256": "f9c318390c6adf5482d771377b805d3841abdafda975272269d8a223df7e7873",
+          "size_bytes": 196658
+        }
+      ]
+    },
+    {
+      "source_row_no": 13,
+      "item_name": "过滤网",
+      "match_mode": "PREFIX",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image12.png",
+          "mime_type": "image/png",
+          "sha256": "0b0ab0bf5f5027f0f3340817533f5424dfa280c9a921f8aa2557d0a8f7e419c4",
+          "size_bytes": 336621
+        }
+      ]
+    },
+    {
+      "source_row_no": 14,
+      "item_name": "JA、JE单开门改为双开门",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 15,
+      "item_name": "JS、JP单开门改为上下门",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 16,
+      "item_name": "JS、JP单开门改为双开门",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 17,
+      "item_name": "JS、JP后背板改为单开门",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 18,
+      "item_name": "JS、JP后背板改为双开门",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 19,
+      "item_name": "JA、JE箱小方锁改为搭扣锁（1把）",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 20,
+      "item_name": "JA、JE顶部加吊环（2个）",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image13.png",
+          "mime_type": "image/png",
+          "sha256": "c1839ef28584ca420f3d5511b3b43809327d8789e546126af0c7c512af7b8228",
+          "size_bytes": 39045
+        }
+      ]
+    },
+    {
+      "source_row_no": 21,
+      "item_name": "平面锁改为MS830锁",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 22,
+      "item_name": "并柜件",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image14.png",
+          "mime_type": "image/png",
+          "sha256": "4d8b9936d42eae03b11360abe7c04dc691e09ec75c3c9550454ef657ed29c211",
+          "size_bytes": 38946
+        },
+        {
+          "image_order": 2,
+          "filename": "image15.png",
+          "mime_type": "image/png",
+          "sha256": "c34fc2d80d02e1be7ff1878f3ce6a5e665e2218dc9a11b02cb401ca9d6a81bef",
+          "size_bytes": 40619
+        }
+      ]
+    },
+    {
+      "source_row_no": 23,
+      "item_name": "内门",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image16.png",
+          "mime_type": "image/png",
+          "sha256": "8b2c8591a8b95eb78f85e5e10ea63ab56e017ad63c4fc2bee0df4ea99ccec2e1",
+          "size_bytes": 41726
+        }
+      ]
+    },
+    {
+      "source_row_no": 24,
+      "item_name": "JK安装板",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image17.png",
+          "mime_type": "image/png",
+          "sha256": "258275810f6ba027cd34d7854c0c8b2738f3060e1af29348a9c6ac73d259f950",
+          "size_bytes": 45350
+        }
+      ]
+    },
+    {
+      "source_row_no": 25,
+      "item_name": "玻璃门",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image18.png",
+          "mime_type": "image/png",
+          "sha256": "c33e7982e745c1f597e2f0b9243c187c28151fd49a2ac671a472a88c0ba5568f",
+          "size_bytes": 53372
+        }
+      ]
+    },
+    {
+      "source_row_no": 26,
+      "item_name": "壁挂件",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image19.png",
+          "mime_type": "image/png",
+          "sha256": "93c4e854394e1354720b82a6e091a775b2ac53af97fafbbcbdd408c1e5c68be1",
+          "size_bytes": 66581
+        }
+      ]
+    },
+    {
+      "source_row_no": 27,
+      "item_name": "重型壁挂件",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image20.png",
+          "mime_type": "image/png",
+          "sha256": "5a179c2c62a25a9425254c518255001972658b9a723fd4b983c7517f83564d83",
+          "size_bytes": 61489
+        }
+      ]
+    },
+    {
+      "source_row_no": 28,
+      "item_name": "防雨顶",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image21.png",
+          "mime_type": "image/png",
+          "sha256": "f3f395991498b96e1dc08dbbe6388a3ba1484851064cd4e2d977656c04ccf722",
+          "size_bytes": 24496
+        }
+      ]
+    },
+    {
+      "source_row_no": 29,
+      "item_name": "无孔承板",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image22.png",
+          "mime_type": "image/png",
+          "sha256": "e77e345c2a78688ea83f0ddaeaf210b0845b223ae5cec6467c7a2de41612a8c4",
+          "size_bytes": 14951
+        }
+      ]
+    },
+    {
+      "source_row_no": 30,
+      "item_name": "有孔承板",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image23.png",
+          "mime_type": "image/png",
+          "sha256": "c5cb1e88ce0e261f9170ba4afba61f8ec4adbd1f635eddab334e5a6a75057b4f",
+          "size_bytes": 46434
+        }
+      ]
+    },
+    {
+      "source_row_no": 31,
+      "item_name": "电脑托盘",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image24.png",
+          "mime_type": "image/png",
+          "sha256": "8ade80c89d8dcb217542d9d4b005bd28db441e4fa3384a5b023253ecea68b006",
+          "size_bytes": 50099
+        }
+      ]
+    },
+    {
+      "source_row_no": 32,
+      "item_name": "通风顶罩",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image25.png",
+          "mime_type": "image/png",
+          "sha256": "d9c8c2e58cf036fc1bb1002aabb77cb75a5ad0eb1b888e9ab2f12724a387af5b",
+          "size_bytes": 48041
+        }
+      ]
+    },
+    {
+      "source_row_no": 33,
+      "item_name": "门限位器",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image26.png",
+          "mime_type": "image/png",
+          "sha256": "bc3afb09925ac80804f7c921cc787a1aa068ef802d267dc9e10c462b07a81f18",
+          "size_bytes": 32485
+        }
+      ]
+    },
+    {
+      "source_row_no": 34,
+      "item_name": "填充安装板",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 35,
+      "item_name": "接地线-红绿线",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 36,
+      "item_name": "接地线-编织带",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 37,
+      "item_name": "福马轮",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 38,
+      "item_name": "丝印",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 39,
+      "item_name": "攻丝",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 40,
+      "item_name": "散热孔",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 41,
+      "item_name": "敲落孔",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 42,
+      "item_name": "内部眉头（柜高内，门板上方）",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 43,
+      "item_name": "外部眉头（柜体顶板上方）",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 44,
+      "item_name": "网版",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 45,
+      "item_name": "进线胶圈（含安装）",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 46,
+      "item_name": "非标塑粉",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 47,
+      "item_name": "侧门",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 48,
+      "item_name": "隔板",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image27.png",
+          "mime_type": "image/png",
+          "sha256": "e09ef864c77c2f2cddedd7165b1e1a33b966130692dbc24d90d29134655cdad8",
+          "size_bytes": 100115
+        }
+      ]
+    },
+    {
+      "source_row_no": 49,
+      "item_name": "铜排",
+      "match_mode": "EXACT",
+      "images": []
+    },
+    {
+      "source_row_no": 50,
+      "item_name": "门加强筋",
+      "match_mode": "EXACT",
+      "images": [
+        {
+          "image_order": 1,
+          "filename": "image28.png",
+          "mime_type": "image/png",
+          "sha256": "a2574383c9f4f08bb774b23c6253662ee390e842c1ce2105a1548d530ebd9ae7",
+          "size_bytes": 60212
+        }
+      ]
+    }
+  ]
+}
