@@ -60,7 +60,7 @@ test('every product accepts all five operator door combinations', () => {
   }
 });
 
-test('quick quote reads SINGLE for all five JS/JP/JA/JE door combinations', () => {
+test('quick quote keeps one price source for every door combination', () => {
   const expected = new Map([
     ['1/0', { JS: 'SINGLE', JP: 'SINGLE', JA: 'SINGLE', JE: 'SINGLE' }],
     ['2/0', { JS: 'SINGLE', JP: 'SINGLE', JA: 'SINGLE', JE: 'SINGLE' }],
@@ -100,6 +100,21 @@ test('quick quote reads SINGLE for all five JS/JP/JA/JE door combinations', () =
     }).product_code,
     'JS_SINGLE',
   );
+  for (const [single, double] of VALID_DOOR_COMBINATIONS) {
+    for (const productCode of ['JM', 'JK', 'JC_EXP', 'JQ_EXP']) {
+      const normalized = normalizeQuickDoorVariantInput({
+        product_code: productCode,
+        variant_code: single > 0 ? 'SINGLE' : 'DOUBLE',
+        single_door_count: single,
+        double_door_count: double,
+      });
+      assert.equal(normalized.product_code, productCode, `${productCode} ${single}/${double}`);
+      assert.equal(normalized.variant_code, 'SINGLE', `${productCode} ${single}/${double} quick variant`);
+    }
+  }
+  assert.equal(normalizeQuickDoorVariantInput({
+    product_code:'JM_DOUBLE',variant_code:'DOUBLE',single_door_count:0,double_door_count:1,
+  }).product_code,'JM');
 });
 
 test('automatic quick door surcharge and description APIs have been removed', () => {

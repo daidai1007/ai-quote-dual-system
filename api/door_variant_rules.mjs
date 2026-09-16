@@ -14,7 +14,6 @@ export const FORMULA_MULTI_DOOR_FAMILIES = Object.freeze(['JS', 'JP', 'JA', 'JE'
 
 const VALID_DOOR_KEYS = new Set(VALID_DOOR_COMBINATIONS.map(([single, double]) => `${single}/${double}`));
 const FORMULA_MULTI_DOOR_FAMILY_SET = new Set(FORMULA_MULTI_DOOR_FAMILIES);
-
 const productFamily = (productCode) => String(productCode || '')
   .trim()
   .toUpperCase()
@@ -50,14 +49,10 @@ export function databaseVariantForDoorCounts(counts) {
 
 export function quickDoorVariantForCounts(counts, productCode = '') {
   if (!counts) return null;
-  const family = productFamily(productCode);
-  // Quick quote reads the SINGLE record for every approved combination in
-  // JS/JP/JA/JE.  Door counts remain in the payload for quantity/BOM rules;
-  // they do not switch the quick-price source or add an automatic surcharge.
-  if (FORMULA_MULTI_DOOR_FAMILY_SET.has(family)) {
-    return 'SINGLE';
-  }
-  return databaseVariantForDoorCounts(counts);
+  // Door counts remain in the payload for formula BOM rules. Quick quotation
+  // always uses one stable price source, so changing a door combination cannot
+  // select another face-price row.
+  return 'SINGLE';
 }
 
 export function normalizeDoorVariantInput(input = {}) {
@@ -104,8 +99,8 @@ export function normalizeQuickDoorVariantInput(input = {}) {
   const variant = quickDoorVariantForCounts(counts, currentProduct);
   const productCode = FORMULA_MULTI_DOOR_FAMILY_SET.has(family)
     ? `${family}_SINGLE`
-    : /_(?:SINGLE|DOUBLE)$/i.test(currentProduct)
-      ? currentProduct.replace(/_(?:SINGLE|DOUBLE)$/i, `_${variant}`)
+    : /^(?:JM|JK)_(?:SINGLE|DOUBLE)$/i.test(currentProduct)
+      ? family
       : currentProduct;
   return {
     ...input,
