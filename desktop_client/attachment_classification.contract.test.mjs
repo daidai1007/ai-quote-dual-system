@@ -59,8 +59,11 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.match(overlay, /"category_level2": category_level2\.text\(\)\.strip\(\) or None/);
   assert.match(overlay, /"category_level3": category_level3\.text\(\)\.strip\(\) or None/);
   assert.match(overlay, /getattr\(owner, "category_selection", \[\]\)/);
-  assert.match(overlay, /show_quick_button = not \(\s*object_name == "attachmentQuickMatchManual" and manual_items\s*\)/);
-  assert.match(overlay, /elif show_quick_button:\s*card_layout\.addWidget\(quick_button\)/);
+  assert.match(
+    overlay,
+    /show_quick_button = \(\s*str\(option\.get\("value"\) or ""\) != "安装板"[\s\S]*object_name == "attachmentQuickMatchManual" and manual_items/,
+  );
+  assert.match(overlay, /elif show_quick_button:\s*selection_layout\.addWidget\(quick_button\)/);
   assert.match(overlay, /match_attachment_size\(getattr\(self, "catalog", \[\]\), source, target\)/);
   assert.match(overlay, /rule in \(DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT\)/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);
@@ -68,9 +71,7 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.doesNotMatch(overlay, /category_level1_combo/);
 
   const approvedOrder = [
-    '底座', '侧板', '三排纵梁', '安装板', '灯开关', '文件夹', '风机滤网',
-    '门限位器', '门加强筋', '配置变形', '门变形', '内门', '玻璃门', '安装条', '防雨顶',
-    '接地线', '铜排', '孔承板', '控制柜附件',
+    '侧板', '安装板', '安装附件', '底座', '灯开关', '资料盒', '风机', '滤网', '门变形', '并柜件',
   ];
   let previousIndex = -1;
   for (const category of approvedOrder) {
@@ -78,6 +79,11 @@ test('attachment dialog drills through responsive category cards before showing 
     assert.ok(index > previousIndex, `${category} must follow the approved order`);
     previousIndex = index;
   }
+  assert.match(
+    hierarchy,
+    /LEVEL1_TRAILING_ORDER = \(\s*"配置变形",\s*"控制柜附件",\s*"其他附件",\s*\)/,
+  );
+  assert.match(hierarchy, /LEVEL1_TRAILING_ORDER\.index\(value\)/);
   assert.match(hierarchy, /options\.append\(\{"value": "", "label": DIRECT_ITEMS_LABEL/);
   assert.match(hierarchy, /def parse_base_specification/);
   assert.match(hierarchy, /def match_fixed_base/);

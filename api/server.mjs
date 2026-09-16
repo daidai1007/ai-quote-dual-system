@@ -386,46 +386,90 @@ const addAttachmentCatalogSql = (input) => {
     // operator's first-level category as the source sheet.
     sourceFile: sqlUnicodeText('attachment_catalog_api'),
     sourceSheet: sqlUnicodeText(item.category_level1),
-    sourceRow: '1',
   };
   return {
     item,
     sql: `
-WITH existing AS (
-  SELECT attachment_price_id
-  FROM calc.attachment_price
-  WHERE is_active = TRUE
-    AND attachment_category = ${values.attachmentCategory}
-    AND item_name = ${values.itemName}
-    AND model_code IS NOT DISTINCT FROM ${values.modelCode}
-    AND variant IS NOT DISTINCT FROM ${values.variant}
-    AND width_mm IS NOT DISTINCT FROM ${values.width}
-    AND height_mm IS NOT DISTINCT FROM ${values.height}
-    AND depth_mm IS NOT DISTINCT FROM ${values.depth}
-    AND price = ${values.price}
-    AND COALESCE(unit, '') = COALESCE(${values.unit}, '')
-    AND COALESCE(price_source, '') = COALESCE(${values.source}, '')
-  ORDER BY attachment_price_id DESC
+WITH catalog_context AS (
+  SELECT data_version, source_sha256, 2 AS attachment_contract
+  FROM calc.attachment_catalog_version
+  WHERE status = 'ACTIVE'
+  UNION ALL
+  SELECT NULL::text, NULL::text, 1
+  WHERE NOT EXISTS (
+    SELECT 1 FROM calc.attachment_catalog_version WHERE status = 'ACTIVE'
+  )
+), existing AS (
+  SELECT price.attachment_price_id, context.data_version,
+         context.attachment_contract
+  FROM calc.attachment_price price
+  CROSS JOIN catalog_context context
+  WHERE price.is_active = TRUE
+    AND price.data_version IS NOT DISTINCT FROM context.data_version
+    AND price.attachment_category = ${values.attachmentCategory}
+    AND price.item_name = ${values.itemName}
+    AND price.model_code IS NOT DISTINCT FROM ${values.modelCode}
+    AND price.variant IS NOT DISTINCT FROM ${values.variant}
+    AND price.width_mm IS NOT DISTINCT FROM ${values.width}
+    AND price.height_mm IS NOT DISTINCT FROM ${values.height}
+    AND price.depth_mm IS NOT DISTINCT FROM ${values.depth}
+    AND CASE WHEN context.data_version IS NULL
+      THEN price.price = ${values.price}
+      ELSE price.quick_face_price = ${values.price}
+    END
+    AND COALESCE(price.unit, '') = COALESCE(${values.unit}, '')
+    AND COALESCE(price.price_source, '') = COALESCE(${values.source}, '')
+  ORDER BY price.attachment_price_id DESC
   LIMIT 1
+), source_slot AS (
+  SELECT context.data_version, context.source_sha256,
+         context.attachment_contract,
+         COALESCE(MAX(price.source_row_no), 0) + 1 AS source_row_no
+  FROM catalog_context context
+  LEFT JOIN calc.attachment_price price
+    ON price.source_file = ${values.sourceFile}
+   AND price.data_version IS NOT DISTINCT FROM context.data_version
+  GROUP BY context.data_version, context.source_sha256,
+           context.attachment_contract
 ), inserted AS (
   INSERT INTO calc.attachment_price (
     attachment_category, item_name, model_code, variant,
     width_mm, height_mm, depth_mm,
-    price, price_text, unit, price_source, notes,
-    source_file, source_sheet, source_row_no, is_active
+    price, quick_face_price, price_text, unit, price_source, notes,
+    source_file, source_sheet, source_row_no, is_active,
+    data_version, import_key, source_sha256
   )
   SELECT ${values.attachmentCategory}, ${values.itemName},
          ${values.modelCode}, ${values.variant},
          ${values.width}, ${values.height}, ${values.depth},
-         ${values.price}, ${values.priceText}, ${values.unit},
+         ${values.price},
+         CASE WHEN slot.data_version IS NULL THEN NULL ELSE ${values.price} END,
+         ${values.priceText}, ${values.unit},
          ${values.source}, ${values.notes},
-         ${values.sourceFile}, ${values.sourceSheet}, ${values.sourceRow}, TRUE
+         ${values.sourceFile}, ${values.sourceSheet}, slot.source_row_no, TRUE,
+         slot.data_version,
+         CASE WHEN slot.data_version IS NULL THEN NULL ELSE
+           'manual:' || md5(concat_ws('|',
+             ${values.categoryLevel1}, ${values.categoryLevel2},
+             ${values.categoryLevel3}, ${values.itemName},
+             ${values.modelCode}, ${values.variant}, ${values.width},
+             ${values.height}, ${values.depth}, ${values.price},
+             ${values.unit}, ${values.source}
+           ))
+         END,
+         slot.source_sha256
+  FROM source_slot slot
   WHERE NOT EXISTS (SELECT 1 FROM existing)
-  RETURNING attachment_price_id
+  RETURNING attachment_price_id, data_version
 ), chosen AS (
-  SELECT attachment_price_id, TRUE AS created FROM inserted
+  SELECT inserted.attachment_price_id, TRUE AS created,
+         inserted.data_version, slot.attachment_contract
+  FROM inserted
+  CROSS JOIN source_slot slot
   UNION ALL
-  SELECT attachment_price_id, FALSE AS created FROM existing
+  SELECT attachment_price_id, FALSE AS created,
+         data_version, attachment_contract
+  FROM existing
 ), classification_updated AS (
   UPDATE calc.attachment_classification classification
   SET category_level1 = ${values.categoryLevel1},
@@ -456,7 +500,9 @@ WITH existing AS (
 SELECT jsonb_build_object(
   'saved', TRUE,
   'created', created,
-  'attachment_price_id', attachment_price_id
+  'attachment_price_id', attachment_price_id,
+  'data_version', data_version,
+  'attachment_contract', attachment_contract
 )::text
 FROM chosen
 LIMIT 1;`,
@@ -1021,7 +1067,6 @@ const server = http.createServer(async (req, res) => {
     try {
       const input = await readBody(req);
       const command = addAttachmentCatalogSql(input);
-      if(await attachmentService.hasActive()) return json(res,409,{error:'catalog_version_managed',message:'当前附件目录以已确认Excel为依据，请通过版本导入更新'});
       const output = await runPsql(command.sql);
       const saved = output ? JSON.parse(output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)) : {};
       return json(res, 200, { ...saved, item: command.item, source: 'postgresql' });

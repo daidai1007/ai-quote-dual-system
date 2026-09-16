@@ -6,14 +6,34 @@ Single-cabinet and ganged V2 selections share server previews and immutable quot
 from __future__ import annotations
 import copy
 import json
+import re
+import unicodedata
 from uuid import uuid4
 from PySide6.QtCore import Qt, QTimer, QDate
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QInputDialog
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QInputDialog, QWidget
 from shiboken6 import isValid
 
 PREVIEW_DELAY_MS = 350
 EXTRA_HEADERS = ("快速金额", "公式状态", "公式单位成本", "公式金额", "人工尺寸")
 COST_KEYS = ("error", "rule_id", "rule_version", "rule_materials", "rule_source_row", "formulas", "calculation_notes", "weight_kg", "material_cost", "spray_area_m2", "spray_cost", "auxiliary_cost", "auxiliary_list", "labor_cost", "attachment_selection_id", "quote_line_id", "environment")
+
+
+def attachment_image_match_key(value):
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or ""))).casefold()
+
+
+def attachment_images_for_name(image_catalog, item_name):
+    wanted = attachment_image_match_key(item_name)
+    if not wanted:
+        return []
+    for entry in image_catalog if isinstance(image_catalog, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        candidate = attachment_image_match_key(entry.get("item_name"))
+        mode = "PREFIX" if entry.get("match_mode") == "PREFIX" else "EXACT"
+        if candidate and ((mode == "PREFIX" and wanted.startswith(candidate)) or wanted == candidate):
+            return [dict(image) for image in entry.get("images", []) if isinstance(image, dict)]
+    return []
 
 def merge_cost(source, cost):
     return {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
@@ -59,6 +79,8 @@ def environment(window, attachments):
 def selected_input(item):
     selected = {"attachment_price_id": item.get("attachment_price_id"), "quantity": item.get("quantity", 1),
                 "attachment_price_sign": item.get("attachment_price_sign", 1), "manual_inputs": copy.deepcopy(item.get("manual_inputs") or {})}
+    if item.get("unit_price_override") is not None:
+        selected["unit_price_override"] = item.get("unit_price_override")
     ganged_index = item.get("ganged_cabinet_index", item.get("ganged_fixed_base_index"))
     if ganged_index is not None:
         selected["ganged_cabinet_index"] = int(ganged_index)
@@ -92,7 +114,6 @@ def install_attachment_v2(namespace):
             for index, (item, (_, _, source)) in enumerate(zip(result, checked(dialog))):
                 result[index] = item = {**copy.deepcopy(source), **item}
                 item.pop("rules", None)
-                item.pop("unit_price_override", None)
             decorate(dialog)
         return result
 
@@ -106,6 +127,11 @@ def install_attachment_v2(namespace):
             table.setColumnCount(first + len(EXTRA_HEADERS))
             table.setHorizontalHeaderItem(dialog.COL_PRICE, QTableWidgetItem("面价（元）"))
             table.setHorizontalHeaderItem(dialog.COL_SCHEME, QTableWidgetItem("单位"))
+            table.setHorizontalHeaderItem(dialog.COL_NAME, QTableWidgetItem("一级分类 / 名称"))
+            table.horizontalHeader().setSectionResizeMode(dialog.COL_NAME, QHeaderView.ResizeMode.Interactive)
+            table.horizontalHeader().resizeSection(dialog.COL_NAME, 250)
+            table.verticalHeader().setMinimumSectionSize(64)
+            table.verticalHeader().setDefaultSectionSize(64)
             dialog.catalog_hint.setText("面价按Excel原值；金额＝选择数量×单价×加减符号。双击人工尺寸填写参数。")
             for i, name in enumerate(EXTRA_HEADERS):
                 table.setHorizontalHeaderItem(first + i, QTableWidgetItem(name))
@@ -116,6 +142,41 @@ def install_attachment_v2(namespace):
                     price.setFlags(price.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 cell = table.item(row, dialog.COL_CHECK)
                 source = dict(cell.data(Qt.ItemDataRole.UserRole) or {}) if cell else {}
+                name_item = table.item(row, dialog.COL_NAME)
+                if source and name_item:
+                    name_cell = table.cellWidget(row, dialog.COL_NAME)
+                    if name_cell is None or name_cell.objectName() != "attachmentCategoryNameCell":
+                        name_cell = QWidget(table)
+                        name_cell.setObjectName("attachmentCategoryNameCell")
+                        name_cell.setMinimumHeight(60)
+                        name_layout = QVBoxLayout(name_cell)
+                        name_layout.setContentsMargins(6, 3, 6, 3)
+                        name_layout.setSpacing(1)
+                        category_label = QLabel(name_cell)
+                        category_label.setObjectName("attachmentPrimaryCategoryCell")
+                        category_label.setStyleSheet("color:#5c6b78;font-size:9pt;")
+                        item_label = QLabel(name_cell)
+                        item_label.setObjectName("attachmentItemNameCell")
+                        item_label.setStyleSheet("color:#173f67;font-weight:600;")
+                        name_layout.addWidget(category_label)
+                        name_layout.addWidget(item_label)
+                        table.setCellWidget(row, dialog.COL_NAME, name_cell)
+                    category_label = name_cell.findChild(QLabel, "attachmentPrimaryCategoryCell")
+                    item_label = name_cell.findChild(QLabel, "attachmentItemNameCell")
+                    category = str(source.get("category_level1") or "未分类").strip() or "未分类"
+                    # The catalogue row already owns the primary category.  Some
+                    # historical ``display_name`` values contain the category
+                    # path as an extra line, which made the custom two-line cell
+                    # render three overlapping labels.  Keep the table contract
+                    # explicit: one category line and one item-name line.
+                    name = " ".join(
+                        str(source.get("item_name") or name_item.text() or "未命名附件").split()
+                    )
+                    name_item.setText("")
+                    category_label.setText(f"一级分类：{category}")
+                    item_label.setText(f"名称：{name}")
+                    name_cell.setAccessibleName(f"一级分类：{category}，名称：{name}")
+                    table.setRowHeight(row, max(64, table.rowHeight(row)))
                 scheme = table.item(row, dialog.COL_SCHEME)
                 if scheme:
                     scheme.setText(source.get("unit") or "")
@@ -155,7 +216,28 @@ def install_attachment_v2(namespace):
         def loaded(body):
             if not isValid(dialog) or dialog._v2_catalog_generation != generation:
                 return
-            dialog.catalog = [dict(x, catalog_version=body["data_version"], display_name=dialog.display_name(x)) for x in body.get("items", [])]
+            image_catalog = [dict(entry) for entry in body.get("attachment_images", []) if isinstance(entry, dict)]
+            dialog._attachment_image_catalog = image_catalog
+            if parent is not None:
+                parent._attachment_image_catalog = image_catalog
+            dialog.catalog = [
+                dict(
+                    x,
+                    catalog_version=body["data_version"],
+                    display_name=dialog.display_name(x),
+                    attachment_images=attachment_images_for_name(image_catalog, x.get("item_name")),
+                )
+                for x in body.get("items", [])
+            ]
+            add_button = getattr(dialog, "add_attachment_catalog_button", None)
+            if add_button is not None:
+                write_supported = body.get("catalog_write_supported") is True
+                add_button.setEnabled(write_supported)
+                add_button.setToolTip(
+                    "新增到当前启用的附件目录；未配置成本规则时作为仅快速报价附件"
+                    if write_supported
+                    else "当前线上服务尚未启用V2附件新增接口"
+                )
             dialog.catalog_hint.setText(f"已读取 {len(dialog.catalog)} 项附件；面价固定，公式成本随当前产品环境计算。")
             prepare = getattr(dialog, "prepare_fixed_base_quick_match", None)
             if callable(prepare):
@@ -279,7 +361,7 @@ def install_attachment_v2(namespace):
         add_button = getattr(dialog, "add_attachment_catalog_button", None)
         if add_button is not None:
             add_button.setEnabled(False)
-            add_button.setToolTip("当前目录以已确认Excel为唯一数据来源")
+            add_button.setToolTip("正在检查V2附件新增接口…")
         dialog._v2_ready = False
         dialog._v2_timer = QTimer(dialog)
         dialog._v2_timer.setSingleShot(True)

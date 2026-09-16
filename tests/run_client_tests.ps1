@@ -35,9 +35,12 @@ $testFiles = @(
     "tests/verify_client_health_guards.py",
     "tests/verify_quote_defaults.py",
     "tests/verify_attachment_size_rules.py",
+    "tests/verify_attachment_catalog_addition.py",
     "tests/verify_v3_program_rules.py",
     "tests/verify_generated_formula_migration.py",
     "tests/verify_v3_layout_refresh.py"
+    "tests/verify_drawing_workflow.py"
+    "tests/verify_freight_output.py"
 )
 foreach ($testFile in $testFiles) {
     & $pythonExe $testFile

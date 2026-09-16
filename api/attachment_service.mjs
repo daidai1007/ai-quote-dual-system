@@ -66,7 +66,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
     const attachmentImages=imageTablesExist
       ? normalizeAttachmentImages(await query(attachmentImageCatalogSql))
       : [];
-    return {items,attachment_images:attachmentImages,data_version:v.data_version,status:v.status,attachment_contract:2};
+    return {items,attachment_images:attachmentImages,data_version:v.data_version,status:v.status,attachment_contract:2,catalog_write_supported:true};
   }
   async function preview(input) {
     if(!Array.isArray(input.attachments)||input.attachments.length>100) throw new Error('attachments必须为不超过100项的数组');

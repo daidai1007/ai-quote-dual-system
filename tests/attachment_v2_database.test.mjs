@@ -23,6 +23,7 @@ test('实际HTTP API与本地PostgreSQL：V2持久化、基础计算回滚及旧
   const target=`${db}_http`;
   sql(`CREATE DATABASE ${target};`,'postgres');
   for(const f of ['tests/fixtures/attachment_online_schema_20260911.sql','database/attachment-v2/web/01-prepare.sql','database/attachment-v2/web/02-stage.sql','tests/fixtures/attachment_api_base_stub.sql']) file(f,target);
+  sql(`BEGIN; SET LOCAL calc.attachment_v2_api_ready='on'; SELECT calc.switch_attachment_catalog_v2('${original.data_version}'); COMMIT;`,target);
   const reserve=net.createServer();await new Promise(resolve=>reserve.listen(0,'127.0.0.1',resolve));
   const port=reserve.address().port;await new Promise(resolve=>reserve.close(resolve));
   const child=spawn(process.execPath,[path.join(root,'api/server.mjs')],{cwd:root,windowsHide:true,env:{...process.env,
@@ -34,7 +35,18 @@ test('实际HTTP API与本地PostgreSQL：V2持久化、基础计算回滚及旧
       child.stdout.on('data',data=>{if(String(data).includes('listening')){clearTimeout(timer);resolve();}});
       child.once('error',reject);child.once('exit',code=>{clearTimeout(timer);reject(new Error(`API exited ${code}`));});});
     const call=async(route,body)=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{});return {status:response.status,body:await response.json()};};
-    const catalog=await call('/api/attachments/catalog?v=2');assert.equal(catalog.status,200,JSON.stringify(catalog));
+    const catalog=await call('/api/attachments/catalog?v=2');assert.equal(catalog.status,200,JSON.stringify(catalog));assert.equal(catalog.body.catalog_write_supported,true);
+    const manualInput={category_level1:'其他附件',category_level2:'人工新增',item_name:'本地新增附件',model_code:'LOCAL-1',price:12.5,unit:'件',price_source:'人工新增'};
+    const created=await call('/api/attachments/catalog',manualInput);
+    assert.equal(created.status,200,JSON.stringify(created));assert.equal(created.body.created,true);assert.equal(created.body.attachment_contract,2);assert.equal(created.body.data_version,original.data_version);
+    const afterCreate=await call('/api/attachments/catalog?v=2');assert.equal(afterCreate.body.items.length,catalog.body.items.length+1);
+    const manual=afterCreate.body.items.find(item=>item.attachment_price_id===created.body.attachment_price_id);
+    assert.ok(manual);assert.equal(manual.price,12.5);assert.deepEqual(manual.rules,[]);
+    const duplicate=await call('/api/attachments/catalog',manualInput);
+    assert.equal(duplicate.status,200,JSON.stringify(duplicate));assert.equal(duplicate.body.created,false);assert.equal(duplicate.body.attachment_price_id,created.body.attachment_price_id);
+    assert.equal((await call('/api/attachments/catalog?v=2')).body.items.length,afterCreate.body.items.length);
+    const manualPreview=await call('/api/attachments/preview',{quote_id:'HTTP_MANUAL',product_code:'JP',material_code:'SECC',width_mm:800,height_mm:2000,depth_mm:600,quote_date:'2026-09-11',coating_type:'橘纹',attachments:[{attachment_price_id:manual.attachment_price_id,quantity:2}]});
+    assert.equal(manualPreview.status,200,JSON.stringify(manualPreview));assert.equal(manualPreview.body.attachments[0].status,'QUICK_ONLY');assert.equal(manualPreview.body.attachments[0].quick_amount,25);assert.equal(manualPreview.body.formula_attachment_fee,0);
     const price=catalog.body.items.find(a=>a.source_row_no===208).attachment_price_id;
     const input={quote_id:'HTTP_LOCAL',attachment_contract:2,product_code:'JP',material_code:'SECC',width_mm:800,height_mm:2000,depth_mm:600,quote_date:'2026-09-11',coating_type:'橘纹',attachments:[{attachment_price_id:price,quantity:2,formula_amount:0,unit_price_override:0}]};
     const response=await call('/api/quotes/calculate-dual',input);
@@ -82,7 +94,6 @@ test('实际HTTP API与本地PostgreSQL：V2持久化、基础计算回滚及旧
     const changedGanged=structuredClone(gangedDocument);changedGanged.items[0].ganged_cabinets[1].width_mm=601;
     const changedChecked=await call('/api/quotes/confirm-check',changedGanged);
     assert.equal(changedChecked.status,400);assert.match(changedChecked.body.message,/并柜明细已变化/);
-    sql(`BEGIN; SET LOCAL calc.attachment_v2_api_ready='on'; SELECT calc.switch_attachment_catalog_v2('${original.data_version}'); COMMIT;`,target);
     assert.equal((await call('/api/attachments/catalog')).status,426);
     assert.equal((await call('/api/quotes/calculate-dual',{...input,attachment_contract:undefined,attachments:[{item_name:'门限位器',quantity:1}]})).status,426);
   } finally {child.kill();await new Promise(resolve=>child.exitCode!==null?resolve():child.once('exit',resolve));}

@@ -107,6 +107,8 @@ qt_core.QTimer = type("QTimer", (), {})
 qt_core.Qt = type("Qt", (), {})
 qt_core.QThread = Thread
 qt_core.Signal = SignalStub
+qt_gui = types.ModuleType("PySide6.QtGui")
+qt_gui.QColor = type("QColor", (), {})
 qt_widgets = types.ModuleType("PySide6.QtWidgets")
 for name in (
     "QAbstractButton", "QCompleter", "QDialog", "QDialogButtonBox", "QFormLayout",
@@ -119,7 +121,7 @@ qt_widgets.QDoubleSpinBox = DoubleSpin
 qt_widgets.QLabel = Label
 qt_widgets.QLineEdit = LineEdit
 pyside = types.ModuleType("PySide6")
-sys.modules.update({"PySide6": pyside, "PySide6.QtCore": qt_core, "PySide6.QtWidgets": qt_widgets})
+sys.modules.update({"PySide6": pyside, "PySide6.QtCore": qt_core, "PySide6.QtGui": qt_gui, "PySide6.QtWidgets": qt_widgets})
 
 spec = importlib.util.spec_from_file_location("layout_refresh", ROOT / "desktop_client" / "layout_refresh.py")
 layout_refresh = importlib.util.module_from_spec(spec)
@@ -139,6 +141,7 @@ from attachment_category_browser import (  # noqa: E402
     DOOR_LIMITER_DEFAULT_QUANTITIES,
     DOOR_TRANSFORMATION_RULE_PREFIX,
     LEVEL1_ORDER,
+    LEVEL1_TRAILING_ORDER,
     MANUAL_SELECTION_SOURCE,
     attachment_selection_source,
     category_options,
@@ -181,11 +184,22 @@ from quick_discount_rules import (  # noqa: E402
 )
 
 
-assert LEVEL1_ORDER[:11] == (
-    "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
-    "门限位器", "门加强筋", "配置变形", "门变形",
+assert LEVEL1_ORDER == (
+    "侧板", "安装板", "安装附件", "底座", "灯开关", "资料盒", "风机",
+    "滤网", "门变形", "并柜件",
 )
-assert LEVEL1_ORDER.index("接地线") < LEVEL1_ORDER.index("铜排") < LEVEL1_ORDER.index("孔承板")
+assert LEVEL1_TRAILING_ORDER == ("配置变形", "控制柜附件", "其他附件")
+root_options = category_options(
+    [
+        {"category_level1": category}
+        for category in (
+            "其他附件", "控制柜附件", "新增分类", "配置变形", "侧板"
+        )
+    ],
+    [],
+)
+root_labels = [option["label"] for option in root_options]
+assert root_labels[-3:] == ["配置变形", "控制柜附件", "其他附件"]
 mixed_options = category_options(
     [
         {"category_level1": "安装板", "category_level2": "JK安装板"},

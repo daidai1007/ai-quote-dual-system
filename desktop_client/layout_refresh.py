@@ -7,17 +7,20 @@ database catalogue presentation and API interactions approved for V3.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import math
 import re
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
@@ -139,8 +142,10 @@ UI_FIELD_BLOCK_MIN_HEIGHT = (
 )
 UI_PRIMARY_ACTION_HEIGHT = 40
 UI_CARD_RADIUS = 8
-ATTACHMENT_DIALOG_TARGET_WIDTH = 900
-ATTACHMENT_DIALOG_TARGET_HEIGHT = 680
+ATTACHMENT_DIALOG_TARGET_WIDTH = 1120
+ATTACHMENT_DIALOG_TARGET_HEIGHT = 820
+ATTACHMENT_DIALOG_MIN_WIDTH = 900
+ATTACHMENT_DIALOG_MIN_HEIGHT = 680
 ATTACHMENT_DIALOG_SCREEN_MARGIN = 32
 FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS = 75
 FORMULA_TEMPLATE_MAX_ATTEMPTS = 3
@@ -149,6 +154,11 @@ FORMULA_TEMPLATE_DEBOUNCE_MS = 420
 FORMULA_TEMPLATE_BUSY_RECHECK_MS = 160
 QUOTE_REQUEST_TIMEOUT_SECONDS = 90
 QUOTE_PROGRESS_INTERVAL_MS = 1000
+ATTACHMENT_CATEGORY_PRODUCT_FAMILIES = {
+    "侧板": frozenset({"JP"}),
+    "控制箱附件": frozenset({"JM", "JA", "JE", "JK"}),
+    "控制柜附件": frozenset({"JS", "JP"}),
+}
 
 
 LOGGER = logging.getLogger("ai_quote.client")
@@ -2911,12 +2921,19 @@ def _apply_quote_responsive_layout(window, *, force: bool = False) -> None:
     previous_mode = workspace.property("responsiveMode")
     input_panel, result_panel = workspace.widget(0), workspace.widget(1)
 
+    stack_layout = window.stack.parentWidget().layout()
+    if stack_layout is not None:
+        stack_layout.setAlignment(window.stack, Qt.AlignmentFlag(0))
+    window.stack.setMaximumHeight(WIDGET_MAX)
+    window.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    workspace.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     workspace.setChildrenCollapsible(False)
     workspace.setHandleWidth(8)
     input_panel.setMaximumWidth(WIDGET_MAX)
     result_panel.setMaximumWidth(WIDGET_MAX)
-    input_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-    result_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    input_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    result_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     if mode == "wide":
         page.setMinimumHeight(0)
@@ -3000,6 +3017,318 @@ def _apply_quote_responsive_layout(window, *, force: bool = False) -> None:
     QTimer.singleShot(0, lambda: _position_quote_action_dock(window))
 
 
+def _attachment_specification(item: dict) -> str:
+    name = str(item.get("item_name") or "")
+    model = str(item.get("model_code") or item.get("variant") or "").strip()
+    dimension_keys = ["width_mm", "height_mm"]
+    if "安装板" not in name:
+        dimension_keys.append("depth_mm")
+    values = [item.get(key) for key in dimension_keys]
+    dimensions = ""
+    if any(value is not None for value in values):
+        dimensions = " × ".join(
+            "—" if value is None else f"{float(value):g}" if _safe_float(value) is not None else str(value)
+            for value in values
+        ) + " mm"
+    parts = [part for part in (model, dimensions) if part]
+    return " · ".join(parts) or "通用"
+
+
+def _attachment_money(value) -> str:
+    amount = _safe_float(value)
+    return "—" if amount is None else f"{amount:,.2f}"
+
+
+def _attachment_face_price(item: dict) -> float | None:
+    value = item.get(
+        "unit_price_override",
+        item.get("matched_price", item.get("face_price", item.get("price"))),
+    )
+    amount = _safe_float(value)
+    return None if amount is None else abs(amount)
+
+
+def _apply_manual_attachment_quick_amounts(window) -> None:
+    has_override = False
+    for item in getattr(window, "attachments", []):
+        if not isinstance(item, dict) or item.get("quick_amount_override") is None:
+            continue
+        amount = _safe_float(item.get("quick_amount_override"))
+        if amount is None:
+            continue
+        item["quick_amount"] = round(amount, 2)
+        has_override = True
+    if not has_override or not isinstance(getattr(window, "current_result", None), dict):
+        return
+    quick = window.current_result.get("quick")
+    if not isinstance(quick, dict):
+        return
+    old_fee = _safe_float(quick.get("attachment_fee"))
+    total = _safe_float(quick.get("total_cost"))
+    if old_fee is None or total is None:
+        return
+    new_fee = sum(
+        float(item["quick_amount_override"])
+        if isinstance(item, dict) and _safe_float(item.get("quick_amount_override")) is not None
+        else quick_attachment_line_amount(item)
+        for item in window.attachments
+    )
+    quick["attachment_fee"] = round(new_fee, 2)
+    quick["total_cost"] = round(total - old_fee + new_fee, 2)
+
+
+def _attachment_summary_edited(window, cell: QTableWidgetItem) -> None:
+    table = getattr(window, "attachment_summary_table", None)
+    try:
+        edited_column = cell.column()
+        edited_row = cell.row()
+        edited_text = cell.text()
+    except RuntimeError:
+        return
+    if (
+        not isinstance(table, QTableWidget)
+        or getattr(window, "_attachment_summary_rendering", False)
+        or edited_column not in (4, 5)
+    ):
+        return
+    row = edited_row
+    attachments = getattr(window, "attachments", [])
+    if row < 0 or row >= len(attachments) or not isinstance(attachments[row], dict):
+        return
+    text = edited_text.strip().replace(",", "").replace("元", "").strip()
+    value = _safe_float(text)
+    minimum_ok = value is not None and (value > 0 if edited_column == 4 else True)
+    if not minimum_ok:
+        risk = getattr(window, "risk_label", None)
+        if isinstance(risk, QLabel):
+            risk.setText("附件数量必须大于 0；快速金额必须是有效数字。")
+        QTimer.singleShot(0, lambda: _render_attachment_summary_table(window))
+        return
+
+    before = [dict(item) if isinstance(item, dict) else item for item in attachments]
+    item = attachments[row]
+    try:
+        sign = -1 if int(item.get("attachment_price_sign", 1)) == -1 else 1
+    except (TypeError, ValueError):
+        sign = 1
+    if edited_column == 4:
+        item["quantity"] = value
+        formula_unit_cost = _safe_float(item.get("formula_unit_cost"))
+        if formula_unit_cost is not None:
+            item["formula_amount"] = round(value * formula_unit_cost * sign, 2)
+        if item.get("quick_amount_override") is None:
+            face_price = _attachment_face_price(item)
+            if face_price is not None:
+                item["quick_amount"] = round(face_price * value * sign, 2)
+    else:
+        item["quick_amount_override"] = round(value, 2)
+        item["quick_amount"] = round(value, 2)
+
+    _invalidate_quote_after_attachment_change(window, before)
+    if edited_column == 4:
+        timer = getattr(window, "_v2_environment_timer", None)
+        if timer is not None and any(
+            isinstance(row_item, dict) and row_item.get("catalog_version")
+            for row_item in attachments
+        ):
+            timer.start()
+    risk = getattr(window, "risk_label", None)
+    if isinstance(risk, QLabel):
+        risk.setText(
+            (
+                "附件数量已更新；人工快速金额保持不变，公式成本正在校验。请重新计算双报价。"
+                if item.get("quick_amount_override") is not None
+                else "附件数量已更新，正在校验公式成本；请重新计算双报价。"
+            )
+            if edited_column == 4
+            else "附件快速金额已人工调整，将计入快速报价；公式金额不变。请重新计算双报价。"
+        )
+    QTimer.singleShot(0, lambda: _render_attachment_summary_table(window))
+
+
+def _attachment_image_key(value) -> str:
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or ""))).casefold()
+
+
+def _attachment_images(window, item: dict) -> list[dict]:
+    direct = item.get("attachment_images")
+    if isinstance(direct, list) and direct:
+        return [image for image in direct if isinstance(image, dict) and image.get("data_base64")]
+    wanted = _attachment_image_key(item.get("item_name"))
+    if not wanted:
+        return []
+    for entry in getattr(window, "_attachment_image_catalog", []):
+        if not isinstance(entry, dict):
+            continue
+        candidate = _attachment_image_key(entry.get("item_name"))
+        mode = "PREFIX" if entry.get("match_mode") == "PREFIX" else "EXACT"
+        if candidate and ((mode == "PREFIX" and wanted.startswith(candidate)) or wanted == candidate):
+            return [
+                image for image in entry.get("images", [])
+                if isinstance(image, dict) and image.get("data_base64")
+            ]
+    return []
+
+
+def _attachment_image_widget(table: QTableWidget, window, item: dict) -> QWidget | None:
+    from PySide6.QtGui import QPixmap
+
+    images = _attachment_images(window, item)
+    if not images:
+        return None
+    container = QWidget(table)
+    container.setObjectName("attachmentImageCell")
+    layout = QHBoxLayout(container)
+    layout.setContentsMargins(3, 3, 3, 3)
+    layout.setSpacing(2)
+    cache = getattr(window, "_attachment_pixmap_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        window._attachment_pixmap_cache = cache
+    available_width = 82
+    label_width = max(34, available_width // min(len(images), 2) - 2)
+    rendered = 0
+    for image in images[:2]:
+        encoded = str(image.get("data_base64") or "")
+        cache_key = str(image.get("image_sha256") or encoded[:80])
+        pixmap = cache.get(cache_key)
+        if pixmap is None:
+            try:
+                raw = base64.b64decode(encoded, validate=False)
+            except (ValueError, TypeError):
+                raw = b""
+            pixmap = QPixmap()
+            if raw:
+                pixmap.loadFromData(raw)
+            cache[cache_key] = pixmap
+        if pixmap.isNull():
+            continue
+        label = QLabel(container)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setFixedSize(label_width, 58)
+        label.setPixmap(pixmap.scaled(
+            label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        layout.addWidget(label)
+        rendered += 1
+    if not rendered:
+        return None
+    container.setToolTip(f"附件图片来自数据库，共 {len(images)} 张")
+    container.setAccessibleName(f"{item.get('item_name') or '附件'}图片")
+    return container
+
+
+def _ensure_attachment_summary_table(window) -> QTableWidget | None:
+    existing = getattr(window, "attachment_summary_table", None)
+    if isinstance(existing, QTableWidget):
+        source = getattr(window, "attachment_list", None)
+        if source is not None:
+            source.setVisible(False)
+            source.setMinimumHeight(0)
+            source.setMaximumHeight(0)
+        return existing
+    source = getattr(window, "attachment_list", None)
+    parent = source.parentWidget() if source is not None else None
+    layout = parent.layout() if parent is not None else None
+    if source is None or parent is None or layout is None:
+        return None
+
+    table = QTableWidget(0, 7, parent)
+    table.setObjectName("attachmentSummaryTable")
+    table.setAccessibleName("已选附件报价明细")
+    table.setHorizontalHeaderLabels((
+        "图片", "一级分类", "名称", "尺寸 / 规格", "数量", "快速金额", "公式金额",
+    ))
+    table.horizontalHeaderItem(0).setToolTip("图片从线上数据库附件图片表读取；缺图时留空")
+    table.horizontalHeaderItem(4).setToolTip("每台柜体或每套并柜的附件选择数量；双击修改")
+    table.horizontalHeaderItem(5).setToolTip("附件快速报价行金额；双击人工调整")
+    table.verticalHeader().setVisible(False)
+    table.verticalHeader().setDefaultSectionSize(66)
+    table.horizontalHeader().setMinimumHeight(30)
+    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+    table.setColumnWidth(0, 90)
+    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+    table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+    for column in range(4, 7):
+        table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+    table.setEditTriggers(
+        QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed
+    )
+    table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(True)
+    table.setWordWrap(False)
+    table.setMinimumHeight(72)
+    table.setMaximumHeight(302)
+    table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    table.setToolTip("双击“数量”或“快速金额”单元格可直接修改；人工快速金额计入快速报价")
+    table.itemChanged.connect(lambda cell: _attachment_summary_edited(window, cell))
+    layout.replaceWidget(source, table)
+    source.setVisible(False)
+    source.setMinimumHeight(0)
+    source.setMaximumHeight(0)
+    window.attachment_summary_table = table
+    return table
+
+
+def _render_attachment_summary_table(window) -> None:
+    table = _ensure_attachment_summary_table(window)
+    if table is None:
+        return
+    attachments = [
+        item for item in getattr(window, "attachments", []) if isinstance(item, dict)
+    ]
+    _apply_manual_attachment_quick_amounts(window)
+    window._attachment_summary_rendering = True
+    table.blockSignals(True)
+    try:
+        table.setRowCount(len(attachments))
+        for row, item in enumerate(attachments):
+            table.removeCellWidget(row, 0)
+            values = (
+                "",
+                str(item.get("category_level1") or item.get("attachment_category") or "未分类").strip(),
+                " ".join(str(item.get("item_name") or "未命名附件").split()),
+                _attachment_specification(item),
+                f"{(_safe_float(item.get('quantity')) or 1):g}",
+                _attachment_money(item.get("quick_amount")),
+                _attachment_money(item.get("formula_amount")),
+            )
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem("" if column == 0 else (value or "—"))
+                flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+                if column in (4, 5):
+                    flags |= Qt.ItemFlag.ItemIsEditable
+                    cell.setBackground(QColor(BLUEPRINT_PALE))
+                    cell.setToolTip("双击修改数量" if column == 4 else "双击调整快速金额；修改值计入快速报价且不改变公式金额")
+                cell.setFlags(flags)
+                if column == 4:
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                elif column >= 5:
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                else:
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(row, column, cell)
+            image_widget = _attachment_image_widget(table, window, item)
+            if image_widget is not None:
+                table.setCellWidget(row, 0, image_widget)
+            table.item(row, 2).setToolTip(str(item.get("display_name") or item.get("item_name") or ""))
+            formula_cell = table.item(row, 6)
+            if formula_cell is not None and item.get("auxiliary_list"):
+                formula_cell.setToolTip("辅材清单：\n" + str(item.get("auxiliary_list")))
+            table.setRowHeight(row, 66)
+        visible_rows = min(max(len(attachments), 1), 4)
+        height = max(102, 34 + visible_rows * 66 + 2)
+        table.setMinimumHeight(height)
+        table.setMaximumHeight(height)
+    finally:
+        table.blockSignals(False)
+        window._attachment_summary_rendering = False
+
+
 def _refresh_quote_page(window) -> None:
     page = window.stack.widget(1)
     workspace = _find(page, QSplitter, "quoteWorkspace")
@@ -3023,6 +3352,8 @@ def _refresh_quote_page(window) -> None:
             font.setPointSize(max(10, font.pointSize()))
             attachment_list.setFont(font)
             attachment_list._detail_font_enlarged = True
+    _ensure_attachment_summary_table(window)
+    _render_attachment_summary_table(window)
 
     _ensure_quote_action_dock(window)
     _apply_quote_responsive_layout(window, force=True)
@@ -3590,6 +3921,15 @@ QListWidget#attachmentDetailList {{
     background: {PAPER}; color: {GRAPHITE}; border: 1px solid #DDE3E8;
     border-radius: 5px; padding: 4px;
 }}
+QTableWidget#attachmentSummaryTable {{
+    background: {PAPER}; color: {GRAPHITE}; border: 1px solid #DDE3E8;
+    border-radius: 5px; gridline-color: #DDE3E8; alternate-background-color: #F7F9FB;
+}}
+QTableWidget#attachmentSummaryTable::item {{ padding: 3px 6px; }}
+QTableWidget#attachmentSummaryTable QHeaderView::section {{
+    background: #EEF3F7; color: #314657; border: 0; border-right: 1px solid #D7E0E7;
+    border-bottom: 1px solid #CDD8E0; padding: 4px 6px; font-weight: 700;
+}}
 QPushButton#advancedToggle {{
     min-height: 32px; background: #EEF2F5; color: #3C4B58;
     border: 1px solid #D7DEE5; border-radius: 6px; text-align: left;
@@ -4151,11 +4491,16 @@ QDialog#attachmentDialog QPushButton:disabled {{
 
 
 def _configure_attachment_dialog(dialog) -> None:
-    """Apply compact production-dialog chrome and deterministic focus order."""
+    """Apply spacious, screen-bounded dialog chrome and deterministic focus."""
 
     dialog.setObjectName("attachmentDialog")
     width, height = _attachment_dialog_target_size(dialog)
-    dialog.setFixedSize(width, height)
+    dialog.setMinimumSize(
+        min(width, ATTACHMENT_DIALOG_MIN_WIDTH),
+        min(height, ATTACHMENT_DIALOG_MIN_HEIGHT),
+    )
+    dialog.setMaximumSize(width, height)
+    dialog.resize(width, height)
     layout = dialog.layout()
     if layout is None:
         return
@@ -4262,6 +4607,28 @@ def _new_optional_dimension(parent) -> QDoubleSpinBox:
     return field
 
 
+def _save_attachment_catalog(owner, payload: dict, namespace: dict) -> dict:
+    """Persist one attachment through the configured authenticated API."""
+
+    header_builder = namespace.get("api_headers")
+    headers = (
+        header_builder(True)
+        if callable(header_builder)
+        else {"Content-Type": "application/json; charset=utf-8"}
+    )
+    request = urllib.request.Request(
+        _attachment_api_url(owner),
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    if not isinstance(result, dict) or not result.get("saved"):
+        raise RuntimeError("附件服务没有确认保存结果")
+    return result
+
+
 def _show_add_attachment_dialog(owner, namespace: dict) -> None:
     editor = QDialog(owner)
     editor.setWindowTitle("新增附件到附件库")
@@ -4269,7 +4636,11 @@ def _show_add_attachment_dialog(owner, namespace: dict) -> None:
     root = QVBoxLayout(editor)
     root.setContentsMargins(18, 16, 18, 16)
     root.setSpacing(12)
-    explanation = QLabel("保存后会立即加入附件库，下次打开也可继续使用。", editor)
+    explanation = QLabel(
+        "保存后会立即加入当前附件库，下次打开也可继续使用。"
+        "未配置成本规则的新增附件用于快速报价。",
+        editor,
+    )
     explanation.setWordWrap(True)
     root.addWidget(explanation)
 
@@ -4363,16 +4734,7 @@ def _show_add_attachment_dialog(owner, namespace: dict) -> None:
         save.setEnabled(False)
         save.setText("正在保存…")
         try:
-            header_builder = namespace.get("api_headers")
-            headers = header_builder(True) if callable(header_builder) else {"Content-Type": "application/json"}
-            request = urllib.request.Request(
-                _attachment_api_url(owner),
-                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                headers=headers,
-                method="POST",
-            )
-            with urllib.request.urlopen(request, timeout=60) as response:
-                result = json.loads(response.read().decode("utf-8"))
+            result = _save_attachment_catalog(owner, payload, namespace)
             reload_catalog = getattr(owner, "reload_catalog", None)
             if callable(reload_catalog):
                 reload_catalog()
@@ -4436,6 +4798,35 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     original_update_selection_hint = dialog_class.update_selection_hint
     original_accept_selection = dialog_class.accept_selection
     original_collect_attachments = dialog_class.collect_attachments
+
+    def attachment_product_family(self) -> str:
+        getter = getattr(self, "selected_product_code", None)
+        product_code = ""
+        if callable(getter):
+            try:
+                product_code = str(getter() or "").strip().upper()
+            except (AttributeError, TypeError, ValueError):
+                product_code = ""
+        if not product_code:
+            parent = self.parentWidget()
+            combo = getattr(parent, "product_combo", None) if parent is not None else None
+            if isinstance(combo, QComboBox):
+                product_code = str(combo.currentData() or combo.currentText() or "").strip().upper()
+        normalized = re.sub(r"[\s\-]+", "_", product_code)
+        match = re.match(r"^(JM|JA|JE|JK|JS|JP)(?:_|$)", normalized)
+        return match.group(1) if match else ""
+
+    def attachment_category_allowed(self, item: dict) -> bool:
+        category = attachment_category_value(item, 0)
+        allowed_families = ATTACHMENT_CATEGORY_PRODUCT_FAMILIES.get(category)
+        family = attachment_product_family(self)
+        return allowed_families is None or not family or family in allowed_families
+
+    def applicable_catalog(self, items) -> list[dict]:
+        return [
+            item for item in items
+            if isinstance(item, dict) and attachment_category_allowed(self, item)
+        ]
 
     def format_attachment_size(item: dict) -> str:
         if "安装板" in str(size_match_attachment_name(item) or ""):
@@ -4828,6 +5219,18 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     def prepare_default_selections(self) -> int:
         matches = build_default_matches(self)
         normalize_selection_origins(self, matches)
+        # Installation boards keep their size-matching helper for an explicit
+        # operator selection, but a calculated match is never an automatic
+        # selection.  Remove legacy automatic snapshots while preserving rows
+        # that the operator selected manually.
+        self.attachments = [
+            item for item in getattr(self, "attachments", [])
+            if not (
+                isinstance(item, dict)
+                and default_rule_for_item(item) == DEFAULT_INSTALLATION_BOARD
+                and is_automatic_attachment_selection(item)
+            )
+        ]
         opt_outs = getattr(self, "default_selection_opt_outs", set())
         selected_items = [item for item in getattr(self, "attachments", []) if isinstance(item, dict)]
         added = 0
@@ -4895,6 +5298,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 selected_items = list(self.attachments)
         for rule, candidate in matches.items():
             if rule == DEFAULT_FIXED_BASE and ganged_base_matches:
+                continue
+            if rule == DEFAULT_INSTALLATION_BOARD:
                 continue
             if candidate is None or rule in opt_outs:
                 continue
@@ -5375,7 +5780,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else {}
             source = source if isinstance(source, dict) else {}
             path = attachment_category_path(source)
-            category_matches = path[:len(filter_path)] == filter_path
+            category_matches = (
+                attachment_category_allowed(self, source)
+                and path[:len(filter_path)] == filter_path
+            )
             table_text = [
                 table.item(row, column).text()
                 for column in (self.COL_NAME, self.COL_SPEC, self.COL_SCHEME, self.COL_PRICE)
@@ -5389,7 +5797,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 *table_text,
             ]).casefold()
             table.setRowHidden(row, not category_matches or bool(needle and needle not in haystack))
-        options = category_options(getattr(self, "catalog", []), selected)
+        options = category_options(
+            applicable_catalog(self, getattr(self, "catalog", [])), selected
+        )
         show_table = bool(needle) or not bool(options)
         scroll = getattr(self, "category_scroll", None)
         if isinstance(scroll, QScrollArea):
@@ -5496,10 +5906,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         return len(automatic)
 
     def refresh_category_browser(self):
-        catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
-        for item in catalog:
+        full_catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
+        for item in full_catalog:
             for level, key in enumerate(("category_level1", "category_level2", "category_level3")):
                 item[key] = attachment_category_value(item, level)
+        catalog = applicable_catalog(self, full_catalog)
         self.category_selection = valid_selection_prefix(catalog, getattr(self, "category_selection", []))
         clear_category_cards(self)
         options = category_options(catalog, self.category_selection)
@@ -5513,21 +5924,45 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         self.category_back_button.setVisible(bool(self.category_selection))
         self.category_back_button.setEnabled(bool(self.category_selection))
 
-        column_count = _attachment_category_column_count(self)
+        root_level = not self.category_selection
+        column_count = 1 if root_level else _attachment_category_column_count(self)
         for column in range(4):
             self.category_grid.setColumnStretch(column, 1 if column < column_count else 0)
         row_minimum_heights: dict[int, int] = {}
         for index, option in enumerate(options):
             card = QFrame(self.category_scroll_content)
             card.setObjectName("attachmentCategoryCardShell")
-            card_layout = QVBoxLayout(card)
+            card_layout = QHBoxLayout(card) if root_level else QVBoxLayout(card)
             card_layout.setContentsMargins(0, 0, 0, 0)
             card_layout.setSpacing(0)
-            button = QPushButton(f"{option['label']}\n{option['count']} 项", card)
+            button_text = f"{option['label']}\n{option['count']} 项"
+            if root_level:
+                names = []
+                for catalog_item in catalog:
+                    if attachment_category_value(catalog_item, 0) != str(option["value"]):
+                        continue
+                    name = str(
+                        catalog_item.get("display_name")
+                        or catalog_item.get("item_name")
+                        or "未命名附件"
+                    ).strip()
+                    if name and name not in names:
+                        names.append(name)
+                name_summary = "、".join(names[:2]) or "未命名附件"
+                if len(names) > 2:
+                    name_summary += f"等 {len(names)} 种"
+                button_text = (
+                    f"一级分类：{option['label']}\n"
+                    f"名称：{name_summary}\n"
+                    f"{option['count']} 项"
+                )
+            button = QPushButton(button_text, card)
             button.setObjectName("attachmentCategoryCard")
+            button.setProperty("rootLevelCard", root_level)
+            button.setProperty("attachmentCategoryValue", option["value"])
             button.setAccessibleName(f"{option['label']}，{option['count']}项")
             button.setToolTip(f"进入“{option['label']}”")
-            button.setMinimumHeight(64)
+            button.setMinimumHeight(82 if root_level else 64)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(lambda _checked=False, value=option["value"]: open_attachment_category(self, value))
 
@@ -5535,23 +5970,43 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             manual_items = manual_selections_for_category(
                 self, str(option.get("value") or "")
             )
-            show_quick_button = not (
-                object_name == "attachmentQuickMatchManual" and manual_items
+            show_quick_button = (
+                str(option.get("value") or "") != "安装板"
+                and not (
+                    object_name == "attachmentQuickMatchManual" and manual_items
+                )
             )
-            quick_button = QPushButton(text, card)
+            quick_text = "  ·  ".join(
+                part.strip() for part in str(text).splitlines() if part.strip()
+            )
+            quick_button = QPushButton(quick_text, card)
             quick_button.setObjectName(object_name)
+            quick_button.setProperty("attachmentSelectionLayout", "horizontal")
             quick_button.setAccessibleName(f"{option['label']}，{text.replace(chr(10), '，')}")
-            quick_button.setToolTip(tooltip)
+            quick_button.setToolTip(f"{tooltip}\n{quick_text}" if tooltip else quick_text)
             quick_button.setEnabled(enabled)
-            quick_button.setMinimumHeight(54 if text.count("\n") == 1 else 70)
+            quick_button.setMinimumHeight(42)
+            quick_button.setMaximumHeight(46)
             quick_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             quick_button.setVisible(show_quick_button)
             if rule is not None and enabled:
                 quick_button.clicked.connect(lambda _checked=False, value=rule: toggle_default_selection(self, value))
-            card_layout.addWidget(button)
+            selection_host = None
+            if root_level:
+                card_layout.addWidget(button, 5)
+                selection_host = QWidget(card)
+                selection_host.setObjectName("attachmentSelectionPane")
+                selection_layout = QVBoxLayout(selection_host)
+                selection_layout.setContentsMargins(8, 8, 8, 8)
+                selection_layout.setSpacing(6)
+                selection_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+                card_layout.addWidget(selection_host, 7)
+            else:
+                card_layout.addWidget(button)
+                selection_layout = card_layout
             if str(option.get("value") or "") == "安装板":
                 quick_row = QHBoxLayout()
-                quick_row.setContentsMargins(0, 0, 8, 0)
+                quick_row.setContentsMargins(0, 0, 0 if root_level else 8, 0)
                 quick_row.setSpacing(6)
                 if show_quick_button:
                     quick_row.addWidget(quick_button, 1)
@@ -5570,19 +6025,23 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 sign_button.setFixedSize(34, 34)
                 sign_button.clicked.connect(lambda: toggle_installation_board_sign(self))
                 quick_row.addWidget(sign_button, 0, Qt.AlignmentFlag.AlignVCenter)
-                card_layout.addLayout(quick_row)
+                selection_layout.addLayout(quick_row)
             elif show_quick_button:
-                card_layout.addWidget(quick_button)
+                selection_layout.addWidget(quick_button)
             for manual_item in manual_items:
-                manual_button = QPushButton(
-                    manual_selection_card_text(self, manual_item), card
+                manual_text = manual_selection_card_text(self, manual_item)
+                manual_horizontal_text = "  ·  ".join(
+                    part.strip() for part in manual_text.splitlines() if part.strip()
                 )
+                manual_button = QPushButton(manual_horizontal_text, card)
                 manual_button.setObjectName("attachmentManualSelection")
-                manual_button.setAccessibleName(
-                    manual_selection_card_text(self, manual_item).replace("\n", "，")
+                manual_button.setProperty("attachmentSelectionLayout", "horizontal")
+                manual_button.setAccessibleName(manual_text.replace("\n", "，"))
+                manual_button.setToolTip(
+                    f"人工已选择；单击只取消这一项附件\n{manual_horizontal_text}"
                 )
-                manual_button.setToolTip("人工已选择；单击只取消这一项附件")
-                manual_button.setMinimumHeight(100)
+                manual_button.setMinimumHeight(42)
+                manual_button.setMaximumHeight(46)
                 manual_button.setSizePolicy(
                     QSizePolicy.Policy.Expanding,
                     QSizePolicy.Policy.Fixed,
@@ -5593,18 +6052,20 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                         self, value
                     )
                 )
-                card_layout.addWidget(manual_button)
-            card_minimum_height = button.minimumHeight()
-            if show_quick_button:
-                card_minimum_height += quick_button.minimumHeight()
-            card_minimum_height += sum(
-                child.minimumHeight()
-                for child in card.findChildren(
-                    QPushButton,
-                    "attachmentManualSelection",
-                    Qt.FindChildOption.FindDirectChildrenOnly,
-                )
-            )
+                selection_layout.addWidget(manual_button)
+            selection_count = int(show_quick_button) + len(manual_items)
+            selection_minimum_height = selection_count * 42
+            if selection_count > 1:
+                selection_minimum_height += (selection_count - 1) * selection_layout.spacing()
+            if str(option.get("value") or "") == "安装板" and not show_quick_button:
+                selection_minimum_height += 34
+            if root_level:
+                selection_minimum_height += 16
+                if selection_host is not None:
+                    selection_host.setMinimumHeight(selection_minimum_height)
+                card_minimum_height = max(button.minimumHeight(), selection_minimum_height)
+            else:
+                card_minimum_height = button.minimumHeight() + selection_minimum_height
             card.setMinimumHeight(card_minimum_height)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             row_index = index // column_count
@@ -5634,10 +6095,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         if show_table:
             apply_classification_filter(self, needle)
         hint = getattr(self, "catalog_hint", None)
-        if catalog and isinstance(hint, QLabel):
+        if full_catalog and isinstance(hint, QLabel):
             level1_count = len({attachment_category_value(item, 0) for item in catalog})
             hint.setText(
-                f"已读取 {len(catalog)} 条附件价格，覆盖 {level1_count} 个一级分类。"
+                f"当前产品可用 {len(catalog)} 条附件价格，覆盖 {level1_count} 个一级分类"
+                f"（附件库共 {len(full_catalog)} 条）。"
                 "绿色框分别标明系统默认和人工选择；单击人工框只取消对应附件。"
             )
 
@@ -6105,10 +6567,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
             if cancel_button is not None:
                 cancel_button.setText("取消")
-        # The dialog remains fixed after construction, but its logical size is
-        # capped to the active screen so Windows 125%-200% scaling cannot push
-        # the footer actions outside the desktop.
-        self.setFixedSize(
+        # Start from the requested roomy size. The final configuration caps
+        # it to the active screen and keeps a smaller resizable range where
+        # the desktop has enough space.
+        self.resize(
             ATTACHMENT_DIALOG_TARGET_WIDTH,
             ATTACHMENT_DIALOG_TARGET_HEIGHT,
         )
@@ -6170,6 +6632,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             "QPushButton#attachmentCategoryBack {background:transparent;border:0;color:#2c6fa8;padding:4px 8px;font-weight:600;}"
             "QFrame#attachmentCategoryCardShell {background:#fbfdff;border:1px solid #a9c5d9;border-left:5px solid #2c78c4;border-radius:7px;}"
             "QPushButton#attachmentCategoryCard {background:transparent;border:0;border-bottom:1px solid #d8e5ef;border-radius:0;color:#173f67;font-weight:700;padding:10px 14px;text-align:left;}"
+            "QPushButton#attachmentCategoryCard[rootLevelCard=\"true\"] {border-bottom:0;border-right:1px solid #d8e5ef;}"
             "QPushButton#attachmentCategoryCard:hover {background:#e4f1fb;border-bottom-color:#6da4cc;}"
             "QPushButton#attachmentCategoryCard:pressed {background:#d5e8f6;}"
             "QPushButton#attachmentQuickMatch,QPushButton#attachmentQuickMatchCancelled {background:#f1f4f6;color:#66727e;padding:7px 12px;border:0;text-align:left;}"
@@ -6430,6 +6893,7 @@ def install_layout_refresh(namespace: dict) -> None:
         table = getattr(self, "summary_table", None)
         formula_price_column = None
         quick_price_column = None
+        remark_column = None
         if isinstance(table, QTableWidget):
             if not native_door_column:
                 table.insertColumn(5)
@@ -6449,6 +6913,8 @@ def install_layout_refresh(namespace: dict) -> None:
                     formula_price_column = column
                 if "快速" in label and "折扣" not in label:
                     quick_price_column = column
+                if "备注" in label:
+                    remark_column = column
             if quick_price_column is None and table.columnCount() > 8:
                 quick_price_column = 8
         for row, item in enumerate(getattr(self, "draft_items", [])):
@@ -6463,6 +6929,18 @@ def install_layout_refresh(namespace: dict) -> None:
             )
             formula_sum += formula_line["line_total"]
             quick_sum += quick_line["line_total"]
+            if remark_column is not None:
+                # Keep the existing columns, row height, style and saved remark.
+                # This is a display-only line item, never an extra charge.
+                cell = table.item(row, remark_column)
+                if cell is not None:
+                    freight_text = f"运费：{formula_line['freight_fee']:.2f} 元"
+                    detail = (
+                        f"{freight_text}/{'套' if ganged_split_count(item) > 1 else '台'}；"
+                        f"本行运费合计：{formula_line['freight_total']:.2f} 元"
+                    )
+                    cell.setText(f"{freight_text}；{cell.text()}")
+                    cell.setToolTip(f"{detail}\n{cell.toolTip()}")
             if formula_price_column is not None:
                 table.setItem(
                     row, formula_price_column,
@@ -6594,34 +7072,35 @@ def install_layout_refresh(namespace: dict) -> None:
     if callable(original_update_attachment_view):
         def update_attachment_view_with_signed_prices(self):
             original_update_attachment_view(self)
+            _apply_manual_attachment_quick_amounts(self)
             attachment_list = getattr(self, "attachment_list", None)
-            if attachment_list is None:
-                return
-            for row, attachment in enumerate(getattr(self, "attachments", [])):
-                if not isinstance(attachment, dict):
-                    continue
-                try:
-                    sign = -1 if int(attachment.get("attachment_price_sign", 1)) == -1 else 1
-                except (TypeError, ValueError):
-                    sign = 1
-                list_item = attachment_list.item(row)
-                if list_item is None:
-                    continue
-                text = list_item.text()
-                if sign == -1:
-                    price = _safe_float(
-                        attachment.get("unit_price_override", attachment.get("matched_price"))
+            if attachment_list is not None:
+                for row, attachment in enumerate(getattr(self, "attachments", [])):
+                    if not isinstance(attachment, dict):
+                        continue
+                    try:
+                        sign = -1 if int(attachment.get("attachment_price_sign", 1)) == -1 else 1
+                    except (TypeError, ValueError):
+                        sign = 1
+                    list_item = attachment_list.item(row)
+                    if list_item is None:
+                        continue
+                    text = list_item.text()
+                    if sign == -1:
+                        price = _safe_float(
+                            attachment.get("unit_price_override", attachment.get("matched_price"))
+                        )
+                        if price is not None:
+                            positive_text = f"{abs(price):,.2f} 元"
+                            negative_text = f"{-abs(price):,.2f} 元"
+                            text = text.replace(positive_text, negative_text)
+                    quantity_spin = getattr(self, "quantity_spin", None)
+                    cabinets = quantity_spin.value() if quantity_spin is not None else 1
+                    final_quantity = final_attachment_quantity(
+                        attachment, cabinets, _ganged_count(self)
                     )
-                    if price is not None:
-                        positive_text = f"{abs(price):,.2f} 元"
-                        negative_text = f"{-abs(price):,.2f} 元"
-                        text = text.replace(positive_text, negative_text)
-                quantity_spin = getattr(self, "quantity_spin", None)
-                cabinets = quantity_spin.value() if quantity_spin is not None else 1
-                final_quantity = final_attachment_quantity(
-                    attachment, cabinets, _ganged_count(self)
-                )
-                list_item.setText(f"{text} · 最终数量 {final_quantity:g}")
+                    list_item.setText(f"{text} · 最终数量 {final_quantity:g}")
+            _render_attachment_summary_table(self)
         main_window.update_attachment_view = update_attachment_view_with_signed_prices
     if callable(original_product_changed):
         def product_changed_with_default_door(self, *_signal_args, **_signal_kwargs):

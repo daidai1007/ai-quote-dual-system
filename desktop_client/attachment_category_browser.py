@@ -10,25 +10,24 @@ from ganged_cabinet_rules import parse_ganged_specification
 
 CATEGORY_KEYS = ("category_level1", "category_level2", "category_level3")
 LEVEL1_ORDER = (
-    "底座",
     "侧板",
-    "三排纵梁",
     "安装板",
+    "安装附件",
+    "底座",
     "灯开关",
-    "文件夹",
-    "风机滤网",
-    "门限位器",
-    "门加强筋",
-    "配置变形",
+    "资料盒",
+    "风机",
+    "滤网",
     "门变形",
-    "内门",
-    "玻璃门",
-    "安装条",
-    "防雨顶",
-    "接地线",
-    "铜排",
-    "孔承板",
+    "并柜件",
+)
+# Business categories that must remain at the end of the first-level browser.
+# Categories imported later still sort before this suffix, so the requested
+# positions do not drift when a workbook adds another category.
+LEVEL1_TRAILING_ORDER = (
+    "配置变形",
     "控制柜附件",
+    "其他附件",
 )
 UNGROUPED_LEVEL1 = "未分类"
 DIRECT_ITEMS_LABEL = "本级附件"
@@ -789,7 +788,10 @@ def _level1_sort_key(value: str) -> tuple[int, int | str]:
     try:
         return (0, LEVEL1_ORDER.index(value))
     except ValueError:
-        return (1, value.casefold())
+        try:
+            return (2, LEVEL1_TRAILING_ORDER.index(value))
+        except ValueError:
+            return (1, value.casefold())
 
 
 def category_options(items: Iterable[dict], selection: Iterable[str]) -> list[dict]:

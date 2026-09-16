@@ -5,6 +5,7 @@ import test from 'node:test';
 import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
 
 const serverSource = readFileSync(new URL('./server.mjs', import.meta.url), 'utf8');
+const serviceSource = readFileSync(new URL('./attachment_service.mjs', import.meta.url), 'utf8');
 
 test('manual attachment normalization keeps persistent catalogue fields', () => {
   assert.deepEqual(normalizeCatalogAttachment({ item_name: '  新铰链  ', price: 12.5 }), {
@@ -50,16 +51,25 @@ test('catalog SQL writes the required legacy category and classification mapping
   assert.equal(item.attachment_category, '安装板');
   assert.match(serverSource, /INSERT INTO calc\.attachment_price \(\s*attachment_category,/);
   assert.match(serverSource, /source_file, source_sheet, source_row_no, is_active/);
+  assert.match(serverSource, /quick_face_price/);
+  assert.match(serverSource, /FROM calc\.attachment_catalog_version/);
+  assert.match(serverSource, /WHERE status = 'ACTIVE'/);
+  assert.match(serverSource, /price\.data_version IS NOT DISTINCT FROM context\.data_version/);
+  assert.match(serverSource, /CASE WHEN slot\.data_version IS NULL THEN NULL ELSE[\s\S]*values\.price/);
+  assert.match(serverSource, /'manual:' \|\| md5/);
+  assert.match(serverSource, /COALESCE\(MAX\(price\.source_row_no\), 0\) \+ 1/);
+  assert.match(serviceSource, /catalog_write_supported:true/);
   assert.match(serverSource, /sqlUnicodeText\('attachment_catalog_api'\)/);
   assert.match(serverSource, /sourceSheet: sqlUnicodeText\(item\.category_level1\)/);
   assert.match(
     serverSource,
-    /\$\{values\.sourceFile\}, \$\{values\.sourceSheet\}, \$\{values\.sourceRow\}, TRUE/,
+    /\$\{values\.sourceFile\}, \$\{values\.sourceSheet\}, slot\.source_row_no, TRUE/,
   );
-  assert.match(serverSource, /AND attachment_category =/);
+  assert.match(serverSource, /AND price\.attachment_category =/);
   assert.match(serverSource, /UPDATE calc\.attachment_classification classification/);
   assert.match(serverSource, /INSERT INTO calc\.attachment_classification \(/);
   assert.match(serverSource, /category_level1, category_level2, category_level3/);
+  assert.doesNotMatch(serverSource, /catalog_version_managed/);
 });
 
 test('manual attachment rejects unsafe or incomplete values', () => {

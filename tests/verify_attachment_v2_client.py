@@ -43,7 +43,11 @@ QMessageBox.warning = lambda *args: messages.append(args[2])
 missing_id = fixture["missing"]["attachments"][0]["attachment_price_id"]
 costs = {a["attachment_price_id"]: a for a in fixture["complete"]["attachments"]}
 costs[missing_id] = fixture["missing"]["attachments"][0]
-catalog = {**fixture["catalog"], "items": [a for a in fixture["catalog"]["items"] if a["attachment_price_id"] in costs]}
+catalog = {
+    **fixture["catalog"],
+    "catalog_write_supported": True,
+    "items": [a for a in fixture["catalog"]["items"] if a["attachment_price_id"] in costs],
+}
 
 # Exercise the real ApiWorker constructor/payload adapter. Replace only network I/O.
 original_worker_init = Worker.__init__
@@ -106,6 +110,9 @@ dialog = Dialog([], window.api_url.text(), window, target_dimensions=(800,2000,6
 dialog.show()
 spin_until(lambda: len(dialog.catalog) == len(catalog["items"]), "catalog did not load")
 assert dialog._v2_mode and dialog.table.columnCount() == 11
+if mode == "v3":
+    assert dialog.add_attachment_catalog_button.isEnabled()
+    assert "当前启用的附件目录" in dialog.add_attachment_catalog_button.toolTip()
 rows = {}
 for row in range(dialog.table.rowCount()):
     cell = dialog.table.item(row, dialog.COL_CHECK)
@@ -133,7 +140,9 @@ spin_until(lambda: dialog._v2_ready, "manual dimension did not unblock preview")
 collected = dialog.collect_attachments()
 manual_row = next(a for a in collected if a["attachment_price_id"] == missing_id)
 assert manual_row["manual_inputs"]["底座高度"] == "100"
-assert all("unit_price_override" not in a for a in collected)
+for collected_row in collected:
+    if collected_row.get("unit_price_override") is not None:
+        assert selected_input(collected_row)["unit_price_override"] == collected_row["unit_price_override"]
 assert any(a.get("status") == "QUICK_ONLY" for a in collected)
 assert any(a.get("auxiliary_list") for a in collected)
 dialog.table.item(rows[missing_id], dialog.COL_QUANTITY).setText("2")
