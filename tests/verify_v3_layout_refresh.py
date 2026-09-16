@@ -23,7 +23,7 @@ core_root = Path(os.environ.get("AI_QUOTE_V3_CORE_ROOT", ""))
 if not core_root.is_dir():
     raise RuntimeError("AI_QUOTE_V3_CORE_ROOT must point to the verified V3 core directory")
 
-from PySide6.QtCore import QRect, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
@@ -73,10 +73,10 @@ for logical_size in ((1092, 576), (910, 512)):
     assert minimum_probe.minimum[0] <= logical_size[0]
     assert minimum_probe.minimum[1] <= logical_size[1]
 
-# The attachment picker is fixed after construction, but caps its logical
+# The attachment picker opens larger on roomy desktops and caps its logical
 # dimensions to the active desktop at common Windows scaling levels.
 for logical_size, expected in {
-    (1092, 614): (900, 582),   # 1366x768 at 125% (representative logical area)
+    (1092, 614): (1060, 582),  # 1366x768 at 125% (representative logical area)
     (910, 512): (878, 480),    # 150%
     (781, 439): (749, 407),    # 175%
     (683, 384): (651, 352),    # 200%
@@ -361,7 +361,7 @@ attachment_dialog.catalog = [
         "category_level1": "未来分类",
     },
 ]
-assert attachment_dialog.prepare_default_selections() == 9
+assert attachment_dialog.prepare_default_selections() == 8
 limiter_attachment = next(
     item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
 )
@@ -372,7 +372,6 @@ assert all(
     if item.get("item_name") != "门限位器"
 )
 attachment_dialog.rebuild_table()
-attachment_dialog.resize(900, 680)
 attachment_dialog.show()
 app.processEvents()
 expected_attachment_size = layout_refresh._attachment_dialog_target_size(attachment_dialog)
@@ -381,14 +380,14 @@ assert attachment_dialog.width() <= layout_refresh.ATTACHMENT_DIALOG_TARGET_WIDT
 assert attachment_dialog.height() <= layout_refresh.ATTACHMENT_DIALOG_TARGET_HEIGHT
 assert (
     attachment_dialog.minimumWidth()
-    == attachment_dialog.maximumWidth()
-    == expected_attachment_size[0]
+    == min(expected_attachment_size[0], layout_refresh.ATTACHMENT_DIALOG_MIN_WIDTH)
 )
 assert (
     attachment_dialog.minimumHeight()
-    == attachment_dialog.maximumHeight()
-    == expected_attachment_size[1]
+    == min(expected_attachment_size[1], layout_refresh.ATTACHMENT_DIALOG_MIN_HEIGHT)
 )
+assert attachment_dialog.maximumWidth() == expected_attachment_size[0]
+assert attachment_dialog.maximumHeight() == expected_attachment_size[1]
 assert len(buttons_with_text(attachment_dialog, {"确认选择"})) == 1
 assert len(buttons_with_text(attachment_dialog, {"取消"})) == 1
 assert not buttons_with_text(attachment_dialog, {"Cancel"})
@@ -417,42 +416,54 @@ def attachment_category_buttons():
 def attachment_category_button(label: str):
     return next(
         button for button in attachment_category_buttons()
-        if button.text().splitlines()[0] == label
+        if button.property("attachmentCategoryValue") == label
     )
 
 
 level1_buttons = attachment_category_buttons()
-assert [button.text().splitlines()[0] for button in level1_buttons] == [
-    "底座", "侧板", "三排纵梁", "安装板", "灯开关", "文件夹", "风机滤网",
-    "门限位器", "门加强筋", "配置变形", "门变形", "接地线", "铜排", "未来分类",
+level1_values = [button.property("attachmentCategoryValue") for button in level1_buttons]
+requested_level1_order = (
+    "侧板", "安装板", "安装附件", "底座", "灯开关", "资料盒", "风机",
+    "滤网", "门变形", "并柜件",
+)
+assert [value for value in level1_values if value in requested_level1_order] == [
+    "侧板", "安装板", "底座", "灯开关", "门变形",
 ]
-assert all(button.parentWidget().minimumHeight() >= 118 for button in level1_buttons)
+assert all("一级分类：" in button.text() and "名称：" in button.text() for button in level1_buttons)
+assert all(button.parentWidget().minimumHeight() >= 82 for button in level1_buttons)
 positions = [
     attachment_dialog.category_grid.getItemPosition(
         attachment_dialog.category_grid.indexOf(button.parentWidget())
     )[:2]
     for button in level1_buttons
 ]
-attachment_columns = layout_refresh._attachment_category_column_count(attachment_dialog)
 expected_positions = [
-    (index // attachment_columns, index % attachment_columns)
-    for index in range(min(len(level1_buttons), attachment_columns + 1))
+    (index, 0)
+    for index in range(len(level1_buttons))
 ]
-assert positions[:len(expected_positions)] == expected_positions, positions
+assert positions == expected_positions, positions
 row_count = max(row for row, _column in positions) + 1
 assert attachment_dialog.category_scroll_content.minimumHeight() >= (
-    row_count * 118
+    row_count * 82
     + max(0, row_count - 1) * attachment_dialog.category_grid.verticalSpacing()
 )
 assert attachment_dialog.table.isHidden()
 quick_match_buttons = attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
-assert len(quick_match_buttons) == 9
-assert any(button.text() == "默认已选择\n固定 · 高 100 mm" for button in quick_match_buttons)
-assert any(button.text() == "默认已选择\nA4资料盒" for button in quick_match_buttons)
-assert any(button.text() == "默认已选择\n门加强筋 · 数量：1 个" for button in quick_match_buttons)
-assert any(button.text() == "默认已选择\n红绿线" for button in quick_match_buttons)
-assert any(button.text() == "默认已选择\n门限位器 · 数量：1 个" for button in quick_match_buttons)
-assert any(button.text() == "默认已选择\n铜排 · 默认数量：1 件" for button in quick_match_buttons)
+assert len(quick_match_buttons) == 8
+assert any(button.text() == "默认已选择  ·  固定 · 高 100 mm" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择  ·  A4资料盒" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择  ·  门加强筋 · 数量：1 个" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择  ·  红绿线" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择  ·  门限位器 · 数量：1 个" for button in quick_match_buttons)
+assert any(button.text() == "默认已选择  ·  铜排 · 默认数量：1 件" for button in quick_match_buttons)
+assert all(button.parentWidget().objectName() == "attachmentSelectionPane" for button in quick_match_buttons)
+for quick_button in quick_match_buttons:
+    shell = quick_button.parentWidget().parentWidget()
+    category_button = shell.findChild(QPushButton, "attachmentCategoryCard")
+    assert category_button is not None
+    assert quick_button.mapTo(attachment_dialog, QPoint(0, 0)).x() >= (
+        category_button.mapTo(attachment_dialog, QPoint(category_button.width(), 0)).x()
+    )
 
 # A ganged cabinet receives one independently size-matched fixed base for
 # each split row.  Those selection rows do not multiply by the split count a
@@ -623,7 +634,7 @@ assert automatic_door["selection_source"] == "automatic"
 def visible_dialog_category_button(dialog, label: str):
     return next(
         button for button in dialog.findChildren(QPushButton, "attachmentCategoryCard")
-        if button.isVisible() and button.text().splitlines()[0] == label
+        if button.isVisible() and button.property("attachmentCategoryValue") == label
     )
 
 
@@ -745,27 +756,27 @@ assert before_manual_total - after_manual_total == 270
 door_dialog.close()
 door_parent.close()
 
-# A non-JK product is routed to the ordinary installation-board library. The
-# selected board is summarized back on the first-level card, and its circular
-# sign toggle stores subtraction separately from the positive source price.
+# Installation-board matching is available only after an explicit checkbox
+# selection. Opening the library neither auto-selects a board nor displays a
+# quick-match result on the first-level card.
 attachment_dialog.prepare_default_selections()
 attachment_dialog.rebuild_table()
 while attachment_dialog.category_selection:
     attachment_dialog.back_attachment_category()
 app.processEvents()
-automatic_board = next(
-    item for item in attachment_dialog.attachments
-    if item.get("item_name") == "安装板"
+assert not any(
+    item.get("item_name") in {"安装板", "JK安装板"}
+    for item in attachment_dialog.attachments
 )
-assert automatic_board["selection_source"] == "automatic"
-assert automatic_board["size_match_exact"] is True
-assert automatic_board["matched_price"] == 75
-assert any(
+installation_card_button = attachment_category_button("安装板")
+installation_card = installation_card_button.parentWidget()
+assert not any(
     button.isVisible()
-    and button.text().startswith("默认已选择\n安装板 · 760×960 mm")
-    for button in attachment_dialog.findChildren(
-        QPushButton, "attachmentQuickMatchSelected"
+    for object_name in (
+        "attachmentQuickMatch", "attachmentQuickMatchSelected",
+        "attachmentQuickMatchCancelled", "attachmentQuickMatchMissing",
     )
+    for button in installation_card.findChildren(QPushButton, object_name)
 )
 attachment_category_button("安装板").click()
 app.processEvents()
@@ -776,8 +787,6 @@ board_row = next(
     if attachment_dialog.table.item(row, attachment_dialog.COL_NAME).text() == "安装板"
 )
 board_check = attachment_dialog.table.item(board_row, attachment_dialog.COL_CHECK)
-board_check.setCheckState(Qt.CheckState.Unchecked)
-app.processEvents()
 board_check.setCheckState(Qt.CheckState.Checked)
 app.processEvents()
 assert "按柜体宽、高精确匹配安装板" in attachment_dialog.catalog_hint.text()
@@ -796,7 +805,7 @@ board_summary = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentManualSelection")
     if button.isVisible() and "安装板" in button.text()
 )
-assert board_summary.text().startswith("人工已选择\n安装板\n")
+assert board_summary.text().startswith("人工已选择  ·  安装板  ·  ")
 board_sign = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentPriceSignPositive")
     if button.isVisible()
@@ -951,7 +960,7 @@ app.processEvents()
 assert len([
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
     if button.isVisible()
-]) == 8
+]) == 7
 folder_cancelled = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchCancelled")
     if button.isVisible() and "A4资料盒" in button.text()
@@ -964,7 +973,7 @@ assert "a4_folder" not in attachment_dialog.default_selection_opt_outs
 assert len([
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
     if button.isVisible()
-]) == 9
+]) == 8
 if artifact_dir is not None:
     assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_categories.png"))
 
@@ -984,7 +993,7 @@ copper_manual = next(
     button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchManual")
     if button.isVisible() and "铜排" in button.text()
 )
-assert copper_manual.text() == "人工数量\n铜排 · 数量：3 件", copper_manual.text()
+assert copper_manual.text() == "人工数量  ·  铜排 · 数量：3 件", copper_manual.text()
 copper_manual.click()
 app.processEvents()
 assert "copper_busbar" in attachment_dialog.default_selection_opt_outs
@@ -1157,17 +1166,17 @@ plain_dialog = attachment_dialog_class(
     target_dimensions=(760, 960, 500),
 )
 plain_dialog.catalog = [dict(item) for item in attachment_dialog.catalog]
-assert plain_dialog.prepare_default_selections() == 7
+assert plain_dialog.prepare_default_selections() == 6
 plain_dialog.rebuild_table()
 plain_dialog.show()
 app.processEvents()
 plain_quick_labels = plain_dialog.findChildren(QPushButton, "attachmentQuickMatch")
-assert any(label.text() == "快速匹配\n无需底座" for label in plain_quick_labels)
-assert any(label.text() == "快速匹配\n仅 JP 默认匹配" for label in plain_quick_labels)
+assert any(label.text() == "快速匹配  ·  无需底座" for label in plain_quick_labels)
+assert any(label.text() == "快速匹配  ·  仅 JP 默认匹配" for label in plain_quick_labels)
 assert sum(
     plain_dialog.table.item(row, plain_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
     for row in range(plain_dialog.table.rowCount())
-) == 7
+) == 6
 plain_dialog.close()
 plain_parent.close()
 attachment_dialog_class.load_catalog = original_attachment_load
@@ -1183,10 +1192,20 @@ assert window.freight_spin.value() == 0
 assert window.freight_spin.toolTip().startswith("填写每台柜体或每套并柜的运费")
 assert len([
     label for label in window.findChildren(QLabel)
-    if label.text().strip() == "运费"
+    if label.text().strip().startswith("运费")
 ]) >= 3
 assert window.attachment_list.font().pointSize() >= 10
-assert window.attachment_list.maximumHeight() == 116
+assert window.attachment_list.maximumHeight() == 0
+assert window.attachment_list.isHidden()
+assert isinstance(window.attachment_summary_table, QTableWidget)
+assert [
+    window.attachment_summary_table.horizontalHeaderItem(column).text()
+    for column in range(window.attachment_summary_table.columnCount())
+] == ["图片", "一级分类", "名称", "尺寸 / 规格", "数量", "快速金额", "公式金额"]
+assert window.attachment_summary_table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+assert window.attachment_summary_table.maximumHeight() == max(
+    102, 36 + max(window.attachment_summary_table.rowCount(), 1) * 66
+)
 assert window.freight_spin.parentWidget() is window.freight_field_block
 assert window.freight_field_block.objectName() == "fieldBlock"
 assert window.freight_label.buddy() is window.freight_spin
@@ -1466,7 +1485,7 @@ assert window.quick_labels["total"].text() == "2,550.00 元"
 assert len(window.current_result["quick"]["matched_experience"]["items"]) == 2
 assert "已合并 2 个子柜" in window.findChild(QLabel, "quoteResultState").text()
 assert window.pending_quote_signature == window.quote_input_signature()
-assert window.pending_quote_signature[-1][0] == "ganged"
+assert any(isinstance(value, tuple) and value and value[0] == "ganged" for value in window.pending_quote_signature)
 formula_order = layout_refresh._formula_order_line_breakdown({
     "formula": window.current_result["formula"],
     "attachments": [],
@@ -1551,6 +1570,8 @@ window.freight_spin.setValue(0)
 # Adding a V2 attachment keeps the two original child requests unchanged and
 # appends one aggregate snapshot request. The snapshot may return distinct
 # formula and quick attachment amounts without changing child split rules.
+for row in window.ganged_cabinets:
+    row["base_height_mm"] = 100
 v2_attachment = {
     "attachment_price_id": 9001,
     "item_name": "固定底座",
@@ -1558,7 +1579,7 @@ v2_attachment = {
     "catalog_version": "attachment-test-v2",
     "quantity": 2,
     "attachment_price_sign": 1,
-    "manual_inputs": {"底座高度": 100},
+    "manual_inputs": {},
     "ganged_fixed_base_index": 1,
     "unit_price": 20,
     "price": 20,
@@ -1620,7 +1641,7 @@ assert snapshot_request["attachments"] == [{
     "attachment_price_sign": 1,
     "manual_inputs": {"底座高度": 100},
     "ganged_cabinet_index": 1,
-}]
+}], snapshot_request["attachments"]
 assert window.current_result["formula"]["attachment_fee"] == 12
 assert window.current_result["quick"]["attachment_fee"] == 40
 assert window._attachment_v2_line_id == "00000000-0000-4000-8000-000000000001"
@@ -1802,9 +1823,11 @@ window.calculate_button.click()
 app.processEvents()
 assert window._pending_formula_calculation
 assert not window.calculate_button.isEnabled()
-assert "读取完成后将自动继续计算" in window.findChild(
-    QLabel, "quoteResultState"
-).text()
+formula_progress_text = window.findChild(QLabel, "quoteResultState").text()
+assert (
+    "读取完成后将自动继续计算" in formula_progress_text
+    or "正在自动重试" in formula_progress_text
+), formula_progress_text
 deadline = time.monotonic() + 5
 while (
     (
@@ -1946,7 +1969,7 @@ window.attachments = [{
 window.update_attachment_view()
 assert "-100.00 元" in window.attachment_list.item(0).text()
 
-assert window.stack.count() == 4
+assert window.stack.count() == 5
 nav = window.findChild(QFrame, "navPanel")
 assert nav is not None and nav.width() == 168
 

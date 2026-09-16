@@ -13,6 +13,8 @@ from PySide6.QtCore import Qt, QTimer, QDate
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QInputDialog, QWidget
 from shiboken6 import isValid
 
+from attachment_category_browser import parse_base_specification
+
 PREVIEW_DELAY_MS = 350
 EXTRA_HEADERS = ("快速金额", "公式状态", "公式单位成本", "公式金额", "人工尺寸")
 COST_KEYS = ("error", "rule_id", "rule_version", "rule_materials", "rule_source_row", "formulas", "calculation_notes", "weight_kg", "material_cost", "spray_area_m2", "spray_cost", "auxiliary_cost", "auxiliary_list", "labor_cost", "attachment_selection_id", "quote_line_id", "environment")
@@ -35,8 +37,13 @@ def attachment_images_for_name(image_catalog, item_name):
             return [dict(image) for image in entry.get("images", []) if isinstance(image, dict)]
     return []
 
-def merge_cost(source, cost):
-    return {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
+def merge_cost(source, cost, automatic_base_height=None):
+    merged = {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
+    if automatic_base_height is not None:
+        manual = copy.deepcopy(merged.get("manual_inputs") or {})
+        manual.pop("底座高度", None)
+        merged["manual_inputs"] = manual
+    return merged
 
 def price_sign(source):
     return -1 if source.get("attachment_price_sign") == -1 else 1
@@ -54,6 +61,21 @@ def ganged(window):
         return _ganged_count(window) > 1
     except (ImportError, AttributeError, TypeError):
         return bool(control and control.value() > 1)
+
+def base_height(window):
+    """Return the base height already entered in the visible cabinet specification."""
+    rows = [dict(row) for row in getattr(window, "ganged_cabinets", []) if isinstance(row, dict)]
+    if len(rows) > 1:
+        values = [row.get("base_height_mm") for row in rows]
+        if values and all(value not in (None, "") for value in values):
+            return float(values[0])
+    for name in ("quote_spec_edit", "model_edit"):
+        control = getattr(window, name, None)
+        text = control.text().strip() if control is not None and hasattr(control, "text") else ""
+        parsed = parse_base_specification(text)
+        if parsed is not None:
+            return float(parsed[3])
+    return None
 
 def environment(window, attachments):
     ganged_rows = [dict(row) for row in getattr(window, "ganged_cabinets", []) if isinstance(row, dict)]
@@ -76,9 +98,25 @@ def environment(window, attachments):
             "ganged_cabinet_count": len(ganged_rows) if ganged_rows else 1, "ganged_cabinets": ganged_rows,
             "ganged_cabinet_inputs": child_inputs}
 
-def selected_input(item):
+def uses_base_height(item):
+    identity = " ".join(str(item.get(key) or "") for key in ("category_level1", "category_level2", "item_name"))
+    if "底座" in identity:
+        return True
+    if any(parameter.get("name") == "底座高度" for parameter in item.get("required_parameters", [])):
+        return True
+    formulas = [item.get("formulas")]
+    formulas.extend(rule.get("formulas") for rule in item.get("rules", []) if isinstance(rule, dict))
+    return any("底座高度" in json.dumps(value, ensure_ascii=False) for value in formulas if value)
+
+def selected_input(item, automatic_base_height=None):
+    manual_inputs = copy.deepcopy(item.get("manual_inputs") or {})
+    # Compatibility for the currently deployed V2 API, where 底座高度 was
+    # classified as MANUAL.  The value still comes exclusively from the
+    # visible cabinet specification; users never enter it in the attachment row.
+    if automatic_base_height is not None and uses_base_height(item):
+        manual_inputs["底座高度"] = automatic_base_height
     selected = {"attachment_price_id": item.get("attachment_price_id"), "quantity": item.get("quantity", 1),
-                "attachment_price_sign": item.get("attachment_price_sign", 1), "manual_inputs": copy.deepcopy(item.get("manual_inputs") or {})}
+                "attachment_price_sign": item.get("attachment_price_sign", 1), "manual_inputs": manual_inputs}
     if item.get("unit_price_override") is not None:
         selected["unit_price_override"] = item.get("unit_price_override")
     ganged_index = item.get("ganged_cabinet_index", item.get("ganged_fixed_base_index"))
@@ -257,7 +295,8 @@ def install_attachment_v2(namespace):
         selected = dialog.collect_attachments(show_errors=False)
         if selected is None:
             return
-        payload = environment(dialog.parentWidget(), [selected_input(x) for x in selected])
+        automatic_base = base_height(dialog.parentWidget())
+        payload = environment(dialog.parentWidget(), [selected_input(x, automatic_base) for x in selected])
         signature = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         dialog._v2_signature = signature
         old = getattr(dialog, "_v2_preview_worker", None)
@@ -275,15 +314,15 @@ def install_attachment_v2(namespace):
             if not isValid(dialog):
                 return
             latest = dialog.collect_attachments(show_errors=False)
-            if latest is None or json.dumps(environment(dialog.parentWidget(), [selected_input(x) for x in latest]), sort_keys=True, ensure_ascii=False) != signature:
+            if latest is None or json.dumps(environment(dialog.parentWidget(), [selected_input(x, automatic_base) for x in latest]), sort_keys=True, ensure_ascii=False) != signature:
                 dialog._v2_timer.start()
                 return
             dialog.table.blockSignals(True)
             try:
                 for (row, cell, source), cost in zip(checked(dialog), body.get("attachments", [])):
-                    source = merge_cost(source, cost)
+                    source = merge_cost(source, cost, automatic_base)
                     cell.setData(Qt.ItemDataRole.UserRole, source)
-                    manual = [p["name"] for p in cost.get("required_parameters", []) if p["source"] == "MANUAL"]
+                    manual = [p["name"] for p in cost.get("required_parameters", []) if p["source"] == "MANUAL" and not (p["name"] == "底座高度" and automatic_base is not None)]
                     values = [cost.get("quick_amount"), cost.get("status_text"), cost.get("formula_unit_cost"), cost.get("formula_amount"), "、".join(manual) or "无需填写"]
                     for i, value in enumerate(values):
                         item = dialog.table.item(row, dialog.COL_QUANTITY + 1 + i)
@@ -325,7 +364,8 @@ def install_attachment_v2(namespace):
             return
         if column != dialog.COL_QUANTITY + len(EXTRA_HEADERS):
             return
-        parameters = [p for p in source.get("required_parameters", []) if p["source"] == "MANUAL"]
+        automatic_base = base_height(dialog.parentWidget())
+        parameters = [p for p in source.get("required_parameters", []) if p["source"] == "MANUAL" and not (p["name"] == "底座高度" and automatic_base is not None)]
         if not parameters:
             return
         editor = QDialog(dialog)
@@ -416,7 +456,8 @@ def install_attachment_v2(namespace):
     worker_init = worker_class.__init__
     def init_worker(worker, url, payload, parent=None, *args, **kwargs):
         if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent) and (payload.get("attachment_contract") == 2 or any(row.get("catalog_version") for row in payload.get("attachments", []))):
-            payload = {**payload, "attachment_contract": 2, "attachments": [selected_input(x) for x in payload.get("attachments", [])]}
+            automatic_base = base_height(parent)
+            payload = {**payload, "attachment_contract": 2, "attachments": [selected_input(x, automatic_base) for x in payload.get("attachments", [])]}
             parent._v2_request_quote_id = payload.get("quote_id")
             parent._v2_request_environment = json.dumps(environment(parent, payload["attachments"]), sort_keys=True)
         elif str(url).endswith("/api/quotes/calculate-dual") and parent is not None:
@@ -432,7 +473,8 @@ def install_attachment_v2(namespace):
             window.risk_label.setText("当前API尚未返回附件V2结果，请更新API后重新计算。")
             return
         if result.get("attachment_contract") == 2 and getattr(window, "_v2_request_environment", None):
-            latest = json.dumps(environment(window, [selected_input(x) for x in window.attachments]), sort_keys=True)
+            automatic_base = base_height(window)
+            latest = json.dumps(environment(window, [selected_input(x, automatic_base) for x in window.attachments]), sort_keys=True)
             if latest != window._v2_request_environment or result.get("quote_id") != window._v2_request_quote_id:
                 return
         previous = getattr(window, "current_result", None)
@@ -443,7 +485,8 @@ def install_attachment_v2(namespace):
         finally:
             window._v2_render_rows = None
         if result.get("attachment_contract") == 2 and getattr(window, "current_result", None) is not previous:
-            window.attachments = [merge_cost(original_rows[i] if i < len(original_rows) else {}, row) for i, row in enumerate(result.get("attachments", []))]
+            automatic_base = base_height(window)
+            window.attachments = [merge_cost(original_rows[i] if i < len(original_rows) else {}, row, automatic_base) for i, row in enumerate(result.get("attachments", []))]
             window._attachment_v2_line_id = result.get("quote_line_id")
             window.update_attachment_view()
             window.refresh_discounted_totals()
@@ -480,9 +523,10 @@ def install_attachment_v2(namespace):
 
     open_dialog = window_class.open_attachment_dialog
     def open_dialog_v2(window, *args, **kwargs):
-        before = json.dumps([selected_input(x) for x in window.attachments], sort_keys=True)
+        automatic_base = base_height(window)
+        before = json.dumps([selected_input(x, automatic_base) for x in window.attachments], sort_keys=True)
         result = open_dialog(window, *args, **kwargs)
-        if before != json.dumps([selected_input(x) for x in window.attachments], sort_keys=True):
+        if before != json.dumps([selected_input(x, automatic_base) for x in window.attachments], sort_keys=True):
             window._attachment_v2_line_id = None
             window.current_result = None
             for labels in (window.formula_labels, window.quick_labels):
@@ -549,17 +593,18 @@ def install_attachment_v2(namespace):
             if old and old.isRunning():
                 timer.start()
                 return
-            payload = environment(window, [selected_input(x) for x in rows])
+            automatic_base = base_height(window)
+            payload = environment(window, [selected_input(x, automatic_base) for x in rows])
             signature = json.dumps(payload, sort_keys=True)
             worker = worker_class(window.base_url() + "/api/attachments/preview", payload, window)
             window._v2_environment_worker = worker
             def received(body):
                 if not isValid(window):
                     return
-                now = environment(window, [selected_input(x) for x in window.attachments])
+                now = environment(window, [selected_input(x, base_height(window)) for x in window.attachments])
                 if json.dumps(now, sort_keys=True) != signature:
                     return
-                window.attachments = [merge_cost(rows[i], cost) for i, cost in enumerate(body.get("attachments", []))]
+                window.attachments = [merge_cost(rows[i], cost, base_height(window)) for i, cost in enumerate(body.get("attachments", []))]
                 window.update_attachment_view()
                 window.risk_label.setText("；".join(x.get("error", "") for x in body.get("errors", [])) or "附件成本已更新；请重新计算整柜报价。")
             worker.succeeded.connect(received)

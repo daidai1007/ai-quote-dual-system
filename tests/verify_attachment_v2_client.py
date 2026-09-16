@@ -65,8 +65,11 @@ def start(self):
             rows = []
             for chosen in self.test_payload["attachments"]:
                 row = copy.deepcopy(costs[chosen["attachment_price_id"]])
-                if chosen["attachment_price_id"] == missing_id and chosen["manual_inputs"].get("底座高度"):
+                if chosen["attachment_price_id"] == missing_id and chosen["manual_inputs"].get("底座高度") == 100:
                     row = copy.deepcopy(fixture["manualComplete"]["attachments"][0])
+                    for parameter in row.get("required_parameters", []):
+                        if parameter.get("name") == "底座高度":
+                            parameter["source"] = "MANUAL"
                 row.update(manual_inputs=chosen["manual_inputs"], quantity=chosen["quantity"])
                 row["quick_amount"] = round(row["face_price"] * chosen["quantity"] * chosen["attachment_price_sign"], 2)
                 if row.get("formula_unit_cost") is not None:
@@ -97,7 +100,9 @@ window.product_combo.addItem("JP", "JP")
 window.product_combo.setCurrentIndex(window.product_combo.findData("JP"))
 window.product_combo.blockSignals(False)
 if hasattr(window, "quote_spec_edit"):
-    window.quote_spec_edit.setText("800*600*2000")
+    window.quote_spec_edit.setText("800*600*(2000+100)")
+else:
+    window.model_edit.setText("800*600*(2000+100)")
 window.width_spin.setValue(800)
 window.height_spin.setValue(2000)
 window.depth_spin.setValue(600)
@@ -121,25 +126,15 @@ for row in range(dialog.table.rowCount()):
     cell.setCheckState(Qt.Checked)
     # Exact catalogue face remains readonly, including all Excel decimal places.
     assert not dialog.table.item(row, dialog.COL_PRICE).flags() & Qt.ItemIsEditable
-spin_until(lambda: any("底座高度" in (dialog.table.item(row, 7).text()) for row in rows.values()), "manual error was not shown")
-assert not dialog._v2_ready
-dialog.accept_selection()
-assert messages and "计算完成" in messages[-1]
-
-# Edit through the actual dimension dialog; blanks are not converted to zero.
-original_exec = QDialog.exec
-def edit_exec(self):
-    for field in self.findChildren(QLineEdit):
-        assert field.text() == ""
-        field.setText("100")
-    return QDialog.Accepted
-QDialog.exec = edit_exec
-dialog.table.cellDoubleClicked.emit(rows[missing_id], 10)
-QDialog.exec = original_exec
-spin_until(lambda: dialog._v2_ready, "manual dimension did not unblock preview")
+spin_until(lambda: any(url.endswith("/preview") for url, _payload in requests), "attachment preview was not requested")
+preview_payload = next(payload for url, payload in reversed(requests) if url.endswith("/preview"))
+preview_base_attachment = next(row for row in preview_payload["attachments"] if row["attachment_price_id"] == missing_id)
+assert preview_base_attachment["manual_inputs"].get("底座高度") == 100, preview_base_attachment
+spin_until(lambda: dialog._v2_ready, "interface base height did not unblock preview")
 collected = dialog.collect_attachments()
 manual_row = next(a for a in collected if a["attachment_price_id"] == missing_id)
-assert manual_row["manual_inputs"]["底座高度"] == "100"
+assert "底座高度" not in manual_row["manual_inputs"]
+assert dialog.table.item(rows[missing_id], 10).text() == "无需填写"
 for collected_row in collected:
     if collected_row.get("unit_price_override") is not None:
         assert selected_input(collected_row)["unit_price_override"] == collected_row["unit_price_override"]
@@ -148,7 +143,7 @@ assert any(a.get("auxiliary_list") for a in collected)
 dialog.table.item(rows[missing_id], dialog.COL_QUANTITY).setText("2")
 spin_until(lambda: dialog._v2_ready, "quantity change did not recalculate")
 manual_row = next(a for a in dialog.collect_attachments() if a["attachment_price_id"] == missing_id)
-assert manual_row["quantity"] == 2 and manual_row["manual_inputs"]["底座高度"] == "100"
+assert manual_row["quantity"] == 2 and "底座高度" not in manual_row["manual_inputs"]
 assert not manual_row.get("error"), "stale error survived a successful calculation"
 for identifier, row in rows.items():
     expected = next(a["price"] for a in catalog["items"] if a["attachment_price_id"] == identifier)
@@ -207,8 +202,8 @@ assert len(window.draft_items) == before
 # Ganged selection uses the same V2 catalog and preserves the target child index.
 window.ganged_cabinet_count = 2
 window.ganged_cabinets = [
-    {"width_mm": 400, "height_mm": 2000, "depth_mm": 600, "single_door_count": 1, "double_door_count": 0},
-    {"width_mm": 400, "height_mm": 2000, "depth_mm": 600, "single_door_count": 0, "double_door_count": 1},
+    {"width_mm": 400, "height_mm": 2000, "depth_mm": 600, "base_height_mm": 100, "single_door_count": 1, "double_door_count": 0},
+    {"width_mm": 400, "height_mm": 2000, "depth_mm": 600, "base_height_mm": 100, "single_door_count": 0, "double_door_count": 1},
 ]
 ganged_selection = copy.deepcopy(fixture["result"]["attachments"][0])
 ganged_selection["ganged_fixed_base_index"] = 1

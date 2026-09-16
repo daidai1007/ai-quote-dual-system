@@ -1752,6 +1752,9 @@ def _ensure_ganged_cabinet_panel(window) -> None:
     table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
     table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     layout.addWidget(hint)
     layout.addWidget(table)
     if placement == "grid":
@@ -1823,13 +1826,14 @@ def _render_ganged_cabinet_table(window) -> None:
             table.cellWidget(row_index, 3),
         )
     table.blockSignals(False)
-    table.setFixedHeight(min(42 + 34 * len(rows), 246))
+    table.setFixedHeight(42 + 34 * len(rows))
     hint = getattr(window, "ganged_cabinet_hint", None)
     if isinstance(hint, QLabel):
         hint.setText(
             f"已拆分为 {len(rows)} 个子柜；报价按子柜分别计算后合并，"
             "下方柜型数量表示整套并柜的台数。"
         )
+    QTimer.singleShot(0, lambda: _apply_quote_responsive_layout(window))
 
 
 def _set_ganged_controls_enabled(window, ganged: bool) -> None:
@@ -2041,13 +2045,18 @@ def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | Non
         return float(control.value()) if control is not None else fallback
     attachments = []
     for item in v2_rows:
-        selected = {
-            "attachment_price_id": item.get("attachment_price_id"),
-            "quantity": item.get("quantity", 1),
-            "attachment_price_sign": item.get("attachment_price_sign", 1),
-            "manual_inputs": dict(item.get("manual_inputs") or {}),
-        }
         ganged_index = item.get("ganged_cabinet_index", item.get(GANGED_FIXED_BASE_INDEX_KEY))
+        target_row = (
+            ganged_rows[int(ganged_index)]
+            if ganged_index is not None and 0 <= int(ganged_index) < len(ganged_rows)
+            else ganged_rows[0]
+        )
+        target_base_height = target_row.get("base_height_mm")
+        from attachment_v2_client import selected_input
+        selected = selected_input(
+            item,
+            None if target_base_height in (None, "") else float(target_base_height),
+        )
         if ganged_index is not None:
             selected["ganged_cabinet_index"] = int(ganged_index)
         attachments.append(selected)
@@ -3261,8 +3270,9 @@ def _ensure_attachment_summary_table(window) -> QTableWidget | None:
     table.setAlternatingRowColors(True)
     table.setShowGrid(True)
     table.setWordWrap(False)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     table.setMinimumHeight(72)
-    table.setMaximumHeight(302)
+    table.setMaximumHeight(WIDGET_MAX)
     table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     table.setToolTip("双击“数量”或“快速金额”单元格可直接修改；人工快速金额计入快速报价")
     table.itemChanged.connect(lambda cell: _attachment_summary_edited(window, cell))
@@ -3320,13 +3330,15 @@ def _render_attachment_summary_table(window) -> None:
             if formula_cell is not None and item.get("auxiliary_list"):
                 formula_cell.setToolTip("辅材清单：\n" + str(item.get("auxiliary_list")))
             table.setRowHeight(row, 66)
-        visible_rows = min(max(len(attachments), 1), 4)
+        visible_rows = max(len(attachments), 1)
         height = max(102, 34 + visible_rows * 66 + 2)
         table.setMinimumHeight(height)
         table.setMaximumHeight(height)
+        table.updateGeometry()
     finally:
         table.blockSignals(False)
         window._attachment_summary_rendering = False
+    QTimer.singleShot(0, lambda: _apply_quote_responsive_layout(window))
 
 
 def _refresh_quote_page(window) -> None:
