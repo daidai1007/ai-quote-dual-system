@@ -20,6 +20,25 @@ test('linear labor uses billable cabinet weight and exact stainless exclusions',
   assert.equal(sus.labor_cost,Math.round((547.4286+4.697963*20)*100)/100);
 });
 
+test('JM confirmed formulas use billable material weight for SECC and stainless steel',()=>{
+  const jmRules=[
+    {rule_kind:'LINEAR_WEIGHT',product_code:'JM',material_codes:['SECC'],intercept:197.2715,slope:1.423229,
+      excluded_part_names:[],source_sheet:'JM',source_row_no:3,source_formula:'人工 = 197.2715 + 1.423229 × 计价材料重量'},
+    {rule_kind:'LINEAR_WEIGHT',product_code:'JM',material_codes:['SUS304','SUS316'],intercept:292.5932,slope:2.756249,
+      excluded_part_names:['安装板'],source_sheet:'JM',source_row_no:4,
+      source_formula:'人工 = 292.5932 + 2.756249 × 计价材料重量（去掉安装板的重量）'},
+  ];
+  for(const material_code of ['SECC','SUS304','SUS316']){
+    const result=calculateCabinetLabor(jmRules,{data_version:'cabinet-labor-20a09683ece5809a-v2',management_fee_rate:.13,
+      product_code:'JM',material_code,width_mm:800,height_mm:1500,depth_mm:300},material);
+    const [intercept,slope]=material_code==='SECC'?[197.2715,1.423229]:[292.5932,2.756249];
+    const expectedWeight=material_code==='SECC'?35:25;
+    assert.equal(result.labor_billable_weight_kg,expectedWeight);
+    assert.equal(result.labor_cost,Math.round((intercept+slope*expectedWeight)*100)/100);
+    assert.deepEqual(result.excluded_part_names,material_code==='SECC'?[]:['安装板']);
+  }
+});
+
 test('fixed products match source dimensions and retain existing perimeter scaling',()=>{
   const exact=calculateCabinetLabor(bundle.rules,{data_version:bundle.data_version,management_fee_rate:.13,
     product_code:'JQ_EXP',model_code:'JQ609648-1',material_code:'SECC',width_mm:600,height_mm:960,depth_mm:480},null);

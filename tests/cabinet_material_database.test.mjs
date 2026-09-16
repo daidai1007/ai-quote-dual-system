@@ -67,6 +67,10 @@ test('versioned cabinet catalog stages, activates, calculates and saves an immut
   assert.match(laborStaged,/cabinet-labor-a3d12580527a3eb6-v1/);
   assert.equal(sql(`SELECT count(*) FROM calc.cabinet_labor_rule;`),'57');
   assert.equal(sql(`SELECT calc.activate_cabinet_labor_catalog_v1('cabinet-labor-a3d12580527a3eb6-v1');`),'cabinet-labor-a3d12580527a3eb6-v1');
+  runFile('database/migrations/update_jm_labor_billable_weight.sql');
+  assert.equal(sql(`SELECT data_version FROM calc.cabinet_labor_catalog_version WHERE status='ACTIVE';`),'cabinet-labor-01249192a2981dc7-v2');
+  assert.equal(sql(`SELECT count(*) FROM calc.cabinet_labor_rule WHERE data_version='cabinet-labor-01249192a2981dc7-v2';`),'58');
+  assert.equal(sql(`SELECT count(*) FROM calc.cabinet_labor_rule WHERE data_version='cabinet-labor-01249192a2981dc7-v2' AND product_code='JM' AND rule_kind='LINEAR_WEIGHT';`),'2');
 
   const service=createCabinetMaterialService({runPsql:async source=>sql(source)});
   const input={quote_id:'CABINET-1',product_code:'JS',material_code:'SUS304',width_mm:1000,height_mm:1800,
@@ -138,7 +142,7 @@ test('versioned cabinet catalog stages, activates, calculates and saves an immut
     assert.ok(body.formula_cost.material_details.some(row=>row.material_code==='SUS304'));
     assert.equal(body.formula_cost.cabinet_spray_version,'cabinet-spray-4b3d73c9cb7a6f26-v2');
     assert.equal(body.formula_cost.cabinet_auxiliary_version,'cabinet-auxiliary-706c234a5de12a39-v2');
-    assert.equal(body.formula_cost.cabinet_labor_version,'cabinet-labor-a3d12580527a3eb6-v1');
+    assert.equal(body.formula_cost.cabinet_labor_version,'cabinet-labor-01249192a2981dc7-v2');
     assert.ok(body.formula_cost.auxiliary_cost>0);
     assert.ok(body.formula_cost.labor_cost>0);
     assert.equal(body.formula_cost.management_fee,Math.round(body.formula_cost.labor_cost*.13*100)/100);
@@ -149,7 +153,7 @@ test('versioned cabinet catalog stages, activates, calculates and saves an immut
     assert.equal(sql(`SELECT formula_waste_factor FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'1.35');
     assert.equal(sql(`SELECT cabinet_spray_version FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'cabinet-spray-4b3d73c9cb7a6f26-v2');
     assert.equal(sql(`SELECT cabinet_auxiliary_version FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'cabinet-auxiliary-706c234a5de12a39-v2');
-    assert.equal(sql(`SELECT cabinet_labor_version FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'cabinet-labor-a3d12580527a3eb6-v1');
+    assert.equal(sql(`SELECT cabinet_labor_version FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'cabinet-labor-01249192a2981dc7-v2');
 
     const experienceResponse=await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`,{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({quote_id:'HTTP-EXPERIENCE',product_code:'JQ_EXP',model_code:'JQ609648-1',material_code:'SECC',
