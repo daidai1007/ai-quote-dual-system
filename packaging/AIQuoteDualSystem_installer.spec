@@ -3,6 +3,7 @@
 import os
 import re
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 packaging_dir = Path(SPEC).resolve().parent
 repo_root = packaging_dir.parent
@@ -26,10 +27,10 @@ generated_version_file.write_text(version_text, encoding='utf-8')
 
 a = Analysis(
     [str(repo_root / 'desktop_client' / 'v3_launcher.py')],
-    pathex=[],
+    pathex=[os.environ['AI_QUOTE_PREVIEW_DEPS']] if os.environ.get('AI_QUOTE_PREVIEW_DEPS') else [],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=collect_data_files('ezdxf') + collect_data_files('fontTools'),
+    hiddenimports=collect_submodules('ezdxf.addons.drawing') + collect_submodules('fontTools'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

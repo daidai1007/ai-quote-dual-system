@@ -26,6 +26,8 @@ from PyInstaller.loader.pyimod01_archive import (
 
 from layout_refresh import install_layout_refresh
 from recognition_repair import install_recognition_repair
+from drawing_workflow import install_drawing_workflow
+from freight_export import install_freight_export
 
 
 _DLL_DIRECTORY_HANDLES = []
@@ -456,6 +458,8 @@ def load_v3_namespace() -> dict:
     _install_cloud_export_validation(namespace)
     install_recognition_repair(namespace)
     install_layout_refresh(namespace)
+    install_drawing_workflow(namespace)
+    install_freight_export(namespace)
     return namespace
 
 
