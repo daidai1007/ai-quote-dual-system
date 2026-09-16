@@ -4,7 +4,7 @@ import test from 'node:test';
 import {applyCabinetAuxiliary,calculateCabinetAuxiliary,calculateCabinetAuxiliaryFixed} from '../api/cabinet_auxiliary_service.mjs';
 
 const bundle=JSON.parse(fs.readFileSync(new URL('../database/cabinet-auxiliary/generated/cabinet-auxiliary-bundle.json',import.meta.url)));
-const get=(product,single,double)=>{const profile=bundle.profiles.find(p=>p.product_code===product&&p.single_door_count===single&&p.double_door_count===double);return [profile,bundle.lines.filter(l=>l.profile_key===profile.profile_key)];};
+const get=(product,single,double,material='SECC')=>{const profile=bundle.profiles.find(p=>p.product_code===product&&p.single_door_count===single&&p.double_door_count===double&&p.material_codes.includes(material));return [profile,bundle.lines.filter(l=>l.profile_key===profile.profile_key)];};
 
 test('auxiliary formulas take width height and depth from the current quote row',()=>{
   const [profile,lines]=get('JS',1,0);
@@ -41,13 +41,23 @@ test('auxiliary replacement is formula-only',()=>{
   assert.equal(result.formula_cost.total_cost,550);assert.deepEqual(result.quick_quote,quick);
 });
 
-test('all 16 profiles and 255 BOM rows execute',()=>{
-  assert.equal(bundle.profiles.length,16);assert.equal(bundle.lines.length,255);
+test('all 32 material profiles and 510 BOM rows execute',()=>{
+  assert.equal(bundle.profiles.length,32);assert.equal(bundle.lines.length,510);
   for(const profile of bundle.profiles){
     const lines=bundle.lines.filter(line=>line.profile_key===profile.profile_key);
     const result=calculateCabinetAuxiliary(profile,lines,{data_version:bundle.data_version,width_mm:1000,height_mm:2200,depth_mm:600,spray_unit_price:26});
     assert.equal(result.lines.length,lines.length,profile.source_sheet);assert.ok(result.auxiliary_cost>=0,profile.source_sheet);
   }
+});
+
+test('ordinary cabinet BOM selects material-specific prices',()=>{
+  const [seccProfile,seccLines]=get('JM',1,0,'SECC');
+  const [stainlessProfile,stainlessLines]=get('JM',1,0,'SUS304');
+  const env={data_version:bundle.data_version,width_mm:800,height_mm:1500,depth_mm:300,spray_unit_price:26};
+  const secc=calculateCabinetAuxiliary(seccProfile,seccLines,env);
+  const stainless=calculateCabinetAuxiliary(stainlessProfile,stainlessLines,env);
+  assert.ok(stainless.auxiliary_cost>secc.auxiliary_cost);
+  assert.deepEqual(stainlessProfile.material_codes,['SUS304','SUS316']);
 });
 
 test('all 72 fixed auxiliary prices execute from the complete price workbook',()=>{

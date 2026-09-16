@@ -13,6 +13,7 @@ const webDir=path.join(root,'database/cabinet-auxiliary/web');
 const text=value=>value==null?'':String(value).trim();
 const number=(value,label,{zero=false}={})=>{const n=Number(value);if(!Number.isFinite(n)||(zero?n<0:n<=0))throw new Error(`${label}无效`);return n;};
 const formulaOf=cell=>cell.type===ExcelJS.ValueType.Formula?text(cell.formula):'';
+const scalarOf=cell=>cell.type===ExcelJS.ValueType.Formula?cell.result:cell.value;
 const normalizeDimensionFormula=raw=>{
   let formula=text(raw).replaceAll('$','').replace(/^=/,'').replaceAll('A3','宽度').replaceAll('A5','高度').replaceAll('A7','深度');
   parseFormula(formula);const variables=formulaVariables(formula);
@@ -51,11 +52,14 @@ for(const sheet of workbook.worksheets){
   if(!['JA','JE','JS','JP','JM'].includes(product))throw new Error(`${sheet.name} 产品代码无效：${product}`);
   let doorText=text(sheet.getCell(1,7).value);if(product==='JM')doorText=sheet.name.includes('双门')?'单门/双门0/1':'单门/双门1/0';
   const door=doorText.match(/单门\/双门(\d+)\/(\d+)/);if(!door)throw new Error(`${sheet.name} 门型无效：${doorText}`);
-  const single=Number(door[1]),double=Number(door[2]),profileKey=`${product}:${single}/${double}`;
+  let materialValue='';
+  for(let rowNo=1;rowNo<=sheet.rowCount;rowNo++)if(text(sheet.getCell(rowNo,1).value)==='材质')materialValue=text(sheet.getCell(rowNo+1,1).value);
+  const profileMaterials=materialCodes(materialValue,`${sheet.name} 材质`);
+  const single=Number(door[1]),double=Number(door[2]),profileKey=`${product}:${single}/${double}:${profileMaterials.join('+')}`;
   const summary=sheet.getCell(1,3),summaryFormula=formulaOf(summary),expectedLast=Math.max(...Array.from({length:sheet.rowCount-2},(_,i)=>i+3).filter(r=>text(sheet.getCell(r,4).value)));
   const expectedRange=`${isJP?'M':'L'}3:${isJP?'M':'L'}${expectedLast}`;
   if(!summaryFormula.replaceAll('$','').toUpperCase().includes(expectedRange))issues.push(`${sheet.name}!C1 汇总范围 ${summaryFormula} 未覆盖 ${expectedRange}`);
-  profiles.push({profile_key:profileKey,product_code:product,single_door_count:single,double_door_count:double,
+  profiles.push({profile_key:profileKey,product_code:product,material_codes:profileMaterials,single_door_count:single,double_door_count:double,
     source_sheet:sheet.name,source_summary_formula:summaryFormula,source_cached_total:Number(summary.result??summary.value??0)});
   for(let rowNo=3;rowNo<=sheet.rowCount;rowNo++){
     const itemName=text(sheet.getCell(rowNo,4).value);if(!itemName)continue;
@@ -68,7 +72,7 @@ for(const sheet of workbook.worksheets){
     if(!totalFormula)throw new Error(`${sheet.name}!${totalCell.address} 缺少合计公式`);
     lines.push({profile_key:profileKey,line_no:Number(sheet.getCell(rowNo,2).value),item_code:text(sheet.getCell(rowNo,3).value)||null,
       item_name:itemName,spec_model:lengthFormula?null:(text(specCell.value)||null),material_name:text(sheet.getCell(rowNo,isJP?8:7).value)||null,
-      quantity_rule:resolveQuantity(sheet,rowNo,pieceCol,quantityCol),unit_price:number(sheet.getCell(rowNo,priceCol).value,`${sheet.name}!${rowNo}单价`,{zero:true}),
+      quantity_rule:resolveQuantity(sheet,rowNo,pieceCol,quantityCol),unit_price:number(scalarOf(sheet.getCell(rowNo,priceCol)),`${sheet.name}!${rowNo}单价`,{zero:true}),
       cost_kind:costKind,length_formula:lengthFormula,spray_width_m:sprayWidth,notes:text(sheet.getCell(rowNo,notesCol).value)||null,
       source_total_formula:totalFormula,source_cached_total:Number(totalCell.result??totalCell.value??0),source_sheet:sheet.name,source_row_no:rowNo});
   }
@@ -102,14 +106,14 @@ for(const [sheetName,rawConfig] of Object.entries(fixedConfigs)){
       allow_dimension_scale:true,source_sheet:sheetName,source_row_no:rowNo});
   }
 }
-if(profiles.length!==16||lines.length!==255)throw new Error(`辅材 BOM 应为 16 个配置/255 条明细，实际 ${profiles.length}/${lines.length}`);
+if(profiles.length!==32||lines.length!==510)throw new Error(`辅材 BOM 应为 32 个材质配置/510 条明细，实际 ${profiles.length}/${lines.length}`);
 if(fixedRules.length!==72)throw new Error(`固定辅材价格应为 72 条，实际 ${fixedRules.length}`);
 const identities=new Set();for(const rule of fixedRules){
   const key=[rule.product_code,rule.profile_code,rule.material_codes.join(','),rule.model_code,rule.width_mm,rule.height_mm,rule.depth_mm].join('|');
   if(identities.has(key))throw new Error(`固定辅材价格冲突：${key}`);identities.add(key);
 }
 
-const version=`cabinet-auxiliary-${sourceSha256.slice(0,16)}-v2`;
+const version=`cabinet-auxiliary-${sourceSha256.slice(0,16)}-v3`;
 const sourceFiles=[
   {kind:'BOM',name:path.basename(bomSource),sha256:bomSha256},
   {kind:'FIXED_PRICE',name:path.basename(fixedSource),sha256:fixedSha256},
@@ -117,14 +121,76 @@ const sourceFiles=[
 const bundle={data_version:version,source_file:sourceFiles.map(x=>x.name).join('; '),source_sha256:sourceSha256,source_files:sourceFiles,profiles,lines,fixed_rules:fixedRules};
 fs.mkdirSync(outDir,{recursive:true});fs.mkdirSync(webDir,{recursive:true});
 fs.writeFileSync(path.join(outDir,'cabinet-auxiliary-bundle.json'),JSON.stringify(bundle,null,2)+'\n');
-fs.copyFileSync(path.join(root,'database/migrations/cabinet_auxiliary_v2.sql'),path.join(webDir,'01-create.sql'));
+  fs.copyFileSync(path.join(root,'database/migrations/cabinet_auxiliary_v3.sql'),path.join(webDir,'01-create.sql'));
 const payloadHex=Buffer.from(JSON.stringify(bundle)).toString('hex');
-fs.writeFileSync(path.join(webDir,'02-stage.sql'),`-- Generated from ${bundle.source_file}\n-- Combined SHA-256: ${sourceSha256}\nBEGIN;\nSET LOCAL lock_timeout='5s';\nSET LOCAL statement_timeout='120s';\nSELECT calc.stage_cabinet_auxiliary_catalog_v2(convert_from(decode('${payloadHex}','hex'),'UTF8')::jsonb);\nCOMMIT;\n`);
+fs.writeFileSync(path.join(webDir,'02-stage.sql'),`-- Generated from ${bundle.source_file}\n-- Combined SHA-256: ${sourceSha256}\nBEGIN;\nSET LOCAL lock_timeout='5s';\nSET LOCAL statement_timeout='120s';\nSELECT calc.stage_cabinet_auxiliary_catalog_v3(convert_from(decode('${payloadHex}','hex'),'UTF8')::jsonb);\nCOMMIT;\n`);
+fs.writeFileSync(path.join(webDir,'03-validate.sql'),`BEGIN READ ONLY;
+SELECT data_version,status,source_sha256,source_files
+FROM calc.cabinet_auxiliary_catalog_version WHERE data_version='${version}';
+SELECT p.product_code,count(DISTINCT p.profile_id) AS profiles,count(l.line_id) AS lines
+FROM calc.cabinet_auxiliary_profile p LEFT JOIN calc.cabinet_auxiliary_line l USING(profile_id)
+WHERE p.data_version='${version}' GROUP BY p.product_code ORDER BY p.product_code;
+SELECT product_code,count(*) AS fixed_rules FROM calc.cabinet_auxiliary_fixed_rule
+WHERE data_version='${version}' GROUP BY product_code ORDER BY product_code;
+SELECT p.product_code,p.single_door_count,p.double_door_count,m.material_code,count(*) AS profiles
+FROM calc.cabinet_auxiliary_profile p
+CROSS JOIN LATERAL jsonb_array_elements_text(p.material_codes) AS m(material_code)
+WHERE p.data_version='${version}'
+GROUP BY p.product_code,p.single_door_count,p.double_door_count,m.material_code HAVING count(*)<>1;
+SELECT count(*) AS unsupported_quantity_rules FROM calc.cabinet_auxiliary_line l
+JOIN calc.cabinet_auxiliary_profile p USING(profile_id)
+WHERE p.data_version='${version}' AND l.quantity_rule->>'kind' NOT IN ('CONSTANT','HEIGHT_GT');
+COMMIT;
+`);
+fs.writeFileSync(path.join(webDir,'04-activate.sql'),`BEGIN;
+SET LOCAL lock_timeout='5s';
+SELECT calc.activate_cabinet_auxiliary_catalog_v3('${version}');
+COMMIT;
+`);
+fs.writeFileSync(path.join(webDir,'05-verify.sql'),`BEGIN READ ONLY;
+SELECT v.data_version,v.status,count(DISTINCT p.profile_id) AS profiles,
+       count(DISTINCT l.line_id) AS lines,count(DISTINCT r.rule_id) AS fixed_rules
+FROM calc.cabinet_auxiliary_catalog_version v
+LEFT JOIN calc.cabinet_auxiliary_profile p USING(data_version)
+LEFT JOIN calc.cabinet_auxiliary_line l USING(profile_id)
+LEFT JOIN calc.cabinet_auxiliary_fixed_rule r ON r.data_version=v.data_version
+GROUP BY v.data_version,v.status ORDER BY v.created_at;
+SELECT count(*) FILTER(WHERE status='ACTIVE') AS active_versions FROM calc.cabinet_auxiliary_catalog_version;
+SELECT p.product_code,p.single_door_count,p.double_door_count,m.material_code,count(*) AS profiles
+FROM calc.cabinet_auxiliary_profile p
+JOIN calc.cabinet_auxiliary_catalog_version v USING(data_version)
+CROSS JOIN LATERAL jsonb_array_elements_text(p.material_codes) AS m(material_code)
+WHERE v.status='ACTIVE'
+GROUP BY p.product_code,p.single_door_count,p.double_door_count,m.material_code HAVING count(*)<>1;
+SELECT calc.get_auxiliary_cost('JK','DEFAULT','','SECC',300,200,80) AS jk_secc,
+       calc.get_auxiliary_cost('JQ_EXP','DEFAULT','JQ609648','SUS316',600,960,480) AS jq_sus316,
+       calc.get_auxiliary_cost('JC_EXP','DEFAULT','JC601660-1','SECC',600,1600,600) AS jc_luxury;
+COMMIT;
+`);
+fs.writeFileSync(path.join(webDir,'06-rollback.sql'),`BEGIN;
+SET LOCAL lock_timeout='5s';
+DO $$
+DECLARE v_previous text;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('calc.cabinet_auxiliary_catalog_version'));
+  SELECT data_version INTO v_previous FROM calc.cabinet_auxiliary_catalog_version
+  WHERE status='RETIRED' AND data_version<>'${version}' ORDER BY created_at DESC LIMIT 1;
+  IF v_previous IS NULL THEN RAISE EXCEPTION 'No previous RETIRED auxiliary version is available'; END IF;
+  UPDATE calc.cabinet_auxiliary_catalog_version SET status='RETIRED',activated_at=NULL WHERE data_version='${version}' AND status='ACTIVE';
+  UPDATE calc.cabinet_auxiliary_catalog_version SET status='ACTIVE',activated_at=current_timestamp WHERE data_version=v_previous;
+END $$;
+COMMIT;
+`);
+fs.writeFileSync(path.join(webDir,'07-delete-retired.sql'),`BEGIN;
+SET LOCAL lock_timeout='5s';
+DELETE FROM calc.cabinet_auxiliary_catalog_version WHERE status='RETIRED';
+COMMIT;
+`);
 const bomCounts=Object.fromEntries([...new Set(profiles.map(p=>p.product_code))].map(p=>[p,lines.filter(l=>l.profile_key.startsWith(`${p}:`)).length]));
 const fixedCounts=Object.fromEntries([...new Set(fixedRules.map(r=>r.product_code))].map(p=>[p,fixedRules.filter(r=>r.product_code===p).length]));
 const report=['# 完整柜体辅材目录读取报告','',`- 数据版本：\`${version}\``,`- 合并源 SHA-256：\`${sourceSha256}\``,'',
   ...sourceFiles.map(x=>`- ${x.kind}：\`${x.name}\`（\`${x.sha256}\`）`),'',
-  `- BOM 门型配置：${profiles.length}` ,`- BOM 明细：${lines.length}`,`- 固定/尺寸价格：${fixedRules.length}`,'',
+  `- BOM 材质门型配置：${profiles.length}` ,`- BOM 明细：${lines.length}`,`- 固定/尺寸价格：${fixedRules.length}`,'',
   '## BOM 覆盖','',...Object.entries(bomCounts).map(([k,v])=>`- ${k}：${v} 条明细`),'',
   '## 固定价格覆盖','',...Object.entries(fixedCounts).map(([k,v])=>`- ${k}：${v} 条价格`),'',
   '宽度、高度、深度统一取当前程序报价行输入的柜体尺寸（mm）。BOM 的 A3/A5/A7 仅是公式占位，不使用缓存尺寸。动态长度小于 0 时按源 IF 公式取 0。JP 辅材框架喷塑面积按长度×0.198×内部数量，喷塑金额使用报价日当前喷塑单价；不喷塑为 0。','',
