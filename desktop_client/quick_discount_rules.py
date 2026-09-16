@@ -48,7 +48,10 @@ def quick_discount_category(item: Mapping[str, Any] | None) -> str | None:
         return None
     if "JK安装板" in combined.upper().replace(" ", ""):
         return "JK安装板"
-    for category in ("通风顶罩", "防雨顶", "分段板", "玻璃门", "内门", "底座", "侧板"):
+    for category in (
+        "无孔承板", "有孔承板", "通风顶罩", "防雨顶", "分段板",
+        "玻璃门", "内门", "底座", "侧板",
+    ):
         if category in combined:
             return category
     if "安装板" in combined or "填充板" in combined:

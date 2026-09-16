@@ -52,7 +52,7 @@ test("an explicit zero attachment quantity remains a zero amount", () => {
   assert.equal(effectiveAttachmentLineAmount(attachment, 2, 3), 0);
 });
 
-test("quick quote discounts only the nine approved attachment categories", () => {
+test("quick quote discounts only the eleven approved attachment categories", () => {
   const approved = [
     ["固定底座", {}, "底座"],
     ["JP侧板", {}, "侧板"],
@@ -63,6 +63,8 @@ test("quick quote discounts only the nine approved attachment categories", () =>
     ["防雨顶", {}, "防雨顶"],
     ["分段板", {}, "分段板"],
     ["JK安装板", {}, "JK安装板"],
+    ["无孔承板", {}, "无孔承板"],
+    ["有孔承板", {}, "有孔承板"],
   ];
   for (const [itemName, metadata, expected] of approved) {
     assert.equal(quickDiscountCategory({ item_name: itemName, ...metadata }), expected);
@@ -78,6 +80,20 @@ test("quick quote discounts only the nine approved attachment categories", () =>
   };
   assert.equal(quickDiscountCategory(otherAttachmentNamedLikeEligible), null);
   assert.equal(attachmentExcludedFromDiscount(otherAttachmentNamedLikeEligible), true);
+});
+
+test("perforated and solid support plates enter the quick discount base", () => {
+  const result = quickDiscountBreakdown({
+    quote: { base_price: 1000, attachment_fee: 300, total_cost: 1300 },
+    attachments: [
+      { item_name: "有孔承板", category_level1: "控制柜附件", quantity: 1, unit_price: 100 },
+      { item_name: "无孔承板", category_level1: "控制柜附件", quantity: 1, unit_price: 200 },
+    ],
+    discount: 0.8,
+  });
+  assert.equal(result.eligibleAttachmentTotal, 300);
+  assert.equal(result.originalPriceAttachmentTotal, 0);
+  assert.equal(result.discountedTotal, 1040);
 });
 
 test("other attachments remain at original price in both quotation methods", () => {

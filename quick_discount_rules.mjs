@@ -13,6 +13,8 @@ export const QUICK_DISCOUNT_ATTACHMENT_CATEGORIES = Object.freeze([
   "防雨顶",
   "分段板",
   "JK安装板",
+  "无孔承板",
+  "有孔承板",
 ]);
 export const ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = Object.freeze([
   "侧板", "门变形", "风机滤网",
@@ -42,7 +44,10 @@ export function quickDiscountCategory(item = {}) {
   const combined = candidates.join(" ");
   if (combined.includes("安装板单发")) return null;
   if (/JK\s*安装板/i.test(combined)) return "JK安装板";
-  for (const category of ["通风顶罩", "防雨顶", "分段板", "玻璃门", "内门", "底座", "侧板"]) {
+  for (const category of [
+    "无孔承板", "有孔承板", "通风顶罩", "防雨顶", "分段板",
+    "玻璃门", "内门", "底座", "侧板",
+  ]) {
     if (combined.includes(category)) return category;
   }
   if (combined.includes("安装板") || combined.includes("填充板")) return "安装板";

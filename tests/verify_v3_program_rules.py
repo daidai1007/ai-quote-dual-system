@@ -832,6 +832,8 @@ approved_quick_categories = {
     "防雨顶": "防雨顶",
     "分段板": "分段板",
     "JK安装板": "JK安装板",
+    "无孔承板": "无孔承板",
+    "有孔承板": "有孔承板",
 }
 for item_name, category in approved_quick_categories.items():
     assert quick_discount_category({"item_name": item_name}) == category
@@ -870,6 +872,18 @@ assert math.isclose(quick_breakdown["base_price"], 4014.29)
 assert math.isclose(quick_breakdown["eligible_attachment_total"], 300)
 assert math.isclose(quick_breakdown["original_price_attachment_total"], 92)
 assert math.isclose(quick_breakdown["discounted_total"], 4190.5755)
+
+support_plate_breakdown = quick_discount_breakdown(
+    {"total_cost": 1300, "base_price": 1000, "attachment_fee": 300},
+    [
+        {"item_name": "有孔承板", "category_level1": "控制柜附件", "quantity": 1, "unit_price": 100},
+        {"item_name": "无孔承板", "category_level1": "控制柜附件", "quantity": 1, "unit_price": 200},
+    ],
+    0.8,
+)
+assert math.isclose(support_plate_breakdown["eligible_attachment_total"], 300)
+assert math.isclose(support_plate_breakdown["original_price_attachment_total"], 0)
+assert math.isclose(support_plate_breakdown["discounted_total"], 1040)
 
 other_attachment_breakdown = quick_discount_breakdown(
     {"total_cost": 1210, "base_price": 1000, "attachment_fee": 210},
