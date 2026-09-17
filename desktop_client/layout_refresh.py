@@ -77,7 +77,13 @@ from attachment_category_browser import (
     DEFAULT_JP_SIDE_PANEL,
     DEFAULT_LIGHT_SWITCH,
     QUICK_FIXED_COLUMN,
+    QUICK_GANGED_CONNECTOR,
+    QUICK_GANGED_FILL_INSTALLATION_BOARD,
+    QUICK_INNER_DOOR,
+    QUICK_JK_INSTALLATION_BOARD,
+    QUICK_RAIN_COVER,
     QUICK_THREE_ROW_INSTALLATION_BEAM,
+    QUICK_VENTILATION_HOOD,
     GANGED_FIXED_BASE_INDEX_KEY,
     GANGED_FIXED_BASE_MATCH_KEY,
     MANUAL_SELECTION_SOURCE,
@@ -106,6 +112,8 @@ from attachment_category_browser import (
     match_default_copper_busbar,
     match_default_ground_wire,
     match_default_light_switch,
+    match_quick_ganged_connector,
+    match_quick_ganged_fill_installation_board,
     match_door_transformation_defaults,
     match_fixed_base,
     match_jp_side_panel,
@@ -4925,8 +4933,14 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 product_code = ""
         if not product_code:
             parent = self.parentWidget()
+            parent_getter = getattr(parent, "selected_product_code", None) if parent is not None else None
+            if callable(parent_getter):
+                try:
+                    product_code = str(parent_getter() or "").strip().upper()
+                except (AttributeError, TypeError, ValueError):
+                    product_code = ""
             combo = getattr(parent, "product_combo", None) if parent is not None else None
-            if isinstance(combo, QComboBox):
+            if not product_code and isinstance(combo, QComboBox):
                 product_code = str(combo.currentData() or combo.currentText() or "").strip().upper()
         normalized = re.sub(r"[\s\-]+", "_", product_code)
         match = re.match(r"^(JM|JA|JE|JK|JS|JP)(?:_|$)", normalized)
@@ -5056,6 +5070,18 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         "门加强筋": (DEFAULT_DOOR_REINFORCEMENT,),
         "接地线": (DEFAULT_GROUND_WIRE,),
         "铜排": (DEFAULT_COPPER_BUSBAR,),
+        "并柜件": (QUICK_GANGED_CONNECTOR,),
+        "控制箱附件": (
+            QUICK_JK_INSTALLATION_BOARD,
+            QUICK_INNER_DOOR,
+            QUICK_RAIN_COVER,
+        ),
+        "控制柜附件": (
+            QUICK_INNER_DOOR,
+            QUICK_RAIN_COVER,
+            QUICK_VENTILATION_HOOD,
+        ),
+        "配置变形": (QUICK_GANGED_FILL_INSTALLATION_BOARD,),
     }
     explicit_quick_match_rules = {
         DEFAULT_INSTALLATION_BOARD,
@@ -5063,6 +5089,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         QUICK_FIXED_COLUMN,
         DEFAULT_A3_FOLDER,
         DEFAULT_A4_FOLDER,
+        QUICK_GANGED_CONNECTOR,
+        QUICK_JK_INSTALLATION_BOARD,
+        QUICK_INNER_DOOR,
+        QUICK_RAIN_COVER,
+        QUICK_VENTILATION_HOOD,
+        QUICK_GANGED_FILL_INSTALLATION_BOARD,
     }
 
     def specification_text(self) -> str:
@@ -5215,7 +5247,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         return match_attachment_size(getattr(self, "catalog", []), source, target)
 
     def build_default_matches(self) -> dict[str, dict | None]:
-        catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
+        catalog = applicable_catalog(
+            self,
+            [item for item in getattr(self, "catalog", []) if isinstance(item, dict)],
+        )
         parsed = parse_base_specification(specification_text(self))
         dimensions = target_dimensions(self)
         parent = self.parentWidget()
@@ -5305,6 +5340,43 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             DEFAULT_DOOR_REINFORCEMENT: match_default_door_reinforcement(catalog),
             DEFAULT_GROUND_WIRE: match_default_ground_wire(catalog),
             DEFAULT_COPPER_BUSBAR: match_default_copper_busbar(catalog),
+            QUICK_GANGED_CONNECTOR: match_quick_ganged_connector(catalog),
+            QUICK_GANGED_FILL_INSTALLATION_BOARD: match_quick_ganged_fill_installation_board(
+                catalog
+            ),
+            QUICK_JK_INSTALLATION_BOARD: match_named_quick_attachment_size(
+                catalog, "控制箱附件", "JK安装板", "JK安装板", dimensions
+            ),
+            QUICK_INNER_DOOR: (
+                match_named_quick_attachment_size(
+                    catalog, "控制箱附件", "内门", "内门", dimensions
+                )
+                or match_named_quick_attachment_size(
+                    catalog, "控制柜附件", "内门", "内门", dimensions
+                )
+            ),
+            QUICK_RAIN_COVER: (
+                match_named_quick_attachment_size(
+                    catalog, "控制箱附件", "防雨顶", "防雨顶", dimensions
+                )
+                or match_named_quick_attachment_size(
+                    catalog, "控制柜附件", "防雨顶", "防雨顶", dimensions
+                )
+            ),
+            QUICK_VENTILATION_HOOD: match_named_quick_attachment_size(
+                catalog,
+                "控制柜附件",
+                "通风顶罩",
+                "通风顶罩",
+                (
+                    dimensions[0],
+                    float(
+                        getattr(self, "ventilation_hood_manual_height_mm", None)
+                        or dimensions[1]
+                    ),
+                    dimensions[2],
+                ) if dimensions is not None else None,
+            ),
             DEFAULT_JP_SIDE_PANEL: side,
         }
         door_counts = selected_door_counts(self)
@@ -5607,7 +5679,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 table.blockSignals(False)
                 self._default_selection_guard = False
         sync_attachments_from_table(self)
-        refresh_category_browser(self)
+        refresh_category_browser(self, preserve_scroll=True)
 
     def default_card_state(
         self,
@@ -5723,6 +5795,45 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             detail = "红绿线"
         elif rule == DEFAULT_COPPER_BUSBAR:
             detail = "铜排 · 默认数量：1 件"
+        elif rule == QUICK_GANGED_CONNECTOR:
+            detail = "并柜件"
+            if candidate is not None:
+                model = str(candidate.get("model_code") or "").strip()
+                dimensions = [
+                    candidate.get(key)
+                    for key in ("width_mm", "height_mm", "depth_mm")
+                ]
+                if model:
+                    detail += f" · {model}"
+                elif all(value not in (None, "") for value in dimensions):
+                    detail += " · " + "×".join(f"{float(value):g}" for value in dimensions) + " mm"
+            missing_tip = "附件库中没有唯一的一级“并柜件”/名称“并柜件”记录"
+        elif rule == QUICK_JK_INSTALLATION_BOARD:
+            detail = "JK安装板"
+            if dimensions is not None:
+                detail += f" · {dimensions[0]:g}×{dimensions[1]:g} mm"
+            missing_tip = "控制箱附件目录中没有可用于当前宽、高匹配的JK安装板"
+        elif rule == QUICK_INNER_DOOR:
+            detail = "内门"
+            if dimensions is not None:
+                detail += f" · {dimensions[0]:g}×{dimensions[1]:g}×{dimensions[2]:g} mm"
+            missing_tip = "当前产品对应的附件目录中没有可用于尺寸匹配的内门"
+        elif rule == QUICK_RAIN_COVER:
+            detail = "防雨顶"
+            if dimensions is not None:
+                detail += f" · {dimensions[0]:g}×{dimensions[1]:g}×{dimensions[2]:g} mm"
+            missing_tip = "当前产品对应的附件目录中没有可用于尺寸匹配的防雨顶"
+        elif rule == QUICK_VENTILATION_HOOD:
+            manual_height = getattr(self, "ventilation_hood_manual_height_mm", None)
+            detail = "通风顶罩 · 高度人工填写"
+            if manual_height is not None:
+                detail = f"通风顶罩 · 人工高度 {float(manual_height):g} mm"
+            missing_tip = "控制柜附件目录中没有可用于当前尺寸匹配的通风顶罩"
+        elif rule == QUICK_GANGED_FILL_INSTALLATION_BOARD:
+            detail = "填充安装板 · 并柜"
+            if candidate is not None:
+                detail += f" · 面价 {float(candidate.get('price') or 0):g} 元"
+            missing_tip = "附件库中没有唯一的一级“配置变形”/名称“填充安装板”记录"
         elif rule == DEFAULT_JP_SIDE_PANEL:
             if not is_jp_product(product_code):
                 return "快速匹配\n仅 JP 默认匹配", "attachmentQuickMatch", "当前产品不是 JP，不自动选择侧板", rule, False
@@ -5882,6 +5993,68 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         if current is not None:
             self.attachments = current
 
+    def refresh_quick_match_button_state(self, rule: str) -> None:
+        """Update one root quick-action in place without rebuilding the list."""
+
+        category_name = next(
+            (
+                category
+                for category, rules in category_rules.items()
+                if rule in rules
+            ),
+            "",
+        )
+        if not category_name:
+            return
+        text, object_name, tooltip, active_rule, enabled = default_card_state(
+            self,
+            {"value": category_name},
+            rule,
+        )
+        quick_text = "  ·  ".join(
+            part.strip() for part in str(text).splitlines() if part.strip()
+        )
+        for button in self.findChildren(QPushButton):
+            if button.property("attachmentQuickRule") != rule:
+                continue
+            button.setText(quick_text)
+            button.setObjectName(object_name)
+            button.setAccessibleName(
+                f"{category_name}，{text.replace(chr(10), '，')}"
+            )
+            button.setToolTip(
+                f"{tooltip}\n{quick_text}" if tooltip else quick_text
+            )
+            button.setEnabled(bool(enabled and active_rule is not None))
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.update()
+
+    def request_ventilation_hood_height(self, initial_height: float) -> tuple[float, bool]:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("通风顶罩高度")
+        layout = QVBoxLayout(dialog)
+        label = QLabel("请输入通风顶罩高度（mm）：", dialog)
+        height_spin = QDoubleSpinBox(dialog)
+        height_spin.setRange(1.0, 10000.0)
+        height_spin.setDecimals(1)
+        height_spin.setSuffix(" mm")
+        height_spin.setValue(float(initial_height))
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确认匹配")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(label)
+        layout.addWidget(height_spin)
+        layout.addWidget(buttons)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        return float(height_spin.value()), accepted
+
     def toggle_default_selection(self, rule: str) -> None:
         if rule == DEFAULT_FIXED_BASE:
             ganged_candidates = [
@@ -5908,6 +6081,18 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 self.default_quantity_manual_overrides.discard(rule)
                 self.rebuild_table()
                 return
+        selected = checked_sources(self, rule)
+        if rule == QUICK_VENTILATION_HOOD and not selected:
+            dimensions = getattr(self, "default_match_dimensions", None)
+            initial_height = float(
+                getattr(self, "ventilation_hood_manual_height_mm", None)
+                or (dimensions[1] if dimensions is not None else 100.0)
+            )
+            height, accepted = self.request_ventilation_hood_height(initial_height)
+            if not accepted:
+                return
+            self.ventilation_hood_manual_height_mm = float(height)
+            build_default_matches(self)
         candidate = getattr(self, "default_matches", {}).get(rule)
         if candidate is None:
             return
@@ -5922,6 +6107,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             set_default_quantity_for_rule(self, rule)
         elif default_is_selected:
             set_checked_for_rule(self, rule, None)
+            if rule == QUICK_VENTILATION_HOOD:
+                self.ventilation_hood_manual_height_mm = None
+                build_default_matches(self)
             self.default_selection_opt_outs.add(rule)
             self.default_quantity_manual_overrides.discard(rule)
         else:
@@ -5930,7 +6118,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             self.default_quantity_manual_overrides.discard(rule)
             set_default_quantity_for_rule(self, rule)
         sync_attachments_from_table(self)
-        refresh_category_browser(self)
+        refresh_quick_match_button_state(self, rule)
+        selection_changed = getattr(self, "attachment_selection_changed", None)
+        if callable(selection_changed):
+            selection_changed()
 
     def apply_classification_filter(self, text: str):
         if not hasattr(self, "category_selection"):
@@ -6071,7 +6262,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         restore_ganged_fixed_base_rows(self)
         return len(automatic)
 
-    def refresh_category_browser(self):
+    def refresh_category_browser(self, preserve_scroll: bool = False):
+        scroll_bar = None
+        saved_scroll_value = None
+        category_scroll = getattr(self, "category_scroll", None)
+        if preserve_scroll and isinstance(category_scroll, QScrollArea):
+            scroll_bar = category_scroll.verticalScrollBar()
+            saved_scroll_value = scroll_bar.value()
         full_catalog = [item for item in getattr(self, "catalog", []) if isinstance(item, dict)]
         for item in full_catalog:
             for level, key in enumerate(("category_level1", "category_level2", "category_level3")):
@@ -6151,6 +6348,16 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 
             category_name = str(option.get("value") or "")
             quick_rules = category_rules.get(category_name, ()) if root_level else ()
+            if attachment_product_family(self) != "JK":
+                quick_rules = tuple(
+                    rule for rule in quick_rules
+                    if rule != QUICK_JK_INSTALLATION_BOARD
+                )
+            if _ganged_count(self.parentWidget()) <= 1:
+                quick_rules = tuple(
+                    rule for rule in quick_rules
+                    if rule != QUICK_GANGED_FILL_INSTALLATION_BOARD
+                )
             quick_buttons = []
             for quick_rule in quick_rules:
                 text, object_name, tooltip, rule, enabled = default_card_state(
@@ -6282,6 +6489,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 f"（附件库共 {len(full_catalog)} 条）。"
                 "绿色框分别标明系统默认和人工选择；单击人工框只取消对应附件。"
             )
+        if scroll_bar is not None and saved_scroll_value is not None:
+            def restore_category_scroll_position() -> None:
+                scroll_bar.setValue(min(saved_scroll_value, scroll_bar.maximum()))
+
+            restore_category_scroll_position()
+            QTimer.singleShot(0, restore_category_scroll_position)
 
     def open_attachment_category(self, value: str):
         if not self.category_selection and str(value) == "门变形":
@@ -6882,6 +7095,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     dialog_class.rebuild_table = rebuild_table_with_defaults
     dialog_class.apply_filter = apply_classification_filter
     dialog_class.collect_attachments = collect_attachments_with_metadata
+    dialog_class.request_ventilation_hood_height = request_ventilation_hood_height
     dialog_class.table_item_changed = table_item_changed_with_defaults
     dialog_class.select_attachment_from_row_click = select_attachment_from_row_click
     dialog_class.update_selection_hint = update_selection_hint_with_row_click

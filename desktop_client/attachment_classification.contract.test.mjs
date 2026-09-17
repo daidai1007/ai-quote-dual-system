@@ -42,6 +42,8 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.match(overlay, /match_default_door_reinforcement/);
   assert.match(overlay, /match_default_ground_wire/);
   assert.match(overlay, /match_default_copper_busbar/);
+  assert.match(overlay, /"并柜件": \(QUICK_GANGED_CONNECTOR,\)/);
+  assert.match(overlay, /QUICK_GANGED_CONNECTOR: match_quick_ganged_connector\(catalog\)/);
   assert.match(overlay, /attachmentQuickMatchSelected/);
   assert.match(overlay, /attachmentQuickMatchCancelled/);
   assert.match(overlay, /def toggle_default_selection/);
@@ -103,6 +105,7 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.match(hierarchy, /def match_default_door_reinforcement/);
   assert.match(hierarchy, /def match_default_ground_wire/);
   assert.match(hierarchy, /def match_default_copper_busbar/);
+  assert.match(hierarchy, /def match_quick_ganged_connector/);
   assert.match(hierarchy, /def match_jp_side_panel/);
   assert.match(hierarchy, /def match_attachment_size/);
   assert.match(hierarchy, /def completed_size_dimensions/);

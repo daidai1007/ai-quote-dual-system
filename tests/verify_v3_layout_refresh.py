@@ -354,6 +354,81 @@ attachment_dialog.catalog = [
         "category_level1": "铜排",
     },
     {
+        "attachment_price_id": 15,
+        "item_name": "并柜件",
+        "model_code": "",
+        "price": 60,
+        "unit": "件",
+        "category_level1": "并柜件",
+        "category_level2": "",
+    },
+    {
+        "attachment_price_id": 16,
+        "item_name": "内门",
+        "model_code": "JP-INNER-760",
+        "price": 120,
+        "category_level1": "控制柜附件",
+        "category_level2": "内门",
+        "width_mm": 760,
+        "height_mm": 960,
+        "depth_mm": 500,
+    },
+    {
+        "attachment_price_id": 17,
+        "item_name": "防雨顶",
+        "model_code": "JP-RAIN-760",
+        "price": 130,
+        "category_level1": "控制柜附件",
+        "category_level2": "防雨顶",
+        "width_mm": 760,
+        "height_mm": 960,
+        "depth_mm": 500,
+    },
+    {
+        "attachment_price_id": 18,
+        "item_name": "通风顶罩",
+        "model_code": "JP-VENT-760",
+        "price": 140,
+        "category_level1": "控制柜附件",
+        "category_level2": "通风顶罩",
+        "width_mm": 760,
+        "height_mm": 120,
+        "depth_mm": 500,
+    },
+    {
+        "attachment_price_id": 19,
+        "item_name": "JK安装板",
+        "model_code": "JK-CONTROL-800",
+        "price": 85,
+        "category_level1": "控制箱附件",
+        "category_level2": "JK安装板",
+        "width_mm": 800,
+        "height_mm": 1000,
+        "depth_mm": 500,
+    },
+    {
+        "attachment_price_id": 20,
+        "item_name": "内门",
+        "model_code": "JK-INNER-800",
+        "price": 125,
+        "category_level1": "控制箱附件",
+        "category_level2": "内门",
+        "width_mm": 800,
+        "height_mm": 1000,
+        "depth_mm": 500,
+    },
+    {
+        "attachment_price_id": 21,
+        "item_name": "防雨顶",
+        "model_code": "JK-RAIN-800",
+        "price": 135,
+        "category_level1": "控制箱附件",
+        "category_level2": "防雨顶",
+        "width_mm": 800,
+        "height_mm": 1000,
+        "depth_mm": 500,
+    },
+    {
         "item_name": "保留配置项",
         "price": 10,
         "category_level1": "配置变形",
@@ -437,7 +512,7 @@ requested_level1_order = (
     "滤网", "门变形", "并柜件",
 )
 assert [value for value in level1_values if value in requested_level1_order] == [
-    "侧板", "安装板", "安装附件", "底座", "灯开关", "资料盒", "滤网", "门变形",
+    "侧板", "安装板", "安装附件", "底座", "灯开关", "资料盒", "滤网", "门变形", "并柜件",
 ]
 assert all("一级分类：" in button.text() and "名称：" in button.text() for button in level1_buttons)
 assert all(button.parentWidget().minimumHeight() >= 82 for button in level1_buttons)
@@ -475,11 +550,22 @@ assert {
     button.property("attachmentQuickRule") for button in explicit_quick_buttons
 } >= {
     "installation_board", "three_row_installation_beam", "fixed_column",
-    "a3_folder", "a4_folder",
+    "a3_folder", "a4_folder", "ganged_connector",
+    "inner_door", "rain_cover", "ventilation_hood",
 }
+assert not any(
+    button.property("attachmentQuickRule") == "jk_installation_board"
+    for button in attachment_dialog.findChildren(QPushButton)
+    if button.isVisible()
+)
+assert not any(
+    button.property("attachmentQuickRule") == "ganged_fill_installation_board"
+    for button in attachment_dialog.findChildren(QPushButton)
+    if button.isVisible()
+)
 assert all("快速匹配未选择" in button.text() for button in explicit_quick_buttons)
 assert not any(
-    item.get("item_name") in {"安装板", "JK安装板", "三排安装梁", "固定立柱", "A3资料盒", "A4资料盒"}
+    item.get("item_name") in {"安装板", "JK安装板", "三排安装梁", "固定立柱", "A3资料盒", "A4资料盒", "并柜件"}
     for item in attachment_dialog.attachments
 )
 for quick_button in quick_match_buttons:
@@ -498,7 +584,7 @@ def visible_quick_rule_button(rule: str):
     )
 
 
-# All five requested shortcuts are opt-in, independently toggleable, green only
+# All requested shortcuts are opt-in, independently toggleable, green only
 # while selected, and reuse one catalogue row rather than duplicating it.
 explicit_rules = {
     "installation_board": "安装板",
@@ -506,10 +592,28 @@ explicit_rules = {
     "fixed_column": "固定立柱",
     "a3_folder": "A3资料盒",
     "a4_folder": "A4资料盒",
+    "ganged_connector": "并柜件",
+    "inner_door": "内门",
+    "rain_cover": "防雨顶",
+    "ventilation_hood": "通风顶罩",
 }
+attachment_dialog.request_ventilation_hood_height = lambda _initial: (120.0, True)
+quick_selection_change_count = [0]
+attachment_dialog.attachment_selection_changed = lambda: quick_selection_change_count.__setitem__(
+    0, quick_selection_change_count[0] + 1
+)
 for rule, expected_name in explicit_rules.items():
-    visible_quick_rule_button(rule).click()
+    saved_scroll_value = None
+    quick_button_before = visible_quick_rule_button(rule)
+    if rule == "a3_folder":
+        scroll_bar = attachment_dialog.category_scroll.verticalScrollBar()
+        saved_scroll_value = min(180, scroll_bar.maximum())
+        scroll_bar.setValue(saved_scroll_value)
+    quick_button_before.click()
     app.processEvents()
+    if saved_scroll_value is not None:
+        assert attachment_dialog.category_scroll.verticalScrollBar().value() == saved_scroll_value
+        assert visible_quick_rule_button(rule) is quick_button_before
     selected_button = visible_quick_rule_button(rule)
     assert selected_button.objectName() == "attachmentQuickMatchSelected"
     assert "快速匹配已选择" in selected_button.text()
@@ -517,9 +621,32 @@ for rule, expected_name in explicit_rules.items():
         item.get("item_name") == expected_name
         for item in attachment_dialog.attachments
     ) == 1
+    if rule == "ganged_connector":
+        selected = next(
+            item for item in attachment_dialog.attachments
+            if item.get("item_name") == "并柜件"
+        )
+        assert selected["attachment_price_id"] == 15
+        assert selected.get("matched_price", selected.get("price")) == 60
+        # Repeated browser refreshes must retain one catalogue row, never duplicate it.
+        attachment_dialog.refresh_category_browser()
+        attachment_dialog.refresh_category_browser()
+        app.processEvents()
+        assert sum(
+            item.get("item_name") == "并柜件"
+            for item in attachment_dialog.attachments
+        ) == 1
+    if rule == "ventilation_hood":
+        selected = next(
+            item for item in attachment_dialog.attachments
+            if item.get("item_name") == "通风顶罩"
+        )
+        assert selected["size_match_target_height_mm"] == 120
+        assert selected["attachment_price_id"] == 18
 assert {
     item.get("item_name") for item in attachment_dialog.attachments
 } >= set(explicit_rules.values())
+assert quick_selection_change_count[0] == len(explicit_rules)
 for rule, expected_name in explicit_rules.items():
     visible_quick_rule_button(rule).click()
     app.processEvents()
@@ -586,6 +713,13 @@ ganged_attachment_dialog.catalog = [
         "height_mm": 100,
         "depth_mm": 500,
     },
+    {
+        "attachment_price_id": 103,
+        "item_name": "填充安装板",
+        "price": 80,
+        "category_level1": "配置变形",
+        "category_level2": "",
+    },
 ]
 assert ganged_attachment_dialog.prepare_default_selections() == 2
 ganged_bases = [
@@ -597,6 +731,46 @@ assert [item["ganged_fixed_base_index"] for item in ganged_bases] == [0, 1]
 assert [item["quantity"] for item in ganged_bases] == [1, 1]
 assert [layout_refresh.final_attachment_quantity(item, 3, 2) for item in ganged_bases] == [3, 3]
 ganged_attachment_dialog.rebuild_table()
+ganged_attachment_dialog.show()
+app.processEvents()
+def visible_ganged_quick_rule_button(rule: str):
+    return next(
+        button for button in ganged_attachment_dialog.findChildren(QPushButton)
+        if button.isVisible() and button.property("attachmentQuickRule") == rule
+    )
+
+
+fill_board_quick = visible_ganged_quick_rule_button(
+    "ganged_fill_installation_board"
+)
+assert fill_board_quick.objectName() == "attachmentQuickMatch"
+assert "快速匹配未选择" in fill_board_quick.text()
+fill_board_quick.click()
+app.processEvents()
+assert visible_ganged_quick_rule_button(
+    "ganged_fill_installation_board"
+).objectName() == "attachmentQuickMatchSelected"
+assert sum(
+    item.get("attachment_price_id") == 103
+    for item in ganged_attachment_dialog.attachments
+) == 1
+ganged_attachment_dialog.refresh_category_browser()
+app.processEvents()
+assert sum(
+    item.get("attachment_price_id") == 103
+    for item in ganged_attachment_dialog.attachments
+) == 1
+visible_ganged_quick_rule_button(
+    "ganged_fill_installation_board"
+).click()
+app.processEvents()
+assert visible_ganged_quick_rule_button(
+    "ganged_fill_installation_board"
+).objectName() == "attachmentQuickMatch"
+assert not any(
+    item.get("attachment_price_id") == 103
+    for item in ganged_attachment_dialog.attachments
+)
 assert [item.get("ganged_fixed_base_index") for item in ganged_attachment_dialog.attachments] == [0, 1], ganged_attachment_dialog.attachments
 ganged_table_sources = [
     ganged_attachment_dialog.table.item(row, ganged_attachment_dialog.COL_CHECK).data(Qt.ItemDataRole.UserRole)
@@ -701,6 +875,13 @@ def visible_dialog_category_button(dialog, label: str):
     return next(
         button for button in dialog.findChildren(QPushButton, "attachmentCategoryCard")
         if button.isVisible() and button.property("attachmentCategoryValue") == label
+    )
+
+
+def visible_dialog_quick_rule_button(dialog, rule: str):
+    return next(
+        button for button in dialog.findChildren(QPushButton)
+        if button.isVisible() and button.property("attachmentQuickRule") == rule
     )
 
 
@@ -915,7 +1096,7 @@ jk_board_dialog = attachment_dialog_class(
 )
 jk_board_dialog.catalog = [
     dict(item) for item in attachment_dialog.catalog
-    if item.get("item_name") in {"安装板", "JK安装板"}
+    if item.get("item_name") in {"安装板", "JK安装板", "内门", "防雨顶"}
 ]
 jk_board_dialog.rebuild_table()
 jk_board_dialog.show()
@@ -951,6 +1132,22 @@ assert jk_selected["unit_price_override"] == round(80 * 3600 / 3440, 6)
 while jk_board_dialog.category_selection:
     jk_board_dialog.back_attachment_category()
 app.processEvents()
+assert any(
+    button.isVisible() and button.property("attachmentCategoryValue") == "控制箱附件"
+    for button in jk_board_dialog.findChildren(QPushButton, "attachmentCategoryCard")
+), [
+    button.property("attachmentCategoryValue")
+    for button in jk_board_dialog.findChildren(QPushButton, "attachmentCategoryCard")
+    if button.isVisible()
+]
+assert visible_dialog_quick_rule_button(jk_board_dialog, "jk_installation_board").objectName() == "attachmentQuickMatch"
+visible_dialog_quick_rule_button(jk_board_dialog, "jk_installation_board").click()
+app.processEvents()
+assert visible_dialog_quick_rule_button(jk_board_dialog, "jk_installation_board").objectName() == "attachmentQuickMatchSelected"
+assert sum(
+    item.get("attachment_price_id") == 19
+    for item in jk_board_dialog.attachments
+) == 1
 assert any(
     button.isVisible() and "JK安装板" in button.text()
     for button in jk_board_dialog.findChildren(QPushButton, "attachmentManualSelection")
@@ -1192,7 +1389,8 @@ light_default.click()
 attachment_dialog.accept_selection()
 assert attachment_parent.attachment_default_opt_outs == {
     "installation_board", "three_row_installation_beam", "fixed_column",
-    "a3_folder", "light_switch",
+    "a3_folder", "ganged_connector", "inner_door", "rain_cover",
+    "ventilation_hood", "light_switch",
 }, attachment_parent.attachment_default_opt_outs
 assert sum(
     item.get("item_name") == "A4资料盒"

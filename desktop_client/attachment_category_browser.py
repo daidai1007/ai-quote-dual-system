@@ -46,6 +46,12 @@ DEFAULT_JP_SIDE_PANEL = "jp_side_panel"
 DEFAULT_DOOR_REINFORCEMENT = "door_reinforcement"
 DEFAULT_GROUND_WIRE = "ground_wire"
 DEFAULT_COPPER_BUSBAR = "copper_busbar"
+QUICK_GANGED_CONNECTOR = "ganged_connector"
+QUICK_JK_INSTALLATION_BOARD = "jk_installation_board"
+QUICK_INNER_DOOR = "inner_door"
+QUICK_RAIN_COVER = "rain_cover"
+QUICK_VENTILATION_HOOD = "ventilation_hood"
+QUICK_GANGED_FILL_INSTALLATION_BOARD = "ganged_fill_installation_board"
 DOOR_TRANSFORMATION_RULE_PREFIX = "door_transformation:"
 DOOR_TRANSFORMATION_NAMES = (
     "JS、JP后背板改为单开门",
@@ -303,6 +309,18 @@ def match_default_copper_busbar(items: Iterable[dict]) -> dict | None:
     )
 
 
+def match_quick_ganged_connector(items: Iterable[dict]) -> dict | None:
+    """Return the exact active catalogue row used by the ganged quick action."""
+
+    return match_quick_attachment_identity(items, "并柜件", "", "并柜件")
+
+
+def match_quick_ganged_fill_installation_board(items: Iterable[dict]) -> dict | None:
+    """Return the single generic fill-board row used only by ganged quotes."""
+
+    return match_quick_attachment_identity(items, "配置变形", "", "填充安装板")
+
+
 def is_jp_product(value) -> bool:
     code = str(value or "").strip().upper()
     return code == "JP" or code.startswith("JP_")
@@ -462,8 +480,19 @@ def default_rule_for_item(item: dict) -> str | None:
     if door_rule is not None:
         return door_rule
     category = category_value(item, 0)
+    subcategory = category_value(item, 1)
     name = str(item.get("item_name") or "").strip()
     model = str(item.get("model_code") or "").strip().upper()
+    if category == "配置变形" and subcategory == "" and name == "填充安装板":
+        return QUICK_GANGED_FILL_INSTALLATION_BOARD
+    if category == "控制箱附件" and subcategory == "JK安装板" and name == "JK安装板":
+        return QUICK_JK_INSTALLATION_BOARD
+    if category in {"控制箱附件", "控制柜附件"} and subcategory == "内门" and name == "内门":
+        return QUICK_INNER_DOOR
+    if category in {"控制箱附件", "控制柜附件"} and subcategory == "防雨顶" and name == "防雨顶":
+        return QUICK_RAIN_COVER
+    if category == "控制柜附件" and subcategory == "通风顶罩" and name == "通风顶罩":
+        return QUICK_VENTILATION_HOOD
     if category == "底座" or "底座" in name:
         return DEFAULT_FIXED_BASE
     if size_match_attachment_name(item) in {"安装板", "JK安装板"}:
@@ -486,6 +515,8 @@ def default_rule_for_item(item: dict) -> str | None:
         return DEFAULT_GROUND_WIRE
     if category == "铜排" or name == "铜排":
         return DEFAULT_COPPER_BUSBAR
+    if category == "并柜件" and name == "并柜件":
+        return QUICK_GANGED_CONNECTOR
     if category == "侧板" or name == "侧板" or model.startswith("JP68"):
         return DEFAULT_JP_SIDE_PANEL
     return None
@@ -633,16 +664,21 @@ def match_installation_board_size(
                 candidates = grouped
     else:
         source_name = installation_board_catalogue_name(source)
-        candidates = (
-            _matching_candidates(
+        if source_name is not None:
+            candidates = _matching_candidates(
                 [
                     item for item in catalogue
                     if installation_board_catalogue_name(item) == source_name
                 ],
                 source,
             )
-            if source_name is not None else []
-        )
+        elif size_match_attachment_name(source) in {"安装板", "JK安装板"}:
+            # Explicit quick actions can live under a business category such
+            # as 控制箱附件. Keep them in their exact category path while
+            # reusing this same W/H perimeter matcher and price scaling.
+            candidates = _matching_candidates(catalogue, source)
+        else:
+            candidates = []
     if target is None or not candidates:
         return None
     target_width, target_height, target_depth = target

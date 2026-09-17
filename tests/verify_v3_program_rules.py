@@ -138,6 +138,12 @@ from attachment_category_browser import (  # noqa: E402
     DEFAULT_GROUND_WIRE,
     DEFAULT_JP_SIDE_PANEL,
     DEFAULT_LIGHT_SWITCH,
+    QUICK_GANGED_CONNECTOR,
+    QUICK_GANGED_FILL_INSTALLATION_BOARD,
+    QUICK_INNER_DOOR,
+    QUICK_JK_INSTALLATION_BOARD,
+    QUICK_RAIN_COVER,
+    QUICK_VENTILATION_HOOD,
     DOOR_LIMITER_DEFAULT_QUANTITIES,
     DOOR_TRANSFORMATION_RULE_PREFIX,
     LEVEL1_ORDER,
@@ -160,6 +166,8 @@ from attachment_category_browser import (  # noqa: E402
     match_default_door_limiter,
     match_default_ground_wire,
     match_default_light_switch,
+    match_quick_ganged_connector,
+    match_quick_ganged_fill_installation_board,
     match_door_transformation_defaults,
     match_fixed_base,
     match_jp_side_panel,
@@ -433,6 +441,8 @@ default_catalog = [
     {"attachment_price_id": 10, "item_name": "接地线", "model_code": "红绿线", "category_level1": "接地线", "category_level2": "红绿线"},
     {"attachment_price_id": 11, "item_name": "接地线", "model_code": "编织带", "category_level1": "接地线", "category_level2": "编织带"},
     {"attachment_price_id": 12, "item_name": "铜排", "model_code": "所有型号", "category_level1": "铜排", "price": 50, "unit": "件"},
+    {"attachment_price_id": 15, "item_name": "并柜件", "category_level1": "并柜件", "price": 60, "unit": "件"},
+    {"attachment_price_id": 16, "item_name": "填充安装板", "category_level1": "配置变形", "category_level2": "", "price": 80},
     {"attachment_price_id": 7, "item_name": "侧板", "model_code": "JP681960", "category_level1": "侧板", "height_mm": 1900, "depth_mm": 600},
     {"attachment_price_id": 8, "item_name": "侧板", "model_code": "JP682060", "category_level1": "侧板", "height_mm": 2000, "depth_mm": 600},
 ]
@@ -443,6 +453,8 @@ assert match_default_door_limiter(default_catalog)["attachment_price_id"] == 6
 assert match_default_door_reinforcement(default_catalog)["attachment_price_id"] == 9
 assert match_default_ground_wire(default_catalog)["attachment_price_id"] == 10
 assert match_default_copper_busbar(default_catalog)["attachment_price_id"] == 12
+assert match_quick_ganged_connector(default_catalog)["attachment_price_id"] == 15
+assert match_quick_ganged_fill_installation_board(default_catalog)["attachment_price_id"] == 16
 assert match_default_copper_busbar(default_catalog + [{
     "attachment_price_id": 13, "item_name": "铜排", "category_level1": "铜排",
 }]) is None
@@ -454,6 +466,12 @@ assert default_rule_for_item({"item_name": "门限位器"}) == DEFAULT_DOOR_LIMI
 assert default_rule_for_item({"item_name": "门加强筋"}) == DEFAULT_DOOR_REINFORCEMENT
 assert default_rule_for_item({"item_name": "接地线", "model_code": "红绿线"}) == DEFAULT_GROUND_WIRE
 assert default_rule_for_item({"item_name": "铜排", "category_level1": "铜排"}) == DEFAULT_COPPER_BUSBAR
+assert default_rule_for_item({"item_name": "并柜件", "category_level1": "并柜件"}) == QUICK_GANGED_CONNECTOR
+assert default_rule_for_item({"item_name": "填充安装板", "category_level1": "配置变形", "category_level2": ""}) == QUICK_GANGED_FILL_INSTALLATION_BOARD
+assert default_rule_for_item({"item_name": "JK安装板", "category_level1": "控制箱附件", "category_level2": "JK安装板"}) == QUICK_JK_INSTALLATION_BOARD
+assert default_rule_for_item({"item_name": "内门", "category_level1": "控制柜附件", "category_level2": "内门"}) == QUICK_INNER_DOOR
+assert default_rule_for_item({"item_name": "防雨顶", "category_level1": "控制箱附件", "category_level2": "防雨顶"}) == QUICK_RAIN_COVER
+assert default_rule_for_item({"item_name": "通风顶罩", "category_level1": "控制柜附件", "category_level2": "通风顶罩"}) == QUICK_VENTILATION_HOOD
 assert default_rule_for_item({"item_name": "照明灯/行程开关"}) == DEFAULT_LIGHT_SWITCH
 assert default_rule_for_item({"item_name": "侧板", "model_code": "JP682060"}) == DEFAULT_JP_SIDE_PANEL
 assert final_attachment_quantity(
@@ -701,6 +719,12 @@ for family in ("JS", "JP"):
     full_window = DoorRuleWindow(family, {"SINGLE": f"{family}_SINGLE"}, (0, 2))
     assert layout_refresh._allowed_door_combinations(full_window) == layout_refresh.VALID_DOOR_COMBINATIONS
     assert not layout_refresh._enforce_product_door_combination(full_window, "double")
+    assert layout_refresh._default_door_counts_for_width(
+        800, layout_refresh._allowed_door_combinations(full_window)
+    ) == (1, 0)
+    assert layout_refresh._default_door_counts_for_width(
+        801, layout_refresh._allowed_door_combinations(full_window)
+    ) == (0, 1)
 for family in ("JA", "JE"):
     limited_window = DoorRuleWindow(family, {"SINGLE": f"{family}_SINGLE"}, (0, 2))
     assert layout_refresh._allowed_door_combinations(limited_window) == {(1, 0), (0, 1)}

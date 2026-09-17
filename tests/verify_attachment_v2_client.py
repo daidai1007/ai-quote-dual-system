@@ -131,6 +131,14 @@ preview_payload = next(payload for url, payload in reversed(requests) if url.end
 preview_base_attachment = next(row for row in preview_payload["attachments"] if row["attachment_price_id"] == missing_id)
 assert preview_base_attachment["manual_inputs"].get("底座高度") == 100, preview_base_attachment
 spin_until(lambda: dialog._v2_ready, "interface base height did not unblock preview")
+preview_count_before_card_toggle = len([url for url, _payload in requests if url.endswith("/preview")])
+dialog.attachment_selection_changed()
+assert not dialog._v2_ready and dialog._v2_timer.isActive()
+spin_until(
+    lambda: dialog._v2_ready
+    and len([url for url, _payload in requests if url.endswith("/preview")]) > preview_count_before_card_toggle,
+    "card-level attachment toggle did not recalculate both prices",
+)
 collected = dialog.collect_attachments()
 manual_row = next(a for a in collected if a["attachment_price_id"] == missing_id)
 assert "底座高度" not in manual_row["manual_inputs"]

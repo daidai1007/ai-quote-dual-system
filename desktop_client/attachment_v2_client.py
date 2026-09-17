@@ -420,8 +420,17 @@ def install_attachment_v2(namespace):
             return
         return originals["accept_selection"](dialog)
 
+    def attachment_selection_changed(dialog):
+        """Recalculate both attachment prices after a card-level toggle."""
+
+        if not getattr(dialog, "_v2_mode", False) or not hasattr(dialog, "_v2_timer"):
+            return
+        dialog._v2_ready = False
+        dialog._v2_timer.start()
+
     dialog_class.__init__, dialog_class.load_catalog, dialog_class.rebuild_table = init, load, rebuild
     dialog_class.collect_attachments, dialog_class.accept_selection = collect, accept
+    dialog_class.attachment_selection_changed = attachment_selection_changed
     item_changed = getattr(dialog_class, "table_item_changed", None)
     if item_changed is not None:
         def item_changed_v2(dialog, item):
@@ -442,8 +451,8 @@ def install_attachment_v2(namespace):
             return result
         dialog_class.table_item_changed = item_changed_v2
     refresh_browser = dialog_class.refresh_category_browser
-    def refresh_browser_v2(dialog):
-        result = refresh_browser(dialog)
+    def refresh_browser_v2(dialog, *args, **kwargs):
+        result = refresh_browser(dialog, *args, **kwargs)
         if getattr(dialog, "_v2_mode", False) and hasattr(dialog, "_v2_timer"):
             decorate(dialog)
             dialog._v2_ready = False

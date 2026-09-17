@@ -43,6 +43,7 @@ test('door defaults use the strict 800 mm boundary and preserve manual state', a
   );
   assert.match(layout, /DOOR_DEFAULT_WIDTH_THRESHOLD_MM = 800\.0/);
   assert.match(layout, /float\(width_mm\) > DOOR_DEFAULT_WIDTH_THRESHOLD_MM/);
+  assert.match(layout, /if family in \{"JS", "JP"\}:/);
   assert.match(layout, /AUTOMATIC_DOOR_SELECTION = "automatic"/);
   assert.match(layout, /MANUAL_DOOR_SELECTION = "manual"/);
   assert.match(layout, /combo\.activated\.connect/);
