@@ -87,6 +87,8 @@ test('attachment dialog drills through responsive category cards before showing 
   );
   assert.match(hierarchy, /LEVEL1_TRAILING_ORDER\.index\(value\)/);
   assert.match(hierarchy, /options\.append\(\{"value": "", "label": DIRECT_ITEMS_LABEL/);
+  assert.match(hierarchy, /DIRECT_SELECTION_LEVEL1 = frozenset\(\{"风机", "滤网", "门变形", "配置变形", "其他附件"\}\)/);
+  assert.match(hierarchy, /len\(chosen\) == 1 and chosen\[0\] in DIRECT_SELECTION_LEVEL1/);
   assert.match(hierarchy, /def parse_base_specification/);
   assert.match(hierarchy, /def match_fixed_base/);
   assert.match(hierarchy, /def match_default_light_switch/);

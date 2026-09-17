@@ -6,7 +6,7 @@ if(!directory) throw new Error('usage: node scripts/attachment_review_artifacts.
 const bundle=JSON.parse(await fs.readFile(path.join(directory,'attachment-bundle.json'),'utf8'));
 const cell=value=>String(value??'').replaceAll('|','\\|').replaceAll('\n','<br>');
 const lines=['# Excel源行映射检查','','来源SHA-256：`'+bundle.source_sha256+'`。转换版本：`'+bundle.data_version+'`。','',
-  '行号均为Excel实际工作表行号，不是表内序号。名称规范全角括号及首尾空白；分类采用已确认的连续行继承，以及快速103/104/105行的明确补齐。产品、原型号和材质适用关系分别保存；搭扣锁及铜排按确认身份绑定。','',
+  '行号均为Excel实际工作表行号，不是表内序号。名称规范全角括号及首尾空白；门变形、配置变形和其他附件按确认取消二级分类，其他分类继续采用已确认的连续行继承。产品、原型号和材质适用关系分别保存；搭扣锁及铜排按确认身份绑定。','',
   '| 快速表行 | 一级分类 | 二级分类 | 名称 | 型号 | 完整面价 | 公式表行 | 检查状态 |','|---|---|---|---|---|---|---|---|'];
 for(const m of bundle.report.mappings) {
   const q=bundle.catalog.find(q=>q.source_row_no===m.quick_row);

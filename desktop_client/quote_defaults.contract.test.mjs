@@ -49,6 +49,9 @@ test('door defaults use the strict 800 mm boundary and preserve manual state', a
   assert.match(layout, /width\.valueChanged\.connect/);
   assert.match(layout, /mode == MANUAL_DOOR_SELECTION/);
   assert.match(layout, /updated\[row_index\]\["door_selection_mode"\] = MANUAL_DOOR_SELECTION/);
+  assert.match(layout, /def _sync_quote_specification[\s\S]*?_door_selection_mode = AUTOMATIC_DOOR_SELECTION/);
+  assert.match(layout, /def sync_model_specification\(value\):\s*_sync_quote_specification\(window, value, parser\)/);
+  assert.match(layout, /def product_changed_with_default_door[\s\S]*?_apply_automatic_door_default\(self, force=True\)/);
 });
 
 test('manual freight persists independently and remains outside both discounts', async () => {

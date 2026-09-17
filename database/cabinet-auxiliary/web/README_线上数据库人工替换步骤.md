@@ -1,14 +1,16 @@
-# 线上柜体辅材目录人工替换步骤（2026-09-15）
+# 线上柜体辅材目录人工替换步骤（2026-09-17）
 
 ## 本次数据
 
-- 新版本：`cabinet-auxiliary-fef2b7a93d50e60c-v3`
+- 新版本：`cabinet-auxiliary-189ae4efbfcb40f5-v3`
 - BOM：`辅材BOM清单.xlsx`
-  - SHA-256：`2690d670e604c1683f610867649519f334c1826e2ddcdfe9a5b744c782317020`
+  - SHA-256：`62b474d977ea512096e2099098e30fcbff91940fdcf2107f37854eb8f1a00125`
 - 固定价格：`JK,JC,操作台辅材价格.xlsx`
   - SHA-256：`4505363a41d6a2ba65587c5df25ac9e00a7ff24c330980ded6357084180de5be`
-- 合并源 SHA-256：`fef2b7a93d50e60c18952925677ebfd01dc8cef29c88918d7ba2b775e2bc3607`
+- 合并源 SHA-256：`189ae4efbfcb40f50260a69f389e224771d13eff44c6cbebbe49ae0dad0bb586`
 - 预期数据量：32 个材质门型配置、510 条 BOM 明细、72 条固定/尺寸价格。
+- JA、JE 单门的吊环新增严格高度规则：高度大于 1000 mm 时数量为 2，否则为 0；适用于 SECC、SUS304、SUS316。
+- JE 单门 SUS304/SUS316 的吊环单价修正为 `5.50`；同配置两条锁杆单价继续保持 `5.80`。
 
 ## 必须先部署的程序改动
 
@@ -36,7 +38,7 @@
 
 4. 执行 `02-stage.sql`。
    - 导入新版本，但状态只会是 `STAGED`，不会影响线上报价。
-   - 预期返回 `cabinet-auxiliary-fef2b7a93d50e60c-v3`。
+   - 预期返回 `cabinet-auxiliary-5f0aa74619a28570-v3`。
    - 该文件较大，请整份执行，不要截断十六进制 payload。
 
 5. 执行 `03-validate.sql`。

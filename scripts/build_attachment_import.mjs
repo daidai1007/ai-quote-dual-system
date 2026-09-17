@@ -7,14 +7,15 @@ const [source, directory] = process.argv.slice(2);
 if (!source || !directory) throw new Error('usage: node scripts/build_attachment_import.mjs raw.json output-directory');
 const raw = JSON.parse(await fs.readFile(source, 'utf8'));
 // Increment the conversion revision when confirmed mappings/overrides change.
-const version = `xlsx-${raw.sha256.slice(0, 16)}-r4`;
+const version = `xlsx-${raw.sha256.slice(0, 16)}-r5`;
 const report = { source_sha256: raw.sha256, data_version: version, confirmations: ['M3 按乘以2.5；用户2026-09-10确认', '同一级分类、同名连续行继承空二级分类；用户2026-09-10确认'], transformations: [], issues: [], quick_only: [], unmapped_rules: [], mappings: [] };
 const normalize = value => String(value ?? '').trim().replaceAll('（', '(').replaceAll('）', ')');
 report.pending_mapping = [];
 report.confirmations.push('公式法第59行空辅材金额按0；用户2026-09-10明确确认');
 report.confirmations.push('2026-09-11：通风顶罩重量按(260+宽度-10)*(260+深度-10)*0.000001*材质密度*1.5；相邻括号为相乘');
 report.confirmations.push('2026-09-11：公式表型号中的SECC/SUS304/SUS316代表适用材质，按程序当前材质匹配；快速面价适用于所有型号且不随材质变化');
-report.confirmations.push('2026-09-11：搭扣锁快速103→公式33（3元）、铜排快速226→公式62（8.1元）明确对应；前三项门变形快速空二级分类补为公式表分类');
+report.confirmations.push('2026-09-11：搭扣锁快速103→公式33（3元）、铜排快速226→公式62（8.1元）明确对应');
+report.confirmations.push('2026-09-17：门变形、配置变形、其他附件取消二级分类，快速报价与公式法规则统一保留一级分类和具体名称');
 report.result_aliases = { 材料质量: '材料重量' };
 report.units = { 材料重量: 'kg（源公式已含密度和换算，不再乘密度）', 材质密度: 'g/cm³', 喷塑面积: 'm²', 材质单价: '元/kg', 喷塑单价: '元/m²', 人工尺寸: 'mm' };
 const split = value => normalize(value).split(/[,，、\\/]+/).map(x => x.trim()).filter(Boolean);
@@ -30,16 +31,17 @@ function rows(sheet) {
     return { ...row, values };
   });
 }
-const common = (r, sheet) => ({ category_level1: normalize(r.values.一级分类), category_level2: normalize(r.values.二级分类), item_name: normalize(r.values.名称), model_code: normalize(r.values.型号), color: normalize(r.values.颜色), unit: normalize(r.values.单位), source_file: raw.source_file, source_sheet: sheet, source_row_no: r.source_row_no, data_version: version });
-const catalog = rows('快速报价').map(r => ({ ...common(r, '快速报价'), import_key: `Q${r.source_row_no}`, price: r.values.面价, width_mm: r.values.宽度 || null, height_mm: r.values.高度 || null, depth_mm: r.values.深度 || null }));
-const confirmedCategories = new Map([[103, 'JA、JE箱小方锁改为搭扣锁(1把)'], [104, 'JA、JE顶部加吊环(2个)'], [105, '平面锁改为MS830锁']]);
-for (const item of catalog) {
-  const name = confirmedCategories.get(item.source_row_no);
-  if (name && item.category_level1 === '门变形' && item.item_name === name && !item.category_level2) {
-    report.transformations.push({ sheet: '快速报价', row: item.source_row_no, field: '二级分类', before: '', after: name, reason: '2026-09-11用户明确确认此三项分类补齐，仅限已确认源行身份' });
-    item.category_level2 = name;
+const common = (r, sheet) => {
+  const category_level1 = normalize(r.values.一级分类);
+  const sourceLevel2 = normalize(r.values.二级分类);
+  const directLevel1 = new Set(['门变形', '配置变形', '其他附件']);
+  const category_level2 = directLevel1.has(category_level1) ? '' : sourceLevel2;
+  if (sourceLevel2 && !category_level2) {
+    report.transformations.push({ sheet, row: r.source_row_no, field: '二级分类', before: sourceLevel2, after: '', reason: `2026-09-17用户确认${category_level1}取消二级分类` });
   }
-}
+  return { category_level1, category_level2, item_name: normalize(r.values.名称), model_code: normalize(r.values.型号), color: normalize(r.values.颜色), unit: normalize(r.values.单位), source_file: raw.source_file, source_sheet: sheet, source_row_no: r.source_row_no, data_version: version };
+};
+const catalog = rows('快速报价').map(r => ({ ...common(r, '快速报价'), import_key: `Q${r.source_row_no}`, price: r.values.面价, width_mm: r.values.宽度 || null, height_mm: r.values.高度 || null, depth_mm: r.values.深度 || null }));
 const columns = { weight_kg: '材料重量', material_cost: '材料成本', spray_area_m2: '喷塑面积', spray_cost: '喷塑成本', auxiliary_cost: '辅材', labor_cost: '人工' };
 const rules = rows('公式法报价').map(r => {
   const v = r.values;

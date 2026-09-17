@@ -25,6 +25,32 @@ test('height conditional lock rows are selected without cached spreadsheet input
   assert.equal(high.lines.find(x=>x.item_name==='MS813').internal_quantity,0);
 });
 
+test('auxiliary builder accepts general height thresholds and the runtime keeps strict boundaries',()=>{
+  const builder=fs.readFileSync(new URL('../scripts/build_cabinet_auxiliary_rules.mjs',import.meta.url),'utf8');
+  assert.match(builder,/IF\\\(A5>\(\[0-9\.\]\+\),\(\[0-9\.\]\+\),\(\[0-9\.\]\+\)\\\)/);
+  assert.doesNotMatch(builder,/IF\\\(A5>800,1,0\\\)/);
+
+  const profile={product_code:'JA',single_door_count:1,double_door_count:0,source_sheet:'JA1'};
+  const lines=[{line_id:1,line_no:1,item_name:'高度条件辅材',quantity_rule:{kind:'HEIGHT_GT',threshold:1000,when_true:2,when_false:0},
+    unit_price:3,cost_kind:'UNIT',source_sheet:'JA1',source_row_no:5}];
+  const environment={data_version:'aux-test',width_mm:600,depth_mm:250,spray_unit_price:0};
+  const boundary=calculateCabinetAuxiliary(profile,lines,{...environment,height_mm:1000});
+  const above=calculateCabinetAuxiliary(profile,lines,{...environment,height_mm:1001});
+  assert.equal(boundary.lines[0].internal_quantity,0);
+  assert.equal(above.lines[0].internal_quantity,2);
+});
+
+test('JE stainless lifting ring uses the revised price without changing lock rods',()=>{
+  const [profile,lines]=get('JE',1,0,'SUS304');
+  const liftingRing=lines.find(line=>line.item_name==='吊环');
+  const lockRods=lines.filter(line=>line.item_name==='锁杆-大锁头');
+  assert.equal(profile.source_sheet,'JE1 (2)');
+  assert.equal(liftingRing.unit_price,5.5);
+  assert.deepEqual(liftingRing.quantity_rule,{kind:'HEIGHT_GT',threshold:1000,when_true:2,when_false:0});
+  assert.equal(lockRods.length,2);
+  assert.deepEqual(lockRods.map(line=>line.unit_price),[5.8,5.8]);
+});
+
 test('JP auxiliary frame spray uses current spray price and zero for no spray',()=>{
   const [profile,lines]=get('JP',1,0),environment={data_version:bundle.data_version,width_mm:800,height_mm:1800,depth_mm:400};
   const a=calculateCabinetAuxiliary(profile,lines,{...environment,spray_unit_price:10});

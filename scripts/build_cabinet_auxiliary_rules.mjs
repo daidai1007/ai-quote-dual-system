@@ -27,7 +27,8 @@ function resolveQuantity(sheet,rowNo,pieceCol,quantityCol,seen=new Set()){
   if(!formula){const n=Number(value);if(Number.isFinite(n))return {kind:'CONSTANT',value:number(n,`${sheet.name}!${cell.address}`,{zero:true})};throw new Error(`${sheet.name}!${cell.address} 数量为空`);}
   const direct=formula.match(/^([A-Z]+)(\d+)$/);
   if(direct){const address=direct[0];if(seen.has(address))throw new Error(`${sheet.name}!${cell.address} 数量循环引用`);seen.add(address);const ref=sheet.getCell(address);return resolveQuantity(sheet,ref.row,ref.col,ref.col,seen);}
-  let match=formula.match(/^IF\(A5>800,1,0\)$/);if(match)return {kind:'HEIGHT_GT',threshold:800,when_true:1,when_false:0};
+  let match=formula.match(/^IF\(A5>([0-9.]+),([0-9.]+),([0-9.]+)\)$/);
+  if(match)return {kind:'HEIGHT_GT',threshold:Number(match[1]),when_true:Number(match[2]),when_false:Number(match[3])};
   match=formula.match(/^IF\(([A-Z]+\d+)>0,0,1\)$/);
   if(match){const ref=sheet.getCell(match[1]);const base=resolveQuantity(sheet,ref.row,ref.col,ref.col,seen);if(base.kind!=='HEIGHT_GT')throw new Error(`${sheet.name}!${cell.address} 反向数量条件不支持`);return {...base,when_true:0,when_false:1};}
   throw new Error(`${sheet.name}!${cell.address} 不支持的数量公式：${formula}`);

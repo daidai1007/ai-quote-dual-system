@@ -1,12 +1,12 @@
 {
-  "data_version": "cabinet-auxiliary-fef2b7a93d50e60c-v3",
+  "data_version": "cabinet-auxiliary-189ae4efbfcb40f5-v3",
   "source_file": "辅材BOM清单.xlsx; JK,JC,操作台辅材价格.xlsx",
-  "source_sha256": "fef2b7a93d50e60c18952925677ebfd01dc8cef29c88918d7ba2b775e2bc3607",
+  "source_sha256": "189ae4efbfcb40f50260a69f389e224771d13eff44c6cbebbe49ae0dad0bb586",
   "source_files": [
     {
       "kind": "BOM",
       "name": "辅材BOM清单.xlsx",
-      "sha256": "2690d670e604c1683f610867649519f334c1826e2ddcdfe9a5b744c782317020"
+      "sha256": "62b474d977ea512096e2099098e30fcbff91940fdcf2107f37854eb8f1a00125"
     },
     {
       "kind": "FIXED_PRICE",
@@ -25,7 +25,7 @@
       "double_door_count": 0,
       "source_sheet": "JA1",
       "source_summary_formula": "SUM(L3:L8)",
-      "source_cached_total": 14.4
+      "source_cached_total": 11.2
     },
     {
       "profile_key": "JA:0/1:SECC",
@@ -50,7 +50,7 @@
       "double_door_count": 0,
       "source_sheet": "JA1 (2)",
       "source_summary_formula": "SUM(L3:L8)",
-      "source_cached_total": 49
+      "source_cached_total": 38
     },
     {
       "profile_key": "JA:0/1:SUS304+SUS316",
@@ -75,7 +75,7 @@
       "double_door_count": 0,
       "source_sheet": "JE1",
       "source_summary_formula": "SUM(L3:L8)",
-      "source_cached_total": 14.4
+      "source_cached_total": 11.2
     },
     {
       "profile_key": "JE:0/1:SECC",
@@ -100,7 +100,7 @@
       "double_door_count": 0,
       "source_sheet": "JE1 (2)",
       "source_summary_formula": "SUM(L3:L8)",
-      "source_cached_total": 41.2
+      "source_cached_total": 38
     },
     {
       "profile_key": "JE:0/1:SUS304+SUS316",
@@ -186,7 +186,7 @@
       "double_door_count": 0,
       "source_sheet": "JS1 (2)",
       "source_summary_formula": "SUM(L3:L21)",
-      "source_cached_total": 237.93
+      "source_cached_total": 223.997
     },
     {
       "profile_key": "JS:0/1:SUS304+SUS316",
@@ -199,7 +199,7 @@
       "double_door_count": 1,
       "source_sheet": "JS2 (2)",
       "source_summary_formula": "SUM(L3:L21)",
-      "source_cached_total": 288.4
+      "source_cached_total": 264
     },
     {
       "profile_key": "JS:2/0:SUS304+SUS316",
@@ -212,7 +212,7 @@
       "double_door_count": 0,
       "source_sheet": "JS3 (2)",
       "source_summary_formula": "SUM(L3:L20)",
-      "source_cached_total": 223.13
+      "source_cached_total": 198.73
     },
     {
       "profile_key": "JS:0/2:SUS304+SUS316",
@@ -225,7 +225,7 @@
       "double_door_count": 2,
       "source_sheet": "JS4 (2)",
       "source_summary_formula": "SUM(L3:L20)",
-      "source_cached_total": 272.8
+      "source_cached_total": 248.4
     },
     {
       "profile_key": "JS:1/1:SUS304+SUS316",
@@ -238,7 +238,7 @@
       "double_door_count": 1,
       "source_sheet": "JS5 (2)",
       "source_summary_formula": "SUM(L3:L21)",
-      "source_cached_total": 222.33
+      "source_cached_total": 197.93
     },
     {
       "profile_key": "JP:1/0:SECC",
@@ -311,7 +311,7 @@
       "double_door_count": 0,
       "source_sheet": "JP1 (2)",
       "source_summary_formula": "SUM(M3:M27)",
-      "source_cached_total": 429.93
+      "source_cached_total": 405.53
     },
     {
       "profile_key": "JP:0/1:SUS304+SUS316",
@@ -324,7 +324,7 @@
       "double_door_count": 1,
       "source_sheet": "JP2 (2)",
       "source_summary_formula": "SUM(M3:M27)",
-      "source_cached_total": 480.4
+      "source_cached_total": 456
     },
     {
       "profile_key": "JP:2/0:SUS304+SUS316",
@@ -337,7 +337,7 @@
       "double_door_count": 0,
       "source_sheet": "JP3 (2)",
       "source_summary_formula": "SUM(M3:M26)",
-      "source_cached_total": 415.13
+      "source_cached_total": 390.73
     },
     {
       "profile_key": "JP:0/2:SUS304+SUS316",
@@ -350,7 +350,7 @@
       "double_door_count": 2,
       "source_sheet": "JP4 (2)",
       "source_summary_formula": "SUM(M3:M26)",
-      "source_cached_total": 464.8
+      "source_cached_total": 440.4
     },
     {
       "profile_key": "JP:1/1:SUS304+SUS316",
@@ -363,7 +363,7 @@
       "double_door_count": 1,
       "source_sheet": "JP5 (2)",
       "source_summary_formula": "SUM(M3:M27)",
-      "source_cached_total": 429.53
+      "source_cached_total": 405.13
     },
     {
       "profile_key": "JM:1/0:SECC",
@@ -400,7 +400,7 @@
       "double_door_count": 0,
       "source_sheet": "JM单门 (2)",
       "source_summary_formula": "SUM(L3:L9)",
-      "source_cached_total": 87.95
+      "source_cached_total": 63.55
     },
     {
       "profile_key": "JM:0/1:SUS304+SUS316",
@@ -413,7 +413,7 @@
       "double_door_count": 1,
       "source_sheet": "JM双门 (2)",
       "source_summary_formula": "SUM(L3:L10)",
-      "source_cached_total": 99.2
+      "source_cached_total": 74.8
     }
   ],
   "lines": [
@@ -469,16 +469,18 @@
       "spec_model": null,
       "material_name": null,
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 2,
+        "when_false": 0
       },
       "unit_price": 1.6,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
-      "notes": null,
+      "notes": "柜高1000以上用",
       "source_total_formula": "K5*I5",
-      "source_cached_total": 3.2,
+      "source_cached_total": 0,
       "source_sheet": "JA1",
       "source_row_no": 5
     },
@@ -737,16 +739,18 @@
       "spec_model": null,
       "material_name": null,
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 2,
+        "when_false": 0
       },
       "unit_price": 5.5,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
-      "notes": null,
+      "notes": "柜高1000以上用",
       "source_total_formula": "K5*I5",
-      "source_cached_total": 11,
+      "source_cached_total": 0,
       "source_sheet": "JA1 (2)",
       "source_row_no": 5
     },
@@ -763,7 +767,7 @@
         "when_true": 1,
         "when_false": 0
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
@@ -786,7 +790,7 @@
         "when_true": 1,
         "when_false": 0
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
@@ -897,7 +901,7 @@
         "when_true": 1,
         "when_false": 0
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
@@ -920,7 +924,7 @@
         "when_true": 1,
         "when_false": 0
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
@@ -1005,16 +1009,18 @@
       "spec_model": null,
       "material_name": null,
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 2,
+        "when_false": 0
       },
       "unit_price": 1.6,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
-      "notes": null,
+      "notes": "柜高1000以上用",
       "source_total_formula": "K5*I5",
-      "source_cached_total": 3.2,
+      "source_cached_total": 0,
       "source_sheet": "JE1",
       "source_row_no": 5
     },
@@ -1273,16 +1279,18 @@
       "spec_model": null,
       "material_name": null,
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "HEIGHT_GT",
+        "threshold": 1000,
+        "when_true": 2,
+        "when_false": 0
       },
-      "unit_price": 1.6,
+      "unit_price": 5.5,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
-      "notes": null,
+      "notes": "柜高1000以上用",
       "source_total_formula": "K5*I5",
-      "source_cached_total": 3.2,
+      "source_cached_total": 0,
       "source_sheet": "JE1 (2)",
       "source_row_no": 5
     },
@@ -1299,7 +1307,7 @@
         "when_true": 1,
         "when_false": 0
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
@@ -1322,7 +1330,7 @@
         "when_true": 1,
         "when_false": 0
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
@@ -1433,7 +1441,7 @@
         "when_true": 1,
         "when_false": 0
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
@@ -1456,7 +1464,7 @@
         "when_true": 1,
         "when_false": 0
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
@@ -3501,7 +3509,7 @@
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "IF(F5<0,0,F5*I5*K5)",
-      "source_cached_total": 0,
+      "source_cached_total": 7.47,
       "source_sheet": "JS1 (2)",
       "source_row_no": 5
     },
@@ -3522,7 +3530,7 @@
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "IF(F6<0,0,F6*I6*K6)",
-      "source_cached_total": 0,
+      "source_cached_total": 2.997,
       "source_sheet": "JS1 (2)",
       "source_row_no": 6
     },
@@ -3684,13 +3692,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K14*I14",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS1 (2)",
       "source_row_no": 14
     },
@@ -3705,13 +3713,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K15*I15",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS1 (2)",
       "source_row_no": 15
     },
@@ -4083,13 +4091,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "IF(F14<0,0,K14*I14)",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS2 (2)",
       "source_row_no": 14
     },
@@ -4104,13 +4112,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "IF(F15<0,0,K15*I15)",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS2 (2)",
       "source_row_no": 15
     },
@@ -4461,13 +4469,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K13*I13",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS3 (2)",
       "source_row_no": 13
     },
@@ -4482,13 +4490,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K14*I14",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS3 (2)",
       "source_row_no": 14
     },
@@ -4839,13 +4847,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "IF(F13<0,0,K13*I13)",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS4 (2)",
       "source_row_no": 13
     },
@@ -4860,13 +4868,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "IF(F14<0,0,K14*I14)",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS4 (2)",
       "source_row_no": 14
     },
@@ -5238,13 +5246,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K14*I14",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS5 (2)",
       "source_row_no": 14
     },
@@ -5259,13 +5267,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K15*I15",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JS5 (2)",
       "source_row_no": 15
     },
@@ -8157,13 +8165,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L11*J11",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP1 (2)",
       "source_row_no": 11
     },
@@ -8178,13 +8186,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L12*J12",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP1 (2)",
       "source_row_no": 12
     },
@@ -8682,13 +8690,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L11*J11",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP2 (2)",
       "source_row_no": 11
     },
@@ -8703,13 +8711,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L12*J12",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP2 (2)",
       "source_row_no": 12
     },
@@ -9207,13 +9215,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L11*J11",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP3 (2)",
       "source_row_no": 11
     },
@@ -9228,13 +9236,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L12*J12",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP3 (2)",
       "source_row_no": 12
     },
@@ -9711,13 +9719,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L11*J11",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP4 (2)",
       "source_row_no": 11
     },
@@ -9732,13 +9740,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L12*J12",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP4 (2)",
       "source_row_no": 12
     },
@@ -10215,13 +10223,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L11*J11",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP5 (2)",
       "source_row_no": 11
     },
@@ -10236,13 +10244,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "L12*J12",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JP5 (2)",
       "source_row_no": 12
     },
@@ -10908,13 +10916,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K4*I4",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JM单门 (2)",
       "source_row_no": 4
     },
@@ -10929,13 +10937,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K5*I5",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JM单门 (2)",
       "source_row_no": 5
     },
@@ -11055,13 +11063,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K4*I4",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JM双门 (2)",
       "source_row_no": 4
     },
@@ -11076,13 +11084,13 @@
         "kind": "CONSTANT",
         "value": 1
       },
-      "unit_price": 18,
+      "unit_price": 5.8,
       "cost_kind": "UNIT",
       "length_formula": null,
       "spray_width_m": null,
       "notes": null,
       "source_total_formula": "K5*I5",
-      "source_cached_total": 18,
+      "source_cached_total": 5.8,
       "source_sheet": "JM双门 (2)",
       "source_row_no": 5
     },

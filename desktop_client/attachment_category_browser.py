@@ -31,6 +31,7 @@ LEVEL1_TRAILING_ORDER = (
 )
 UNGROUPED_LEVEL1 = "未分类"
 DIRECT_ITEMS_LABEL = "本级附件"
+DIRECT_SELECTION_LEVEL1 = frozenset({"风机", "滤网", "门变形", "配置变形", "其他附件"})
 FIXED_BASE_CATEGORY = "底座"
 FIXED_BASE_SUBCATEGORY = "固定底座"
 DEFAULT_FIXED_BASE = "fixed_base"
@@ -903,6 +904,8 @@ def category_options(items: Iterable[dict], selection: Iterable[str]) -> list[di
     """
 
     chosen = tuple(selection)
+    if len(chosen) == 1 and chosen[0] in DIRECT_SELECTION_LEVEL1:
+        return []
     level = len(chosen)
     if level >= len(CATEGORY_KEYS):
         return []

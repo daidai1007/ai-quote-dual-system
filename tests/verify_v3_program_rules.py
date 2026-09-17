@@ -212,6 +212,50 @@ assert mixed_options == [
     {"value": "JK安装板", "label": "JK安装板", "count": 1},
     {"value": "", "label": "本级附件", "count": 1},
 ]
+fan_filter_items = [
+    {
+        "category_level1": "风机",
+        "category_level2": "KA2206风机",
+        "category_level3": "KA2206风机",
+    },
+    {
+        "category_level1": "风机",
+        "category_level2": "KA1725风机",
+        "category_level3": "过滤网FU-9803A",
+    },
+]
+assert category_options(fan_filter_items, []) == [
+    {"value": "风机", "label": "风机", "count": 2},
+]
+assert category_options(fan_filter_items, ["风机"]) == []
+assert category_options(
+    [{"category_level1": "滤网", "category_level2": "过滤网FU-9803A"}],
+    ["滤网"],
+) == []
+door_transformation_items = [
+    {
+        "category_level1": "门变形",
+        "category_level2": "旧二级分类",
+        "item_name": "JS、JP单开门改为双开门",
+    },
+]
+assert category_options(door_transformation_items, ["门变形"]) == []
+configuration_transformation_items = [
+    {
+        "category_level1": "配置变形",
+        "category_level2": "旧二级分类",
+        "item_name": "填充安装板",
+    },
+]
+assert category_options(configuration_transformation_items, ["配置变形"]) == []
+other_attachment_items = [
+    {
+        "category_level1": "其他附件",
+        "category_level2": "旧二级分类",
+        "item_name": "门加强筋",
+    },
+]
+assert category_options(other_attachment_items, ["其他附件"]) == []
 automatic_selection = with_attachment_selection_source(
     {"item_name": "系统默认门变形"}, AUTOMATIC_SELECTION_SOURCE
 )

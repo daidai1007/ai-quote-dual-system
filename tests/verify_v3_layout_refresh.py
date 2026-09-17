@@ -313,7 +313,7 @@ attachment_dialog.catalog = [
         "model_code": "过滤网FU-9803A",
         "variant": "7035色",
         "price": 15,
-        "category_level1": "风机滤网",
+        "category_level1": "滤网",
         "category_level2": "过滤网",
         "category_level3": "过滤网FU-9803A",
     },
@@ -437,7 +437,7 @@ requested_level1_order = (
     "滤网", "门变形", "并柜件",
 )
 assert [value for value in level1_values if value in requested_level1_order] == [
-    "侧板", "安装板", "安装附件", "底座", "灯开关", "资料盒", "门变形",
+    "侧板", "安装板", "安装附件", "底座", "灯开关", "资料盒", "滤网", "门变形",
 ]
 assert all("一级分类：" in button.text() and "名称：" in button.text() for button in level1_buttons)
 assert all(button.parentWidget().minimumHeight() >= 82 for button in level1_buttons)
@@ -682,7 +682,7 @@ door_dialog.catalog = [
         "item_name": "三级风机附件",
         "model_code": "FAN-L3",
         "price": 45,
-        "category_level1": "风机滤网",
+        "category_level1": "滤网",
         "category_level2": "风机",
         "category_level3": "三级风机附件",
     },
@@ -706,6 +706,7 @@ def visible_dialog_category_button(dialog, label: str):
 
 visible_dialog_category_button(door_dialog, "门变形").click()
 app.processEvents()
+assert not door_dialog.table.isHidden()
 assert not any(
     item.get("item_name") == "JS、JP后背板改为单开门"
     for item in door_dialog.attachments
@@ -761,12 +762,9 @@ app.processEvents()
 door_dialog.search_edit.clear()
 door_dialog.refresh_category_browser()
 app.processEvents()
-visible_dialog_category_button(door_dialog, "风机滤网").click()
+visible_dialog_category_button(door_dialog, "滤网").click()
 app.processEvents()
-visible_dialog_category_button(door_dialog, "风机").click()
-app.processEvents()
-visible_dialog_category_button(door_dialog, "三级风机附件").click()
-app.processEvents()
+assert not door_dialog.table.isHidden()
 fan_row = next(
     row for row in range(door_dialog.table.rowCount())
     if not door_dialog.table.isRowHidden(row)
@@ -1124,15 +1122,7 @@ visible_quick_rule_button("a4_folder").click()
 app.processEvents()
 assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
 
-attachment_category_button("风机滤网").click()
-app.processEvents()
-assert [button.text().splitlines()[0] for button in attachment_category_buttons()] == ["过滤网"]
-attachment_category_button("过滤网").click()
-app.processEvents()
-assert [button.text().splitlines()[0] for button in attachment_category_buttons()] == [
-    "过滤网FU-9803A"
-]
-attachment_category_button("过滤网FU-9803A").click()
+attachment_category_button("滤网").click()
 app.processEvents()
 assert not attachment_dialog.table.isHidden()
 assert not attachment_dialog.search_edit.isHidden()

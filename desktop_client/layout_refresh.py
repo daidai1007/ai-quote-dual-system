@@ -1353,7 +1353,15 @@ def _sync_quote_specification(window, text: str, parser=None) -> bool:
     """Apply one specification edit to dimensions and horizontal-ganging state."""
 
     _sync_manual_specification_to_dimensions(window, text, parser)
-    return _sync_ganged_specification(window, text)
+    ganged_changed = _sync_ganged_specification(window, text)
+    # Entering a specification describes a new cabinet configuration.  Restore
+    # the width-driven default here even when an earlier cabinet left the door
+    # selector in manual mode.  Subsequent direct width edits still preserve a
+    # door combination that the operator explicitly selected.
+    if _ganged_count(window) <= 1:
+        window._door_selection_mode = AUTOMATIC_DOOR_SELECTION
+        _apply_automatic_door_default(window, force=True)
+    return ganged_changed
 
 
 def _allowed_door_combinations(window) -> set[tuple[int, int]]:
@@ -2470,8 +2478,7 @@ def _configure_quote_rule_interactions(window, parser=None) -> None:
         )
         if not getattr(model_edit, "_ganged_specification_connected", False):
             def sync_model_specification(value):
-                _sync_manual_specification_to_dimensions(window, value, parser)
-                _sync_ganged_specification(window, value)
+                _sync_quote_specification(window, value, parser)
 
             model_edit.textEdited.connect(sync_model_specification)
             model_edit._ganged_specification_connected = True
@@ -7296,9 +7303,11 @@ def install_layout_refresh(namespace: dict) -> None:
                 material_selected,
                 coating_selected,
             )
+            if _ganged_count(self) <= 1:
+                self._door_selection_mode = AUTOMATIC_DOOR_SELECTION
             _sync_main_door_combo_options(self, locked=_ganged_count(self) > 1)
             if _ganged_count(self) <= 1:
-                _apply_automatic_door_default(self)
+                _apply_automatic_door_default(self, force=True)
             _sync_door_limiter_default_quantity(self, previous_door_counts)
             _sync_door_transform_defaults(self)
             _refresh_model_suggestions(self)
