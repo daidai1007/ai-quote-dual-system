@@ -153,6 +153,7 @@ from attachment_category_browser import (  # noqa: E402
     is_jp_product,
     is_automatic_attachment_selection,
     is_manual_attachment_selection,
+    match_default_a3_folder,
     match_default_a4_folder,
     match_default_copper_busbar,
     match_default_door_reinforcement,
@@ -381,8 +382,8 @@ assert match_fixed_base(base_catalog, 760, 500, 100)["attachment_price_id"] == 1
 assert match_fixed_base(base_catalog, 760, 500, 200) is None
 default_catalog = [
     {"attachment_price_id": 3, "item_name": "照明灯/行程开关", "category_level1": "灯开关"},
-    {"attachment_price_id": 4, "item_name": "A3资料盒", "category_level1": "文件夹"},
-    {"attachment_price_id": 5, "item_name": "A4资料盒", "category_level1": "文件夹"},
+    {"attachment_price_id": 4, "item_name": "A3资料盒", "category_level1": "资料盒"},
+    {"attachment_price_id": 5, "item_name": "A4资料盒", "category_level1": "资料盒"},
     {"attachment_price_id": 6, "item_name": "门限位器", "category_level1": "门限位器"},
     {"attachment_price_id": 9, "item_name": "门加强筋", "category_level1": "门加强筋"},
     {"attachment_price_id": 10, "item_name": "接地线", "model_code": "红绿线", "category_level1": "接地线", "category_level2": "红绿线"},
@@ -392,6 +393,7 @@ default_catalog = [
     {"attachment_price_id": 8, "item_name": "侧板", "model_code": "JP682060", "category_level1": "侧板", "height_mm": 2000, "depth_mm": 600},
 ]
 assert match_default_light_switch(default_catalog)["attachment_price_id"] == 3
+assert match_default_a3_folder(default_catalog)["attachment_price_id"] == 4
 assert match_default_a4_folder(default_catalog)["attachment_price_id"] == 5
 assert match_default_door_limiter(default_catalog)["attachment_price_id"] == 6
 assert match_default_door_reinforcement(default_catalog)["attachment_price_id"] == 9

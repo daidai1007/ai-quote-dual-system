@@ -251,10 +251,20 @@ attachment_dialog.catalog = [
         "depth_mm": 500,
     },
     {
-        "item_name": "三排纵梁",
-        "model_code": "BEAM-3",
+        "attachment_price_id": 6,
+        "item_name": "三排安装梁",
+        "model_code": "JP760250",
         "price": 25,
-        "category_level1": "三排纵梁",
+        "category_level1": "安装附件",
+        "category_level2": "三排纵梁",
+    },
+    {
+        "attachment_price_id": 61,
+        "item_name": "固定立柱",
+        "price": 35,
+        "category_level1": "安装附件",
+        "category_level2": "固定立柱",
+        "height_mm": 960,
     },
     {
         "attachment_price_id": 4,
@@ -290,13 +300,13 @@ attachment_dialog.catalog = [
         "attachment_price_id": 8,
         "item_name": "A3资料盒",
         "price": 60,
-        "category_level1": "文件夹",
+        "category_level1": "资料盒",
     },
     {
         "attachment_price_id": 9,
         "item_name": "A4资料盒",
         "price": 30,
-        "category_level1": "文件夹",
+        "category_level1": "资料盒",
     },
     {
         "item_name": "过滤网FU-9803A",
@@ -361,7 +371,7 @@ attachment_dialog.catalog = [
         "category_level1": "未来分类",
     },
 ]
-assert attachment_dialog.prepare_default_selections() == 8
+assert attachment_dialog.prepare_default_selections() == 7
 limiter_attachment = next(
     item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
 )
@@ -427,7 +437,7 @@ requested_level1_order = (
     "滤网", "门变形", "并柜件",
 )
 assert [value for value in level1_values if value in requested_level1_order] == [
-    "侧板", "安装板", "底座", "灯开关", "门变形",
+    "侧板", "安装板", "安装附件", "底座", "灯开关", "资料盒", "门变形",
 ]
 assert all("一级分类：" in button.text() and "名称：" in button.text() for button in level1_buttons)
 assert all(button.parentWidget().minimumHeight() >= 82 for button in level1_buttons)
@@ -449,20 +459,76 @@ assert attachment_dialog.category_scroll_content.minimumHeight() >= (
 )
 assert attachment_dialog.table.isHidden()
 quick_match_buttons = attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
-assert len(quick_match_buttons) == 8
+assert len(quick_match_buttons) == 7
 assert any(button.text() == "默认已选择  ·  固定 · 高 100 mm" for button in quick_match_buttons)
-assert any(button.text() == "默认已选择  ·  A4资料盒" for button in quick_match_buttons)
+assert not any("A3资料盒" in button.text() or "A4资料盒" in button.text() for button in quick_match_buttons)
 assert any(button.text() == "默认已选择  ·  门加强筋 · 数量：1 个" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择  ·  红绿线" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择  ·  门限位器 · 数量：1 个" for button in quick_match_buttons)
 assert any(button.text() == "默认已选择  ·  铜排 · 默认数量：1 件" for button in quick_match_buttons)
 assert all(button.parentWidget().objectName() == "attachmentSelectionPane" for button in quick_match_buttons)
+explicit_quick_buttons = [
+    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatch")
+    if button.isVisible() and button.property("attachmentQuickRule")
+]
+assert {
+    button.property("attachmentQuickRule") for button in explicit_quick_buttons
+} >= {
+    "installation_board", "three_row_installation_beam", "fixed_column",
+    "a3_folder", "a4_folder",
+}
+assert all("快速匹配未选择" in button.text() for button in explicit_quick_buttons)
+assert not any(
+    item.get("item_name") in {"安装板", "JK安装板", "三排安装梁", "固定立柱", "A3资料盒", "A4资料盒"}
+    for item in attachment_dialog.attachments
+)
 for quick_button in quick_match_buttons:
     shell = quick_button.parentWidget().parentWidget()
     category_button = shell.findChild(QPushButton, "attachmentCategoryCard")
     assert category_button is not None
     assert quick_button.mapTo(attachment_dialog, QPoint(0, 0)).x() >= (
         category_button.mapTo(attachment_dialog, QPoint(category_button.width(), 0)).x()
+    )
+
+
+def visible_quick_rule_button(rule: str):
+    return next(
+        button for button in attachment_dialog.findChildren(QPushButton)
+        if button.isVisible() and button.property("attachmentQuickRule") == rule
+    )
+
+
+# All five requested shortcuts are opt-in, independently toggleable, green only
+# while selected, and reuse one catalogue row rather than duplicating it.
+explicit_rules = {
+    "installation_board": "安装板",
+    "three_row_installation_beam": "三排安装梁",
+    "fixed_column": "固定立柱",
+    "a3_folder": "A3资料盒",
+    "a4_folder": "A4资料盒",
+}
+for rule, expected_name in explicit_rules.items():
+    visible_quick_rule_button(rule).click()
+    app.processEvents()
+    selected_button = visible_quick_rule_button(rule)
+    assert selected_button.objectName() == "attachmentQuickMatchSelected"
+    assert "快速匹配已选择" in selected_button.text()
+    assert sum(
+        item.get("item_name") == expected_name
+        for item in attachment_dialog.attachments
+    ) == 1
+assert {
+    item.get("item_name") for item in attachment_dialog.attachments
+} >= set(explicit_rules.values())
+for rule, expected_name in explicit_rules.items():
+    visible_quick_rule_button(rule).click()
+    app.processEvents()
+    unselected_button = visible_quick_rule_button(rule)
+    assert unselected_button.objectName() == "attachmentQuickMatch"
+    assert "快速匹配未选择" in unselected_button.text()
+    assert not any(
+        item.get("item_name") == expected_name
+        for item in attachment_dialog.attachments
     )
 
 # A ganged cabinet receives one independently size-matched fixed base for
@@ -756,9 +822,8 @@ assert before_manual_total - after_manual_total == 270
 door_dialog.close()
 door_parent.close()
 
-# Installation-board matching is available only after an explicit checkbox
-# selection. Opening the library neither auto-selects a board nor displays a
-# quick-match result on the first-level card.
+# Installation-board matching is opt-in from the first-level card. Opening the
+# library displays the gray action but does not select a board.
 attachment_dialog.prepare_default_selections()
 attachment_dialog.rebuild_table()
 while attachment_dialog.category_selection:
@@ -770,14 +835,11 @@ assert not any(
 )
 installation_card_button = attachment_category_button("安装板")
 installation_card = installation_card_button.parentWidget()
-assert not any(
-    button.isVisible()
-    for object_name in (
-        "attachmentQuickMatch", "attachmentQuickMatchSelected",
-        "attachmentQuickMatchCancelled", "attachmentQuickMatchMissing",
-    )
-    for button in installation_card.findChildren(QPushButton, object_name)
+board_quick = next(
+    button for button in installation_card.findChildren(QPushButton, "attachmentQuickMatch")
+    if button.isVisible() and button.property("attachmentQuickRule") == "installation_board"
 )
+assert "快速匹配未选择" in board_quick.text()
 attachment_category_button("安装板").click()
 app.processEvents()
 attachment_category_button("安装板").click()
@@ -948,32 +1010,26 @@ assert "door_limiter" not in attachment_dialog.default_selection_opt_outs
 assert next(
     item for item in attachment_dialog.attachments if item.get("item_name") == "门限位器"
 )["quantity"] == 1
-folder_default = next(
-    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
-    if button.isVisible() and "A4资料盒" in button.text()
+a3_quick = visible_quick_rule_button("a3_folder")
+a4_quick = visible_quick_rule_button("a4_folder")
+a3_quick.click()
+a4_quick.click()
+app.processEvents()
+assert {
+    item.get("item_name") for item in attachment_dialog.attachments
+} >= {"A3资料盒", "A4资料盒"}
+assert visible_quick_rule_button("a3_folder").objectName() == "attachmentQuickMatchSelected"
+assert visible_quick_rule_button("a4_folder").objectName() == "attachmentQuickMatchSelected"
+visible_quick_rule_button("a3_folder").click()
+app.processEvents()
+assert not any(item.get("item_name") == "A3资料盒" for item in attachment_dialog.attachments)
+assert any(item.get("item_name") == "A4资料盒" for item in attachment_dialog.attachments)
+visible_quick_rule_button("a4_folder").click()
+app.processEvents()
+assert not any(
+    item.get("item_name") in {"A3资料盒", "A4资料盒"}
+    for item in attachment_dialog.attachments
 )
-folder_default.click()
-app.processEvents()
-assert "a4_folder" in attachment_dialog.default_selection_opt_outs
-attachment_dialog.rebuild_table()
-app.processEvents()
-assert len([
-    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
-    if button.isVisible()
-]) == 7
-folder_cancelled = next(
-    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchCancelled")
-    if button.isVisible() and "A4资料盒" in button.text()
-)
-if artifact_dir is not None:
-    assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_default_cancelled.png"))
-folder_cancelled.click()
-app.processEvents()
-assert "a4_folder" not in attachment_dialog.default_selection_opt_outs
-assert len([
-    button for button in attachment_dialog.findChildren(QPushButton, "attachmentQuickMatchSelected")
-    if button.isVisible()
-]) == 8
 if artifact_dir is not None:
     assert attachment_dialog.grab().save(str(artifact_dir / "v3_attachment_categories.png"))
 
@@ -1011,7 +1067,7 @@ assert next(
     item for item in attachment_dialog.attachments if item.get("item_name") == "铜排"
 )["quantity"] == 1
 
-attachment_category_button("文件夹").click()
+attachment_category_button("资料盒").click()
 app.processEvents()
 folder_rows = [
     row for row in range(attachment_dialog.table.rowCount())
@@ -1064,13 +1120,7 @@ assert not any(
 folder_manual_cards[0].click()
 app.processEvents()
 assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Unchecked
-folder_cancelled = next(
-    button for button in attachment_dialog.findChildren(
-        QPushButton, "attachmentQuickMatchCancelled"
-    )
-    if button.isVisible() and "A4资料盒" in button.text()
-)
-folder_cancelled.click()
+visible_quick_rule_button("a4_folder").click()
 app.processEvents()
 assert attachment_dialog.table.item(a4_row, attachment_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
 
@@ -1151,8 +1201,37 @@ light_default = next(
 light_default.click()
 attachment_dialog.accept_selection()
 assert attachment_parent.attachment_default_opt_outs == {
-    "installation_board", "light_switch"
-}
+    "installation_board", "three_row_installation_beam", "fixed_column",
+    "a3_folder", "light_switch",
+}, attachment_parent.attachment_default_opt_outs
+assert sum(
+    item.get("item_name") == "A4资料盒"
+    for item in attachment_dialog.attachments
+) == 1
+# Reopening with a confirmed snapshot preserves that one opt-in choice without
+# auto-selecting its sibling or adding a duplicate row.
+reopened_dialog = attachment_dialog_class(
+    [dict(item) for item in attachment_dialog.attachments],
+    api_url="http://127.0.0.1:1",
+    parent=attachment_parent,
+    target_dimensions=(760, 960, 500),
+)
+reopened_dialog.catalog = [dict(item) for item in attachment_dialog.catalog]
+reopened_dialog.rebuild_table()
+reopened_dialog.show()
+app.processEvents()
+assert sum(
+    item.get("item_name") == "A4资料盒"
+    for item in reopened_dialog.attachments
+) == 1
+assert not any(item.get("item_name") == "A3资料盒" for item in reopened_dialog.attachments)
+assert any(
+    button.isVisible()
+    and button.property("attachmentQuickRule") == "a4_folder"
+    and button.objectName() == "attachmentQuickMatchSelected"
+    for button in reopened_dialog.findChildren(QPushButton)
+)
+reopened_dialog.close()
 assert attachment_parent.attachment_default_quantity_overrides == set()
 attachment_parent.close()
 
@@ -1166,7 +1245,7 @@ plain_dialog = attachment_dialog_class(
     target_dimensions=(760, 960, 500),
 )
 plain_dialog.catalog = [dict(item) for item in attachment_dialog.catalog]
-assert plain_dialog.prepare_default_selections() == 6
+assert plain_dialog.prepare_default_selections() == 5
 plain_dialog.rebuild_table()
 plain_dialog.show()
 app.processEvents()
@@ -1176,7 +1255,7 @@ assert any(label.text() == "快速匹配  ·  仅 JP 默认匹配" for label in 
 assert sum(
     plain_dialog.table.item(row, plain_dialog.COL_CHECK).checkState() == Qt.CheckState.Checked
     for row in range(plain_dialog.table.rowCount())
-) == 6
+) == 5
 plain_dialog.close()
 plain_parent.close()
 attachment_dialog_class.load_catalog = original_attachment_load
@@ -1292,6 +1371,22 @@ window.product_catalog = {
 window.quote_catalog_state = "ready"
 window.product_combo.clear()
 window.product_combo.addItem("JP", "JP")
+# Main-cabinet defaults use a strict >800 boundary while automatic, then stop
+# following width once the operator activates either door selector.
+window._door_selection_mode = layout_refresh.AUTOMATIC_DOOR_SELECTION
+window.width_spin.setValue(800)
+app.processEvents()
+assert window.door_counts() == (1, 0)
+window.width_spin.setValue(801)
+app.processEvents()
+assert window.door_counts() == (0, 1)
+window.double_door_combo.activated.emit(window.double_door_combo.currentIndex())
+assert window._door_selection_mode == layout_refresh.MANUAL_DOOR_SELECTION
+window.width_spin.setValue(800)
+window.height_spin.setValue(window.height_spin.value() + 1)
+app.processEvents()
+assert window.door_counts() == (0, 1)
+window._formula_template_debounce_timer.stop()
 window.formula_calculator.calculate = (
     lambda _code, width, height, depth, _single, _double: (
         round(width * height * depth / 10_000_000, 1),
@@ -1308,6 +1403,27 @@ assert layout_refresh._sync_ganged_specification(
     window, "（600+900）*300*1800"
 )
 app.processEvents()
+assert [
+    (row["single_door_count"], row["double_door_count"])
+    for row in window.ganged_cabinets
+] == [(1, 0), (0, 1)]
+# A manual choice belongs only to that child.  Subsequent specification edits
+# preserve it while automatic siblings continue following their own width.
+second_single = window.ganged_cabinet_table.cellWidget(1, 2)
+second_single.setCurrentIndex(second_single.findData(1))
+app.processEvents()
+second_double = window.ganged_cabinet_table.cellWidget(1, 3)
+second_double.setCurrentIndex(second_double.findData(0))
+app.processEvents()
+assert window.ganged_cabinets[1]["door_selection_mode"] == layout_refresh.MANUAL_DOOR_SELECTION
+assert (window.ganged_cabinets[0]["single_door_count"], window.ganged_cabinets[0]["double_door_count"]) == (1, 0)
+assert layout_refresh._sync_ganged_specification(window, "（801+700）*300*1800")
+app.processEvents()
+assert [
+    (row["single_door_count"], row["double_door_count"])
+    for row in window.ganged_cabinets
+] == [(0, 1), (1, 0)], window.ganged_cabinets
+window._formula_template_debounce_timer.stop()
 window.ganged_cabinets = [
     {
         "width_mm": 600,
@@ -1448,7 +1564,7 @@ app.processEvents()
 assert window.ganged_template_worker is None
 assert window.worker is None
 assert window.calculate_button.isEnabled()
-assert window.calculate_button.text() == "计算双报价"
+assert window.calculate_button.text() == "计算双报价", window.calculate_button.text()
 assert template_requests == [{"product_code": "JP_SINGLE"}]
 assert layout_refresh._missing_ganged_formula_product_codes(window) == []
 assert len(recorded_payloads) == 2
@@ -1953,8 +2069,8 @@ ganged_door_rows = [
     )
     for row in range(2)
 ]
-assert ganged_door_rows == [(1, 0), (1, 0)], ganged_door_rows
-assert "最终数量 2" in window.attachment_list.item(0).text(), window.attachment_list.item(0).text()
+assert ganged_door_rows == [(1, 0), (0, 1)], ganged_door_rows
+assert "最终数量 3" in window.attachment_list.item(0).text(), window.attachment_list.item(0).text()
 plain_specification = "1000*600*1800"
 window.quote_spec_edit.setText(plain_specification)
 window.quote_spec_edit.textEdited.emit(plain_specification)
@@ -2279,6 +2395,10 @@ window.product_combo.setCurrentIndex(js_index)
 window.product_combo.activated.emit(js_index)
 window.reset_current_cabinet(keep_company=True)
 assert window.product_combo.currentData() == "JS"
+assert window._door_selection_mode == layout_refresh.AUTOMATIC_DOOR_SELECTION
+assert window.door_counts() == layout_refresh._default_door_counts_for_width(
+    window.width_spin.value(), layout_refresh._allowed_door_combinations(window)
+)
 
 history_card = quote_page.findChild(QFrame, "historyPriceCard")
 history_table = quote_page.findChild(QTableWidget, "historyPriceTable")
@@ -2381,7 +2501,7 @@ layout_refresh._sync_main_door_combo_options(window)
 
 window.attachments = [
     {"item_name": "门限位器", "category_level1": "门限位器", "quantity": 1},
-    {"item_name": "A4资料盒", "category_level1": "文件夹", "quantity": 9},
+    {"item_name": "A4资料盒", "category_level1": "资料盒", "quantity": 9},
 ]
 window.attachment_default_opt_outs = set()
 window.attachment_default_quantity_overrides = set()

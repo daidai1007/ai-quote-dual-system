@@ -66,6 +66,7 @@ from attachment_category_browser import (
     ATTACHMENT_SELECTION_SOURCE_KEY,
     AUTOMATIC_SELECTION_SOURCE,
     DOOR_TRANSFORMATION_RULE_PREFIX,
+    DEFAULT_A3_FOLDER,
     DEFAULT_A4_FOLDER,
     DEFAULT_DOOR_REINFORCEMENT,
     DEFAULT_DOOR_LIMITER,
@@ -75,6 +76,8 @@ from attachment_category_browser import (
     DEFAULT_INSTALLATION_BOARD,
     DEFAULT_JP_SIDE_PANEL,
     DEFAULT_LIGHT_SWITCH,
+    QUICK_FIXED_COLUMN,
+    QUICK_THREE_ROW_INSTALLATION_BEAM,
     GANGED_FIXED_BASE_INDEX_KEY,
     GANGED_FIXED_BASE_MATCH_KEY,
     MANUAL_SELECTION_SOURCE,
@@ -94,7 +97,9 @@ from attachment_category_browser import (
     installation_board_catalogue_name,
     installation_board_match_name_for_product,
     match_attachment_size,
+    match_named_quick_attachment_size,
     match_installation_board_for_product,
+    match_default_a3_folder,
     match_default_a4_folder,
     match_default_door_reinforcement,
     match_default_door_limiter,
@@ -148,6 +153,9 @@ ATTACHMENT_DIALOG_MIN_WIDTH = 900
 ATTACHMENT_DIALOG_MIN_HEIGHT = 680
 ATTACHMENT_DIALOG_SCREEN_MARGIN = 32
 FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS = 75
+DOOR_DEFAULT_WIDTH_THRESHOLD_MM = 800.0
+AUTOMATIC_DOOR_SELECTION = "automatic"
+MANUAL_DOOR_SELECTION = "manual"
 FORMULA_TEMPLATE_MAX_ATTEMPTS = 3
 FORMULA_TEMPLATE_RETRY_DELAYS_MS = (500, 1000)
 FORMULA_TEMPLATE_DEBOUNCE_MS = 420
@@ -1358,6 +1366,54 @@ def _allowed_door_combinations(window) -> set[tuple[int, int]]:
     return set(SINGLE_DOOR_ONLY_COMBINATIONS)
 
 
+def _default_door_counts_for_width(
+    width_mm,
+    allowed: set[tuple[int, int]] | None = None,
+) -> tuple[int, int]:
+    """Return the width-driven default without expanding allowed combinations."""
+
+    try:
+        preferred = (0, 1) if float(width_mm) > DOOR_DEFAULT_WIDTH_THRESHOLD_MM else (1, 0)
+    except (TypeError, ValueError):
+        preferred = (1, 0)
+    if not allowed or preferred in allowed:
+        return preferred
+    if (1, 0) in allowed:
+        return (1, 0)
+    if (0, 1) in allowed:
+        return (0, 1)
+    return sorted(allowed)[0] if allowed else preferred
+
+
+def _apply_automatic_door_default(window, *, force: bool = False) -> bool:
+    """Apply the width default only while the main selector remains automatic."""
+
+    if not force and getattr(
+        window, "_door_selection_mode", AUTOMATIC_DOOR_SELECTION
+    ) != AUTOMATIC_DOOR_SELECTION:
+        return False
+    width = getattr(window, "width_spin", None)
+    getter = getattr(window, "door_counts", None)
+    setter = getattr(window, "set_door_counts", None)
+    if not isinstance(width, QDoubleSpinBox) or not callable(getter) or not callable(setter):
+        return False
+    target = _default_door_counts_for_width(width.value(), _allowed_door_combinations(window))
+    try:
+        current = tuple(int(value) for value in getter())
+    except (TypeError, ValueError):
+        current = None
+    window._door_selection_mode = AUTOMATIC_DOOR_SELECTION
+    if current == target:
+        return False
+    setter(*target)
+    return True
+
+
+def _mark_main_door_selection_manual(window) -> None:
+    if _ganged_count(window) <= 1:
+        window._door_selection_mode = MANUAL_DOOR_SELECTION
+
+
 def _door_combination_tooltip(window) -> str:
     family = str(_current_product_selection(window) or "").strip().upper()
     family = family.split("_", 1)[0]
@@ -1887,8 +1943,20 @@ def _sync_ganged_specification(window, text: str) -> bool:
     for index, dimensions in enumerate(parsed["rows"]):
         old = previous[index] if index < len(previous) else {}
         row = dict(dimensions)
-        row["single_door_count"] = int(old.get("single_door_count", default_counts[0]))
-        row["double_door_count"] = int(old.get("double_door_count", default_counts[1]))
+        mode = str(old.get("door_selection_mode") or AUTOMATIC_DOOR_SELECTION)
+        if mode == MANUAL_DOOR_SELECTION:
+            counts = (
+                int(old.get("single_door_count", default_counts[0])),
+                int(old.get("double_door_count", default_counts[1])),
+            )
+        else:
+            counts = _default_door_counts_for_width(
+                row["width_mm"], _allowed_door_combinations(window)
+            )
+            mode = AUTOMATIC_DOOR_SELECTION
+        row["single_door_count"] = counts[0]
+        row["double_door_count"] = counts[1]
+        row["door_selection_mode"] = mode
         rows.append(row)
     window.ganged_cabinets = rows
     window.ganged_cabinet_count = len(rows)
@@ -1946,7 +2014,11 @@ def _ganged_door_changed(window, row_index: int, source: str) -> None:
         source,
         _allowed_door_combinations(window),
     )
-    window.ganged_cabinets = cascade_door_counts(rows, row_index, single, double)
+    updated = [dict(row) for row in rows]
+    updated[row_index]["single_door_count"] = single
+    updated[row_index]["double_door_count"] = double
+    updated[row_index]["door_selection_mode"] = MANUAL_DOOR_SELECTION
+    window.ganged_cabinets = updated
     if row_index == 0:
         setter = getattr(window, "set_door_counts", None)
         if callable(setter):
@@ -2119,6 +2191,8 @@ def _start_ganged_formula_template_preparation(
         if isinstance(calculate_button, QPushButton)
         else "计算双报价"
     )
+    if idle_text.startswith(("正在读取", "模板读取", "准备读取", "正在计算")):
+        idle_text = "计算双报价"
     if isinstance(calculate_button, QPushButton):
         calculate_button.setProperty("gangedIdleText", idle_text)
         calculate_button.setText(f"正在读取 {len(product_codes)} 个公式模板…")
@@ -2283,6 +2357,8 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         if isinstance(calculate_button, QPushButton)
         else "计算双报价"
     )
+    if idle_text.startswith(("正在读取", "模板读取", "准备读取", "正在计算")):
+        idle_text = "计算双报价"
     if isinstance(calculate_button, QPushButton):
         calculate_button.setProperty("gangedIdleText", idle_text)
         calculate_button.setText(f"正在计算 {len(payloads)} 个子柜…")
@@ -2367,6 +2443,25 @@ def _configure_quote_rule_interactions(window, parser=None) -> None:
     if isinstance(double, QComboBox):
         double.setAccessibleName("双门数量")
     _sync_main_door_combo_options(window)
+    if not hasattr(window, "_door_selection_mode"):
+        window._door_selection_mode = AUTOMATIC_DOOR_SELECTION
+    for combo in (single, double):
+        if isinstance(combo, QComboBox) and not getattr(
+            combo, "_door_manual_state_connected", False
+        ):
+            combo.activated.connect(
+                lambda _index, owner=window: _mark_main_door_selection_manual(owner)
+            )
+            combo._door_manual_state_connected = True
+    width = getattr(window, "width_spin", None)
+    if isinstance(width, QDoubleSpinBox) and not getattr(
+        width, "_door_width_default_connected", False
+    ):
+        width.valueChanged.connect(
+            lambda _value, owner=window: _apply_automatic_door_default(owner)
+        )
+        width._door_width_default_connected = True
+    _apply_automatic_door_default(window, force=True)
 
     model_edit = getattr(window, "model_edit", None)
     if isinstance(model_edit, QLineEdit):
@@ -4241,6 +4336,8 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             if label is not None:
                 label.hide()
             _set_ganged_controls_enabled(self, False)
+            self._door_selection_mode = AUTOMATIC_DOOR_SELECTION
+            _apply_automatic_door_default(self, force=True)
             return result
         main_window.reset_current_cabinet = reset_current_cabinet_without_labor_base
 
@@ -4942,15 +5039,23 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         )
 
     category_rules = {
-        "底座": DEFAULT_FIXED_BASE,
-        "安装板": DEFAULT_INSTALLATION_BOARD,
-        "侧板": DEFAULT_JP_SIDE_PANEL,
-        "灯开关": DEFAULT_LIGHT_SWITCH,
-        "文件夹": DEFAULT_A4_FOLDER,
-        "门限位器": DEFAULT_DOOR_LIMITER,
-        "门加强筋": DEFAULT_DOOR_REINFORCEMENT,
-        "接地线": DEFAULT_GROUND_WIRE,
-        "铜排": DEFAULT_COPPER_BUSBAR,
+        "底座": (DEFAULT_FIXED_BASE,),
+        "安装板": (DEFAULT_INSTALLATION_BOARD,),
+        "安装附件": (QUICK_THREE_ROW_INSTALLATION_BEAM, QUICK_FIXED_COLUMN),
+        "侧板": (DEFAULT_JP_SIDE_PANEL,),
+        "灯开关": (DEFAULT_LIGHT_SWITCH,),
+        "资料盒": (DEFAULT_A3_FOLDER, DEFAULT_A4_FOLDER),
+        "门限位器": (DEFAULT_DOOR_LIMITER,),
+        "门加强筋": (DEFAULT_DOOR_REINFORCEMENT,),
+        "接地线": (DEFAULT_GROUND_WIRE,),
+        "铜排": (DEFAULT_COPPER_BUSBAR,),
+    }
+    explicit_quick_match_rules = {
+        DEFAULT_INSTALLATION_BOARD,
+        QUICK_THREE_ROW_INSTALLATION_BEAM,
+        QUICK_FIXED_COLUMN,
+        DEFAULT_A3_FOLDER,
+        DEFAULT_A4_FOLDER,
     }
 
     def specification_text(self) -> str:
@@ -5180,7 +5285,14 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         matches = {
             DEFAULT_FIXED_BASE: base,
             DEFAULT_INSTALLATION_BOARD: installation_board,
+            QUICK_THREE_ROW_INSTALLATION_BEAM: match_named_quick_attachment_size(
+                catalog, "安装附件", "三排纵梁", "三排安装梁", dimensions
+            ),
+            QUICK_FIXED_COLUMN: match_named_quick_attachment_size(
+                catalog, "安装附件", "固定立柱", "固定立柱", dimensions
+            ),
             DEFAULT_LIGHT_SWITCH: match_default_light_switch(catalog),
+            DEFAULT_A3_FOLDER: match_default_a3_folder(catalog),
             DEFAULT_A4_FOLDER: match_default_a4_folder(catalog),
             DEFAULT_DOOR_LIMITER: match_default_door_limiter(catalog),
             DEFAULT_DOOR_REINFORCEMENT: match_default_door_reinforcement(catalog),
@@ -5311,7 +5423,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         for rule, candidate in matches.items():
             if rule == DEFAULT_FIXED_BASE and ganged_base_matches:
                 continue
-            if rule == DEFAULT_INSTALLATION_BOARD:
+            if rule in explicit_quick_match_rules:
                 continue
             if candidate is None or rule in opt_outs:
                 continue
@@ -5369,6 +5481,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 continue
             matched["quantity"] = selected.get("quantity", 1)
             for key in (
+                ATTACHMENT_SELECTION_SOURCE_KEY,
                 GANGED_FIXED_BASE_MATCH_KEY,
                 GANGED_FIXED_BASE_INDEX_KEY,
                 "ganged_fixed_base_split_count",
@@ -5489,7 +5602,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         sync_attachments_from_table(self)
         refresh_category_browser(self)
 
-    def default_card_state(self, option: dict) -> tuple[str, str, str, str | None, bool]:
+    def default_card_state(
+        self,
+        option: dict,
+        requested_rule: str | None = None,
+    ) -> tuple[str, str, str, str | None, bool]:
         if getattr(self, "category_selection", []):
             return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则", None, False
         category_name = str(option.get("value") or "")
@@ -5525,8 +5642,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 None,
                 False,
             )
-        rule = category_rules.get(category_name)
-        if rule is None:
+        rules = category_rules.get(category_name, ())
+        rule = requested_rule or (rules[0] if rules else None)
+        if rule is None or rule not in rules:
             return "快速匹配\n待配置", "attachmentQuickMatch", "该分类尚未配置快速匹配规则", None, False
 
         parsed = getattr(self, "default_match_spec", None)
@@ -5558,6 +5676,18 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             else:
                 detail = f"{expected_name} · 宽、高尺寸无效"
             missing_tip = f"附件库中没有可用于宽、高匹配的“{expected_name}”"
+        elif rule == QUICK_THREE_ROW_INSTALLATION_BEAM:
+            detail = "三排安装梁"
+            if dimensions is not None:
+                detail += f" · 柜深 {dimensions[2]:g} mm"
+            missing_tip = "附件库中没有一级“安装附件”/二级“三排纵梁”/名称“三排安装梁”的有效型号"
+        elif rule == QUICK_FIXED_COLUMN:
+            detail = "固定立柱"
+            if dimensions is not None:
+                detail += f" · 柜高 {dimensions[1]:g} mm"
+            missing_tip = "附件库中没有一级“安装附件”/二级“固定立柱”/名称“固定立柱”的有效尺寸"
+        elif rule == DEFAULT_A3_FOLDER:
+            detail = "A3资料盒"
         elif rule == DEFAULT_A4_FOLDER:
             detail = "A4资料盒"
         elif rule == DEFAULT_DOOR_LIMITER:
@@ -5624,9 +5754,18 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 return f"默认选择已取消\n{detail}", "attachmentQuickMatchCancelled", "已取消各子柜底座；单击可恢复", rule, True
             return f"默认选择未匹配\n{detail}", "attachmentQuickMatchMissing", missing_tip, rule, False
         if candidate is None:
-            return f"默认选择未匹配\n{detail}", "attachmentQuickMatchMissing", missing_tip, rule, False
+            prefix = "快速匹配未匹配" if rule in explicit_quick_match_rules else "默认选择未匹配"
+            return f"{prefix}\n{detail}", "attachmentQuickMatchMissing", missing_tip, rule, False
         selected = checked_sources(self, rule)
         if any(same_choice(self, item, candidate) for item in selected):
+            if rule in explicit_quick_match_rules:
+                return (
+                    f"快速匹配已选择\n{detail}",
+                    "attachmentQuickMatchSelected",
+                    "已由用户选择；单击取消并恢复灰色",
+                    rule,
+                    True,
+                )
             if rule == DEFAULT_COPPER_BUSBAR:
                 selected_attachment = next(
                     (
@@ -5665,6 +5804,14 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         if selected:
             item_name = str(selected[0].get("item_name") or "人工选择")
             return f"人工已选择\n{item_name}", "attachmentQuickMatchManual", "当前使用人工选择；单击恢复系统默认", rule, True
+        if rule in explicit_quick_match_rules:
+            return (
+                f"快速匹配未选择\n{detail}",
+                "attachmentQuickMatch",
+                "当前未选择；单击后使用附件目录和现有快速匹配机制",
+                rule,
+                True,
+            )
         return f"默认选择已取消\n{detail}", "attachmentQuickMatchCancelled", "已取消默认选择；单击可恢复", rule, True
 
     def set_checked_for_rule(self, rule: str, candidate: dict | None) -> None:
@@ -5978,31 +6125,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(lambda _checked=False, value=option["value"]: open_attachment_category(self, value))
 
-            text, object_name, tooltip, rule, enabled = default_card_state(self, option)
             manual_items = manual_selections_for_category(
                 self, str(option.get("value") or "")
             )
-            show_quick_button = (
-                str(option.get("value") or "") != "安装板"
-                and not (
-                    object_name == "attachmentQuickMatchManual" and manual_items
-                )
-            )
-            quick_text = "  ·  ".join(
-                part.strip() for part in str(text).splitlines() if part.strip()
-            )
-            quick_button = QPushButton(quick_text, card)
-            quick_button.setObjectName(object_name)
-            quick_button.setProperty("attachmentSelectionLayout", "horizontal")
-            quick_button.setAccessibleName(f"{option['label']}，{text.replace(chr(10), '，')}")
-            quick_button.setToolTip(f"{tooltip}\n{quick_text}" if tooltip else quick_text)
-            quick_button.setEnabled(enabled)
-            quick_button.setMinimumHeight(42)
-            quick_button.setMaximumHeight(46)
-            quick_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            quick_button.setVisible(show_quick_button)
-            if rule is not None and enabled:
-                quick_button.clicked.connect(lambda _checked=False, value=rule: toggle_default_selection(self, value))
             selection_host = None
             if root_level:
                 card_layout.addWidget(button, 5)
@@ -6016,12 +6141,47 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             else:
                 card_layout.addWidget(button)
                 selection_layout = card_layout
-            if str(option.get("value") or "") == "安装板":
+
+            category_name = str(option.get("value") or "")
+            quick_rules = category_rules.get(category_name, ()) if root_level else ()
+            quick_buttons = []
+            for quick_rule in quick_rules:
+                text, object_name, tooltip, rule, enabled = default_card_state(
+                    self, option, quick_rule
+                )
+                quick_text = "  ·  ".join(
+                    part.strip() for part in str(text).splitlines() if part.strip()
+                )
+                quick_button = QPushButton(quick_text, card)
+                quick_button.setObjectName(object_name)
+                quick_button.setProperty("attachmentSelectionLayout", "horizontal")
+                quick_button.setProperty("attachmentQuickRule", quick_rule)
+                quick_button.setAccessibleName(
+                    f"{option['label']}，{text.replace(chr(10), '，')}"
+                )
+                quick_button.setToolTip(
+                    f"{tooltip}\n{quick_text}" if tooltip else quick_text
+                )
+                quick_button.setEnabled(enabled)
+                quick_button.setMinimumHeight(42)
+                quick_button.setMaximumHeight(46)
+                quick_button.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+                )
+                if rule is not None and enabled:
+                    quick_button.clicked.connect(
+                        lambda _checked=False, value=rule: toggle_default_selection(
+                            self, value
+                        )
+                    )
+                quick_buttons.append(quick_button)
+
+            if category_name == "安装板":
                 quick_row = QHBoxLayout()
                 quick_row.setContentsMargins(0, 0, 0 if root_level else 8, 0)
                 quick_row.setSpacing(6)
-                if show_quick_button:
-                    quick_row.addWidget(quick_button, 1)
+                if quick_buttons:
+                    quick_row.addWidget(quick_buttons[0], 1)
                 else:
                     quick_row.addStretch(1)
                 sign = installation_board_price_sign(self)
@@ -6038,8 +6198,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 sign_button.clicked.connect(lambda: toggle_installation_board_sign(self))
                 quick_row.addWidget(sign_button, 0, Qt.AlignmentFlag.AlignVCenter)
                 selection_layout.addLayout(quick_row)
-            elif show_quick_button:
-                selection_layout.addWidget(quick_button)
+            else:
+                for quick_button in quick_buttons:
+                    selection_layout.addWidget(quick_button)
             for manual_item in manual_items:
                 manual_text = manual_selection_card_text(self, manual_item)
                 manual_horizontal_text = "  ·  ".join(
@@ -6065,11 +6226,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                     )
                 )
                 selection_layout.addWidget(manual_button)
-            selection_count = int(show_quick_button) + len(manual_items)
+            selection_count = len(quick_buttons) + len(manual_items)
             selection_minimum_height = selection_count * 42
             if selection_count > 1:
                 selection_minimum_height += (selection_count - 1) * selection_layout.spacing()
-            if str(option.get("value") or "") == "安装板" and not show_quick_button:
+            if category_name == "安装板" and not quick_buttons:
                 selection_minimum_height += 34
             if root_level:
                 selection_minimum_height += 16
@@ -7136,6 +7297,8 @@ def install_layout_refresh(namespace: dict) -> None:
                 coating_selected,
             )
             _sync_main_door_combo_options(self, locked=_ganged_count(self) > 1)
+            if _ganged_count(self) <= 1:
+                _apply_automatic_door_default(self)
             _sync_door_limiter_default_quantity(self, previous_door_counts)
             _sync_door_transform_defaults(self)
             _refresh_model_suggestions(self)

@@ -20,6 +20,7 @@ from attachment_category_browser import (  # noqa: E402
     match_attachment_size,
     match_installation_board_for_product,
     match_installation_board_size,
+    match_named_quick_attachment_size,
     size_match_attachment_name,
 )
 
@@ -168,11 +169,57 @@ fallback_b = row(33, "固定底座", 980, 120, 580, 120)
 height_fallback = match_attachment_size([fallback_a, fallback_b], fallback_a, (1000, 100, 600))
 assert height_fallback["attachment_price_id"] == 33
 
-for name in ("固定底座", "活动底座", "侧板", "安装板", "内门", "玻璃门", "通风顶罩", "防雨顶", "分段板", "JK安装板"):
+for name in ("固定底座", "活动底座", "侧板", "安装板", "内门", "玻璃门", "通风顶罩", "防雨顶", "分段板", "JK安装板", "固定立柱", "三排安装梁"):
     assert size_match_attachment_name({"item_name": name}) == name
 assert size_match_attachment_name({"item_name": "门限位器"}) is None
 assert size_match_attachment_name({"item_name": "铜排", "category_level1": "铜排"}) is None
 assert size_match_attachment_name({"item_name": "安装板单发"}) is None
+
+# The catalogue's exact installation-accessory names feed the existing size
+# matcher.  Three-row beam model codes carry the five approved cabinet depths;
+# no broad "纵梁" keyword is accepted.
+beams = [
+    {
+        "attachment_price_id": 100 + index,
+        "category_level1": "安装附件",
+        "category_level2": "三排纵梁",
+        "item_name": "三排安装梁",
+        "model_code": model,
+        "price": price,
+    }
+    for index, (model, price) in enumerate((
+        ("JP760240", 40), ("JP760250", 50), ("JP760260", 60),
+        ("JP760280", 80), ("JP760210", 100),
+    ))
+]
+beam_match = match_named_quick_attachment_size(
+    beams, "安装附件", "三排纵梁", "三排安装梁", (760, 2000, 600)
+)
+assert beam_match is not None
+assert beam_match["model_code"] == "JP760260"
+assert beam_match["matched_price"] == 60
+assert beam_match["size_match_exact"] is True
+assert match_named_quick_attachment_size(
+    beams, "安装附件", "纵梁", "三排安装梁", (760, 2000, 600)
+) is None
+
+columns = [
+    {
+        "attachment_price_id": 200 + index,
+        "category_level1": "安装附件",
+        "category_level2": "固定立柱",
+        "item_name": "固定立柱",
+        "height_mm": height,
+        "price": price,
+    }
+    for index, (height, price) in enumerate(((1600, 16), (1800, 18), (2000, 20)))
+]
+column_match = match_named_quick_attachment_size(
+    columns, "安装附件", "固定立柱", "固定立柱", (800, 1800, 600)
+)
+assert column_match is not None
+assert column_match["height_mm"] == 1800
+assert column_match["matched_price"] == 18
 
 expected_quantities = {(1, 0): 1, (2, 0): 2, (0, 1): 2, (0, 2): 4, (1, 1): 3}
 for counts, expected in expected_quantities.items():

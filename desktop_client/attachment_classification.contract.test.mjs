@@ -36,6 +36,9 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.match(overlay, /match_fixed_base/);
   assert.match(overlay, /match_jp_side_panel/);
   assert.match(overlay, /match_default_a4_folder/);
+  assert.match(overlay, /match_default_a3_folder/);
+  assert.match(overlay, /QUICK_THREE_ROW_INSTALLATION_BEAM/);
+  assert.match(overlay, /QUICK_FIXED_COLUMN/);
   assert.match(overlay, /match_default_door_reinforcement/);
   assert.match(overlay, /match_default_ground_wire/);
   assert.match(overlay, /match_default_copper_busbar/);
@@ -59,11 +62,10 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.match(overlay, /"category_level2": category_level2\.text\(\)\.strip\(\) or None/);
   assert.match(overlay, /"category_level3": category_level3\.text\(\)\.strip\(\) or None/);
   assert.match(overlay, /getattr\(owner, "category_selection", \[\]\)/);
-  assert.match(
-    overlay,
-    /show_quick_button = \(\s*str\(option\.get\("value"\) or ""\) != "安装板"[\s\S]*object_name == "attachmentQuickMatchManual" and manual_items/,
-  );
-  assert.match(overlay, /elif show_quick_button:\s*selection_layout\.addWidget\(quick_button\)/);
+  assert.match(overlay, /"安装附件": \(QUICK_THREE_ROW_INSTALLATION_BEAM, QUICK_FIXED_COLUMN\)/);
+  assert.match(overlay, /"资料盒": \(DEFAULT_A3_FOLDER, DEFAULT_A4_FOLDER\)/);
+  assert.match(overlay, /quick_button\.setProperty\("attachmentQuickRule", quick_rule\)/);
+  assert.match(overlay, /for quick_button in quick_buttons:\s*selection_layout\.addWidget\(quick_button\)/);
   assert.match(overlay, /match_attachment_size\(getattr\(self, "catalog", \[\]\), source, target\)/);
   assert.match(overlay, /rule in \(DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT\)/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);
@@ -89,6 +91,10 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.match(hierarchy, /def match_fixed_base/);
   assert.match(hierarchy, /def match_default_light_switch/);
   assert.match(hierarchy, /def match_default_a4_folder/);
+  assert.match(hierarchy, /def match_default_a3_folder/);
+  assert.match(hierarchy, /def match_named_quick_attachment_size/);
+  assert.match(hierarchy, /category_value\(item, 1\) == "三排纵梁"/);
+  assert.match(hierarchy, /category_value\(item, 1\) == "三排纵梁" and name == "三排安装梁"/);
   assert.match(hierarchy, /def match_default_door_limiter/);
   assert.match(hierarchy, /def door_limiter_default_quantity/);
   assert.match(hierarchy, /\(1, 1\): 3/);

@@ -36,6 +36,21 @@ test('current door counts replace only the door phrase in manual remarks', async
   assert.match(exporter, /replaceDoorConfigurationPhrase/);
 });
 
+test('door defaults use the strict 800 mm boundary and preserve manual state', async () => {
+  const layout = await fs.readFile(
+    path.join(projectRoot, 'desktop_client', 'layout_refresh.py'),
+    'utf8',
+  );
+  assert.match(layout, /DOOR_DEFAULT_WIDTH_THRESHOLD_MM = 800\.0/);
+  assert.match(layout, /float\(width_mm\) > DOOR_DEFAULT_WIDTH_THRESHOLD_MM/);
+  assert.match(layout, /AUTOMATIC_DOOR_SELECTION = "automatic"/);
+  assert.match(layout, /MANUAL_DOOR_SELECTION = "manual"/);
+  assert.match(layout, /combo\.activated\.connect/);
+  assert.match(layout, /width\.valueChanged\.connect/);
+  assert.match(layout, /mode == MANUAL_DOOR_SELECTION/);
+  assert.match(layout, /updated\[row_index\]\["door_selection_mode"\] = MANUAL_DOOR_SELECTION/);
+});
+
 test('manual freight persists independently and remains outside both discounts', async () => {
   const main = await fs.readFile(path.join(projectRoot, 'desktop_client', 'main.py'), 'utf8');
   const layout = await fs.readFile(path.join(projectRoot, 'desktop_client', 'layout_refresh.py'), 'utf8');

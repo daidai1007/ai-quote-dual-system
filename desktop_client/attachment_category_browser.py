@@ -35,7 +35,10 @@ FIXED_BASE_CATEGORY = "底座"
 FIXED_BASE_SUBCATEGORY = "固定底座"
 DEFAULT_FIXED_BASE = "fixed_base"
 DEFAULT_INSTALLATION_BOARD = "installation_board"
+QUICK_FIXED_COLUMN = "fixed_column"
+QUICK_THREE_ROW_INSTALLATION_BEAM = "three_row_installation_beam"
 DEFAULT_LIGHT_SWITCH = "light_switch"
+DEFAULT_A3_FOLDER = "a3_folder"
 DEFAULT_A4_FOLDER = "a4_folder"
 DEFAULT_DOOR_LIMITER = "door_limiter"
 DEFAULT_JP_SIDE_PANEL = "jp_side_panel"
@@ -190,11 +193,61 @@ def match_default_light_switch(items: Iterable[dict]) -> dict | None:
 
 
 def match_default_a4_folder(items: Iterable[dict]) -> dict | None:
-    def is_a4(item: dict) -> bool:
-        text = " ".join(str(item.get(key) or "") for key in ("item_name", "model_code", "variant"))
-        return category_value(item, 0) == "文件夹" and "A4" in text.upper()
+    return match_quick_attachment_identity(items, "资料盒", "", "A4资料盒")
 
-    return _unique_match(items, is_a4)
+
+def match_default_a3_folder(items: Iterable[dict]) -> dict | None:
+    return match_quick_attachment_identity(items, "资料盒", "", "A3资料盒")
+
+
+def match_quick_attachment_identity(
+    items: Iterable[dict],
+    category_level1: str,
+    category_level2: str,
+    item_name: str,
+) -> dict | None:
+    """Return one exact catalogue identity used by a first-level quick action.
+
+    These operator-facing shortcuts deliberately use the effective catalogue
+    names rather than broad substrings.  In particular, the catalogue calls
+    the requested three-row installation beam ``三排安装梁`` under the
+    ``三排纵梁`` branch.
+    """
+
+    return _unique_match(
+        items,
+        lambda item: (
+            category_value(item, 0) == category_level1
+            and category_value(item, 1) == category_level2
+            and str(item.get("item_name") or "").strip() == item_name
+        ),
+    )
+
+
+def match_quick_attachment_source(
+    items: Iterable[dict],
+    category_level1: str,
+    category_level2: str,
+    item_name: str,
+) -> dict | None:
+    """Return a deterministic source row when an exact identity has sizes."""
+
+    matches = [
+        item for item in items
+        if category_value(item, 0) == category_level1
+        and category_value(item, 1) == category_level2
+        and str(item.get("item_name") or "").strip() == item_name
+    ]
+    if not matches:
+        return None
+    return sorted(
+        matches,
+        key=lambda item: (
+            _number(item.get("attachment_price_id")) is None,
+            _number(item.get("attachment_price_id")) or float("inf"),
+            _natural_text_key(item.get("model_code")),
+        ),
+    )[0]
 
 
 def match_default_door_limiter(items: Iterable[dict]) -> dict | None:
@@ -416,8 +469,14 @@ def default_rule_for_item(item: dict) -> str | None:
         return DEFAULT_INSTALLATION_BOARD
     if category == "灯开关" or "开关" in name:
         return DEFAULT_LIGHT_SWITCH
-    if category == "文件夹" or "资料盒" in name:
+    if category in {UNGROUPED_LEVEL1, "资料盒", "文件夹"} and name == "A3资料盒":
+        return DEFAULT_A3_FOLDER
+    if category in {UNGROUPED_LEVEL1, "资料盒", "文件夹"} and name == "A4资料盒":
         return DEFAULT_A4_FOLDER
+    if category == "安装附件" and category_value(item, 1) == "固定立柱" and name == "固定立柱":
+        return QUICK_FIXED_COLUMN
+    if category == "安装附件" and category_value(item, 1) == "三排纵梁" and name == "三排安装梁":
+        return QUICK_THREE_ROW_INSTALLATION_BEAM
     if category == "门限位器" or "门限位器" in name:
         return DEFAULT_DOOR_LIMITER
     if category == "门加强筋" or "门加强筋" in name:
@@ -447,7 +506,7 @@ def size_match_attachment_name(item: dict) -> str | None:
     # Match the more specific names before their containing generic names.
     for name in (
         "固定底座", "活动底座", "通风顶罩", "玻璃门", "防雨顶",
-        "分段板", "JK安装板", "内门", "侧板", "安装板",
+        "三排安装梁", "固定立柱", "分段板", "JK安装板", "内门", "侧板", "安装板",
     ):
         if name in compact:
             return name
@@ -761,6 +820,48 @@ def match_attachment_size(
         selected.pop("unit_price_override", None)
     selected.pop("size_match_warning", None)
     return selected
+
+
+def match_named_quick_attachment_size(
+    items: Iterable[dict],
+    category_level1: str,
+    category_level2: str,
+    item_name: str,
+    target_dimensions,
+) -> dict | None:
+    """Route an exact quick-action identity through the existing size matcher.
+
+    The source workbook leaves the dimensions of the five three-row beam
+    records blank even though their approved model codes encode cabinet depth.
+    Supplying that catalogue fact as ``depth_mm`` lets ``match_attachment_size``
+    remain the sole nearest-size and price-scaling implementation.
+    """
+
+    candidates: list[dict] = []
+    for item in items:
+        if not (
+            category_value(item, 0) == category_level1
+            and category_value(item, 1) == category_level2
+            and str(item.get("item_name") or "").strip() == item_name
+        ):
+            continue
+        candidate = dict(item)
+        if item_name == "三排安装梁":
+            model = str(candidate.get("model_code") or "").strip().upper()
+            model_match = re.fullmatch(r"JP7602(40|50|60|80|10)", model)
+            if model_match is None:
+                continue
+            candidate["depth_mm"] = {
+                "40": 400.0,
+                "50": 500.0,
+                "60": 600.0,
+                "80": 800.0,
+                "10": 1000.0,
+            }[model_match.group(1)]
+        candidates.append(candidate)
+    if not candidates:
+        return None
+    return match_attachment_size(candidates, candidates[0], target_dimensions)
 
 
 def category_value(item: dict, level: int) -> str:
