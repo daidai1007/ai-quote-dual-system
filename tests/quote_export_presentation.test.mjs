@@ -118,6 +118,10 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
         item_name: "门限位器",
         quantity: 4,
         unit_price: 25,
+        material_cost: 10,
+        spray_cost: 5,
+        auxiliary_cost: 4,
+        labor_cost: 6,
         price_source: "测试附件价格",
       },
       {
@@ -163,6 +167,8 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
     closeTo(limiterRow.getCell(8).value, 8, "door limiter BOM final quantity");
     closeTo(limiterRow.getCell(10).value, 25, "door limiter BOM unit price");
     closeTo(limiterRow.getCell(11).value, 200, "door limiter BOM amount");
+    assert.match(limiterRow.getCell(7).text,
+      /单位成本＝材料成本 10\.00 \+ 喷塑成本 5\.00 \+ 辅材 4\.00 \+ 人工 6\.00 = 25\.00 元/);
     assert.ok(reinforcementRow, "door reinforcement BOM row is missing");
     closeTo(reinforcementRow.getCell(8).value, 8, "door reinforcement BOM final quantity");
     closeTo(reinforcementRow.getCell(10).value, 30, "door reinforcement BOM unit price");

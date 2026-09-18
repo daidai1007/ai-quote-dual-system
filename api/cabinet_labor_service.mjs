@@ -13,10 +13,10 @@ function jcProfile(environment){
   return null;
 }
 function linearLabor(rule,material){
-  if(!material?.part_details?.length)throw new Error(`${rule.product_code} 人工公式需要当前柜体计价材料重量明细`);
+  if(!material?.part_details?.length)throw new Error(`${rule.product_code} 人工公式需要当前柜体净材料重量明细`);
   const excluded=new Set(rule.excluded_part_names||[]);
   const eligible=material.part_details.filter(part=>!excluded.has(part.part_name));
-  const weight=round(eligible.reduce((sum,part)=>sum+finite(part.billable_weight_kg,`${part.part_name}计价重量`,{zero:true}),0),8);
+  const weight=round(eligible.reduce((sum,part)=>sum+finite(part.net_weight_kg,`${part.part_name}净重`,{zero:true}),0),8);
   return {labor_cost:round(Number(rule.intercept)+Number(rule.slope)*weight,2),labor_billable_weight_kg:weight,
     excluded_part_names:[...excluded],match_method:'LINEAR_WEIGHT',matched_rule:rule};
 }

@@ -426,6 +426,18 @@ const attachmentUnitPrice = (item = {}) => {
   }
   return 0;
 };
+const attachmentFormulaCostBasis = (item = {}) => {
+  const components = [
+    ["材料成本", item.material_cost],
+    ["喷塑成本", item.spray_cost],
+    ["辅材", item.auxiliary_cost],
+    ["人工", item.labor_cost],
+  ];
+  if (!components.some(([, value]) => hasFiniteNumber(value))) return "";
+  const parts = components.map(([label, value]) => `${label} ${asNumber(value).toFixed(2)}`);
+  const total = components.reduce((sum, [, value]) => sum + asNumber(value), 0);
+  return `单位成本＝${parts.join(" + ")} = ${total.toFixed(2)} 元`;
+};
 const attachmentLineAmount = (item = {}) => {
   if(item.catalog_version && item.quick_amount != null) return Number(item.quick_amount);
   const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
@@ -1105,13 +1117,14 @@ function buildFormulaCostDetailSheet() {
       attachmentLineSum += formulaSelectedAmount;
       const multiplier = selectedQuantity ? quantity / selectedQuantity : 1;
       const signedPrice = quantity ? formulaAmount / quantity : (omittedFromFormula ? 0 : price);
+      const componentBasis = attachmentFormulaCostBasis(attachment);
       addDetail(
         itemIndex, item, "附件成本", attachment.item_name || attachment.model_code || "附件",
         [attachment.model_code, attachment.variant, attachment.notes].filter(Boolean).join(" / "),
         omittedFromFormula
           ? (attachment.catalog_version ? '当前产品无适用成本规则，仅快速报价；见附件双报价明细'
             : `原附件金额 ${amount.toFixed(2)} 元；一级分类为门变形，公式法不计费`)
-          : `${selectedQuantity} × 柜体倍率 ${multiplier} = 最终数量 ${quantity}；`
+          : `${componentBasis ? `${componentBasis}；` : ""}${selectedQuantity} × 柜体倍率 ${multiplier} = 最终数量 ${quantity}；`
             + `${quantity} × ${signedPrice.toFixed(2)} = ${formulaAmount.toFixed(2)} 元`,
         quantity, attachment.unit || "件", signedPrice, formulaAmount,
         attachment.price_source || "数据库附件价格表",
