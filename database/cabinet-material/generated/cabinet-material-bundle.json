@@ -2636,7 +2636,7 @@
       "area_formula": "(高度-200)*168.5*0.000001",
       "sheet_thickness_mm": 1.5,
       "quantity_rule": {
-        "kind": "HEIGHT_GT",
+        "kind": "WIDTH_GT",
         "threshold": 1000,
         "when_true": 1,
         "when_false": 0
@@ -2836,7 +2836,7 @@
       "area_formula": "(高度-200)*168.5*0.000001",
       "sheet_thickness_mm": 1.5,
       "quantity_rule": {
-        "kind": "HEIGHT_GT",
+        "kind": "WIDTH_GT",
         "threshold": 1000,
         "when_true": 1,
         "when_false": 0

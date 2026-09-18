@@ -151,3 +151,19 @@ test('every JS rear-panel reinforcement uses one piece only above width 1000',()
     assert.equal(above.part_details.find(row=>row.part_name==='后背板加强筋').internal_quantity,1);
   }
 });
+
+test('every JP rear-panel reinforcement uses one piece only above width 1000',()=>{
+  const bundle=JSON.parse(fs.readFileSync(new URL('../database/cabinet-material/generated/cabinet-material-bundle.json',import.meta.url)));
+  const rules=bundle.rules.filter(rule=>rule.family==='JP'&&rule.part_name==='后背板加强筋');
+  assert.equal(rules.length,2);
+  assert.ok(rules.every(rule=>JSON.stringify(rule.quantity_rule)===JSON.stringify(
+    {kind:'WIDTH_GT',threshold:1000,when_true:1,when_false:0})));
+  for(const rule of rules){
+    const base={...environment,product_code:'JP',cabinet_body_thickness_mm:rule.body_thickness_profile_mm,
+      single_door_count:rule.single_door_count,double_door_count:rule.double_door_count};
+    const atLimit=calculateCabinetMaterial(bundle.rules,{...base,width_mm:1000});
+    const above=calculateCabinetMaterial(bundle.rules,{...base,width_mm:1001});
+    assert.equal(atLimit.part_details.find(row=>row.part_name==='后背板加强筋').internal_quantity,0);
+    assert.equal(above.part_details.find(row=>row.part_name==='后背板加强筋').internal_quantity,1);
+  }
+});
