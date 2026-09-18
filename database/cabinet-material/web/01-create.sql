@@ -137,7 +137,7 @@ BEGIN
     RAISE EXCEPTION 'Staged cabinet material fixed catalog is incomplete';
   END IF;
   IF EXISTS(SELECT 1 FROM calc.cabinet_material_rule WHERE data_version=v_version
-    AND (quantity_rule->>'kind') NOT IN ('CONSTANT','JS_DEPTH_HEIGHT','HEIGHT_GT','JE_REINFORCEMENT')) THEN
+    AND (quantity_rule->>'kind') NOT IN ('CONSTANT','JS_DEPTH_HEIGHT','HEIGHT_GT','WIDTH_GT','JE_REINFORCEMENT')) THEN
     RAISE EXCEPTION 'Unsupported cabinet material quantity rule';
   END IF;
   IF EXISTS(SELECT 1 FROM calc.cabinet_material_fixed_rule WHERE data_version=v_version AND apply_waste_factor) THEN

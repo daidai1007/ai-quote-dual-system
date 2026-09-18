@@ -13,6 +13,7 @@ function quantity(rule,environment){
   if(q.kind==='CONSTANT') return positive(q.value,'内部数量',{allowZero:true});
   if(q.kind==='JS_DEPTH_HEIGHT') return d>=350&&d<=1000&&h<1000?Number(q.when_true):Number(q.when_false);
   if(q.kind==='HEIGHT_GT') return h>Number(q.threshold)?Number(q.when_true):Number(q.when_false);
+  if(q.kind==='WIDTH_GT') return w>Number(q.threshold)?Number(q.when_true):Number(q.when_false);
   if(q.kind==='JE_REINFORCEMENT') return (w>600&&h>1000)||(w>800&&h>600)?Number(q.when_true):Number(q.when_false);
   throw new Error(`不支持的柜体材料数量规则：${q.kind||'空'}`);
 }

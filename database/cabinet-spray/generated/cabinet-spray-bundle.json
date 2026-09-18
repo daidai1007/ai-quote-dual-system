@@ -22,7 +22,7 @@
       "single_door_count": 1,
       "double_door_count": 0,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
         "kind": "JS_DEPTH_HEIGHT",
         "when_true": 1,
@@ -199,7 +199,7 @@
       "single_door_count": 0,
       "double_door_count": 1,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
         "kind": "JS_DEPTH_HEIGHT",
         "when_true": 1,
@@ -392,7 +392,7 @@
       "single_door_count": 2,
       "double_door_count": 0,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
         "kind": "JS_DEPTH_HEIGHT",
         "when_true": 1,
@@ -553,7 +553,7 @@
       "single_door_count": 0,
       "double_door_count": 2,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
         "kind": "JS_DEPTH_HEIGHT",
         "when_true": 1,
@@ -730,7 +730,7 @@
       "single_door_count": 1,
       "double_door_count": 1,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
         "kind": "JS_DEPTH_HEIGHT",
         "when_true": 1,
@@ -923,10 +923,11 @@
       "single_door_count": 1,
       "double_door_count": 0,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
       },
       "source_sheet": "JS",
       "source_row_no": 3,
@@ -1099,10 +1100,11 @@
       "single_door_count": 0,
       "double_door_count": 1,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
       },
       "source_sheet": "JS",
       "source_row_no": 14,
@@ -1291,10 +1293,11 @@
       "single_door_count": 2,
       "double_door_count": 0,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
       },
       "source_sheet": "JS",
       "source_row_no": 26,
@@ -1451,10 +1454,11 @@
       "single_door_count": 0,
       "double_door_count": 2,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
       },
       "source_sheet": "JS",
       "source_row_no": 36,
@@ -1627,10 +1631,11 @@
       "single_door_count": 1,
       "double_door_count": 1,
       "part_name": "左右侧板-1",
-      "area_formula": "(宽度+50.5)*(深度+64)*0.000001",
+      "area_formula": "(高度+50.5)*(深度+64)*0.000001",
       "quantity_rule": {
-        "kind": "CONSTANT",
-        "value": 2
+        "kind": "JS_DEPTH_HEIGHT",
+        "when_true": 1,
+        "when_false": 2
       },
       "source_sheet": "JS",
       "source_row_no": 47,

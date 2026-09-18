@@ -6,7 +6,8 @@ import {applyCabinetSpray,calculateCabinetSpray,calculateCabinetSprayFixed} from
 
 const rules=[
   {rule_id:1,family:'JS',body_thickness_profile_mm:1.5,single_door_count:1,double_door_count:0,
-    part_name:'侧板',area_formula:'(宽度+50.5)*(深度+64)*0.000001',quantity_rule:{kind:'CONSTANT',value:2},
+    part_name:'左右侧板-1',area_formula:'(高度+50.5)*(深度+64)*0.000001',
+    quantity_rule:{kind:'JS_DEPTH_HEIGHT',when_true:1,when_false:2},
     source_sheet:'JS',source_row_no:3,source_column:'A:D'},
   {rule_id:2,family:'JS',body_thickness_profile_mm:2,single_door_count:1,double_door_count:0,
     part_name:'侧板',area_formula:'宽度*深度*0.000001',quantity_rule:{kind:'CONSTANT',value:1},
@@ -17,10 +18,19 @@ const environment={data_version:'cabinet-spray-test-v1',product_code:'JS',width_
 
 test('spray cost is formula area times internal quantity times current spray unit price',()=>{
   const result=calculateCabinetSpray(rules,environment);
-  const expectedArea=(1000+50.5)*(600+64)*0.000001*2;
+  const expectedArea=(1800+50.5)*(600+64)*0.000001*2;
   assert.ok(Math.abs(result.product_area_m2-expectedArea)<1e-8);
   assert.equal(result.spray_cost,Math.round(expectedArea*12*100)/100);
   assert.equal(result.part_details[0].internal_quantity,2);
+});
+
+test('JS side-panel spray quantity is one only for depth 350..1000 and height below 1000',()=>{
+  const one=calculateCabinetSpray(rules,{...environment,height_mm:999,depth_mm:350});
+  const high=calculateCabinetSpray(rules,{...environment,height_mm:1000,depth_mm:350});
+  const shallow=calculateCabinetSpray(rules,{...environment,height_mm:999,depth_mm:349});
+  assert.equal(one.part_details[0].internal_quantity,1);
+  assert.equal(high.part_details[0].internal_quantity,2);
+  assert.equal(shallow.part_details[0].internal_quantity,2);
 });
 
 test('zero spray unit price is valid and waste factor never changes spray',()=>{
@@ -47,6 +57,10 @@ test('applying spray replaces old spray cost and keeps the quick quote unchanged
 test('all 202 workbook spray rules execute for every imported product/profile/door group',()=>{
   const bundle=JSON.parse(fs.readFileSync(new URL('../database/cabinet-spray/generated/cabinet-spray-bundle.json',import.meta.url)));
   assert.equal(bundle.rules.length,202);
+  const jsSides=bundle.rules.filter(rule=>rule.family==='JS'&&rule.part_name==='左右侧板-1');
+  assert.equal(jsSides.length,10);
+  assert.ok(jsSides.every(rule=>rule.area_formula==='(高度+50.5)*(深度+64)*0.000001'));
+  assert.ok(jsSides.every(rule=>JSON.stringify(rule.quantity_rule)===JSON.stringify({kind:'JS_DEPTH_HEIGHT',when_true:1,when_false:2})));
   const groups=new Map();
   for(const rule of bundle.rules){
     const key=[rule.family,rule.body_thickness_profile_mm,rule.single_door_count,rule.double_door_count].join('|');
