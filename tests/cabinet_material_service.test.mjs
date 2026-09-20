@@ -145,8 +145,10 @@ test('every JS rear-panel reinforcement uses one piece only above width 1000',()
   for(const rule of rules){
     const base={...environment,product_code:'JS',cabinet_body_thickness_mm:rule.body_thickness_profile_mm,
       single_door_count:rule.single_door_count,double_door_count:rule.double_door_count};
+    const actualCase=calculateCabinetMaterial(bundle.rules,{...base,width_mm:800,depth_mm:600,height_mm:1800});
     const atLimit=calculateCabinetMaterial(bundle.rules,{...base,width_mm:1000});
     const above=calculateCabinetMaterial(bundle.rules,{...base,width_mm:1001});
+    assert.equal(actualCase.part_details.find(row=>row.part_name==='后背板加强筋').internal_quantity,0);
     assert.equal(atLimit.part_details.find(row=>row.part_name==='后背板加强筋').internal_quantity,0);
     assert.equal(above.part_details.find(row=>row.part_name==='后背板加强筋').internal_quantity,1);
   }

@@ -16,6 +16,13 @@ const canonical=value=>JSON.stringify(value, function(key,current) {
   return current && typeof current==='object' && !Array.isArray(current)
     ? Object.fromEntries(Object.entries(current).sort(([a],[b])=>a.localeCompare(b))) : current;
 });
+export const attachmentEnvironmentChange = (item, saved) => {
+  for(const key of ['product_code','material_code','width_mm','height_mm','depth_mm','coating_type','quote_date'])
+    if(String(item[key]??'')!==String(saved[key]??'')) return key;
+  for(const key of ['cabinet_body_thickness_mm','waste_factor'])
+    if(item[key]!=null && String(item[key])!==String(saved[key]??'')) return key;
+  return null;
+};
 const id=value=>{
   if(!/^[1-9][0-9]*$/.test(String(value))||!Number.isSafeInteger(Number(value))) throw new Error('必须提供有效 attachment_price_id');
   return Number(value);
@@ -155,10 +162,8 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
       }
       const saved=await query(snapshotSql(item.quote_line_id));
       if(!saved) throw new Error('附件报价行不存在，请重新计算');
-      for(const key of ['product_code','material_code','width_mm','height_mm','depth_mm','coating_type','quote_date','model_code'])
-        if(String(item[key]??'')!==String(saved.environment[key]??'')) throw new Error(`报价环境已变化（${key}），请重新计算附件`);
-      for(const key of ['cabinet_body_thickness_mm','waste_factor'])
-        if(item[key]!=null && String(item[key])!==String(saved.environment[key]??'')) throw new Error(`报价环境已变化（${key}），请重新计算附件`);
+      const changedKey=attachmentEnvironmentChange(item,saved.environment);
+      if(changedKey) throw new Error(`报价环境已变化（${changedKey}），请重新计算附件`);
       if(Number(item.ganged_cabinet_count||1)!==Number(saved.environment.ganged_cabinet_count||1)
         ||canonical(item.ganged_cabinets||[])!==canonical(saved.environment.ganged_cabinets||[])) throw new Error('并柜明细已变化，请重新计算附件');
       if(canonical((item.attachments||[]).map(attachmentInput))!==canonical(saved.attachments.map(attachmentInput))) throw new Error('附件选择或人工参数已变化，请重新计算');
