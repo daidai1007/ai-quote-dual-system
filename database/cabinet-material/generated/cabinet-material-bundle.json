@@ -3631,7 +3631,7 @@
       "sheet_thickness_mm": 1.5,
       "quantity_rule": {
         "kind": "CONSTANT",
-        "value": 2
+        "value": 4
       },
       "fixed_material_code": null,
       "source_sheet": "JA",
@@ -3865,7 +3865,7 @@
       "sheet_thickness_mm": 1.5,
       "quantity_rule": {
         "kind": "CONSTANT",
-        "value": 2
+        "value": 4
       },
       "fixed_material_code": null,
       "source_sheet": "JA",
@@ -4118,7 +4118,7 @@
       "sheet_thickness_mm": 1.5,
       "quantity_rule": {
         "kind": "CONSTANT",
-        "value": 2
+        "value": 4
       },
       "fixed_material_code": null,
       "source_sheet": "JE",

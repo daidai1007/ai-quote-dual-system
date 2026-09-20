@@ -2691,7 +2691,7 @@
       "area_formula": "(高度-60)*34*0.000001",
       "quantity_rule": {
         "kind": "CONSTANT",
-        "value": 2
+        "value": 4
       },
       "source_sheet": "JA",
       "source_row_no": 11,
@@ -2867,7 +2867,7 @@
       "area_formula": "(高度-60)*34*0.000001",
       "quantity_rule": {
         "kind": "CONSTANT",
-        "value": 2
+        "value": 4
       },
       "source_sheet": "JA",
       "source_row_no": 25,
@@ -3043,7 +3043,7 @@
       "area_formula": "(高度-60)*34*0.000001",
       "quantity_rule": {
         "kind": "CONSTANT",
-        "value": 2
+        "value": 4
       },
       "source_sheet": "JE",
       "source_row_no": 11,
