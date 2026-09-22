@@ -25,8 +25,9 @@ except ImportError:
 
 RENDER_EDGE = 2400
 PDF_RENDER_STEP = 1200
-PDF_MAX_RENDER_EDGE = 7200
+PDF_MAX_RENDER_EDGE = 9600
 PDF_DETAIL_DELAY_MS = 180
+FIT_RENDER_OVERSAMPLE = 1.5
 CACHE_PIXEL_BUDGET = 80_000_000
 TOOL_HEIGHT = 34
 SPACE = 8
@@ -43,6 +44,10 @@ def resolve_document(candidate, documents):
     if not candidate:
         return '', ''
     source = str(candidate.get('source_path') or candidate.get('path') or '')
+    # PDF is already the vector-quality source.  Generated recognition previews
+    # are often raster thumbnails and become visibly softer than WPS when zoomed.
+    if source and Path(source).is_file() and Path(source).suffix.lower() == '.pdf':
+        return source, source
     records = [candidate] + [d for d in documents if isinstance(d, dict) and source
                            and normalized_path(d.get('source_path') or d.get('path')) == normalized_path(source)]
     for record in records:
@@ -101,7 +106,7 @@ class RenderWorker(QThread):
                     if not renderer.isValid() or renderer.viewBoxF().isEmpty():
                         raise ValueError('CAD 模型空间没有可预览的图元。')
                     size = renderer.viewBoxF().size().toSize()
-                    size.scale(QSize(RENDER_EDGE, RENDER_EDGE), Qt.AspectRatioMode.KeepAspectRatio)
+                    size.scale(QSize(self.render_edge, self.render_edge), Qt.AspectRatioMode.KeepAspectRatio)
                     image = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
                     image.fill(Qt.GlobalColor.white)
                     painter = QPainter(image)
@@ -112,8 +117,8 @@ class RenderWorker(QThread):
                     reader = QImageReader(str(path))
                     reader.setAutoTransform(True)
                     size = reader.size()
-                    if max(size.width(), size.height()) > RENDER_EDGE:
-                        size.scale(QSize(RENDER_EDGE, RENDER_EDGE), Qt.AspectRatioMode.KeepAspectRatio)
+                    if max(size.width(), size.height()) > self.render_edge:
+                        size.scale(QSize(self.render_edge, self.render_edge), Qt.AspectRatioMode.KeepAspectRatio)
                         reader.setScaledSize(size)
                     image = reader.read()
                 else:
@@ -762,7 +767,15 @@ class QuoteDrawingPreview(QFrame):
         self.serial += 1
         self.canvas.finish_stroke()
         page_key = (self.document_key, self.page)
-        target_edge = int(render_edge or self.render_edges.get(page_key, RENDER_EDGE))
+        viewport = self.canvas.viewport()
+        fit_required = int(ceil(
+            max(viewport.width(), viewport.height())
+            * viewport.devicePixelRatioF()
+            * FIT_RENDER_OVERSAMPLE
+        ))
+        fit_edge = int(ceil(fit_required / PDF_RENDER_STEP) * PDF_RENDER_STEP)
+        fit_edge = min(PDF_MAX_RENDER_EDGE, max(RENDER_EDGE, fit_edge))
+        target_edge = int(render_edge or max(self.render_edges.get(page_key, RENDER_EDGE), fit_edge))
         self._render_context[self.serial] = (target_edge, preserve_view)
         if not preserve_view:
             self.canvas.scene().clear()
