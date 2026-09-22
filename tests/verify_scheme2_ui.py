@@ -18,7 +18,7 @@ if not core.is_dir():
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QFontDatabase  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDialogButtonBox, QPushButton, QToolButton  # noqa: E402
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDialogButtonBox, QFrame, QLabel, QPushButton, QToolButton  # noqa: E402
 from pypdf import PdfWriter  # noqa: E402
 
 import v3_launcher  # noqa: E402
@@ -64,6 +64,11 @@ assert all(button.height() == 36 for button in window.nav_buttons)
 assert window.scheme2_nav.findChild(__import__("PySide6.QtWidgets").QtWidgets.QLabel, "scheme2NavLogo").size().width() == 26
 assert window.scheme2_nav.findChild(QPushButton, "scheme2CollapseButton").size().width() == 28
 assert window.stack.widget(1).objectName() == "scheme2OptionPage"
+assert window.stack.widget(1).findChild(QFrame, "scheme2TopBar") is None
+assert not hasattr(window, "scheme2_saved_status")
+service_status = window.scheme2_nav.findChild(QLabel, "scheme2ServiceStatus")
+assert service_status is window.scheme2_service_status
+assert "报价" in service_status.text() and service_status.y() > window.nav_buttons[-1].y()
 assert window.stack.widget(3).objectName() == "scheme2CostPage"
 assert window.stack.widget(5).objectName() == "scheme2DetailPage"
 assert [window.summary_table.horizontalHeaderItem(i).text() for i in range(16)] == [
@@ -93,9 +98,9 @@ assert window.scheme2_company.height() == scheme2_ui.COMPANY_COMBO_HEIGHT == 96,
 assert window.scheme2_company.view().wordWrap()
 assert window.scheme2_company.view().textElideMode() == Qt.TextElideMode.ElideNone
 assert window.scheme2_company.isEditable()
-assert window.scheme2_company.lineEdit().isReadOnly()
-assert window.scheme2_company.lineEdit().focusPolicy() == Qt.FocusPolicy.NoFocus
-assert window.scheme2_company.lineEdit().testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+assert not window.scheme2_company.lineEdit().isReadOnly()
+assert window.scheme2_company.lineEdit().focusPolicy() == Qt.FocusPolicy.StrongFocus
+assert not window.scheme2_company.lineEdit().testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 assert hasattr(window.scheme2_company, "_scheme2_multiline_filter")
 assert window.scheme2_cost_sidebar.findChild(
     __import__("PySide6.QtWidgets").QtWidgets.QLabel, "scheme2SidebarHint"

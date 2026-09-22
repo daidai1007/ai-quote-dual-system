@@ -2548,30 +2548,17 @@ def _configure_option_page(window, namespace):
     page_layout = QVBoxLayout(page)
     page_layout.setContentsMargins(0, 0, 0, 0)
     page_layout.setSpacing(0)
-    header = QFrame()
-    header.setObjectName("scheme2TopBar")
-    header_layout = QHBoxLayout(header)
-    header_layout.setContentsMargins(14, 8, 14, 8)
-    logo = QLabel("AI")
-    logo.setObjectName("scheme2TopLogo")
-    logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    logo.setFixedSize(20, 20)
-    brand = QLabel("智能报价")
-    brand.setObjectName("scheme2Brand")
     service = old_page.findChild(QLabel, "serviceStatusBadge")
     if service is None:
         service = QLabel("报价服务已连接")
     else:
         _detach(service)
     service.setObjectName("scheme2ServiceStatus")
-    saved = QLabel("快照已保存")
-    saved.setObjectName("scheme2SavedStatus")
-    header_layout.addWidget(logo)
-    header_layout.addWidget(brand)
-    header_layout.addStretch(1)
-    header_layout.addWidget(saved)
-    header_layout.addWidget(service)
-    page_layout.addWidget(header)
+    service.setWordWrap(True)
+    service.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    nav_layout = window.scheme2_nav.layout()
+    nav_layout.insertWidget(max(0, nav_layout.count() - 1), service)
+    window.scheme2_service_status = service
 
     workspace = QSplitter(Qt.Orientation.Horizontal)
     workspace.setObjectName("scheme2Workspace")
@@ -2879,7 +2866,6 @@ def _configure_option_page(window, namespace):
         window.scheme2_completion = counter
         window.scheme2_add_button = add
         window.scheme2_add_progress = progress
-        window.scheme2_saved_status = saved
         _sync_scheme2_page_navigation(window)
     workspace.addWidget(right_shell)
     workspace.setStretchFactor(0, 0)
@@ -3240,12 +3226,7 @@ def _apply_palette(window):
     window.setStyleSheet(window.styleSheet() + """
 QMainWindow QWidget { font-family:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI"; }
 QMainWindow, QWidget#scheme2OptionPage, QWidget#scheme2CostPage, QWidget#scheme2DetailPage { background:#FFFFFF; color:#1C1C1E; }
-QFrame#scheme2TopBar { background:#FFFFFF; border-bottom:1px solid rgba(0,0,0,.12); }
-QLabel#scheme2TopLogo { background:#E6F1FB; color:#185FA5; border-radius:5px; font-size:10px; font-weight:600; }
-QLabel#scheme2Brand { font-size:14px; font-weight:600; color:#1C1C1E; }
-QLabel#scheme2ServiceStatus { color:#3B6D11; background:#EAF3DE; border-radius:10px; padding:3px 9px; font-size:11px; }
-QLabel#scheme2SavedStatus { color:#3B6D11; font-size:11px; }
-QLabel#scheme2SavedStatus[dirty="true"] { color:#854F0B; background:#FAEEDA; border-radius:9px; padding:2px 7px; }
+QLabel#scheme2ServiceStatus { color:#3B6D11; background:#EAF3DE; border-radius:7px; padding:5px 6px; font-size:10px; }
 QScrollArea#scheme2OptionScroll, QWidget#scheme2OptionForm { background:#FFFFFF; border:0; }
 QScrollArea#scheme2OptionScroll QScrollBar:vertical { background:#EEF0F3; width:10px; margin:0; }
 QScrollArea#scheme2OptionScroll QScrollBar::handle:vertical { background:#C3CBD6; border-radius:5px; min-height:36px; }
