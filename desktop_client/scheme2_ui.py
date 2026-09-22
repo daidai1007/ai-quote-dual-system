@@ -7,13 +7,15 @@ editing state inside the existing draft-item JSON snapshots.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QPoint, QSignalBlocker, Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractSpinBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -27,7 +29,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QScrollArea,
+    QProgressBar,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
@@ -354,6 +356,7 @@ def _build_detail_page(window):
         _apply_responsive(window)
 
     back.clicked.connect(close_detail)
+    window.scheme2_close_detail = close_detail
     return page
 
 
@@ -391,7 +394,7 @@ def _show_detail(window, item):
 def _cost_sidebar(window):
     bar = QFrame()
     bar.setObjectName("scheme2CostSidebar")
-    bar.setFixedWidth(116)
+    bar.setFixedWidth(100)
     layout = QVBoxLayout(bar)
     layout.setContentsMargins(10, 12, 10, 12)
     layout.setSpacing(7)
@@ -481,7 +484,27 @@ def _build_cost_page(window):
     header.addWidget(title)
     header.addWidget(hint)
     header.addStretch(1)
+    column_mode = QPushButton("完整 16 列")
+    column_mode.setObjectName("scheme2PrimaryGhost")
+    header.addWidget(column_mode)
     body_layout.addLayout(header)
+    compact = QFrame()
+    compact.setObjectName("scheme2CompactCoefficients")
+    compact_row = QHBoxLayout(compact)
+    compact_row.setContentsMargins(8, 5, 8, 5)
+    compact_row.addWidget(QLabel("修改系数"))
+    compact_key = QComboBox()
+    compact_value = _price_spin(1.0)
+    for key, label in (
+        ("galvanized_price", "镀锌板价格"), ("carbon_price", "碳钢价格"),
+        ("waste_factor", "废料系数"), ("labor_discount", "人工折扣"),
+        ("surface_price", "表面处理价格"),
+    ):
+        compact_key.addItem(label, key)
+    compact_row.addWidget(compact_key, 1)
+    compact_row.addWidget(compact_value)
+    compact.hide()
+    body_layout.addWidget(compact)
     table = QTableWidget(0, len(HEADERS))
     table.setObjectName("summaryTable")
     table.setHorizontalHeaderLabels(HEADERS)
@@ -503,7 +526,24 @@ def _build_cost_page(window):
     table.setColumnWidth(15, 88)
     window.summary_table = table
     body_layout.addWidget(table, 1)
-    actions = QHBoxLayout()
+    empty = QLabel("在选项配置页点击加入报价清单后，柜型会出现在这里", table.viewport())
+    empty.setObjectName("scheme2EmptyState")
+    empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    empty.hide()
+    undo_bar = QFrame()
+    undo_bar.setObjectName("scheme2UndoBar")
+    undo_layout = QHBoxLayout(undo_bar)
+    undo_layout.setContentsMargins(10, 4, 10, 4)
+    undo_text = QLabel("已删除 1 行")
+    undo = QPushButton("撤销")
+    undo_layout.addWidget(undo_text)
+    undo_layout.addStretch(1)
+    undo_layout.addWidget(undo)
+    undo_bar.hide()
+    body_layout.addWidget(undo_bar)
+    action_widget = QWidget()
+    actions = QGridLayout(action_widget)
+    actions.setContentsMargins(0, 0, 0, 0)
     delete = QPushButton("× 删除")
     up = QPushButton("↑ 上移")
     down = QPushButton("↓ 下移")
@@ -511,26 +551,126 @@ def _build_cost_page(window):
     back = QPushButton("返回选项配置")
     export = QPushButton("导出正式双报价单")
     export.setObjectName("scheme2PrimaryAction")
-    actions.addWidget(delete)
-    actions.addWidget(up)
-    actions.addWidget(down)
-    actions.addWidget(edit)
-    actions.addStretch(1)
-    actions.addWidget(back)
-    actions.addWidget(export)
-    body_layout.addLayout(actions)
+    action_buttons = (delete, up, down, edit, back, export)
+    for column, button in enumerate(action_buttons):
+        actions.addWidget(button, 0, column)
+    actions.setColumnStretch(4, 1)
+    body_layout.addWidget(action_widget)
     outer.addWidget(body, 1)
-    delete.clicked.connect(lambda: window.remove_selected_item())
+    delete.clicked.connect(lambda: _delete_selected(window))
     up.clicked.connect(lambda: window.move_selected_item(-1))
     down.clicked.connect(lambda: window.move_selected_item(1))
     edit.clicked.connect(lambda: _edit_selected(window))
     back.clicked.connect(lambda: window.show_section(OPTION_ROUTE))
     export.clicked.connect(lambda: window.confirm_and_export())
+    undo.clicked.connect(lambda: _undo_delete(window))
+    column_mode.clicked.connect(lambda: _set_cost_column_mode(window, not window._scheme2_full_columns))
+    compact_key.currentIndexChanged.connect(lambda: _sync_compact_control(window))
+    compact_value.editingFinished.connect(lambda: _apply_compact_control(window))
     table.cellChanged.connect(lambda row, column: _cost_cell_changed(window, row, column))
     table.cellClicked.connect(lambda row, column: _cost_cell_clicked(window, row, column))
     table.itemSelectionChanged.connect(lambda: _sync_sidebar(window))
     window.scheme2_cost_page = page
+    window.scheme2_cost_sidebar = page.findChild(QFrame, "scheme2CostSidebar")
+    window.scheme2_compact_coefficients = compact
+    window.scheme2_compact_key = compact_key
+    window.scheme2_compact_value = compact_value
+    window.scheme2_cost_empty = empty
+    window.scheme2_cost_export = export
+    window.scheme2_cost_undo = undo_bar
+    window.scheme2_undo_timer = QTimer(window)
+    window.scheme2_undo_timer.setSingleShot(True)
+    window.scheme2_undo_timer.timeout.connect(undo_bar.hide)
+    window.scheme2_cost_action_grid = actions
+    window.scheme2_cost_action_buttons = action_buttons
+    window._scheme2_full_columns = False
+    window._scheme2_deleted = None
+    _set_cost_column_mode(window, False)
     return page
+
+
+def _set_cost_column_mode(window, full):
+    window._scheme2_full_columns = bool(full)
+    core = {0, 1, 2, 3, 11, 12, 13, 15}
+    for column in range(len(HEADERS)):
+        window.summary_table.setColumnHidden(column, not full and column not in core)
+    buttons = window.scheme2_cost_page.findChildren(QPushButton) if hasattr(window, "scheme2_cost_page") else []
+    toggle = next((button for button in buttons if button.text() in ("完整 16 列", "核心 8 列")), None)
+    if toggle is not None:
+        toggle.setText("核心 8 列" if full else "完整 16 列")
+
+
+def _sync_compact_control(window):
+    key = window.scheme2_compact_key.currentData()
+    source = window.scheme2_cost_controls.get(key)
+    if source is None:
+        return
+    with QSignalBlocker(window.scheme2_compact_value):
+        window.scheme2_compact_value.setDecimals(source.decimals())
+        window.scheme2_compact_value.setRange(source.minimum(), source.maximum())
+        window.scheme2_compact_value.setValue(source.value())
+
+
+def _apply_compact_control(window):
+    key = window.scheme2_compact_key.currentData()
+    value = window.scheme2_compact_value.value()
+    source = window.scheme2_cost_controls.get(key)
+    if source is not None:
+        source.setValue(value)
+    _apply_cost_control(window, key, value)
+
+
+def _delete_selected(window):
+    row = _selected_row(window)
+    items = getattr(window, "draft_items", [])
+    if not 0 <= row < len(items):
+        return
+    window._scheme2_deleted = (row, items.pop(row))
+    window.refresh_summary()
+    window.scheme2_cost_undo.show()
+    window.scheme2_undo_timer.start(5000)
+
+
+def _undo_delete(window):
+    deleted = getattr(window, "_scheme2_deleted", None)
+    if deleted is None:
+        return
+    row, item = deleted
+    window.draft_items.insert(min(row, len(window.draft_items)), item)
+    window._scheme2_deleted = None
+    window.scheme2_undo_timer.stop()
+    window.scheme2_cost_undo.hide()
+    window.refresh_summary()
+    window.summary_table.selectRow(min(row, len(window.draft_items) - 1))
+
+
+def _duplicate_selected(window):
+    row = _selected_row(window)
+    items = getattr(window, "draft_items", [])
+    if not 0 <= row < len(items):
+        return
+    item = deepcopy(items[row])
+    item["name"] = f"{item.get('name') or item.get('model_code') or '未命名'} - 副本"
+    items.insert(row + 1, item)
+    window.refresh_summary()
+    window.summary_table.selectRow(row + 1)
+
+
+def _layout_cost_actions(window, compact):
+    grid = window.scheme2_cost_action_grid
+    buttons = window.scheme2_cost_action_buttons
+    while grid.count():
+        grid.takeAt(0)
+    if compact:
+        for column, button in enumerate(buttons[:4]):
+            grid.addWidget(button, 0, column)
+        grid.addWidget(buttons[4], 1, 2)
+        grid.addWidget(buttons[5], 1, 3)
+        grid.setColumnStretch(1, 1)
+    else:
+        for column, button in enumerate(buttons):
+            grid.addWidget(button, 0, column)
+        grid.setColumnStretch(4, 1)
 
 
 def _edit_selected(window):
@@ -589,6 +729,8 @@ def _sync_sidebar(window):
     for key, control in window.scheme2_cost_controls.items():
         with QSignalBlocker(control):
             control.setValue(_number(state.get(key), window.scheme2_defaults[key]))
+    if hasattr(window, "scheme2_compact_key"):
+        _sync_compact_control(window)
 
 
 def _refresh_cost_table(window):
@@ -597,6 +739,17 @@ def _refresh_cost_table(window):
     selected = _selected_row(window)
     window._scheme2_refreshing = True
     try:
+        empty = getattr(window, "scheme2_cost_empty", None)
+        export = getattr(window, "scheme2_cost_export", None)
+        if empty is not None:
+            empty.setGeometry(table.viewport().rect())
+            empty.setVisible(not items)
+            empty.raise_()
+        if export is not None:
+            export.setEnabled(bool(items))
+        if not items:
+            table.setRowCount(0)
+            return
         table.setRowCount(len(items) + 1)
         for row, item in enumerate(items):
             values = list(_row_values(item))
@@ -828,6 +981,42 @@ def _open_attachment_overlay(window, dialog_class, anchor):
             text = header.text() if header is not None else ""
             if "价格" in text or "单价" in text or "金额" in text:
                 table.setColumnHidden(column, True)
+    custom_rows = []
+    custom_frame = QFrame()
+    custom_layout = QHBoxLayout(custom_frame)
+    custom_layout.setContentsMargins(0, 3, 0, 3)
+    custom_toggle = QPushButton("＋ 新增附件")
+    custom_name = QLineEdit()
+    custom_name.setPlaceholderText("请输入附件名称")
+    custom_add = QPushButton("添加")
+    custom_name.hide()
+    custom_add.hide()
+    custom_layout.addWidget(custom_toggle)
+    custom_layout.addWidget(custom_name, 1)
+    custom_layout.addWidget(custom_add)
+    if dialog.layout() is not None:
+        dialog.layout().insertWidget(max(0, dialog.layout().count() - 1), custom_frame)
+
+    def show_custom_input():
+        custom_toggle.hide()
+        custom_name.show()
+        custom_add.show()
+        custom_name.setFocus()
+
+    def add_custom():
+        name = custom_name.text().strip()
+        if not name:
+            return
+        custom_rows.append({"item_name": name, "name": name, "quantity": 1, "matched_price": 0, "custom": True})
+        custom_toggle.setText(f"＋ 新增附件（已新增 {len(custom_rows)} 项）")
+        custom_name.clear()
+        custom_name.hide()
+        custom_add.hide()
+        custom_toggle.show()
+
+    custom_toggle.clicked.connect(show_custom_input)
+    custom_add.clicked.connect(add_custom)
+    custom_name.returnPressed.connect(add_custom)
     dialog.setObjectName("scheme2AttachmentOverlay")
     dialog.setModal(False)
     dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
@@ -837,6 +1026,7 @@ def _open_attachment_overlay(window, dialog_class, anchor):
 
     def apply_selection():
         selected = dialog.collect_attachments()
+        selected = list(selected or []) + custom_rows
         window.attachments = [dict(item) for item in selected if isinstance(item, dict)]
         window.attachment_default_opt_outs = set(getattr(dialog, "default_selection_opt_outs", set()))
         window.attachment_default_quantity_overrides = set(getattr(dialog, "default_quantity_manual_overrides", set()))
@@ -882,9 +1072,12 @@ def _configure_option_page(window, namespace):
     else:
         _detach(service)
     service.setObjectName("scheme2ServiceStatus")
+    saved = QLabel("快照已保存")
+    saved.setObjectName("scheme2SavedStatus")
     header_layout.addWidget(logo)
     header_layout.addWidget(brand)
     header_layout.addStretch(1)
+    header_layout.addWidget(saved)
     header_layout.addWidget(service)
     page_layout.addWidget(header)
 
@@ -1044,6 +1237,12 @@ def _configure_option_page(window, namespace):
         row.setContentsMargins(10, 8, 10, 8)
         status = QLabel("等待图纸识别")
         status.setObjectName("scheme2RecognitionStatus")
+        progress = QProgressBar()
+        progress.setObjectName("scheme2AddProgress")
+        progress.setRange(0, 5)
+        progress.setTextVisible(True)
+        progress.setFixedWidth(190)
+        progress.hide()
         more = QToolButton()
         more.setText("更多")
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -1063,6 +1262,7 @@ def _configure_option_page(window, namespace):
         add = QPushButton("加入报价清单")
         add.setObjectName("scheme2PrimaryAction")
         row.addWidget(status, 1)
+        row.addWidget(progress)
         row.addWidget(more)
         row.addWidget(manage)
         row.addWidget(add)
@@ -1072,12 +1272,28 @@ def _configure_option_page(window, namespace):
         window.scheme2_recognition_status = status
         window.scheme2_completion = counter
         window.scheme2_add_button = add
+        window.scheme2_add_progress = progress
+        window.scheme2_saved_status = saved
     workspace.addWidget(right_shell)
     workspace.setStretchFactor(0, 0)
     workspace.setStretchFactor(1, 1)
     window.scheme2_option_splitter = workspace
     window.scheme2_option_form_widget = left_scroll
     window.scheme2_drawing_widget = right_shell
+
+    for control in (
+        name_edit, window.quote_spec_edit, window.product_combo, window.quantity_spin,
+        window.material_combo, window.coating_combo, color, thickness,
+        window.single_door_combo, window.double_door_combo,
+    ):
+        if control is None:
+            continue
+        if isinstance(control, QLineEdit):
+            control.textEdited.connect(lambda *_: _set_dirty(window, True))
+        elif isinstance(control, QComboBox):
+            control.activated.connect(lambda *_: _set_dirty(window, True))
+        elif isinstance(control, QAbstractSpinBox):
+            control.editingFinished.connect(lambda: _set_dirty(window, True))
 
     for name in ("primaryQuoteAction", "secondaryQuoteAction", "quietQuoteAction"):
         button = window.findChild(QPushButton, name)
@@ -1102,12 +1318,38 @@ def _calculate_and_add(window):
     current = getattr(window, "current_result", None)
     valid = isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
     if valid:
+        _set_add_progress(window, 5, "保存快照并生成行")
         _finish_add(window)
         return
     window._scheme2_add_after_calculate = True
     window.scheme2_add_button.setEnabled(False)
     window.scheme2_add_button.setText("正在计算…")
+    _set_add_progress(window, 1, "校验输入")
+    QTimer.singleShot(80, lambda: _set_add_progress(window, 2, "附件匹配"))
+    QTimer.singleShot(160, lambda: _set_add_progress(window, 3, "读取公式模板并计算"))
     window.calculate()
+
+
+def _set_add_progress(window, step, label, failed=False):
+    progress = getattr(window, "scheme2_add_progress", None)
+    if progress is None:
+        return
+    progress.show()
+    progress.setValue(step)
+    progress.setFormat(f"{step}/5 {label}")
+    progress.setProperty("failed", failed)
+    progress.style().unpolish(progress)
+    progress.style().polish(progress)
+
+
+def _set_dirty(window, dirty=True):
+    window._scheme2_dirty = bool(dirty)
+    label = getattr(window, "scheme2_saved_status", None)
+    if label is not None:
+        label.setText("有未保存变更" if dirty else "快照已保存")
+        label.setProperty("dirty", bool(dirty))
+        label.style().unpolish(label)
+        label.style().polish(label)
 
 
 def _finish_add(window):
@@ -1129,8 +1371,19 @@ def _finish_add(window):
         getattr(window, "_scheme2_active_settings", None) or window.scheme2_defaults
     )
     window._scheme2_active_settings = None
+    _set_add_progress(window, 5, "已完成")
+    window.scheme2_add_button.setText("已加入")
+    _set_dirty(window, False)
     window.refresh_summary()
     window.show_section(COST_ROUTE)
+    target_row = editing_index if editing_index is not None else len(window.draft_items) - 1
+    if target_row >= 0:
+        window.summary_table.selectRow(target_row)
+        for column in range(window.summary_table.columnCount()):
+            cell = window.summary_table.item(target_row, column)
+            if cell is not None:
+                cell.setBackground(QColor("#EAF3DE"))
+        QTimer.singleShot(1000, window.refresh_summary)
 
 
 def _sync_completion(window):
@@ -1172,13 +1425,54 @@ def _advance_to_next_drawing(window):
         window._scheme2_advancing = False
 
 
+def _install_shortcuts(window):
+    shortcuts = []
+
+    def bind(sequence, callback):
+        shortcut = QShortcut(QKeySequence(sequence), window)
+        shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut.activated.connect(callback)
+        shortcuts.append(shortcut)
+
+    def submit():
+        if window.stack.currentIndex() != OPTION_ROUTE:
+            return
+        focus = window.focusWidget()
+        if isinstance(focus, (QComboBox, QAbstractSpinBox)) or isinstance(
+                focus.parentWidget() if focus is not None else None, QComboBox):
+            return
+        _calculate_and_add(window)
+
+    def escape():
+        overlay = getattr(window, "_scheme2_attachment_overlay", None)
+        if overlay is not None and overlay.isVisible():
+            overlay.reject()
+        elif window.stack.currentIndex() == DETAIL_ROUTE:
+            window.scheme2_close_detail()
+
+    def shift_move(delta):
+        if window.stack.currentIndex() == COST_ROUTE:
+            window.move_selected_item(delta)
+
+    bind("Ctrl+1", lambda: window.show_section(OPTION_ROUTE))
+    bind("Ctrl+2", lambda: window.show_section(COST_ROUTE))
+    bind("Return", submit)
+    bind("Enter", submit)
+    bind("Escape", escape)
+    bind("Shift+Up", lambda: shift_move(-1))
+    bind("Shift+Down", lambda: shift_move(1))
+    bind("Delete", lambda: _delete_selected(window) if window.stack.currentIndex() == COST_ROUTE else None)
+    bind("Ctrl+D", lambda: _duplicate_selected(window) if window.stack.currentIndex() == COST_ROUTE else None)
+    window.scheme2_shortcuts = shortcuts
+
+
 def _apply_responsive(window):
     splitter = getattr(window, "scheme2_option_splitter", None)
     route = window.stack.currentIndex()
+    width = window.width()
     option_page = window.stack.widget(OPTION_ROUTE)
     main_scroll = window.findChild(QScrollArea, "mainScroll")
     if splitter is not None:
-        width = window.width()
         if route != OPTION_ROUTE:
             option_page.setMinimumHeight(0)
             splitter.setMinimumHeight(0)
@@ -1227,6 +1521,23 @@ def _apply_responsive(window):
             splitter.widget(0).setMinimumWidth(form)
             splitter.widget(0).setMaximumWidth(420 if width >= 1600 else (520 if width >= 1100 else 300))
             splitter.setSizes([form, max(500, width - form - 100)])
+    sidebar = getattr(window, "scheme2_cost_sidebar", None)
+    compact_coefficients = getattr(window, "scheme2_compact_coefficients", None)
+    if sidebar is not None and compact_coefficients is not None:
+        use_compact_coefficients = width < 1100
+        sidebar.setVisible(not use_compact_coefficients)
+        compact_coefficients.setVisible(use_compact_coefficients)
+        if use_compact_coefficients:
+            _sync_compact_control(window)
+        _layout_cost_actions(window, width < 900)
+    detail_table = getattr(window, "scheme2_detail_table", None)
+    if detail_table is not None:
+        card_columns = {0, 1, 7, 8, 9}
+        for column in range(detail_table.columnCount()):
+            detail_table.setColumnHidden(column, width < 900 and column not in card_columns)
+    empty = getattr(window, "scheme2_cost_empty", None)
+    if empty is not None:
+        empty.setGeometry(window.summary_table.viewport().rect())
     legacy_dock = getattr(window, "quote_action_dock", None)
     if legacy_dock is not None:
         legacy_dock.hide()
@@ -1281,6 +1592,8 @@ QFrame#scheme2TopBar { background:#FFFFFF; border-bottom:1px solid rgba(0,0,0,.1
 QLabel#scheme2TopLogo { background:#E6F1FB; color:#185FA5; border-radius:5px; font-size:10px; font-weight:600; }
 QLabel#scheme2Brand { font-size:14px; font-weight:600; color:#1C1C1E; }
 QLabel#scheme2ServiceStatus { color:#3B6D11; background:#EAF3DE; border-radius:10px; padding:3px 9px; font-size:11px; }
+QLabel#scheme2SavedStatus { color:#3B6D11; font-size:11px; }
+QLabel#scheme2SavedStatus[dirty="true"] { color:#854F0B; background:#FAEEDA; border-radius:9px; padding:2px 7px; }
 QScrollArea#scheme2OptionScroll, QWidget#scheme2OptionForm { background:#FFFFFF; border:0; }
 QFrame#scheme2DrawingShell { background:#EEF0F3; border-left:1px solid rgba(0,0,0,.12); }
 QFrame#scheme2DrawingHeader { background:#FFFFFF; border-bottom:1px solid rgba(0,0,0,.12); }
@@ -1298,7 +1611,10 @@ QLabel#scheme2NavTitle { color:#1F3A6A; font-size:11px; font-weight:600; }
 QFrame#navPanel QPushButton { color:#1F3A6A; border:0; border-radius:7px; padding:8px 7px; text-align:left; }
 QFrame#navPanel QPushButton:checked { color:#FFFFFF; background:#2563EB; }
 QFrame#scheme2CostSidebar { background:#DCE8F7; border-right:1px solid #BBD0EA; }
+QFrame#scheme2CompactCoefficients { background:#DCE8F7; border:1px solid #BBD0EA; border-radius:7px; }
 QFrame#scheme2CostBody { background:#FFFFFF; }
+QFrame#scheme2UndoBar { background:#E6F1FB; border:1px solid #85B7EB; border-radius:7px; }
+QLabel#scheme2EmptyState { color:#8A8A86; background:#FFFFFF; font-size:13px; }
 QLabel#scheme2PageTitle { font-size:18px; font-weight:600; color:#1C1C1E; }
 QLabel#scheme2DialogTitle { font-size:15px; font-weight:600; color:#1C1C1E; padding-bottom:4px; }
 QLabel#scheme2SidebarTitle { font-size:14px; font-weight:600; color:#1F3A6A; }
@@ -1314,9 +1630,13 @@ QPushButton#scheme2PrimaryGhost, QPushButton#scheme2CollapseButton, QPushButton#
 QFrame#scheme2RecognitionFooter { background:#FFFFFF; border-top:1px solid rgba(0,0,0,.12); }
 QTableWidget#summaryTable, QTableWidget#scheme2DetailTable { background:#FFFFFF; alternate-background-color:#F6F7F9; border:1px solid rgba(0,0,0,.12); border-radius:8px; gridline-color:rgba(0,0,0,.12); }
 QTableWidget#summaryTable::item:selected, QTableWidget#scheme2DetailTable::item:selected { background:#E6F1FB; color:#1C1C1E; }
+QTableWidget#summaryTable::item:hover { background:#F5F9FF; }
 QHeaderView::section { background:#F6F7F9; color:#5F5E5A; border:0; border-bottom:1px solid rgba(0,0,0,.12); padding:7px 8px; font-weight:500; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background:#FFFFFF; border:1px solid rgba(0,0,0,.18); border-radius:7px; padding:5px 7px; min-height:22px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color:#2563EB; }
+QProgressBar#scheme2AddProgress { background:#EEF0F3; border:0; border-radius:5px; text-align:center; color:#1F3A6A; min-height:20px; }
+QProgressBar#scheme2AddProgress::chunk { background:#97C459; border-radius:5px; }
+QProgressBar#scheme2AddProgress[failed="true"]::chunk { background:#E24A4A; }
 """)
 
 
@@ -1359,6 +1679,7 @@ def install_scheme2_ui(namespace):
 
     original_init = cls.__init__
     original_resize = cls.resizeEvent
+    original_close = cls.closeEvent
     original_section = cls.show_section
     original_show_result = cls.show_result
     original_show_error = cls.show_error
@@ -1378,7 +1699,7 @@ def install_scheme2_ui(namespace):
         original_init(window, *args, **kwargs)
         # The reference explicitly supports the <900 logical-pixel stacked
         # layout; the recovered client used a wider fixed minimum.
-        window.setMinimumSize(720, 560)
+        window.setMinimumSize(1024, 700)
         window.statusBar().hide()
         old_cost_page = window.stack.widget(COST_ROUTE)
         window.stack.removeWidget(old_cost_page)
@@ -1390,14 +1711,28 @@ def install_scheme2_ui(namespace):
         window.stack.insertWidget(DETAIL_ROUTE, detail)
         _configure_navigation(window)
         _configure_option_page(window, namespace)
+        _install_shortcuts(window)
         _apply_palette(window)
         window.refresh_summary()
         window.show_section(OPTION_ROUTE)
+        _set_dirty(window, False)
         _apply_responsive(window)
 
     def resize(window, event):
         original_resize(window, event)
         QTimer.singleShot(0, lambda: _apply_responsive(window))
+
+    def close(window, event):
+        if getattr(window, "_scheme2_dirty", False) and window.isVisible():
+            answer = QMessageBox.question(
+                window, "有未保存变更", "当前配置尚未加入报价清单，确定关闭吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+        original_close(window, event)
 
     def section(window, index):
         previous_index = window.stack.currentIndex()
@@ -1418,6 +1753,7 @@ def install_scheme2_ui(namespace):
         if hasattr(window, "quote_right_stack"):
             window.quote_right_stack.setCurrentIndex(0)
         if window._scheme2_add_after_calculate and isinstance(getattr(window, "current_result", None), dict):
+            _set_add_progress(window, 4, "双报价计算完成")
             window._scheme2_add_after_calculate = False
             window.scheme2_add_button.setEnabled(True)
             window.scheme2_add_button.setText("加入报价清单")
@@ -1428,7 +1764,8 @@ def install_scheme2_ui(namespace):
         window._scheme2_add_after_calculate = False
         if hasattr(window, "scheme2_add_button"):
             window.scheme2_add_button.setEnabled(True)
-            window.scheme2_add_button.setText("加入报价清单")
+            window.scheme2_add_button.setText("重试")
+            _set_add_progress(window, 3, f"失败：{message}", failed=True)
         return original_show_error(window, message)
 
     def refresh(window):
@@ -1494,6 +1831,7 @@ def install_scheme2_ui(namespace):
 
     cls.__init__ = init
     cls.resizeEvent = resize
+    cls.closeEvent = close
     cls.show_section = section
     cls.show_result = show_result
     cls.show_error = show_error
