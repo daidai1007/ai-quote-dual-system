@@ -1,4 +1,5 @@
 import {evaluateFormula,round} from './attachment_formula.mjs';
+import {withSidebarMaterialPrices} from './material_price_override.mjs';
 
 const valueSql=value=>value==null?'NULL':typeof value==='number'?String(value):
   `convert_from(decode('${Buffer.from(String(value)).toString('hex')}','hex'),'UTF8')`;
@@ -34,7 +35,7 @@ export function calculateCabinetMaterial(rules,environment){
     const materialCode=rule.fixed_material_code||environment.material_code;
     const material=priceByCode.get(materialCode);
     if(!material)throw new Error(`${rule.part_name}缺少材质 ${materialCode} 的密度或有效材料单价`);
-    const density=positive(material.density_g_cm3,`${materialCode}密度`),unitPrice=positive(material.material_unit_price,`${materialCode}材料单价`);
+    const density=positive(material.density_g_cm3,`${materialCode}密度`),unitPrice=positive(material.material_unit_price,`${materialCode}界面材料单价`);
     const netWeight=area*Number(rule.sheet_thickness_mm)*internalQuantity*density;
     const billableWeight=netWeight*waste;
     return {rule_id:rule.rule_id,part_name:rule.part_name,material_code:materialCode,area_m2:round(area,10),
@@ -105,7 +106,7 @@ export function calculateCabinetMaterialFixed(rules,environment){
     densityRatio=positive(material.density_g_cm3,`${materialCode}密度`)/positive(base.density_g_cm3,'SECC密度');
   }
   const netWeight=Number(matched.material_weight_kg)*ratio*densityRatio;
-  const unitPrice=positive(material.material_unit_price,`${materialCode}材料单价`);
+  const unitPrice=positive(material.material_unit_price,`${materialCode}界面材料单价`);
   const requestedWaste=positive(environment.waste_factor??1.2,'废料系数',{max:10});
   return {data_version:environment.data_version,product_code:product,method:'FIXED',match_method:matchMethod,
     material_code:materialCode,waste_factor:1,waste_factor_applied:false,requested_waste_factor:requestedWaste,
@@ -130,25 +131,15 @@ export function createCabinetMaterialService({runPsql}){
       'data_version',v.data_version,'default_waste_factor',v.default_waste_factor,
       'rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no,r.source_column),'[]') FROM calc.cabinet_material_rule r WHERE r.data_version=v.data_version AND r.family=${valueSql(family)}),
       'fixed_rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no),'[]') FROM calc.cabinet_material_fixed_rule r WHERE r.data_version=v.data_version AND r.product_code=${valueSql(product)}),
-      'materials',(SELECT coalesce(jsonb_agg(jsonb_build_object('material_code',m.material_code,'density_g_cm3',m.density_g_cm3,
-        'material_unit_price',calc.get_material_unit_price(m.material_code,${valueSql(date)}::date))),'[]') FROM calc.material m WHERE m.material_code IN (${valueSql(input.material_code)},'SECC','Q235','SGCC','DX51D','GI')))
+      'materials',(SELECT coalesce(jsonb_agg(jsonb_build_object('material_code',m.material_code,'density_g_cm3',m.density_g_cm3)),'[]')
+        FROM calc.material m WHERE m.material_code IN (${valueSql(input.material_code)},'SECC','Q235','SGCC','DX51D','GI')))
       FROM calc.cabinet_material_catalog_version v WHERE v.status='ACTIVE';`); }
     catch(error){
       if(/cabinet_material_(catalog_version|rule|fixed_rule).*does not exist/is.test(String(error?.message||error)))return null;
       throw error;
     }
     if(!data)return null;
-    const carbonOverride=input.carbon_steel_unit_price_override==null?null:
-      positive(input.carbon_steel_unit_price_override,'碳钢价格',{max:1e5});
-    const galvanizedOverride=input.galvanized_sheet_unit_price_override==null?null:
-      positive(input.galvanized_sheet_unit_price_override,'镀锌板价格',{max:1e5});
-    const materials=(data.materials||[]).map(material=>{
-      const code=codeOf(material.material_code);
-      const override=['SECC','Q235'].includes(code)?carbonOverride:
-        ['SGCC','DX51D','GI'].includes(code)?galvanizedOverride:null;
-      return override==null?material:{...material,database_material_unit_price:material.material_unit_price,
-        material_unit_price:override,quote_local_price_override:true};
-    });
+    const materials=withSidebarMaterialPrices(input,data.materials);
     const environment={...input,product_code:product,data_version:data.data_version,materials,
       waste_factor:input.waste_factor??data.default_waste_factor};
     return fixedProducts.has(product)?calculateCabinetMaterialFixed(data.fixed_rules,environment):calculateCabinetMaterial(data.rules,environment);
@@ -184,14 +175,24 @@ export function createCabinetMaterialService({runPsql}){
 export function applyCabinetMaterial(result,material){
   if(!material)return result;
   const formula={...(result.formula_cost||{})},old=Number(formula.material_cost);
-  if(!Number.isFinite(old)||!Number.isFinite(Number(formula.total_cost)))throw new Error('数据库基础公式材料成本缺失，不能应用最新柜体材料规则');
+  const baseTotal=Number(formula.total_cost);
+  const hasDatabaseMaterialCost=formula.material_cost!=null&&Number.isFinite(old);
+  const hasDatabaseTotal=formula.total_cost!=null&&Number.isFinite(baseTotal);
   formula.material_cost=material.material_cost;
-  formula.total_cost=round(Number(formula.total_cost)-old+material.material_cost,2);
+  if(hasDatabaseMaterialCost&&hasDatabaseTotal) formula.total_cost=round(baseTotal-old+material.material_cost,2);
+  else{
+    const componentKeys=['auxiliary_cost','labor_cost','attachment_fee','spray_cost','management_fee'];
+    const components=componentKeys.map(key=>Number(formula[key]));
+    if(components.some(value=>!Number.isFinite(value))) throw new Error('数据库基础公式非材料成本缺失');
+    formula.total_cost=round(material.material_cost+components.reduce((sum,value)=>sum+value,0),2);
+  }
+  if(material.material_details?.length===1) formula.material_unit_price=material.material_details[0].material_unit_price;
   Object.assign(formula,{net_material_weight_kg:material.net_material_weight_kg,
     corrected_material_weight_kg:material.corrected_material_weight_kg,waste_factor:material.waste_factor,
     waste_factor_applied:material.waste_factor_applied,requested_waste_factor:material.requested_waste_factor,
     cabinet_material_method:material.method,cabinet_material_match_method:material.match_method,
     cabinet_material_version:material.data_version,material_details:material.material_details,
     cabinet_material_part_details:material.part_details});
-  return {...result,formula_cost:formula};
+  const riskFlags=(result.risk_flags||[]).filter(flag=>flag?.code!=='material_price_missing');
+  return {...result,formula_cost:formula,risk_flags:riskFlags};
 }

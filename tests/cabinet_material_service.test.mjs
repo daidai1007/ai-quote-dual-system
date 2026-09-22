@@ -45,14 +45,35 @@ test('operator waste factor overrides the 1.2 default and profile 2 is exact',()
   assert.equal(result.corrected_material_weight_kg,result.net_material_weight_kg*1.35);
 });
 
-test('quote-local carbon price override replaces catalog price without mutating the catalog',async()=>{
+test('recognized material uses the current-material sidebar price without mutating the catalog',async()=>{
   const catalogMaterials=materials.map(row=>({...row}));
+  let querySql='';
   const service=createCabinetMaterialService({runPsql:async()=>JSON.stringify({
     data_version:'cabinet-material-test-v1',default_waste_factor:1.2,rules,fixed_rules:[],materials:catalogMaterials,
   })});
-  const result=await service.calculate({...environment,quote_date:'2026-09-22',carbon_steel_unit_price_override:9.5});
-  assert.equal(result.part_details.find(row=>row.material_code==='SECC').material_unit_price,9.5);
+  const inspectedService=createCabinetMaterialService({runPsql:async sql=>{querySql=sql;return JSON.stringify({
+    data_version:'cabinet-material-test-v1',default_waste_factor:1.2,rules,fixed_rules:[],materials:catalogMaterials,
+  });}});
+  const result=await inspectedService.calculate({...environment,quote_date:'2026-09-22',carbon_steel_unit_price_override:9.5,
+    galvanized_sheet_unit_price_override:10.5});
+  assert.equal(result.part_details.find(row=>row.material_code==='SECC').material_unit_price,10.5);
+  assert.equal(result.part_details.find(row=>row.material_code==='SUS304').material_unit_price,9.5);
   assert.equal(catalogMaterials.find(row=>row.material_code==='SECC').material_unit_price,5);
+  assert.doesNotMatch(querySql,/get_material_unit_price/);
+  await assert.rejects(()=>service.calculate({...environment,quote_date:'2026-09-22'}),/成本计算副导航栏/);
+});
+
+test('fixed SGCC uses the galvanized price from the cost sidebar',async()=>{
+  const service=createCabinetMaterialService({runPsql:async()=>JSON.stringify({
+    data_version:'cabinet-material-test-v1',default_waste_factor:1.2,
+    rules:[{...rules[0],fixed_material_code:'SGCC'},rules[1]],fixed_rules:[],
+    materials:[...materials.map(({material_unit_price,...row})=>row),{material_code:'SGCC',density_g_cm3:7.85}],
+  })});
+  const result=await service.calculate({...environment,quote_date:'2026-09-22',material_unit_price_override:21.5,
+    carbon_steel_unit_price_override:9.5,
+    galvanized_sheet_unit_price_override:10.5});
+  assert.equal(result.part_details.find(row=>row.material_code==='SGCC').material_unit_price,10.5);
+  assert.equal(result.part_details.find(row=>row.material_code==='SUS304').material_unit_price,21.5);
 });
 
 test('base quote material cost and total are replaced while other components stay intact',()=>{
@@ -61,6 +82,14 @@ test('base quote material cost and total are replaced while other components sta
   assert.equal(applied.formula_cost.total_cost,1200-999+material.material_cost);
   assert.equal(applied.formula_cost.auxiliary_cost,10);
   assert.equal(applied.quick_quote.total_cost,1500);
+});
+
+test('sidebar material price works when the database base material price is missing',()=>{
+  const material=calculateCabinetMaterial(rules,environment);
+  const applied=applyCabinetMaterial({formula_cost:{material_cost:null,auxiliary_cost:10,labor_cost:20,
+    attachment_fee:3,spray_cost:4,management_fee:2.6,total_cost:null},risk_flags:[{code:'material_price_missing'}]},material);
+  assert.equal(applied.formula_cost.total_cost,Math.round((material.material_cost+39.6)*100)/100);
+  assert.deepEqual(applied.risk_flags,[]);
 });
 
 test('dynamic attachments do not use the cabinet waste factor',()=>{

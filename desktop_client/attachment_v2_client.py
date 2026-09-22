@@ -13,11 +13,17 @@ from PySide6.QtCore import Qt, QTimer, QDate
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QInputDialog, QWidget
 from shiboken6 import isValid
 
-from attachment_category_browser import parse_base_specification
+from attachment_category_browser import (
+    match_attachment_size,
+    match_installation_board_for_product,
+    match_named_quick_attachment_size,
+    parse_base_specification,
+    size_match_attachment_name,
+)
 
 PREVIEW_DELAY_MS = 350
 EXTRA_HEADERS = ("快速金额", "公式状态", "公式单位成本", "公式金额", "人工尺寸")
-COST_KEYS = ("error", "rule_id", "rule_version", "rule_materials", "rule_source_row", "formulas", "calculation_notes", "weight_kg", "material_cost", "spray_area_m2", "spray_cost", "auxiliary_cost", "auxiliary_list", "labor_cost", "attachment_selection_id", "quote_line_id", "environment")
+COST_KEYS = ("error", "rule_id", "rule_version", "rule_materials", "rule_source_row", "formulas", "calculation_notes", "weight_kg", "material_cost", "spray_area_m2", "spray_cost", "auxiliary_cost", "auxiliary_list", "labor_cost", "attachment_selection_id", "quote_line_id", "environment", "pending_manual_dimensions", "pending_manual_error")
 
 
 def attachment_image_match_key(value):
@@ -36,6 +42,154 @@ def attachment_images_for_name(image_catalog, item_name):
         if candidate and ((mode == "PREFIX" and wanted.startswith(candidate)) or wanted == candidate):
             return [dict(image) for image in entry.get("images", []) if isinstance(image, dict)]
     return []
+
+
+def missing_manual_dimensions(row):
+    manual = row.get("manual_inputs") if isinstance(row, dict) else None
+    manual = manual if isinstance(manual, dict) else {}
+    missing = []
+    for parameter in row.get("required_parameters", []) if isinstance(row, dict) else []:
+        if not isinstance(parameter, dict) or parameter.get("source") != "MANUAL":
+            continue
+        name = str(parameter.get("name") or "").strip()
+        try:
+            valid = float(manual.get(name)) > 0
+        except (TypeError, ValueError):
+            valid = False
+        if name and not valid:
+            missing.append(name)
+    return missing
+
+
+def provisionalize_manual_dimension_result(result):
+    """Make only missing-manual-dimension rows addable at zero UI amount."""
+    if not isinstance(result, dict) or result.get("attachment_contract") != 2:
+        return result
+    rendered = copy.deepcopy(result)
+    pending_quick = 0.0
+    has_pending = False
+    has_blocking_error = False
+    for row in rendered.get("attachments", []):
+        missing = missing_manual_dimensions(row)
+        manual_error = row.get("status") == "ERROR" and missing and str(row.get("error") or "").startswith("人工尺寸")
+        if manual_error:
+            has_pending = True
+            pending_quick += float(row.get("quick_amount") or 0)
+            row["pending_manual_dimensions"] = missing
+            row["pending_manual_error"] = str(row.get("error") or "")
+            row["quick_amount"] = 0.0
+            row["formula_amount"] = 0.0
+            row["formula_unit_cost"] = 0.0
+            row["status"] = "PENDING_MANUAL"
+            row["status_text"] = "待补充尺寸：" + "、".join(missing)
+        elif row.get("status") == "ERROR":
+            has_blocking_error = True
+    if not has_pending:
+        return rendered
+    quick = dict(rendered.get("quick_quote") or {})
+    quick["attachment_fee"] = max(0.0, float(quick.get("attachment_fee") or 0) - pending_quick)
+    if quick.get("total_cost") is not None:
+        quick["total_cost"] = float(quick["total_cost"]) - pending_quick
+    rendered["quick_quote"] = quick
+    formula = dict(rendered.get("formula_cost") or {})
+    formula["attachment_fee"] = (
+        sum(float(row.get("formula_amount") or 0) for row in rendered.get("attachments", []))
+        if not has_blocking_error else None
+    )
+    if not has_blocking_error and formula.get("total_cost") is None:
+        formula["total_cost"] = sum(float(formula.get(key) or 0) for key in (
+            "material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee",
+        )) + float(formula.get("attachment_fee") or 0)
+    rendered["formula_cost"] = formula
+    pending_names = {
+        str(row.get("item_name") or "") for row in rendered.get("attachments", [])
+        if row.get("status") == "PENDING_MANUAL"
+    }
+    rendered["risk_flags"] = [
+        risk for risk in rendered.get("risk_flags", [])
+        if not (
+            isinstance(risk, dict)
+            and risk.get("code") == "attachment_error"
+            and any(name and str(risk.get("message") or "").startswith(name + "：") for name in pending_names)
+        )
+    ]
+    return rendered
+
+
+def match_catalog_attachment(selection, catalog, target_dimensions=None, product_code="", base_height_mm=None):
+    """Resolve a price-free scheme selection against the live V2 catalogue."""
+    wanted_name = attachment_image_match_key(selection.get("item_name") or selection.get("name"))
+    wanted_category = attachment_image_match_key(
+        selection.get("category_level1") or selection.get("attachment_category")
+    )
+    candidates = [
+        item for item in catalog if isinstance(item, dict)
+        and attachment_image_match_key(item.get("item_name")) == wanted_name
+    ]
+    category_matches = [
+        item for item in candidates
+        if attachment_image_match_key(item.get("category_level1")) == wanted_category
+    ]
+    sized_candidates = category_matches or candidates
+    if sized_candidates and target_dimensions is not None:
+        category = str(selection.get("category_level1") or selection.get("attachment_category") or "").strip()
+        name = str(selection.get("item_name") or selection.get("name") or "").strip()
+        target = tuple(target_dimensions)
+        if category == "底座" and base_height_mm is not None and len(target) >= 3:
+            target = (target[0], float(base_height_mm), target[2])
+        matched = None
+        if category == "安装板" and name in {"安装板", "JK安装板"}:
+            matched = match_installation_board_for_product(
+                catalog, sized_candidates[0], target, product_code
+            )
+        elif category == "安装附件" and name == "固定立柱":
+            matched = match_named_quick_attachment_size(
+                catalog, category, "固定立柱", name, target
+            )
+        elif category == "安装附件" and name == "三排安装梁":
+            matched = match_named_quick_attachment_size(
+                catalog, category, "三排纵梁", name, target
+            )
+        elif category in {"控制箱附件", "控制柜附件"} and name in {
+            "JK安装板", "内门", "防雨顶", "通风顶罩",
+        }:
+            matched = match_named_quick_attachment_size(
+                catalog, category, name, name, target
+            )
+        elif size_match_attachment_name(sized_candidates[0]) is not None:
+            matched = match_attachment_size(sized_candidates, sized_candidates[0], target)
+        if matched is not None:
+            return matched
+    if len(category_matches) == 1:
+        return category_matches[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    if wanted_name == wanted_category:
+        category_items = [
+            item for item in catalog if isinstance(item, dict)
+            and attachment_image_match_key(item.get("category_level1")) == wanted_category
+        ]
+        if len(category_items) == 1:
+            return category_items[0]
+    return None
+
+
+def match_quote_attachment(window, selection, catalog):
+    """Apply the retained quick-size rules immediately before quote pricing."""
+    controls = [getattr(window, name, None) for name in ("width_spin", "height_spin", "depth_spin")]
+    try:
+        dimensions = tuple(float(control.value()) for control in controls)
+    except (AttributeError, TypeError, ValueError):
+        dimensions = None
+    product_getter = getattr(window, "selected_product_code", None)
+    product_code = product_getter() if callable(product_getter) else ""
+    return match_catalog_attachment(
+        selection,
+        catalog,
+        target_dimensions=dimensions,
+        product_code=product_code,
+        base_height_mm=base_height(window),
+    )
 
 def merge_cost(source, cost, automatic_base_height=None):
     merged = {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
@@ -460,6 +614,117 @@ def install_attachment_v2(namespace):
         return result
     dialog_class.refresh_category_browser = refresh_browser_v2
 
+    def resolve_attachments_for_quote(window, succeeded, failed):
+        rows = [dict(item) for item in getattr(window, "attachments", []) if isinstance(item, dict)]
+        pending = [item for item in rows if item.get("attachment_price_id") is None]
+        if not pending:
+            succeeded()
+            return
+        active = getattr(window, "_scheme2_attachment_catalog_worker", None)
+        if active is not None and active.isRunning():
+            failed("附件价格库正在读取，请稍后重试")
+            return
+        base_url = str(window.base_url() or "")
+        url = base_url.split("/api/", 1)[0].rstrip("/") + "/api/attachments/catalog?v=2"
+        worker = worker_class(url, {}, window, method="GET")
+        window._scheme2_attachment_catalog_worker = worker
+
+        def loaded(body):
+            if not isValid(window):
+                return
+            catalog = [dict(item) for item in body.get("items", []) if isinstance(item, dict)]
+            version = body.get("data_version")
+            image_catalog = [dict(item) for item in body.get("attachment_images", []) if isinstance(item, dict)]
+            resolved = []
+            missing = []
+            for source in rows:
+                if source.get("attachment_price_id") is not None:
+                    resolved.append(source)
+                    continue
+                match = match_quote_attachment(window, source, catalog)
+                if match is None:
+                    missing.append(str(source.get("item_name") or source.get("name") or "未命名附件"))
+                    continue
+                resolved.append({
+                    **copy.deepcopy(match),
+                    **source,
+                    "attachment_price_id": match.get("attachment_price_id"),
+                    "catalog_version": version,
+                    "attachment_images": attachment_images_for_name(image_catalog, match.get("item_name")),
+                })
+            if missing:
+                failed("价格库中未找到唯一匹配项：" + "、".join(missing))
+                return
+            window.attachments = resolved
+            window._attachment_image_catalog = image_catalog
+            window._attachment_v2_line_id = None
+            window.current_result = None
+            window.update_attachment_view()
+            succeeded()
+
+        worker.succeeded.connect(loaded)
+        worker.failed.connect(lambda message: failed(f"附件价格库读取失败：{message}") if isValid(window) else None)
+
+        def finished():
+            if isValid(window) and getattr(window, "_scheme2_attachment_catalog_worker", None) is worker:
+                window._scheme2_attachment_catalog_worker = None
+            worker.deleteLater()
+
+        worker.finished.connect(finished)
+        worker.start()
+
+    window_class.resolve_attachments_for_quote = resolve_attachments_for_quote
+
+    def recalculate_draft_attachment(window, quote_item, attachment, succeeded, failed):
+        settings = quote_item.get("scheme2_cost_settings") or getattr(window, "scheme2_defaults", {})
+        payload = {
+            "quote_id": "PREVIEW",
+            "product_code": quote_item.get("product_code"),
+            "model_code": quote_item.get("model_code") or quote_item.get("name") or "",
+            "material_code": quote_item.get("material_code"),
+            "width_mm": quote_item.get("width_mm"),
+            "height_mm": quote_item.get("height_mm"),
+            "depth_mm": quote_item.get("depth_mm"),
+            "coating_type": quote_item.get("coating_type"),
+            "quote_date": quote_item.get("quote_date") or QDate.currentDate().toString("yyyy-MM-dd"),
+            "cabinet_body_thickness_mm": quote_item.get("cabinet_body_thickness_mm"),
+            "waste_factor": settings.get("waste_factor", quote_item.get("waste_factor")),
+            "galvanized_sheet_unit_price_override": settings.get("galvanized_price"),
+            "material_unit_price_override": settings.get("carbon_price"),
+            "carbon_steel_unit_price_override": settings.get("carbon_price"),
+            "surface_treatment_unit_price_override": settings.get("surface_price"),
+            "attachments": [selected_input(attachment)],
+            "attachment_contract": 2,
+        }
+        url = str(window.base_url() or "").split("/api/", 1)[0].rstrip("/") + "/api/attachments/preview"
+        worker = worker_class(url, payload, window)
+        active = getattr(window, "_scheme2_attachment_reprice_workers", set())
+        active.add(worker)
+        window._scheme2_attachment_reprice_workers = active
+
+        def loaded(body):
+            rows = body.get("attachments", []) if isinstance(body, dict) else []
+            if not rows:
+                failed("附件数据库未返回计算结果")
+                return
+            calculated = merge_cost(attachment, rows[0])
+            if calculated.get("status") == "ERROR":
+                failed(str(calculated.get("error") or "附件金额计算失败"))
+                return
+            succeeded(calculated)
+
+        worker.succeeded.connect(loaded)
+        worker.failed.connect(failed)
+
+        def finished():
+            getattr(window, "_scheme2_attachment_reprice_workers", set()).discard(worker)
+            worker.deleteLater()
+
+        worker.finished.connect(finished)
+        worker.start()
+
+    window_class.recalculate_draft_attachment = recalculate_draft_attachment
+
     # ApiWorker handles ordinary requests. The existing ganged worker keeps its
     # child-cabinet flow and commits one aggregate V2 attachment snapshot.
     worker_init = worker_class.__init__
@@ -476,6 +741,7 @@ def install_attachment_v2(namespace):
 
     show = window_class.show_result
     def show_result(window, result, *args, **kwargs):
+        result = provisionalize_manual_dimension_result(result)
         if getattr(window, "_v2_request_environment", None) and result.get("attachment_contract") != 2:
             window.current_result = None
             window._attachment_v2_line_id = None

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
+import { materialUnitPriceFromSidebar } from './material_price_override.mjs';
 import {
   attachmentImageCatalogSql,
   attachmentImageTablesExistSql,
@@ -89,14 +90,13 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
     for(const key of ['width_mm','height_mm','depth_mm']) if(!Number.isFinite(Number(input[key]))||Number(input[key])<=0) throw new Error(`${key}必须为正数`);
     const prices=await query(`SELECT jsonb_build_object(
       'density_g_cm3',(SELECT density_g_cm3 FROM calc.material WHERE material_code=${sqlValue(input.material_code)}),
-      'material_unit_price',calc.get_material_unit_price(${sqlValue(input.material_code)},${sqlValue(quoteDate)}::date),
       'spray_unit_price',CASE WHEN ${sqlValue(input.coating_type)}='不喷塑' THEN 0 ELSE calc.get_spray_unit_price(${sqlValue(quoteDate)}::date,${sqlValue(input.coating_type)}) END);`);
     const environment={quote_line_id:randomUUID(),product_code:input.product_code,material_code:input.material_code,
       width_mm:Number(input.width_mm),height_mm:Number(input.height_mm),depth_mm:Number(input.depth_mm),
       coating_type:input.coating_type,quote_date:quoteDate,
       cabinet_body_thickness_mm:Number(input.cabinet_body_thickness_mm??1.5),
       waste_factor:Number(input.waste_factor??1.2),ganged_cabinet_count:gangedCount,
-      ganged_cabinets:gangedCabinets,...prices};
+      ganged_cabinets:gangedCabinets,...prices,material_unit_price:materialUnitPriceFromSidebar(input,input.material_code)};
     const attachments=selections.map(selection=>{
       const item=data.items.find(a=>Number(a.attachment_price_id)===selection.attachment_price_id);
       if(!item) throw new Error(`附件ID ${selection.attachment_price_id} 不属于当前目录，请重新选择`);

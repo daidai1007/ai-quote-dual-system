@@ -14,6 +14,7 @@ import { applyCabinetMaterial, createCabinetMaterialService } from './cabinet_ma
 import { applyCabinetSpray, createCabinetSprayService } from './cabinet_spray_service.mjs';
 import { applyCabinetLabor, createCabinetLaborService } from './cabinet_labor_service.mjs';
 import { applyCabinetAuxiliary, createCabinetAuxiliaryService } from './cabinet_auxiliary_service.mjs';
+import { normalizeDrawingContext } from './drawing_context.mjs';
 
 const RUNTIME_CONFIG = resolveRuntimeConfig();
 const PORT = RUNTIME_CONFIG.port;
@@ -101,7 +102,7 @@ const dateValue = (value) => {
 
 const clientErrorStatus = (error) => {
   const message = String(error?.message || '');
-  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only|报价日期无效|柜体料厚|废料系数|并柜|材料重量|最新柜体材料表没有|缺少材质.+密度或有效材料单价|人工成本必须|没有适用人工|人工公式|辅材 BOM|辅材数量规则/i.test(message)
+  return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only|drawing_context|报价日期无效|柜体料厚|废料系数|并柜|材料重量|副导航栏|界面材料单价|最新柜体材料表没有|缺少材质.+密度或有效材料单价|人工成本必须|没有适用人工|人工公式|辅材 BOM|辅材数量规则/i.test(message)
     ? 400 : 500;
 };
 
@@ -135,6 +136,7 @@ const validateRequest = (input) => {
   return {
     ...input,
     product_code: productCode,
+    drawing_context: normalizeDrawingContext(input.drawing_context),
     attachments: (input.attachments || []).map((attachment, index) => {
       if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
         throw new Error(`attachments[${index}] must be an object`);
@@ -829,15 +831,14 @@ const runWorkbookExporter = async (payload) => {
   }
 };
 
-// Cost-detail export enrichment is intentionally read-only.  It exposes the
-// database-owned material and spray prices used to explain an already
-// calculated formula quotation. Auxiliary details come from the versioned
+// Cost-detail export enrichment is intentionally read-only. Material prices
+// remain frozen in the quote snapshot from the cost-page sidebar; only the
+// spray price still needs database enrichment. Auxiliary details come from the versioned
 // calculation snapshot already present in the formula result.
 const exportCostDetailSql = (payload) => {
   const requests = (payload.items || []).map((item, itemIndex) => {
     return {
       item_index: itemIndex,
-      material_code: item.material_code || 'SECC',
       coating_type: item.coating_type || DEFAULT_COATING_TYPE,
       quote_date: dateValue(item.quote_date || payload.quote_date),
     };
@@ -846,14 +847,12 @@ const exportCostDetailSql = (payload) => {
   return `WITH requested AS (
     SELECT
       (value->>'item_index')::integer AS item_index,
-      value->>'material_code' AS material_code,
       value->>'coating_type' AS coating_type,
       (value->>'quote_date')::date AS quote_date
     FROM jsonb_array_elements(${requestJson}::jsonb)
   )
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
     'item_index', r.item_index,
-    'material_unit_price', calc.get_material_unit_price(r.material_code, r.quote_date),
     'spray_unit_price', calc.get_spray_unit_price(r.quote_date, r.coating_type)
   ) ORDER BY r.item_index), '[]'::jsonb)::text
   FROM requested r;`;
@@ -870,14 +869,7 @@ const enrichExportCostDetails = async (payload) => {
     items: items.map((item, index) => {
       const detail = byIndex.get(index) || {};
       const formula = { ...(item.formula || {}) };
-      const materialUnitPrice = Number(detail.material_unit_price);
       const sprayUnitPrice = Number(detail.spray_unit_price);
-      if (Number.isFinite(materialUnitPrice) && materialUnitPrice > 0) {
-        formula.material_unit_price = materialUnitPrice;
-        if (formula.corrected_material_weight_kg == null && Number.isFinite(Number(formula.material_cost))) {
-          formula.corrected_material_weight_kg = Number(formula.material_cost) / materialUnitPrice;
-        }
-      }
       if (Number.isFinite(sprayUnitPrice)) formula.spray_unit_price = sprayUnitPrice;
       return {
         ...item,
@@ -1119,7 +1111,9 @@ const server = http.createServer(async (req, res) => {
     const input = normalizeProductVariant(validateRequest(await readBody(req)));
     if(input.attachment_contract===2) {
       input.quote_date=dateValue(input.quote_date);input.coating_type ||= DEFAULT_COATING_TYPE;
-      return json(res,200,await attachmentService.calculate(input));
+      const attachmentResult=await attachmentService.calculate(input);
+      if(input.drawing_context) attachmentResult.drawing_context=input.drawing_context;
+      return json(res,200,attachmentResult);
     }
     if((input.attachments||[]).length && (await attachmentService.hasActive()
       ||input.attachments.some(a=>a.catalog_version||a.data_version||a.status))) {
@@ -1163,6 +1157,7 @@ const server = http.createServer(async (req, res) => {
         waste_factor:quoteInput.waste_factor??null,
       },
     };
+    if(input.drawing_context) result.drawing_context=input.drawing_context;
     await cabinetMaterialService.persist(input.quote_id, result, cabinetMaterial);
     await cabinetSprayService.persist(input.quote_id, result, cabinetSpray);
     await cabinetAuxiliaryService.persist(input.quote_id,result,cabinetAuxiliary);
