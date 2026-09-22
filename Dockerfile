@@ -14,7 +14,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY api/server.mjs api/attachment_catalog_rules.mjs api/attachment_catalog_query.mjs api/attachment_image_query.mjs api/door_variant_rules.mjs api/history_price_query.mjs api/runtime_config.mjs api/attachment_service.mjs api/attachment_cost.mjs api/attachment_formula.mjs api/cabinet_material_service.mjs api/cabinet_spray_service.mjs api/cabinet_labor_service.mjs api/cabinet_auxiliary_service.mjs ./api/
+COPY api/server.mjs api/attachment_catalog_rules.mjs api/attachment_catalog_query.mjs api/attachment_image_query.mjs api/door_variant_rules.mjs api/history_price_query.mjs api/runtime_config.mjs api/attachment_service.mjs api/attachment_cost.mjs api/attachment_formula.mjs api/cabinet_material_service.mjs api/material_price_override.mjs api/drawing_context.mjs api/cabinet_spray_service.mjs api/cabinet_labor_service.mjs api/cabinet_auxiliary_service.mjs ./api/
 COPY exceljs_range_adapter.mjs quote_export_contract.mjs quick_discount_rules.mjs export_dual_quote_workbook.mjs attachment_snapshot_export.mjs ./
 
 RUN chown -R node:node /app

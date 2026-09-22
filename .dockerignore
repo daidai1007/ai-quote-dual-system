@@ -7,6 +7,8 @@
 !api/attachment_cost.mjs
 !api/attachment_formula.mjs
 !api/cabinet_material_service.mjs
+!api/material_price_override.mjs
+!api/drawing_context.mjs
 !api/cabinet_spray_service.mjs
 !api/cabinet_labor_service.mjs
 !api/cabinet_auxiliary_service.mjs
