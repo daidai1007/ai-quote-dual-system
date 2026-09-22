@@ -131,14 +131,25 @@ export function createCabinetMaterialService({runPsql}){
       'rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no,r.source_column),'[]') FROM calc.cabinet_material_rule r WHERE r.data_version=v.data_version AND r.family=${valueSql(family)}),
       'fixed_rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no),'[]') FROM calc.cabinet_material_fixed_rule r WHERE r.data_version=v.data_version AND r.product_code=${valueSql(product)}),
       'materials',(SELECT coalesce(jsonb_agg(jsonb_build_object('material_code',m.material_code,'density_g_cm3',m.density_g_cm3,
-        'material_unit_price',calc.get_material_unit_price(m.material_code,${valueSql(date)}::date))),'[]') FROM calc.material m WHERE m.material_code IN (${valueSql(input.material_code)},'SECC')))
+        'material_unit_price',calc.get_material_unit_price(m.material_code,${valueSql(date)}::date))),'[]') FROM calc.material m WHERE m.material_code IN (${valueSql(input.material_code)},'SECC','Q235','SGCC','DX51D','GI')))
       FROM calc.cabinet_material_catalog_version v WHERE v.status='ACTIVE';`); }
     catch(error){
       if(/cabinet_material_(catalog_version|rule|fixed_rule).*does not exist/is.test(String(error?.message||error)))return null;
       throw error;
     }
     if(!data)return null;
-    const environment={...input,product_code:product,data_version:data.data_version,materials:data.materials,
+    const carbonOverride=input.carbon_steel_unit_price_override==null?null:
+      positive(input.carbon_steel_unit_price_override,'碳钢价格',{max:1e5});
+    const galvanizedOverride=input.galvanized_sheet_unit_price_override==null?null:
+      positive(input.galvanized_sheet_unit_price_override,'镀锌板价格',{max:1e5});
+    const materials=(data.materials||[]).map(material=>{
+      const code=codeOf(material.material_code);
+      const override=['SECC','Q235'].includes(code)?carbonOverride:
+        ['SGCC','DX51D','GI'].includes(code)?galvanizedOverride:null;
+      return override==null?material:{...material,database_material_unit_price:material.material_unit_price,
+        material_unit_price:override,quote_local_price_override:true};
+    });
+    const environment={...input,product_code:product,data_version:data.data_version,materials,
       waste_factor:input.waste_factor??data.default_waste_factor};
     return fixedProducts.has(product)?calculateCabinetMaterialFixed(data.fixed_rules,environment):calculateCabinetMaterial(data.rules,environment);
   },async persist(quoteId,result,material){

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import {applyCabinetSpray,calculateCabinetSpray,calculateCabinetSprayFixed} from '../api/cabinet_spray_service.mjs';
+import {applyCabinetSpray,calculateCabinetSpray,calculateCabinetSprayFixed,createCabinetSprayService} from '../api/cabinet_spray_service.mjs';
 
 const rules=[
   {rule_id:1,family:'JS',body_thickness_profile_mm:1.5,single_door_count:1,double_door_count:0,
@@ -38,6 +38,15 @@ test('zero spray unit price is valid and waste factor never changes spray',()=>{
   const second=calculateCabinetSpray(rules,{...environment,spray_unit_price:0,waste_factor:1.8});
   assert.equal(first.spray_cost,0);assert.equal(second.spray_cost,0);
   assert.equal(first.product_area_m2,second.product_area_m2);
+});
+
+test('quote-local surface-treatment price overrides the active catalog price',async()=>{
+  const service=createCabinetSprayService({runPsql:async()=>JSON.stringify({
+    data_version:'cabinet-spray-test-v1',rules,fixed_rules:[],spray_unit_price:12,
+  })});
+  const result=await service.calculate({...environment,quote_date:'2026-09-22',surface_treatment_unit_price_override:28});
+  assert.equal(result.spray_unit_price,28);
+  assert.equal(result.spray_cost,Math.round(result.product_area_m2*28*100)/100);
 });
 
 test('body thickness selects the exact spray profile',()=>{

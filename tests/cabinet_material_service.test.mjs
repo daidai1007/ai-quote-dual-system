@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import {calculateCabinetMaterial,calculateCabinetMaterialFixed,applyCabinetMaterial} from '../api/cabinet_material_service.mjs';
+import {calculateCabinetMaterial,calculateCabinetMaterialFixed,applyCabinetMaterial,createCabinetMaterialService} from '../api/cabinet_material_service.mjs';
 import {calculateAttachment} from '../api/attachment_cost.mjs';
 
 const materials=[
@@ -43,6 +43,16 @@ test('operator waste factor overrides the 1.2 default and profile 2 is exact',()
   assert.equal(result.waste_factor,1.35);
   assert.equal(result.net_material_weight_kg,1000*600*0.000001*2*7.93);
   assert.equal(result.corrected_material_weight_kg,result.net_material_weight_kg*1.35);
+});
+
+test('quote-local carbon price override replaces catalog price without mutating the catalog',async()=>{
+  const catalogMaterials=materials.map(row=>({...row}));
+  const service=createCabinetMaterialService({runPsql:async()=>JSON.stringify({
+    data_version:'cabinet-material-test-v1',default_waste_factor:1.2,rules,fixed_rules:[],materials:catalogMaterials,
+  })});
+  const result=await service.calculate({...environment,quote_date:'2026-09-22',carbon_steel_unit_price_override:9.5});
+  assert.equal(result.part_details.find(row=>row.material_code==='SECC').material_unit_price,9.5);
+  assert.equal(catalogMaterials.find(row=>row.material_code==='SECC').material_unit_price,5);
 });
 
 test('base quote material cost and total are replaced while other components stay intact',()=>{

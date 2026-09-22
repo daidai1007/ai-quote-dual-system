@@ -100,6 +100,8 @@ export function createCabinetSprayService({runPsql}){
       throw error;
     }
     if(!data)return null;
+    if(input.surface_treatment_unit_price_override!=null&&String(input.coating_type||'').trim()!=='不喷塑')
+      data.spray_unit_price=finite(input.surface_treatment_unit_price_override,'表面处理价格',{allowZero:true,max:1e5});
     if(fixedProducts.has(product))return calculateCabinetSprayFixed(data.fixed_rules,{...input,product_code:product,data_version:data.data_version});
     return calculateCabinetSpray(data.rules,{...input,data_version:data.data_version,spray_unit_price:data.spray_unit_price});
   },async persist(quoteId,result,spray){

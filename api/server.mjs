@@ -1141,6 +1141,28 @@ const server = http.createServer(async (req, res) => {
     const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
     const result = applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(
       applyCabinetMaterial(JSON.parse(jsonLine),cabinetMaterial),cabinetSpray),cabinetAuxiliary),cabinetLabor);
+    // A normalized, additive detail contract for the cost-detail UI.  The
+    // existing formula_cost/quick_quote structures remain unchanged for old
+    // clients and exports; these rows are also captured by the existing quote
+    // document JSON snapshot, so no schema migration is required.
+    result.cost_details={
+      version:1,
+      material_parts:cabinetMaterial?.part_details||[],
+      material_groups:cabinetMaterial?.material_details||[],
+      auxiliary_parts:cabinetAuxiliary?.lines||[],
+      spray_parts:cabinetSpray?.part_details||[],
+      labor: cabinetLabor?{
+        labor_cost:cabinetLabor.labor_cost,management_fee:cabinetLabor.management_fee,
+        management_fee_rate:cabinetLabor.management_fee_rate,method:cabinetLabor.match_method,
+        billable_weight_kg:cabinetLabor.labor_billable_weight_kg,matched_rule:cabinetLabor.matched_rule,
+      }:null,
+      quote_local_overrides:{
+        galvanized_sheet_unit_price:quoteInput.galvanized_sheet_unit_price_override??null,
+        carbon_steel_unit_price:quoteInput.carbon_steel_unit_price_override??null,
+        surface_treatment_unit_price:quoteInput.surface_treatment_unit_price_override??null,
+        waste_factor:quoteInput.waste_factor??null,
+      },
+    };
     await cabinetMaterialService.persist(input.quote_id, result, cabinetMaterial);
     await cabinetSprayService.persist(input.quote_id, result, cabinetSpray);
     await cabinetAuxiliaryService.persist(input.quote_id,result,cabinetAuxiliary);
