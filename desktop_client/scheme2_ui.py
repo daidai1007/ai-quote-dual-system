@@ -879,6 +879,92 @@ class _MultilineComboPaintFilter(QObject):
         return True
 
 
+class _SchemeConfirmDialog(QDialog):
+    def __init__(self, parent, title, message, accept_text, reject_text="继续编辑"):
+        super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("scheme2ConfirmDialog")
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        if parent is not None:
+            self.resize(parent.size())
+            self.move(parent.mapToGlobal(QPoint(0, 0)))
+
+        overlay = QVBoxLayout(self)
+        overlay.setContentsMargins(0, 0, 0, 0)
+        shell = QFrame()
+        shell.setObjectName("scheme2ConfirmShell")
+        shell.setFixedWidth(386)
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 14)
+        shell_layout.setSpacing(0)
+
+        title_bar = QFrame()
+        title_bar.setObjectName("scheme2ConfirmTitleBar")
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(14, 0, 8, 0)
+        title_label = QLabel(title)
+        title_label.setObjectName("scheme2ConfirmTitle")
+        close_button = QToolButton()
+        close_button.setObjectName("scheme2ConfirmClose")
+        close_button.setText("×")
+        close_button.setFixedSize(28, 28)
+        close_button.clicked.connect(self.reject)
+        title_layout.addWidget(title_label)
+        title_layout.addStretch(1)
+        title_layout.addWidget(close_button)
+        shell_layout.addWidget(title_bar)
+
+        content = QWidget()
+        content_layout = QHBoxLayout(content)
+        content_layout.setContentsMargins(16, 16, 16, 12)
+        content_layout.setSpacing(14)
+        icon = QLabel("⚠")
+        icon.setObjectName("scheme2ConfirmWarningIcon")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setFixedSize(34, 34)
+        message_label = QLabel(message)
+        message_label.setObjectName("scheme2ConfirmMessage")
+        message_label.setWordWrap(True)
+        content_layout.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        content_layout.addWidget(message_label, 1)
+        shell_layout.addWidget(content)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(16, 0, 16, 0)
+        actions.setSpacing(10)
+        actions.addStretch(1)
+        reject_button = QPushButton(reject_text)
+        reject_button.setObjectName("scheme2ConfirmReject")
+        accept_button = QPushButton(accept_text)
+        accept_button.setObjectName("scheme2ConfirmDanger")
+        for button in (reject_button, accept_button):
+            button.setMinimumHeight(30)
+            button.setAutoDefault(False)
+            button.setDefault(False)
+        reject_button.clicked.connect(self.reject)
+        accept_button.clicked.connect(self.accept)
+        actions.addWidget(reject_button)
+        actions.addWidget(accept_button)
+        shell_layout.addLayout(actions)
+
+        overlay.addStretch(1)
+        overlay.addWidget(shell, 0, Qt.AlignmentFlag.AlignCenter)
+        overlay.addStretch(1)
+        self.shell = shell
+        self.reject_button = reject_button
+        self.accept_button = accept_button
+
+
+def _confirm_discard_unsaved(parent):
+    dialog = _SchemeConfirmDialog(
+        parent,
+        "有未保存变更",
+        "当前配置尚未加入报价清单，关闭后将丢失本次填写的内容。",
+        "放弃更改并关闭",
+    )
+    return dialog.exec() == QDialog.DialogCode.Accepted
+
+
 class _SchemeComboItemDelegate(QStyledItemDelegate):
     def __init__(self, combo, separator_index=-1):
         super().__init__(combo.view())
@@ -3227,6 +3313,17 @@ def _apply_palette(window):
 QMainWindow QWidget { font-family:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI"; }
 QMainWindow, QWidget#scheme2OptionPage, QWidget#scheme2CostPage, QWidget#scheme2DetailPage { background:#FFFFFF; color:#1C1C1E; }
 QLabel#scheme2ServiceStatus { color:#3B6D11; background:#EAF3DE; border-radius:7px; padding:5px 6px; font-size:10px; }
+QDialog#scheme2ConfirmDialog { background:rgba(22,28,36,0.45); }
+QFrame#scheme2ConfirmShell { background:#FFFFFF; border:1px solid #D7DCE3; border-radius:8px; }
+QFrame#scheme2ConfirmTitleBar { background:#FFFFFF; border:0; border-bottom:1px solid #E2E5E9; border-top-left-radius:8px; border-top-right-radius:8px; min-height:40px; }
+QLabel#scheme2ConfirmTitle { color:#1C1C1E; font-size:14px; font-weight:600; border:0; }
+QToolButton#scheme2ConfirmClose { color:#8A8A86; background:transparent; border:0; font-size:16px; }
+QToolButton#scheme2ConfirmClose:hover { color:#1C1C1E; }
+QLabel#scheme2ConfirmWarningIcon { color:#B55D08; background:#FFF4E5; border:1px solid #F2A33A; border-radius:17px; font-size:16px; }
+QLabel#scheme2ConfirmMessage { color:#1C1C1E; background:transparent; border:0; font-size:13px; }
+QPushButton#scheme2ConfirmReject { color:#1C1C1E; background:#FFFFFF; border:1px solid #C8CDD4; border-radius:6px; padding:0 14px; }
+QPushButton#scheme2ConfirmDanger { color:#FFFFFF; background:#C9362B; border:1px solid #C9362B; border-radius:6px; padding:0 14px; font-weight:600; }
+QPushButton#scheme2ConfirmDanger:hover { background:#B52E25; border-color:#B52E25; }
 QScrollArea#scheme2OptionScroll, QWidget#scheme2OptionForm { background:#FFFFFF; border:0; }
 QScrollArea#scheme2OptionScroll QScrollBar:vertical { background:#EEF0F3; width:10px; margin:0; }
 QScrollArea#scheme2OptionScroll QScrollBar::handle:vertical { background:#C3CBD6; border-radius:5px; min-height:36px; }
@@ -3442,12 +3539,7 @@ def install_scheme2_ui(namespace):
             event.ignore()
             return
         if getattr(window, "_scheme2_dirty", False) and window.isVisible():
-            answer = QMessageBox.question(
-                window, "有未保存变更", "当前配置尚未加入报价清单，确定关闭吗？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
+            if not _confirm_discard_unsaved(window):
                 event.ignore()
                 return
         original_close(window, event)
