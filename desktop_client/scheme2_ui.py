@@ -1275,6 +1275,10 @@ class _SchemeComboItemDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
         return QSize(max(120, option.rect.width()), 40)
 
+    @staticmethod
+    def checkbox_rect(rect):
+        return QRect(rect.left() + 14, rect.center().y() - 7, 15, 15)
+
     def paint(self, painter, option, index):
         painter.save()
         rect = option.rect
@@ -1300,18 +1304,23 @@ class _SchemeComboItemDelegate(QStyledItemDelegate):
             painter.drawLine(rect.left(), rect.top(), rect.right(), rect.top())
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         custom = index.row() == self.separator_index
+        shows_checkbox = hasattr(self.combo, "is_row_selected") and index.row() > 0
+        if shows_checkbox:
+            check_rect = self.checkbox_rect(rect)
+            painter.setPen(QPen(QColor("#2563EB" if chosen else "#98A2B3"), 1))
+            painter.setBrush(QColor("#2563EB") if chosen else QColor("#FFFFFF"))
+            painter.drawRoundedRect(check_rect, 2, 2)
+            if chosen:
+                painter.setPen(QPen(QColor("#FFFFFF"), 1.7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                center_y = check_rect.center().y()
+                painter.drawLine(QPoint(check_rect.left() + 3, center_y), QPoint(check_rect.left() + 6, center_y + 3))
+                painter.drawLine(QPoint(check_rect.left() + 6, center_y + 3), QPoint(check_rect.right() - 2, center_y - 4))
         painter.setPen(QColor("#185FA5" if chosen or custom else "#1C1C1E"))
         painter.drawText(
-            rect.adjusted(14, 0, -36, 0),
+            rect.adjusted(40 if shows_checkbox else 14, 0, -14, 0),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             text,
         )
-        if chosen:
-            center_y = rect.center().y()
-            right = rect.right() - 14
-            painter.setPen(QPen(QColor("#2563EB"), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-            painter.drawLine(QPoint(right - 8, center_y), QPoint(right - 5, center_y + 4))
-            painter.drawLine(QPoint(right - 5, center_y + 4), QPoint(right + 1, center_y - 5))
         painter.restore()
 
 

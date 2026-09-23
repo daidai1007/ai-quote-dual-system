@@ -167,6 +167,25 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
     )
     category = str(selection.get("category_level1") or selection.get("attachment_category") or "").strip()
     name = str(selection.get("item_name") or selection.get("name") or "").strip()
+    ground_wire_aliases = {
+        "接地线-黄绿线": ("黄绿线", "红绿线"),
+        "接地线-编织带": ("编织带",),
+    }
+    if name in ground_wire_aliases:
+        aliases = tuple(attachment_image_match_key(value) for value in ground_wire_aliases[name])
+        ground_wire_matches = []
+        for item in catalog:
+            if not isinstance(item, dict):
+                continue
+            identity = " ".join(
+                str(item.get(field) or "")
+                for field in ("category_level1", "category_level2", "category_level3", "item_name", "model_code", "variant")
+            )
+            normalized_identity = attachment_image_match_key(identity)
+            if "接地线" in normalized_identity and any(alias in normalized_identity for alias in aliases):
+                ground_wire_matches.append(item)
+        if len(ground_wire_matches) == 1:
+            return ground_wire_matches[0]
     if category in {"风机", "滤网"}:
         wanted_suffix = attachment_model_suffix(name, category)
         if wanted_suffix:

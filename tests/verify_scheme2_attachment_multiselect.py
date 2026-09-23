@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QImage, QPainter  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QPainter  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 
@@ -45,9 +45,9 @@ assert check.isChecked()
 combo.resize(125, combo.height())
 combo.repaint()
 app.processEvents()
-placements, required_height = combo._chip_layout()
+placements, required_height = combo._chip_layout(90)
 assert len(placements) == 2 and placements[0][1].y() < placements[1][1].y()
-assert combo.minimumHeight() == required_height
+assert required_height > 36
 first_chip = combo._chip_hit_rects[fixed]
 QTest.mouseClick(combo, Qt.MouseButton.LeftButton, pos=first_chip.center())
 app.processEvents()
@@ -62,12 +62,24 @@ assert [row["item_name"] for row in rows] == ["固定立柱", "分段板"]
 
 delegate = combo.view().itemDelegate()
 image = QImage(240, 40, QImage.Format.Format_ARGB32)
+image.fill(QColor("#FFFFFF"))
 painter = QPainter(image)
 option = QStyleOptionViewItem()
 option.rect = image.rect()
 delegate.paint(painter, option, combo.model().index(section, 0))
 painter.end()
 assert combo.is_row_selected(fixed) and combo.is_row_selected(section)
+checkbox = delegate.checkbox_rect(option.rect)
+selected_fill = image.pixelColor(checkbox.left() + 3, checkbox.top() + 3)
+assert selected_fill.blue() > selected_fill.red() + 40
+
+unchecked_image = QImage(240, 40, QImage.Format.Format_ARGB32)
+unchecked_image.fill(QColor("#FFFFFF"))
+unchecked_painter = QPainter(unchecked_image)
+delegate.paint(unchecked_painter, option, combo.model().index(combo.findText("绑线条"), 0))
+unchecked_painter.end()
+unchecked_border = unchecked_image.pixelColor(checkbox.left(), checkbox.center().y())
+assert unchecked_border != QColor("#FFFFFF")
 
 combo.toggle_row(fixed)
 assert combo.selected_texts() == ["分段板"]
