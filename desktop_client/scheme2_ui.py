@@ -9,13 +9,15 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import date
+import html
 from pathlib import Path
 import re
 import tempfile
 from types import MethodType
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut, QTextDocument
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
@@ -90,6 +92,42 @@ class _ClickableProgressBar(QProgressBar):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+class _ExportValidationWorker(QThread):
+    succeeded = Signal()
+    failed = Signal(str)
+
+    def __init__(self, validation, parent=None):
+        super().__init__(parent)
+        self.validation = validation
+
+    def run(self):
+        try:
+            self.validation()
+            self.succeeded.emit()
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
+def _start_export_validation(window):
+    worker = getattr(window, "_scheme2_export_validation_worker", None)
+    if worker is not None and worker.isRunning():
+        return
+    window.set_export_busy(True, "正在检查云端导出服务…")
+    worker = _ExportValidationWorker(window.validate_export_environment, window)
+    window._scheme2_export_validation_worker = worker
+
+    def proceed():
+        window.set_export_busy(False, "")
+        window._scheme2_export_validation_passed = True
+        window.confirm_and_export()
+
+    worker.succeeded.connect(proceed)
+    worker.failed.connect(window.confirmation_failed)
+    worker.finished.connect(lambda: setattr(window, "_scheme2_export_validation_worker", None))
+    worker.finished.connect(worker.deleteLater)
+    worker.start()
 
 
 class _Scheme2PageRecognitionWorker(QThread):
@@ -233,7 +271,10 @@ def _reprice_material_details(item, state):
     if not isinstance(groups, list) or not groups:
         return False
     selected_code = str(item.get("material_code") or "").strip().upper()
-    current_price = _number(state.get("carbon_price"))
+    current_price = _number(
+        state.get("stainless_price") if selected_code in {"SUS304", "SUS316"}
+        else state.get("carbon_price")
+    )
     galvanized_price = _number(state.get("galvanized_price"))
 
     def price_for(code):
@@ -267,6 +308,15 @@ def _reprice_material_details(item, state):
         formula["material_unit_price"] = groups[0]["material_unit_price"]
     _replace_component(item, "material_cost", total)
     return True
+
+
+def _current_material_unit_price(item):
+    formula = _formula(item)
+    selected_code = str(item.get("material_code") or "").strip().upper()
+    for group in formula.get("material_details") or []:
+        if str(group.get("material_code") or "").strip().upper() == selected_code:
+            return _number(group.get("material_unit_price"))
+    return _number(formula.get("material_unit_price"))
 
 
 def _selected_row(window):
@@ -782,10 +832,11 @@ class _SchemePencilSpinBox(QDoubleSpinBox):
 
 
 class FaceDiscountEditor(QDialog):
-    def __init__(self, window, item):
+    def __init__(self, window, item, target_items=None):
         super().__init__(window)
         self.window = window
         self.item = item
+        self.target_items = list(target_items or [item])
         self.setWindowTitle("面价折扣")
         self.setObjectName("scheme2DiscountDialog")
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
@@ -803,7 +854,8 @@ class FaceDiscountEditor(QDialog):
         header.setObjectName("scheme2DiscountHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(0, 8, 0, 8)
-        title = QLabel("面价折扣")
+        product = _cost_product(item)
+        title = QLabel(f"{product}统一面价折扣" if len(self.target_items) > 1 else "面价折扣")
         title.setObjectName("scheme2DialogTitle")
         close = QToolButton()
         close.setObjectName("scheme2DiscountClose")
@@ -859,9 +911,46 @@ class FaceDiscountEditor(QDialog):
         layout.addLayout(actions)
 
     def accept(self):
-        self.item["quick_discount"] = self.discount.value()
+        for item in self.target_items:
+            item["quick_discount"] = self.discount.value()
         self.window.refresh_summary()
         super().accept()
+
+
+def _printable_quote_html(window) -> str:
+    company = html.escape(str(getattr(window, "scheme2_company", None).currentText() if getattr(window, "scheme2_company", None) is not None else ""))
+    rows = []
+    total = 0.0
+    for index, item in enumerate(getattr(window, "draft_items", []), 1):
+        values = _row_values(item)
+        amount = _number(values[13]) * max(1, int(_number(values[11], 1)))
+        total += amount
+        cells = (index, values[1], values[2], values[3], values[11], f"{_number(values[13]):,.2f}", f"{amount:,.2f}")
+        rows.append("<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in cells) + "</tr>")
+    return f"""
+    <html><head><style>
+    body{{font-family:'Microsoft YaHei UI';font-size:10pt;color:#202B38}}
+    h1{{text-align:center;font-size:18pt}} table{{width:100%;border-collapse:collapse}}
+    th,td{{border:1px solid #64748B;padding:6px;text-align:center}} th{{background:#DCE8F7}}
+    .meta{{margin-bottom:12px}} .total{{text-align:right;font-size:12pt;font-weight:600;margin-top:10px}}
+    </style></head><body><h1>报价单</h1><div class="meta">下单公司：{company}</div>
+    <table><tr><th>序号</th><th>名称</th><th>产品</th><th>规格</th><th>数量</th><th>面价</th><th>金额</th></tr>
+    {''.join(rows)}</table><div class="total">合计：{total:,.2f} 元</div></body></html>
+    """
+
+
+def _print_quote(window):
+    if not getattr(window, "draft_items", []):
+        QMessageBox.warning(window, "报价清单为空", "请先将至少一个柜型加入报价清单。")
+        return
+    printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+    dialog = QPrintDialog(printer, window)
+    dialog.setWindowTitle("打印报价单")
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return
+    document = QTextDocument(window)
+    document.setHtml(_printable_quote_html(window))
+    document.print_(printer)
 
 
 def _detail_rows(item):
@@ -1466,6 +1555,7 @@ def _cost_sidebar(window):
     controls = {
         "galvanized_price": ("镀锌板价格", _sidebar_price_spin(4.55, 2)),
         "carbon_price": ("碳钢价格", _sidebar_price_spin(4.20, 1)),
+        "stainless_price": ("不锈钢价格", _sidebar_price_spin(17.50, 2)),
         "waste_factor": ("废料系数", _sidebar_price_spin(1.20, 1, 4)),
         "labor_discount": ("人工折扣", _sidebar_price_spin(1.00, 2, 4)),
         "surface_price": ("表面处理价格", _sidebar_price_spin(26.00, 0)),
@@ -1481,6 +1571,10 @@ def _cost_sidebar(window):
         field = _field(label, control)
         if key == "carbon_price":
             window.scheme2_material_price_label = field.findChild(QLabel, "scheme2FieldLabel")
+        if key == "stainless_price":
+            window.scheme2_stainless_price_field = field
+            window.scheme2_stainless_price_label = field.findChild(QLabel, "scheme2FieldLabel")
+            field.hide()
         layout.addWidget(field)
         control.editingFinished.connect(lambda k=key, c=control: _apply_cost_control(window, k, c.value()))
     layout.addStretch(1)
@@ -1504,13 +1598,23 @@ def _apply_cost_control(window, key, value):
         base = _number(item.setdefault("scheme2_cost_bases", {}).setdefault("material_cost", formula.get("material_cost")))
         original = _number(item.setdefault("scheme2_cost_bases", {}).setdefault("waste_factor", item.get("waste_factor", old)), 1.2)
         item["waste_factor"] = value
-        _replace_component(item, "material_cost", base * value / max(original, .01))
+        ratio = value / max(original, .01)
+        groups = formula.get("material_details") or []
+        for group in groups:
+            base_weight = _number(group.setdefault("_scheme2_base_billable_weight", group.get("billable_weight_kg")))
+            group["billable_weight_kg"] = base_weight * ratio
+        for detail in formula.get("cabinet_material_part_details") or []:
+            base_weight = _number(detail.setdefault("_scheme2_base_billable_weight", detail.get("billable_weight_kg")))
+            detail["billable_weight_kg"] = base_weight * ratio
+        if not _reprice_material_details(item, state):
+            _replace_component(item, "material_cost", base * ratio)
     elif key == "labor_discount":
         base = _number(item.get("formula_base", formula).get("labor_cost", formula.get("labor_cost")))
         item["labor_multiplier"] = value
         _replace_component(item, "labor_cost", base * value)
-        _replace_component(item, "management_fee", base * value * .13)
-    elif key in ("carbon_price", "galvanized_price"):
+        management_rate = _number(formula.get("management_fee_rate"), .13)
+        _replace_component(item, "management_fee", base * value * management_rate)
+    elif key in ("carbon_price", "galvanized_price", "stainless_price"):
         if not _reprice_material_details(item, state):
             base_state = item.setdefault("scheme2_cost_bases", {})
             base = _number(base_state.setdefault("material_cost", formula.get("material_cost")))
@@ -1560,6 +1664,7 @@ def _build_cost_page(window):
     compact_value = _price_spin(1.0)
     for key, label in (
         ("galvanized_price", "镀锌板价格"), ("carbon_price", "当前材质价格"),
+        ("stainless_price", "不锈钢价格"),
         ("waste_factor", "废料系数"), ("labor_discount", "人工折扣"),
         ("surface_price", "表面处理价格"),
     ):
@@ -1611,8 +1716,9 @@ def _build_cost_page(window):
     up = QPushButton("↑ 上移")
     down = QPushButton("↓ 下移")
     back = QPushButton("返回")
+    print_button = QPushButton("打印")
     secondary_size = delete.sizeHint()
-    for button in (delete, up, down, back):
+    for button in (delete, up, down, back, print_button):
         # Reuse the option page's "导入图纸" visual role so every
         # interaction state continues to come from one shared QSS definition.
         button.setObjectName("scheme2PrimaryGhost")
@@ -1620,18 +1726,20 @@ def _build_cost_page(window):
         button.setFixedHeight(28)
     export = QPushButton("导出报价单")
     export.setObjectName("scheme2PrimaryAction")
-    action_buttons = (delete, up, down, back, export)
+    action_buttons = (delete, up, down, back, print_button, export)
     for column, button in enumerate(action_buttons[:3]):
         actions.addWidget(button, 0, column)
     actions.setColumnStretch(3, 1)
     actions.addWidget(back, 0, 4)
-    actions.addWidget(export, 0, 5)
+    actions.addWidget(print_button, 0, 5)
+    actions.addWidget(export, 0, 6)
     body_layout.addWidget(action_widget)
     outer.addWidget(body, 1)
     delete.clicked.connect(lambda: _delete_selected(window))
     up.clicked.connect(lambda: window.move_selected_item(-1))
     down.clicked.connect(lambda: window.move_selected_item(1))
     back.clicked.connect(lambda: window.show_section(OPTION_ROUTE))
+    print_button.clicked.connect(lambda: _print_quote(window))
     export.clicked.connect(lambda: window.confirm_and_export())
     undo.clicked.connect(lambda: _undo_delete(window))
     column_mode.clicked.connect(lambda: _set_cost_column_mode(window, not window._scheme2_full_columns))
@@ -1648,6 +1756,7 @@ def _build_cost_page(window):
     window.scheme2_compact_value = compact_value
     window.scheme2_cost_empty = empty
     window.scheme2_cost_export = export
+    window.scheme2_cost_print = print_button
     _install_export_busy_feedback(window, export)
     window.scheme2_cost_return = back
     window.scheme2_cost_undo = undo_bar
@@ -1754,8 +1863,9 @@ def _layout_cost_actions(window, compact):
     if compact:
         for column, button in enumerate(buttons[:3]):
             grid.addWidget(button, 0, column)
-        grid.addWidget(buttons[3], 1, 1)
-        grid.addWidget(buttons[4], 1, 2)
+        grid.addWidget(buttons[3], 1, 0)
+        grid.addWidget(buttons[4], 1, 1)
+        grid.addWidget(buttons[5], 1, 2)
         grid.setColumnStretch(1, 1)
     else:
         for column, button in enumerate(buttons[:3]):
@@ -1763,6 +1873,7 @@ def _layout_cost_actions(window, compact):
         grid.setColumnStretch(3, 1)
         grid.addWidget(buttons[3], 0, 4)
         grid.addWidget(buttons[4], 0, 5)
+        grid.addWidget(buttons[5], 0, 6)
 
 
 def _edit_selected(window):
@@ -1807,7 +1918,11 @@ def _cost_cell_clicked(window, row, column):
     if not 0 <= row < len(items):
         return
     item = items[row]
-    if column == 13:
+    if column == 2:
+        product = _cost_product(item)
+        targets = [candidate for candidate in items if _cost_product(candidate) == product]
+        FaceDiscountEditor(window, item, targets).exec()
+    elif column == 13:
         FaceDiscountEditor(window, item).exec()
     elif column == 14:
         AttachmentEditor(window, item).exec()
@@ -1818,12 +1933,22 @@ def _cost_cell_clicked(window, row, column):
 def _sync_sidebar(window):
     item = _selected_item(window)
     state = item.get("scheme2_cost_settings", {}) if isinstance(item, dict) else window.scheme2_defaults
+    material_code = str(item.get("material_code") or "").strip().upper() if isinstance(item, dict) else ""
+    stainless = material_code in {"SUS304", "SUS316"}
+    if stainless and "stainless_price" not in state:
+        state["stainless_price"] = _current_material_unit_price(item) or window.scheme2_defaults["stainless_price"]
     for key, control in window.scheme2_cost_controls.items():
         with QSignalBlocker(control):
             control.setValue(_number(state.get(key), window.scheme2_defaults[key]))
-    caption = _material_price_caption(item.get("material_code") if isinstance(item, dict) else None)
+    caption = "碳钢价格"
     if hasattr(window, "scheme2_material_price_label"):
         window.scheme2_material_price_label.setText(caption)
+    stainless_field = getattr(window, "scheme2_stainless_price_field", None)
+    if stainless_field is not None:
+        stainless_field.setVisible(stainless)
+    stainless_label = getattr(window, "scheme2_stainless_price_label", None)
+    if isinstance(stainless_label, QLabel):
+        stainless_label.setText(f"{material_code}价格" if stainless else "不锈钢价格")
     surface_control = getattr(window, "scheme2_cost_controls", {}).get("surface_price")
     if isinstance(surface_control, QDoubleSpinBox):
         coating = str(_formula(item).get("coating_type") or "橘纹") if isinstance(item, dict) else "橘纹"
@@ -1832,6 +1957,11 @@ def _sync_sidebar(window):
         material_index = window.scheme2_compact_key.findData("carbon_price")
         if material_index >= 0:
             window.scheme2_compact_key.setItemText(material_index, caption)
+        stainless_index = window.scheme2_compact_key.findData("stainless_price")
+        if stainless_index >= 0:
+            window.scheme2_compact_key.setItemText(
+                stainless_index, f"{material_code}价格" if stainless else "不锈钢价格"
+            )
     if hasattr(window, "scheme2_compact_key"):
         _sync_compact_control(window)
 
@@ -3256,6 +3386,22 @@ def _refresh_scheme2_attachment_summary(window):
         button.setText("修改…" if attachments else "选择附件…")
 
 
+def _clear_scheme2_attachments(window):
+    """Clear the completed order's attachments from data, UI and page state."""
+
+    window.attachments = []
+    window._scheme2_attachments_manual = False
+    refresh = getattr(window, "update_attachment_view", None)
+    if callable(refresh):
+        refresh()
+    _refresh_scheme2_attachment_summary(window)
+    pages = getattr(window, "_scheme2_drawing_pages", [])
+    page_index = int(getattr(window, "_scheme2_drawing_page_index", -1))
+    if 0 <= page_index < len(pages) and isinstance(pages[page_index].get("state"), dict):
+        pages[page_index]["state"]["attachments"] = []
+        pages[page_index]["state"]["attachments_manual"] = False
+
+
 def _configure_option_page(window, namespace):
     old_page = window.stack.widget(OPTION_ROUTE)
     page = QWidget()
@@ -3742,6 +3888,10 @@ def _show_add_failure_reason(window):
 
 def _set_dirty(window, dirty=True):
     window._scheme2_dirty = bool(dirty)
+    add_button = getattr(window, "scheme2_add_button", None)
+    if dirty and isinstance(add_button, QPushButton) and add_button.text() == "已加入":
+        add_button.setText("加入报价清单")
+        add_button.setEnabled(True)
     label = getattr(window, "scheme2_saved_status", None)
     if label is not None:
         label.setText("有未保存变更" if dirty else "快照已保存")
@@ -3806,6 +3956,8 @@ def _finish_add(window):
         getattr(window, "_scheme2_active_settings", None) or window.scheme2_defaults
     )
     window._scheme2_active_settings = None
+    window._scheme2_clear_attachments_on_return = True
+    _clear_scheme2_attachments(window)
     _set_add_progress(window, 5, "已完成")
     window.scheme2_add_button.setText("已加入")
     _set_dirty(window, False)
@@ -4237,12 +4389,17 @@ def install_scheme2_ui(namespace):
             owner = worker.parent()
             if isinstance(payload, dict) and owner is not None and hasattr(owner, "scheme2_defaults"):
                 values = getattr(owner, "_scheme2_active_settings", None) or owner.scheme2_defaults
+                material_code = str(payload.get("material_code") or "").strip().upper()
                 updates = {
                     "galvanized_sheet_unit_price_override": values["galvanized_price"],
-                    "material_unit_price_override": values["carbon_price"],
                     "carbon_steel_unit_price_override": values["carbon_price"],
                     "surface_treatment_unit_price_override": values["surface_price"],
                 }
+                # SUS304/SUS316 must retain the material price resolved by the
+                # database.  Only carbon-steel selections use the sidebar
+                # override during the initial quote calculation.
+                if material_code not in {"SUS304", "SUS316"}:
+                    updates["material_unit_price_override"] = values["carbon_price"]
                 pages = getattr(owner, "_scheme2_drawing_pages", [])
                 page_index = int(getattr(owner, "_scheme2_drawing_page_index", -1))
                 if 0 <= page_index < len(pages):
@@ -4267,6 +4424,7 @@ def install_scheme2_ui(namespace):
     original_refresh = cls.refresh_summary
     original_apply_drawing = cls._apply_confirmed_drawing_to_quote
     original_add = cls.add_current_to_summary
+    original_confirm_and_export = cls.confirm_and_export
     original_company_catalog_loaded = getattr(cls, "company_catalog_loaded", None)
 
     def init(window, *args, **kwargs):
@@ -4283,7 +4441,7 @@ def install_scheme2_ui(namespace):
         window._scheme2_accept_paths = namespace["ImportDropZone"].accepted_paths
         window.scheme2_defaults = {
             "galvanized_price": 4.55, "carbon_price": 4.20, "waste_factor": 1.20,
-            "labor_discount": 1.0, "surface_price": 26.0,
+            "stainless_price": 17.50, "labor_discount": 1.0, "surface_price": 26.0,
         }
         original_init(window, *args, **kwargs)
         # The reference explicitly supports the <900 logical-pixel stacked
@@ -4312,6 +4470,22 @@ def install_scheme2_ui(namespace):
         original_resize(window, event)
         QTimer.singleShot(0, lambda: _apply_responsive(window))
 
+    def confirm_and_export(window):
+        if not getattr(window, "_scheme2_export_validation_passed", False):
+            _start_export_validation(window)
+            return
+        window._scheme2_export_validation_passed = False
+        had_override = "validate_export_environment" in window.__dict__
+        previous = window.__dict__.get("validate_export_environment")
+        window.validate_export_environment = MethodType(lambda _self: None, window)
+        try:
+            return original_confirm_and_export(window)
+        finally:
+            if had_override:
+                window.validate_export_environment = previous
+            else:
+                del window.validate_export_environment
+
     def close(window, event):
         worker = getattr(window, "_scheme2_page_worker", None)
         if worker is not None and worker.isRunning():
@@ -4338,6 +4512,9 @@ def install_scheme2_ui(namespace):
         QTimer.singleShot(0, lambda: _apply_responsive(window))
         if index == OPTION_ROUTE and previous_index == COST_ROUTE:
             QTimer.singleShot(0, lambda: _change_scheme2_page(window, 1))
+            if getattr(window, "_scheme2_clear_attachments_on_return", False):
+                window._scheme2_clear_attachments_on_return = False
+                QTimer.singleShot(0, lambda: _clear_scheme2_attachments(window))
         return result
 
     def show_result(window, payload, *args, **kwargs):
@@ -4428,6 +4605,7 @@ def install_scheme2_ui(namespace):
 
     cls.__init__ = init
     cls.resizeEvent = resize
+    cls.confirm_and_export = confirm_and_export
     cls.closeEvent = close
     cls.show_section = section
     cls.show_result = show_result

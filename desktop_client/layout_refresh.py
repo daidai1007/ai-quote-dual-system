@@ -46,6 +46,110 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+
+class _HistoryOrderDialog(QDialog):
+    """Focused history-match prompt matching the option-page visual system."""
+
+    def __init__(self, summary: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("historyOrderDialog")
+        self.setWindowTitle("发现历史订单")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(True)
+        self.setFixedSize(490, 330)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(7, 7, 7, 7)
+        card = QFrame()
+        card.setObjectName("historyOrderCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(0, 0, 0, 16)
+        layout.setSpacing(12)
+        header = QHBoxLayout()
+        header.setContentsMargins(14, 10, 10, 8)
+        title = QLabel("发现历史订单")
+        title.setObjectName("historyOrderTitle")
+        close = QPushButton("×")
+        close.setObjectName("historyOrderClose")
+        close.setFixedSize(24, 24)
+        close.clicked.connect(self.reject)
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(close)
+        layout.addLayout(header)
+        line = QFrame()
+        line.setObjectName("historyOrderDivider")
+        line.setFixedHeight(1)
+        layout.addWidget(line)
+        content = QHBoxLayout()
+        content.setContentsMargins(18, 2, 18, 0)
+        content.setSpacing(12)
+        icon = QLabel("i")
+        icon.setObjectName("historyOrderInfoIcon")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setFixedSize(40, 40)
+        text_column = QVBoxLayout()
+        intro = QLabel("发现 1 张相同公司、柜型、变体、材质和尺寸的已确认\n历史订单：")
+        intro.setObjectName("historyOrderIntro")
+        summary_label = QLabel(summary)
+        summary_label.setObjectName("historyOrderSummary")
+        summary_label.setWordWrap(True)
+        summary_label.setMinimumHeight(62)
+        text_column.addWidget(intro)
+        text_column.addWidget(summary_label)
+        content.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        content.addLayout(text_column, 1)
+        layout.addLayout(content)
+        question = QLabel("是否带入该订单的喷塑方式、附件与备注？")
+        question.setObjectName("historyOrderQuestion")
+        question.setContentsMargins(28, 0, 18, 0)
+        layout.addWidget(question)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(18, 2, 18, 0)
+        skip = QPushButton("不带入，继续填写")
+        skip.setObjectName("historyOrderSecondary")
+        apply = QPushButton("带入历史设置")
+        apply.setObjectName("historyOrderPrimary")
+        skip.clicked.connect(self.reject)
+        apply.clicked.connect(self.accept)
+        actions.addStretch(1)
+        actions.addWidget(skip)
+        actions.addWidget(apply)
+        layout.addLayout(actions)
+        outer.addWidget(card)
+        self.setStyleSheet("""
+            QDialog#historyOrderDialog { background:rgba(0,0,0,82); }
+            QFrame#historyOrderCard { background:#FFFFFF; border-radius:10px; }
+            QLabel#historyOrderTitle { color:#1F3A6A; font-size:13px; font-weight:600; }
+            QPushButton#historyOrderClose { color:#8A8A8A; background:transparent; border:0; font-size:16px; }
+            QFrame#historyOrderDivider { background:#E2E5E9; border:0; }
+            QLabel#historyOrderInfoIcon { color:#2563EB; background:#E8F3FF; border-radius:20px; font-size:22px; font-weight:600; }
+            QLabel#historyOrderIntro, QLabel#historyOrderQuestion { color:#2A3541; font-size:13px; }
+            QLabel#historyOrderSummary { color:#4B5563; background:#EAF4FF; border:1px solid #7DB6FF; border-radius:7px; padding:8px 10px; font-size:12px; }
+            QPushButton#historyOrderSecondary { min-height:32px; padding:0 14px; color:#2A3541; background:#FFFFFF; border:1px solid #B8BEC7; border-radius:7px; }
+            QPushButton#historyOrderPrimary { min-height:32px; padding:0 14px; color:#FFFFFF; background:#2563EB; border:1px solid #2563EB; border-radius:7px; font-weight:600; }
+            QPushButton#historyOrderPrimary:hover { background:#1D4ED8; }
+            QPushButton#historyOrderPrimary:pressed { background:#1E40AF; }
+        """)
+
+
+def _history_order_summary(window, result: dict) -> str:
+    payload = result.get("payload") or {}
+    item = payload.get("item") or payload
+    company = str(payload.get("company_name") or window.company_combo.currentText() or "").strip()
+    product = str(item.get("product_family") or window.product_combo.currentText() or "").strip()
+    specification_control = getattr(window, "quote_spec_edit", None)
+    specification = str(
+        item.get("specification")
+        or (specification_control.text() if isinstance(specification_control, QLineEdit) else "")
+    ).strip()
+    variant = str(item.get("variant_name") or item.get("variant_code") or "").strip()
+    quote_date = str(payload.get("quote_date") or item.get("quote_date") or "").strip()
+    quote_id = str(payload.get("quote_id") or item.get("quote_id") or "").strip()
+    first = " · ".join(value for value in (company, product, specification, variant) if value)
+    second = " · ".join(value for value in (f"确认于 {quote_date}" if quote_date else "", f"订单号 {quote_id}" if quote_id else "") if value)
+    return "\n".join(value for value in (first, second) if value)
+
 from quote_defaults import (
     DEFAULT_COATING_TYPE,
     DEFAULT_MATERIAL_CODE,
@@ -1369,7 +1473,31 @@ def _sync_quote_specification(window, text: str, parser=None) -> bool:
     if _ganged_count(window) <= 1:
         window._door_selection_mode = AUTOMATIC_DOOR_SELECTION
         _apply_automatic_door_default(window, force=True)
+    _clear_missing_default_dimension_notice(window)
     return ganged_changed
+
+
+def _clear_missing_default_dimension_notice(window) -> bool:
+    """Accept complete manual dimensions when the catalog omits default fields."""
+
+    label = getattr(window, "risk_label", None)
+    specification = getattr(window, "quote_spec_edit", None)
+    dimensions = (
+        getattr(window, "width_spin", None),
+        getattr(window, "depth_spin", None),
+        getattr(window, "height_spin", None),
+    )
+    if not isinstance(label, QLabel) or not isinstance(specification, QLineEdit):
+        return False
+    if "所选型号没有数据库默认尺寸" not in label.text():
+        return False
+    if not specification.text().strip() or not all(
+        isinstance(field, QDoubleSpinBox) and field.value() > 0 for field in dimensions
+    ):
+        return False
+    label.setStyleSheet("color:#166534;")
+    label.setText("已按正式规格使用当前 W、D、H，可正常计算报价。")
+    return True
 
 
 def _allowed_door_combinations(window) -> set[tuple[int, int]]:
@@ -7182,6 +7310,7 @@ def install_layout_refresh(namespace: dict) -> None:
     original_product_changed = getattr(main_window, "product_changed", None)
     original_door_counts_changed = getattr(main_window, "door_counts_changed", None)
     original_product_catalog_loaded = getattr(main_window, "product_catalog_loaded", None)
+    original_history_match_loaded = getattr(main_window, "history_match_loaded", None)
     original_selected_product_code = getattr(main_window, "selected_product_code", None)
     original_refresh_formula_inputs = getattr(main_window, "refresh_formula_inputs", None)
     original_formula_template_loaded = getattr(main_window, "formula_template_loaded", None)
@@ -7416,6 +7545,7 @@ def install_layout_refresh(namespace: dict) -> None:
             original_update_quote_readiness(self)
             rows = _ganged_rows(self)
             if len(rows) <= 1:
+                _clear_missing_default_dimension_notice(self)
                 return None
 
             material_combo = getattr(self, "material_combo", None)
@@ -7999,6 +8129,27 @@ def install_layout_refresh(namespace: dict) -> None:
             _restore_product_selection(self, retained_product)
             return loaded
         main_window.product_catalog_loaded = product_catalog_loaded_with_database_options
+    if callable(original_history_match_loaded):
+        def history_match_loaded_with_dialog(self, result):
+            if not isinstance(result, dict) or not result.get("matched"):
+                return None
+            dialog = _HistoryOrderDialog(_history_order_summary(self, result), self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return None
+            payload = result.get("payload") or {}
+            item = payload.get("item") or payload
+            coating = item.get("coating_type")
+            index = self.coating_combo.findData(coating)
+            if index >= 0:
+                self.coating_combo.setCurrentIndex(index)
+            self.attachments = [dict(value) for value in item.get("attachments") or []]
+            self.update_attachment_view()
+            if item.get("notes"):
+                self.notes_text.setPlainText(str(item["notes"]))
+            self.risk_label.setText("已带入最近确认的历史订单内容；当前价格仍按最新数据库重新计算。")
+            return None
+
+        main_window.history_match_loaded = history_match_loaded_with_dialog
     if callable(original_selected_product_code):
         def selected_product_code_with_ja_fallback(self):
             code = original_selected_product_code(self)
