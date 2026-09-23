@@ -23,11 +23,12 @@ try:
 except ImportError:
     ezdxf = None
 
-RENDER_EDGE = 2400
+RENDER_EDGE = 3600
 PDF_RENDER_STEP = 1200
 PDF_MAX_RENDER_EDGE = 9600
 PDF_DETAIL_DELAY_MS = 180
-FIT_RENDER_OVERSAMPLE = 1.5
+FIT_RENDER_OVERSAMPLE = 2.25
+PDF_ZOOM_OVERSAMPLE = 1.75
 CACHE_PIXEL_BUDGET = 80_000_000
 TOOL_HEIGHT = 34
 SPACE = 8
@@ -83,7 +84,8 @@ class RenderWorker(QThread):
                         raise ValueError('缺少 PDF 预览组件，请修复客户端安装。')
                     prefix = str(Path(folder) / 'page')
                     run = subprocess.run([self.pdftoppm, '-f', str(self.page + 1), '-l', str(self.page + 1),
-                                          '-singlefile', '-scale-to', str(self.render_edge), '-png', str(path), prefix],
+                                          '-singlefile', '-aa', 'yes', '-aaVector', 'yes',
+                                          '-scale-to', str(self.render_edge), '-png', str(path), prefix],
                                          capture_output=True, timeout=60,
                                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
                     if run.returncode:
@@ -110,6 +112,11 @@ class RenderWorker(QThread):
                     image = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
                     image.fill(Qt.GlobalColor.white)
                     painter = QPainter(image)
+                    painter.setRenderHints(
+                        QPainter.RenderHint.Antialiasing
+                        | QPainter.RenderHint.TextAntialiasing
+                        | QPainter.RenderHint.SmoothPixmapTransform
+                    )
                     renderer.render(painter)
                     painter.end()
                     kind = 'CAD 模型空间'
@@ -757,7 +764,7 @@ class QuoteDrawingPreview(QFrame):
         logical_edge = max(self.canvas.scene().sceneRect().width(),
                            self.canvas.scene().sceneRect().height())
         required = int(ceil(logical_edge * self.canvas.current_scale()
-                            * self.canvas.viewport().devicePixelRatioF() * 1.25))
+                            * self.canvas.viewport().devicePixelRatioF() * PDF_ZOOM_OVERSAMPLE))
         target = max(RENDER_EDGE, int(ceil(required / PDF_RENDER_STEP) * PDF_RENDER_STEP))
         target = min(PDF_MAX_RENDER_EDGE, target)
         if target > self.current_render_edge:

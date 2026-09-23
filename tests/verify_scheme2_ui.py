@@ -91,8 +91,8 @@ assert not window.scheme2_cost_empty.isHidden()
 assert not any(button.text() == "返回选项配置" for button in window.scheme2_cost_page.findChildren(QPushButton))
 assert window.scheme2_company.minimumWidth() == 0
 assert window.scheme2_company.maximumWidth() == 16777215
-assert window.scheme2_cost_sidebar.width() == scheme2_ui.COST_SIDEBAR_WIDTH == 100
-assert window.scheme2_company.height() == scheme2_ui.COMPANY_COMBO_HEIGHT == 96, (
+assert window.scheme2_cost_sidebar.width() == scheme2_ui.COST_SIDEBAR_WIDTH == 130
+assert window.scheme2_company.height() == scheme2_ui.COMPANY_COMBO_HEIGHT == 56, (
     window.scheme2_company.height(), window.scheme2_company.minimumHeight(), window.scheme2_company.maximumHeight()
 )
 assert window.scheme2_company.view().wordWrap()
@@ -109,7 +109,7 @@ assert len(window.scheme2_shortcuts) >= 8
 assert window.quote_date.isHidden() or window.quote_date.parentWidget().isHidden()
 assert window.quote_date.date().toString("yyyy-MM-dd") == __import__("datetime").date.today().isoformat()
 assert window.scheme2_add_button.text() == "加入报价清单"
-assert window.scheme2_attachment_summary.text() == "未选择附件"
+assert window.scheme2_attachment_summary.findChild(QLabel, "scheme2AttachmentEmpty").text() == "未选择附件"
 assert window.attachment_summary_table.isHidden()
 assert not window.scheme2_name_edit.isVisible()
 assert window.product_combo.minimumHeight() >= 50
@@ -352,7 +352,7 @@ assert window.summary_table.item(0, 13).text() == "484.50"
 assert window.summary_table.item(1, 11).text() == "2"
 assert window.summary_table.item(1, 12).text() == "860.00"
 assert window.summary_table.item(1, 13).text() == "969.00"
-assert all(not window.summary_table.isColumnHidden(column) for column in (0, 1, 2, 3, 11, 12, 13, 15))
+assert all(not window.summary_table.isColumnHidden(column) for column in (0, 1, 2, 3, 10, 11, 12, 13, 14, 15))
 assert window.summary_table.isColumnHidden(4)
 scheme2_ui._set_cost_column_mode(window, True)
 assert not any(window.summary_table.isColumnHidden(column) for column in range(16))
@@ -384,7 +384,7 @@ assert window.scheme2_detail_table.item(management_row, 2).text() == "人工成�
 assert window.scheme2_detail_table.item(window.scheme2_detail_table.rowCount() - 1, 1).text() == "合计成本"
 assert window.scheme2_detail_table.verticalHeader().isHidden()
 factor = window.scheme2_detail_table.cellWidget(0, 8)
-assert factor.minimum() == .01 and factor.maximum() == 10 and factor.decimals() == 4
+assert factor.minimum() == 0 and factor.maximum() == 10 and factor.decimals() == 4
 factor.setValue(2)
 detail_back = next(button for button in window.scheme2_detail_page.findChildren(QPushButton) if "返回成本计算" in button.text())
 detail_back.click()

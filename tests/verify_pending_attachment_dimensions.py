@@ -42,10 +42,18 @@ window.refresh_summary = lambda: None
 item = {"attachments": [row], "formula": result["formula_cost"], "quick": result["quick_quote"]}
 editor = scheme2_ui.AttachmentEditor(window, item)
 assert editor.table.columnCount() == 6
-assert editor.table.item(0, 1).text().startswith("点击补充")
-for column in (4, 5):
-    assert editor.table.item(0, column).text() == "0.00"
-    assert editor.table.item(0, column).data(Qt.ItemDataRole.ForegroundRole) is not None
+assert editor.table.horizontalHeaderItem(0).text() == "图片"
+assert editor.table.item(0, 2).text().startswith("点击补充")
+assert editor.table.cellWidget(0, 4).value() == 0
+assert editor.table.item(0, 5).text() == "0.00"
+assert editor.table.item(0, 5).data(Qt.ItemDataRole.ForegroundRole) is not None
+dimension_dialog = scheme2_ui._SchemeDimensionEditor(editor, "固定底座 · 补充尺寸", ["底座高度"], {})
+assert dimension_dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+assert not dimension_dialog.confirm_button.isEnabled()
+dimension_dialog.fields["底座高度"].setText("100")
+assert dimension_dialog.confirm_button.isEnabled()
+assert dimension_dialog.values() == {"底座高度": 100.0}
+dimension_dialog.close()
 editor.close()
 window.close()
 

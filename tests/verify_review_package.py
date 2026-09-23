@@ -32,7 +32,7 @@ def verify(directory):
         pyz_path.write_bytes(reader.extract('PYZ.pyz'))
         pyz = ZlibArchiveReader(str(pyz_path))
         for name in ('drawing_workflow', 'quote_drawing_preview', 'freight_state', 'freight_export', 'layout_refresh',
-                     'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules'):
+                     'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules', 'scheme2_ui'):
             expected = compile((ROOT / 'desktop_client' / f'{name}.py').read_text(encoding='utf-8'), '', 'exec')
             actual = pyz.extract(name)
             assert normalized(expected) == normalized(actual), f'Packaged source differs: {name}'

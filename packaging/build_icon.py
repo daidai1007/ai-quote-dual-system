@@ -30,89 +30,55 @@ def draw_mark(size: int = 1024) -> Image.Image:
     canvas = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
 
-    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow)
-    shadow_draw.rounded_rectangle(
-        scaled_box((78, 92, 946, 960), scale),
-        radius=210 * scale,
-        fill=(1, 12, 24, 115),
-    )
-    shadow = shadow.filter(ImageFilter.GaussianBlur(26 * scale))
-    canvas.alpha_composite(shadow)
-
+    # Pale-blue rounded tile from the approved application-icon reference.
     draw.rounded_rectangle(
-        scaled_box((80, 70, 944, 934), scale),
-        radius=210 * scale,
-        fill=NAVY,
-    )
-    draw.rounded_rectangle(
-        scaled_box((108, 96, 916, 390), scale),
-        radius=160 * scale,
-        fill=NAVY_2,
+        scaled_box((116, 70, 908, 946), scale),
+        radius=188 * scale,
+        fill="#DCE8F7",
     )
 
-    # Blue is formula pricing, mint is quick pricing.
+    # Two cabinet doors: formula pricing blue and deep-blue quick pricing.
     draw.rounded_rectangle(
-        scaled_box((196, 214, 478, 760), scale),
-        radius=66 * scale,
-        fill=BLUE,
+        scaled_box((254, 270, 496, 690), scale),
+        radius=48 * scale,
+        fill="#2563EB",
     )
     draw.rounded_rectangle(
-        scaled_box((546, 214, 828, 760), scale),
-        radius=66 * scale,
-        fill=MINT,
+        scaled_box((528, 270, 770, 690), scale),
+        radius=48 * scale,
+        fill="#185FA5",
     )
 
-    # Folded corners make the mark specific to sheet-metal cabinet work.
-    draw.polygon(
-        [(382 * scale, 214 * scale), (478 * scale, 214 * scale), (478 * scale, 310 * scale)],
-        fill=BLUE_HI,
-    )
-    draw.line(
-        [(382 * scale, 214 * scale), (478 * scale, 310 * scale)],
-        fill=ICE,
-        width=12 * scale,
-    )
-    draw.polygon(
-        [(546 * scale, 214 * scale), (642 * scale, 214 * scale), (546 * scale, 310 * scale)],
-        fill=MINT_HI,
-    )
-    draw.line(
-        [(642 * scale, 214 * scale), (546 * scale, 310 * scale)],
-        fill=WHITE,
-        width=12 * scale,
-    )
-
-    for x in (250, 600):
+    for x in (308, 582):
         draw.rounded_rectangle(
-            scaled_box((x, 404, x + 174, 438), scale),
-            radius=17 * scale,
-            fill=WHITE,
+            scaled_box((x, 424, x + 118, 454), scale),
+            radius=15 * scale,
+            fill="#FFFFFF",
         )
         draw.rounded_rectangle(
-            scaled_box((x, 488, x + 132, 522), scale),
-            radius=17 * scale,
-            fill=WHITE,
+            scaled_box((x, 504, x + 72, 534), scale),
+            radius=15 * scale,
+            fill="#FFFFFF",
         )
 
-    # Cabinet-door split and comparison axis.
+    # Central divider and open support legs match the supplied mark.
     draw.rounded_rectangle(
-        scaled_box((496, 270, 528, 690), scale),
-        radius=16 * scale,
-        fill=WHITE,
+        scaled_box((492, 196, 532, 664), scale),
+        radius=20 * scale,
+        fill="#1F3A6A",
     )
     draw.line(
-        [(512 * scale, 684 * scale), (430 * scale, 790 * scale)],
-        fill=WHITE,
-        width=32 * scale,
+        [(512 * scale, 650 * scale), (416 * scale, 786 * scale)],
+        fill="#1F3A6A",
+        width=40 * scale,
     )
     draw.line(
-        [(512 * scale, 684 * scale), (594 * scale, 790 * scale)],
-        fill=WHITE,
-        width=32 * scale,
+        [(512 * scale, 650 * scale), (608 * scale, 786 * scale)],
+        fill="#1F3A6A",
+        width=40 * scale,
     )
 
-    draw.ellipse(scaled_box((744, 806, 806, 868), scale), fill=MINT_HI)
+    draw.ellipse(scaled_box((714, 718, 790, 794), scale), fill="#8BC34A")
     return canvas.resize((size, size), Image.Resampling.LANCZOS)
 
 

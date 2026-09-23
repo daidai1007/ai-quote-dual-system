@@ -35,13 +35,28 @@ company.addItem("绵阳市鑫瑞电气设备制造有限公司")
 company.setCurrentIndex(0)
 app.processEvents()
 
-assert window.scheme2_cost_sidebar.width() == 100
-assert company.height() == scheme2_ui.COMPANY_COMBO_HEIGHT == 96
+assert window.scheme2_cost_sidebar.width() == scheme2_ui.COST_SIDEBAR_WIDTH == 130
+assert not window.scheme2_cost_sidebar.isAncestorOf(company)
+assert window.scheme2_cost_company_field.isAncestorOf(company)
+header_buttons = window.scheme2_cost_page.findChildren(scheme2_ui.QPushButton)
+column_toggle = next(button for button in header_buttons if button.text() in ("完整 16 列", "核心 10 列"))
+assert company.mapTo(window.scheme2_cost_page, company.rect().topLeft()).x() < column_toggle.mapTo(window.scheme2_cost_page, column_toggle.rect().topLeft()).x()
+assert company.height() == scheme2_ui.COMPANY_COMBO_HEIGHT == 56
+assert company.view().objectName() == "scheme2CompanyDropdown"
+assert company.view().minimumWidth() >= 320
+assert not company.view().wordWrap()
+assert company.view().sizeHintForRow(0) >= 40
 assert company.isEditable() and not company.lineEdit().isReadOnly()
 assert company.lineEdit().focusPolicy() == Qt.FocusPolicy.StrongFocus
 assert not company.lineEdit().testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 assert company.currentText() == "绵阳市鑫瑞电气设备制造有限公司"
 assert company.toolTip() == company.currentText()
+controls = window.scheme2_cost_controls
+assert all(control.buttonSymbols() == control.ButtonSymbols.NoButtons for control in controls.values())
+assert controls["carbon_price"].text() == "4.2"
+assert controls["waste_factor"].text() == "1.2"
+assert controls["labor_discount"].text() == "1.00"
+assert controls["surface_price"].text() == "橘纹 26"
 
 custom_company = "四川测试电气设备制造有限公司"
 company.setEditText(custom_company)

@@ -23,6 +23,7 @@ from attachment_category_browser import (  # noqa: E402
     match_named_quick_attachment_size,
     size_match_attachment_name,
 )
+from attachment_v2_client import match_catalog_attachment  # noqa: E402
 
 
 def row(identifier, name, width, height, depth, price, model=""):
@@ -199,6 +200,13 @@ assert beam_match is not None
 assert beam_match["model_code"] == "JP760260"
 assert beam_match["matched_price"] == 60
 assert beam_match["size_match_exact"] is True
+explicit_beam = match_catalog_attachment(
+    {"category_level1": "安装附件", "item_name": "三排安装梁", "model_code": "JP760280"},
+    beams,
+    target_dimensions=(760, 2000, 600),
+)
+assert explicit_beam is not None
+assert explicit_beam["model_code"] == "JP760280"
 assert match_named_quick_attachment_size(
     beams, "安装附件", "纵梁", "三排安装梁", (760, 2000, 600)
 ) is None

@@ -36,10 +36,23 @@ catalog = [
     {"attachment_price_id": 12, "category_level1": "安装附件", "category_level2": "固定立柱", "item_name": "固定立柱", "height_mm": 2000, "price": 20},
     {"attachment_price_id": 21, "category_level1": "底座", "category_level2": "固定底座", "item_name": "固定底座", "width_mm": 800, "height_mm": 100, "depth_mm": 600, "price": 30},
     {"attachment_price_id": 22, "category_level1": "底座", "category_level2": "固定底座", "item_name": "固定底座", "width_mm": 800, "height_mm": 200, "depth_mm": 600, "price": 40},
+    {"attachment_price_id": 31, "category_level1": "风机", "item_name": "风机KA1725HA2/B(卡固)", "price": 31},
+    {"attachment_price_id": 32, "category_level1": "滤网", "item_name": "滤网", "model_code": "过滤网FU-9803A(卡固)", "price": 32},
 ]
 
 assert match_quote_attachment(window, {"category_level1": "侧板", "item_name": "侧板"}, catalog)["attachment_price_id"] == 2
 assert match_quote_attachment(window, {"category_level1": "安装附件", "item_name": "固定立柱"}, catalog)["attachment_price_id"] == 12
 assert match_quote_attachment(window, {"category_level1": "底座", "item_name": "固定底座"}, catalog)["attachment_price_id"] == 21
+assert match_quote_attachment(window, {"category_level1": "风机", "item_name": "KA1725HA2/B(卡固)"}, catalog)["attachment_price_id"] == 31
+assert match_quote_attachment(window, {"category_level1": "滤网", "item_name": "过滤网FU-9803A(卡固)"}, catalog)["attachment_price_id"] == 32
+
+# Side panels are selected by the visible interface dimensions even when the
+# catalogue uses a more specific item name and the hidden spins are stale.
+window.height_spin = Value(1900)
+named_side_catalog = [
+    {"attachment_price_id": 41, "category_level1": "侧板", "item_name": "JP控制柜侧板", "height_mm": 1900, "depth_mm": 600, "price": 19},
+    {"attachment_price_id": 42, "category_level1": "侧板", "item_name": "JP控制柜侧板", "height_mm": 2000, "depth_mm": 600, "price": 20},
+]
+assert match_quote_attachment(window, {"category_level1": "侧板", "item_name": "侧板"}, named_side_catalog)["attachment_price_id"] == 42
 
 print("PASS: scheme attachment selections retain quick-size matching before database pricing")

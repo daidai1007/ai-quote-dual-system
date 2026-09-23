@@ -14,7 +14,7 @@ import tempfile
 from types import MethodType
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QSettings, QSignalBlocker, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut
+from PySide6.QtGui import QColor, QDoubleValidator, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
@@ -57,8 +57,8 @@ OPTION_ROUTE = 1
 COST_ROUTE = 3
 DETAIL_ROUTE = 5
 NAV_EXPANDED_WIDTH = 128
-COST_SIDEBAR_WIDTH = 100
-COMPANY_COMBO_HEIGHT = 96
+COST_SIDEBAR_WIDTH = 130
+COMPANY_COMBO_HEIGHT = 56
 HEADERS = (
     "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "数量", "成本单价",
@@ -68,6 +68,7 @@ MONEY_COLUMNS = frozenset(range(4, 14))
 EDITABLE_COLUMNS = frozenset((10, 11))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 GALVANIZED_MATERIAL_CODES = frozenset(("SGCC", "DX51D", "GI"))
+THREE_ROW_BEAM_MODELS = ("JP760240", "JP760250", "JP760260", "JP760280", "JP760210")
 
 
 class _ClickableProgressBar(QProgressBar):
@@ -160,7 +161,7 @@ def _quick(item):
 def _attachment_amount(row):
     price = row.get("unit_price_override", row.get("matched_price", 0))
     sign = -1 if int(_number(row.get("attachment_price_sign", 1), 1)) == -1 else 1
-    return max(0, int(_number(row.get("quantity", 1), 1))) * abs(_number(price)) * sign
+    return int(_number(row.get("quantity", 1), 1)) * abs(_number(price)) * sign
 
 
 def _attachment_total(item):
@@ -205,7 +206,7 @@ def _material_price_caption(material_code):
         "SUS304": "SUS304价格",
         "SUS316": "SUS316价格",
         "SECC": "碳钢价格",
-    }.get(code, "当前材质价格")
+    }.get(code, "碳钢价格")
 
 
 def _reprice_material_details(item, state):
@@ -288,59 +289,231 @@ def _price_spin(value=0.0):
     return control
 
 
+def _sidebar_price_spin(value, display_decimals=2, decimals=2):
+    control = _SchemePencilSpinBox(display_decimals)
+    control.setRange(0, 999999.99)
+    control.setDecimals(decimals)
+    control.setSingleStep(.1)
+    control.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+    control.setFixedHeight(28)
+    control.setValue(value)
+    return control
+
+
+class _SchemeDimensionEditor(QDialog):
+    def __init__(self, parent, title, dimensions, current_values):
+        super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("scheme2DimensionDialog")
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        if parent is not None:
+            self.resize(parent.size())
+            self.move(parent.mapToGlobal(QPoint(0, 0)))
+
+        overlay = QVBoxLayout(self)
+        overlay.setContentsMargins(0, 0, 0, 0)
+        shell = QFrame()
+        shell.setObjectName("scheme2DimensionShell")
+        shell.setFixedWidth(362)
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 14)
+        shell_layout.setSpacing(0)
+
+        title_bar = QFrame()
+        title_bar.setObjectName("scheme2DimensionTitleBar")
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(14, 0, 8, 0)
+        title_label = QLabel(title)
+        title_label.setObjectName("scheme2DimensionTitle")
+        close_button = QToolButton()
+        close_button.setObjectName("scheme2DimensionClose")
+        close_button.setText("×")
+        close_button.setFixedSize(28, 28)
+        close_button.clicked.connect(self.reject)
+        title_layout.addWidget(title_label)
+        title_layout.addStretch(1)
+        title_layout.addWidget(close_button)
+        shell_layout.addWidget(title_bar)
+
+        form = QFormLayout()
+        form.setContentsMargins(16, 16, 16, 8)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
+        self.fields = {}
+        for name in dimensions:
+            field = QLineEdit(str(current_values.get(name) or ""))
+            field.setObjectName("scheme2DimensionInput")
+            field.setPlaceholderText("请输入正数（mm）")
+            validator = QDoubleValidator(0.0, 999999.0, 3, field)
+            validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+            field.setValidator(validator)
+            self.fields[name] = field
+            form.addRow(str(name), field)
+        shell_layout.addLayout(form)
+
+        hint = QLabel("仅接受正数，单位固定 mm；非法输入时确定按钮置灰")
+        hint.setObjectName("scheme2DimensionHint")
+        shell_layout.addWidget(hint)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(16, 12, 16, 0)
+        actions.setSpacing(10)
+        actions.addStretch(1)
+        cancel = QPushButton("取消")
+        cancel.setObjectName("scheme2DimensionCancel")
+        confirm = QPushButton("确定")
+        confirm.setObjectName("scheme2DimensionConfirm")
+        for button in (cancel, confirm):
+            button.setMinimumSize(62, 34)
+            button.setAutoDefault(False)
+            button.setDefault(False)
+        cancel.clicked.connect(self.reject)
+        confirm.clicked.connect(self.accept)
+        actions.addWidget(cancel)
+        actions.addWidget(confirm)
+        shell_layout.addLayout(actions)
+
+        overlay.addStretch(1)
+        overlay.addWidget(shell, 0, Qt.AlignmentFlag.AlignCenter)
+        overlay.addStretch(1)
+        self.confirm_button = confirm
+        for field in self.fields.values():
+            field.textChanged.connect(self._refresh_validity)
+        self._refresh_validity()
+
+    def _refresh_validity(self):
+        try:
+            valid = bool(self.fields) and all(float(field.text().strip()) > 0 for field in self.fields.values())
+        except ValueError:
+            valid = False
+        self.confirm_button.setEnabled(valid)
+
+    def values(self):
+        return {name: float(field.text().strip()) for name, field in self.fields.items()}
+
+
 class AttachmentEditor(QDialog):
     def __init__(self, window, item):
         super().__init__(window)
         self.window = window
         self.item = item
         self.setWindowTitle("已选附件")
-        self.resize(720, 460)
-        layout = QVBoxLayout(self)
+        self.setObjectName("scheme2AttachmentEditorDialog")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(650, 315)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        shell = QFrame()
+        shell.setObjectName("scheme2AttachmentEditorShell")
+        layout = QVBoxLayout(shell)
+        layout.setContentsMargins(0, 0, 0, 10)
+        layout.setSpacing(0)
+        outer.addWidget(shell)
+        header = QFrame()
+        header.setObjectName("scheme2AttachmentEditorHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(13, 0, 8, 0)
         title = QLabel("已选附件")
-        title.setObjectName("scheme2DialogTitle")
-        layout.addWidget(title)
-        note = QLabel("本报价内临时调整；数量和单价同时用于公式法与面价，不写入全局附件库。")
-        note.setObjectName("scheme2Hint")
-        layout.addWidget(note)
+        title.setObjectName("scheme2AttachmentEditorTitle")
+        close_button = QToolButton()
+        close_button.setObjectName("scheme2AttachmentEditorClose")
+        close_button.setText("×")
+        close_button.setToolTip("保存并关闭")
+        close_button.setFixedSize(28, 28)
+        close_button.clicked.connect(self.accept)
+        header_layout.addWidget(title)
+        header_layout.addStretch(1)
+        header_layout.addWidget(close_button)
+        layout.addWidget(header)
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(("名称", "尺寸 / 规格", "数量", "单价", "快速金额", "附件成本"))
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setObjectName("scheme2AttachmentEditorTable")
+        self.table.setHorizontalHeaderLabels(("图片", "名称", "尺寸 / 规格", "数量", "金额", "公式金额"))
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(False)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.setToolTip("右键可添加或删除临时附件；按 Esc 取消修改")
+        self.table.customContextMenuRequested.connect(self._show_table_menu)
+        table_header = self.table.horizontalHeader()
+        table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        table_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 50)
+        self.table.setColumnWidth(3, 62)
+        self.table.setColumnWidth(4, 82)
+        self.table.setColumnWidth(5, 88)
         self.table.cellClicked.connect(self.edit_missing_dimensions)
         layout.addWidget(self.table, 1)
-        actions = QHBoxLayout()
-        add = QPushButton("＋ 临时附件")
-        remove = QPushButton("删除所选")
-        add.clicked.connect(self.add_row)
-        remove.clicked.connect(lambda: self.table.removeRow(self.table.currentRow()) if self.table.currentRow() >= 0 else None)
-        actions.addWidget(add)
-        actions.addWidget(remove)
-        actions.addStretch(1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        actions.addWidget(buttons)
-        layout.addLayout(actions)
         for attachment in item.get("attachments", []):
             if isinstance(attachment, dict):
                 self.add_row(attachment)
+
+    def _show_table_menu(self, position):
+        menu = QMenu(self)
+        add_action = menu.addAction("＋ 临时附件")
+        remove_action = menu.addAction("删除所选")
+        remove_action.setEnabled(self.table.currentRow() >= 0)
+        chosen = menu.exec(self.table.viewport().mapToGlobal(position))
+        if chosen is add_action:
+            self.add_row()
+        elif chosen is remove_action and self.table.currentRow() >= 0:
+            self.table.removeRow(self.table.currentRow())
 
     def add_row(self, attachment=None):
         source = attachment if isinstance(attachment, dict) else {}
         row = self.table.rowCount()
         self.table.insertRow(row)
+        self.table.setRowHeight(row, 42)
         name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
         spec = str(source.get("specification") or source.get("matched_specification") or "—")
-        self.table.setItem(row, 0, QTableWidgetItem(name))
-        self.table.setItem(row, 1, QTableWidgetItem(spec))
+        image = QTableWidgetItem("▧")
+        image.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        image.setData(Qt.ItemDataRole.ForegroundRole, QColor("#8A8A86"))
+        self.table.setItem(row, 0, image)
+        self.table.setItem(row, 1, QTableWidgetItem(name))
+        if name == "三排安装梁":
+            model = str(source.get("model_code") or source.get("specification") or "").strip().upper()
+            selector = QComboBox()
+            selector.setObjectName("scheme2AttachmentModelCombo")
+            selector.view().setObjectName("scheme2AttachmentModelDropdown")
+            selector.addItem("未选择", "")
+            for option in THREE_ROW_BEAM_MODELS:
+                selector.addItem(option, option)
+            selector.setCurrentIndex(max(0, selector.findData(model)))
+            self.table.setCellWidget(row, 2, selector)
+            selector.currentIndexChanged.connect(
+                lambda _index, target_row=row, combo=selector: self._beam_model_changed(target_row, combo.currentData())
+            )
+        else:
+            self.table.setItem(row, 2, QTableWidgetItem(spec))
         quantity = QSpinBox()
-        quantity.setRange(1, 9999)
-        quantity.setValue(max(1, int(_number(source.get("quantity", 1), 1))))
-        price = _price_spin(abs(_number(source.get("unit_price_override", source.get("matched_price", 0)))))
-        self.table.setCellWidget(row, 2, quantity)
-        self.table.setCellWidget(row, 3, price)
-        self.table.item(row, 0).setData(ROLE_ROW, dict(source))
+        quantity.setObjectName("scheme2AttachmentEditorQuantity")
+        quantity.setRange(-9999, 9999)
+        quantity.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        quantity.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        quantity.setValue(max(-9999, min(9999, int(_number(source.get("quantity", 1), 1)))))
+        self.table.setCellWidget(row, 3, quantity)
+        self.table.item(row, 1).setData(ROLE_ROW, dict(source))
         self._render_amounts(row, source)
+        quantity.valueChanged.connect(lambda value, target_row=row: self._quantity_changed(target_row, value))
+
+    def _beam_model_changed(self, row, model):
+        model = str(model or "").strip().upper()
+        if not model:
+            return
+        source_item = self.table.item(row, 1)
+        source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
+        if str(source.get("model_code") or "").strip().upper() == model:
+            return
+        source.update({"model_code": model, "specification": model, "matched_specification": model})
+        for key in ("attachment_price_id", "unit_price_override", "matched_price", "quick_amount", "formula_amount"):
+            source.pop(key, None)
+        source_item.setData(ROLE_ROW, source)
+        self._reprice_row(row, source)
 
     @staticmethod
     def _pending_dimensions(source):
@@ -350,63 +523,107 @@ class AttachmentEditor(QDialog):
         pending = bool(self._pending_dimensions(source))
         quick_amount = 0.0 if pending else _number(source.get("quick_amount"), _attachment_amount(source))
         formula_amount = 0.0 if pending else _number(source.get("formula_amount"), 0)
-        for column, amount in ((4, quick_amount), (5, formula_amount)):
-            cell = QTableWidgetItem(_money(amount))
-            cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if pending:
-                cell.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
-                cell.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充")
-            self.table.setItem(row, column, cell)
-        specification = self.table.item(row, 1)
+        amount_editor = self.table.cellWidget(row, 4)
+        if not isinstance(amount_editor, QDoubleSpinBox):
+            amount_editor = _SchemePencilSpinBox(2)
+            amount_editor.setObjectName("scheme2AttachmentEditorAmount")
+            amount_editor.setRange(-999999.99, 999999.99)
+            amount_editor.setDecimals(2)
+            amount_editor.setSingleStep(1)
+            amount_editor.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+            amount_editor.setAlignment(Qt.AlignmentFlag.AlignRight)
+            self.table.setCellWidget(row, 4, amount_editor)
+            amount_editor.valueChanged.connect(lambda value, target_row=row: self._amount_changed(target_row, value))
+        with QSignalBlocker(amount_editor):
+            amount_editor.setValue(quick_amount)
+        amount_editor.setProperty("schemeEdited", False)
+        amount_editor.setProperty("pending", pending)
+        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "修改后同时计入成本和快速报价")
+        amount_editor.style().unpolish(amount_editor)
+        amount_editor.style().polish(amount_editor)
+
+        cell = QTableWidgetItem(_money(formula_amount))
+        cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        font = cell.font()
+        font.setUnderline(True)
+        cell.setFont(font)
+        if pending:
+            cell.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
+            cell.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充")
+            cell.setBackground(QColor("#FAEEDA"))
+        self.table.setItem(row, 5, cell)
+        specification = self.table.item(row, 2)
         if pending and specification is not None:
             specification.setText("点击补充：" + "、".join(self._pending_dimensions(source)))
             specification.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
+            for column in (0, 1, 2, 3):
+                cell = self.table.item(row, column)
+                if cell is not None:
+                    cell.setBackground(QColor("#FAEEDA"))
+
+    def _amount_changed(self, row, value):
+        editor = self.table.cellWidget(row, 4)
+        if editor is not None:
+            editor.setProperty("schemeEdited", True)
+        formula = self.table.item(row, 5)
+        if formula is not None:
+            formula.setText(_money(value))
+
+    def _quantity_changed(self, row, value):
+        amount_editor = self.table.cellWidget(row, 4)
+        source_item = self.table.item(row, 1)
+        if not isinstance(amount_editor, QDoubleSpinBox) or amount_editor.property("schemeEdited"):
+            return
+        source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
+        previous_quantity = int(_number(source.get("quantity", 1), 1))
+        unit_amount = (
+            _number(source.get("quick_amount"), _attachment_amount(source)) / previous_quantity
+            if previous_quantity else 0
+        )
+        with QSignalBlocker(amount_editor):
+            amount_editor.setValue(unit_amount * value)
+        previous_formula = _number(source.get("formula_amount"), 0)
+        formula = self.table.item(row, 5)
+        if formula is not None:
+            formula.setText(_money((previous_formula / previous_quantity if previous_quantity else 0) * value))
 
     def edit_missing_dimensions(self, row, column):
-        if column != 1 or not 0 <= row < self.table.rowCount():
+        if column != 2 or not 0 <= row < self.table.rowCount():
             return
-        source_item = self.table.item(row, 0)
+        source_item = self.table.item(row, 1)
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         missing = self._pending_dimensions(source)
         if not missing:
             return
-        editor = QDialog(self)
-        editor.setWindowTitle(f"{source.get('item_name', '附件')} · 补充尺寸")
-        layout = QVBoxLayout(editor)
-        form = QFormLayout()
-        fields = {}
         manual = source.get("manual_inputs") if isinstance(source.get("manual_inputs"), dict) else {}
-        for name in missing:
-            field = QLineEdit(str(manual.get(name) or ""))
-            field.setPlaceholderText("请输入正数（mm）")
-            fields[name] = field
-            form.addRow(name, field)
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(editor.accept)
-        buttons.rejected.connect(editor.reject)
-        layout.addWidget(buttons)
+        editor = _SchemeDimensionEditor(
+            self,
+            f"{source.get('item_name', '附件')} · 补充尺寸",
+            missing,
+            manual,
+        )
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
-        values = {}
-        try:
-            for name, field in fields.items():
-                value = float(field.text().strip())
-                if value <= 0:
-                    raise ValueError
-                values[name] = value
-        except ValueError:
-            QMessageBox.warning(self, "尺寸无效", "缺失尺寸必须填写大于 0 的数字。")
-            return
+        values = editor.values()
         source["manual_inputs"] = {**manual, **values}
         source_item.setData(ROLE_ROW, source)
-        specification = self.table.item(row, 1)
+        specification = self.table.item(row, 2)
         if specification is not None:
             specification.setText("；".join(f"{name}={value:g} mm" for name, value in values.items()))
             specification.setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
-        for column_index in (4, 5):
-            self.table.item(row, column_index).setText("计算中…")
-            self.table.item(row, column_index).setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
+        self._reprice_row(row, source, specification)
+
+    def _reprice_row(self, row, source, specification=None):
+        source_item = self.table.item(row, 1)
+        specification_editor = self.table.cellWidget(row, 2)
+        if isinstance(specification_editor, QComboBox):
+            specification_editor.setEnabled(False)
+        amount_editor = self.table.cellWidget(row, 4)
+        if isinstance(amount_editor, QDoubleSpinBox):
+            amount_editor.setEnabled(False)
+            amount_editor.setToolTip("计算中…")
+        self.table.item(row, 5).setText("计算中…")
+        self.table.item(row, 5).setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
         reprice = getattr(self.window, "recalculate_draft_attachment", None)
         if not callable(reprice):
             QMessageBox.warning(self, "附件计算失败", "附件数据库计算功能不可用。")
@@ -414,14 +631,24 @@ class AttachmentEditor(QDialog):
 
         def succeeded(calculated):
             source_item.setData(ROLE_ROW, dict(calculated))
-            if specification is not None:
+            if isinstance(specification, QTableWidgetItem):
                 specification.setData(Qt.ItemDataRole.ForegroundRole, QColor("#1C1C1E"))
+            if isinstance(amount_editor, QDoubleSpinBox):
+                amount_editor.setEnabled(True)
+            if isinstance(specification_editor, QComboBox):
+                specification_editor.setEnabled(True)
             self._render_amounts(row, calculated)
 
         def failed(message):
-            for column_index in (4, 5):
-                self.table.item(row, column_index).setText(_money(0))
-                self.table.item(row, column_index).setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
+            if isinstance(amount_editor, QDoubleSpinBox):
+                with QSignalBlocker(amount_editor):
+                    amount_editor.setValue(0)
+                amount_editor.setEnabled(True)
+                amount_editor.setProperty("pending", True)
+            if isinstance(specification_editor, QComboBox):
+                specification_editor.setEnabled(True)
+            self.table.item(row, 5).setText(_money(0))
+            self.table.item(row, 5).setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
             QMessageBox.warning(self, "附件计算失败", str(message))
 
         reprice(self.item, source, succeeded, failed)
@@ -431,20 +658,39 @@ class AttachmentEditor(QDialog):
         old_quick_total = _number(_quick(self.item).get("attachment_fee"), _attachment_total(self.item))
         rows = []
         for row in range(self.table.rowCount()):
-            data = self.table.item(row, 0).data(ROLE_ROW) or {}
+            data = self.table.item(row, 1).data(ROLE_ROW) or {}
             data = dict(data)
-            data["item_name"] = self.table.item(row, 0).text().strip() or "自定义附件"
-            specification_editor = self.table.cellWidget(row, 1)
+            previous_quantity = int(_number(data.get("quantity", 1), 1))
+            previous_formula_amount = _number(data.get("formula_amount"), 0)
+            data["item_name"] = self.table.item(row, 1).text().strip() or "自定义附件"
+            specification_editor = self.table.cellWidget(row, 2)
             specification = (
-                specification_editor.currentText().strip()
+                str(specification_editor.currentData() or specification_editor.currentText()).strip()
                 if isinstance(specification_editor, QComboBox)
-                else self.table.item(row, 1).text().strip()
+                else self.table.item(row, 2).text().strip()
             )
             data["specification"] = specification
-            data["quantity"] = self.table.cellWidget(row, 2).value()
-            data["unit_price_override"] = self.table.cellWidget(row, 3).value()
-            data["matched_price"] = data["unit_price_override"]
-            data["quick_amount_override"] = data["quantity"] * data["unit_price_override"]
+            if data.get("item_name") == "三排安装梁" and specification:
+                data["model_code"] = specification
+            data["quantity"] = self.table.cellWidget(row, 3).value()
+            amount_editor = self.table.cellWidget(row, 4)
+            amount = _number(amount_editor.value())
+            amount_edited = bool(amount_editor.property("schemeEdited")) or not data
+            data["quick_amount_override"] = round(amount, 2)
+            data["quick_amount"] = round(amount, 2)
+            if amount_edited:
+                data["formula_amount"] = round(amount, 2)
+                unit_price = amount / data["quantity"] if data["quantity"] else amount
+                data["unit_price_override"] = unit_price
+                data["matched_price"] = unit_price
+            else:
+                formula_unit_amount = (
+                    _number(data.get("formula_unit_cost"))
+                    * (-1 if int(_number(data.get("attachment_price_sign", 1), 1)) == -1 else 1)
+                    if data.get("formula_unit_cost") is not None
+                    else previous_formula_amount / previous_quantity if previous_quantity else 0
+                )
+                data["formula_amount"] = round(formula_unit_amount * data["quantity"], 2)
             data.setdefault("selection_source", "QUOTE_LOCAL")
             rows.append(data)
         self.item["attachments"] = rows
@@ -779,7 +1025,7 @@ def _show_detail(window, item):
             if column == 8:
                 spin = _SchemePencilSpinBox(2)
                 spin.setObjectName("scheme2DetailFactor")
-                spin.setRange(.01, 10)
+                spin.setRange(0, 10)
                 spin.setDecimals(4)
                 spin.setSingleStep(.01)
                 spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
@@ -1105,8 +1351,15 @@ def _cost_sidebar(window):
     company.setProperty("scheme2Multiline", True)
     company.setFixedHeight(COMPANY_COMBO_HEIGHT)
     company.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    company.view().setWordWrap(True)
+    company.view().setObjectName("scheme2CompanyDropdown")
+    company.view().setMinimumWidth(320)
+    company.view().setWordWrap(False)
     company.view().setTextElideMode(Qt.TextElideMode.ElideNone)
+    company.view().setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    company.view().setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    company.setMaxVisibleItems(8)
+    company._scheme2_company_delegate = _SchemeComboItemDelegate(company)
+    company.view().setItemDelegate(company._scheme2_company_delegate)
     company._scheme2_multiline_filter = _MultilineComboPaintFilter(company)
     company.installEventFilter(company._scheme2_multiline_filter)
     if company.lineEdit() is not None:
@@ -1124,19 +1377,20 @@ def _cost_sidebar(window):
     company.setToolTip(company.currentText())
     company.currentTextChanged.connect(company.setToolTip)
     window.scheme2_company = company
-    layout.addWidget(_field("下单公司", company))
     controls = {
-        "galvanized_price": ("镀锌板价格", _price_spin(4.55)),
-        "carbon_price": ("当前材质价格", _price_spin(4.20)),
-        "waste_factor": ("废料系数", _price_spin(1.20)),
-        "labor_discount": ("人工折扣", _price_spin(1.00)),
-        "surface_price": ("表面处理价格", _price_spin(26.00)),
+        "galvanized_price": ("镀锌板价格", _sidebar_price_spin(4.55, 2)),
+        "carbon_price": ("碳钢价格", _sidebar_price_spin(4.20, 1)),
+        "waste_factor": ("废料系数", _sidebar_price_spin(1.20, 1, 4)),
+        "labor_discount": ("人工折扣", _sidebar_price_spin(1.00, 2, 4)),
+        "surface_price": ("表面处理价格", _sidebar_price_spin(26.00, 0)),
     }
     window.scheme2_cost_controls = {}
     for key, (label, control) in controls.items():
         if key in ("waste_factor", "labor_discount"):
             control.setRange(.01, 10)
             control.setDecimals(4)
+        if key == "surface_price":
+            control.setPrefix("橘纹 ")
         window.scheme2_cost_controls[key] = control
         field = _field(label, control)
         if key == "carbon_price":
@@ -1203,6 +1457,10 @@ def _build_cost_page(window):
     header.addWidget(title)
     header.addWidget(hint)
     header.addStretch(1)
+    company_field = _field("下单公司", window.scheme2_company)
+    company_field.setObjectName("scheme2CostCompanyField")
+    company_field.setFixedWidth(250)
+    header.addWidget(company_field)
     column_mode = QPushButton("完整 16 列")
     column_mode.setObjectName("scheme2PrimaryGhost")
     header.addWidget(column_mode)
@@ -1295,6 +1553,7 @@ def _build_cost_page(window):
     table.itemSelectionChanged.connect(lambda: _sync_sidebar(window))
     window.scheme2_cost_page = page
     window.scheme2_cost_sidebar = page.findChild(QFrame, "scheme2CostSidebar")
+    window.scheme2_cost_company_field = company_field
     window.scheme2_compact_coefficients = compact
     window.scheme2_compact_key = compact_key
     window.scheme2_compact_value = compact_value
@@ -1315,13 +1574,13 @@ def _build_cost_page(window):
 
 def _set_cost_column_mode(window, full):
     window._scheme2_full_columns = bool(full)
-    core = {0, 1, 2, 3, 11, 12, 13, 15}
+    core = {0, 1, 2, 3, 10, 11, 12, 13, 14, 15}
     for column in range(len(HEADERS)):
         window.summary_table.setColumnHidden(column, not full and column not in core)
     buttons = window.scheme2_cost_page.findChildren(QPushButton) if hasattr(window, "scheme2_cost_page") else []
-    toggle = next((button for button in buttons if button.text() in ("完整 16 列", "核心 8 列")), None)
+    toggle = next((button for button in buttons if button.text() in ("完整 16 列", "核心 10 列")), None)
     if toggle is not None:
-        toggle.setText("核心 8 列" if full else "完整 16 列")
+        toggle.setText("核心 10 列" if full else "完整 16 列")
 
 
 def _sync_compact_control(window):
@@ -1458,6 +1717,10 @@ def _sync_sidebar(window):
     caption = _material_price_caption(item.get("material_code") if isinstance(item, dict) else None)
     if hasattr(window, "scheme2_material_price_label"):
         window.scheme2_material_price_label.setText(caption)
+    surface_control = getattr(window, "scheme2_cost_controls", {}).get("surface_price")
+    if isinstance(surface_control, QDoubleSpinBox):
+        coating = str(_formula(item).get("coating_type") or "橘纹") if isinstance(item, dict) else "橘纹"
+        surface_control.setPrefix(f"{coating} ")
     if hasattr(window, "scheme2_compact_key"):
         material_index = window.scheme2_compact_key.findData("carbon_price")
         if material_index >= 0:
@@ -1718,6 +1981,7 @@ def _capture_scheme2_page_state(window):
         "combos": combos,
         "spins": spins,
         "attachments": deepcopy(getattr(window, "attachments", [])),
+        "attachments_manual": bool(getattr(window, "_scheme2_attachments_manual", False)),
         "manual_fields": set(getattr(window, "scheme2_manual_fields", set())),
         "dirty": bool(getattr(window, "_scheme2_dirty", False)),
     }
@@ -1740,6 +2004,7 @@ def _restore_scheme2_page_state(window, state):
             with QSignalBlocker(spin):
                 spin.setValue(value)
     window.attachments = deepcopy(state.get("attachments") or [])
+    window._scheme2_attachments_manual = bool(state.get("attachments_manual", False))
     window.scheme2_manual_fields = set(state.get("manual_fields") or set())
     for key in ("dimensions", "material", "coating", "color"):
         if key in window.scheme2_manual_fields:
@@ -1749,10 +2014,7 @@ def _restore_scheme2_page_state(window, state):
     refresh = getattr(window, "update_attachment_view", None)
     if callable(refresh):
         refresh()
-    summary = getattr(window, "scheme2_attachment_summary", None)
-    if isinstance(summary, QLabel):
-        names = [str(item.get("item_name") or item.get("name") or "附件") for item in window.attachments]
-        summary.setText("未选择附件" if not names else f"已选择 {len(names)} 项：" + "、".join(names[:3]))
+    _refresh_scheme2_attachment_summary(window)
     _set_dirty(window, bool(state.get("dirty")))
 
 
@@ -2561,10 +2823,8 @@ def _open_legacy_attachment_overlay(window, dialog_class, anchor):
         refresh = getattr(window, "update_attachment_view", None)
         if callable(refresh):
             refresh()
-        summary = getattr(window, "scheme2_attachment_summary", None)
-        if isinstance(summary, QLabel):
-            names = [str(item.get("item_name") or item.get("name") or "附件") for item in window.attachments]
-            summary.setText("未选择附件" if not names else f"已选择 {len(names)} 项：" + "、".join(names[:3]))
+        window._scheme2_attachments_manual = True
+        _refresh_scheme2_attachment_summary(window)
         window._scheme2_attachment_overlay = None
         dialog.deleteLater()
 
@@ -2607,10 +2867,8 @@ def _open_attachment_overlay(window, _dialog_class, anchor):
         refresh = getattr(window, "update_attachment_view", None)
         if callable(refresh):
             refresh()
-        summary = getattr(window, "scheme2_attachment_summary", None)
-        if isinstance(summary, QLabel):
-            names = [item["item_name"] for item in window.attachments]
-            summary.setText("未选择附件" if not names else f"已选择 {len(names)} 项：" + "、".join(names[:3]))
+        window._scheme2_attachments_manual = True
+        _refresh_scheme2_attachment_summary(window)
         window._scheme2_attachment_overlay = None
         dialog.deleteLater()
 
@@ -2625,6 +2883,56 @@ def _open_attachment_overlay(window, _dialog_class, anchor):
     dialog.setFixedSize(anchor.size())
     dialog.move(top_left)
     dialog.raise_()
+
+
+def _attachment_chip_text(item):
+    name = str(item.get("item_name") or item.get("name") or "附件").strip()
+    category = str(item.get("category_level1") or item.get("attachment_category") or "").strip()
+    if item.get("custom"):
+        quantity = max(1, int(_number(item.get("quantity"), 1)))
+        return f"临时：{name} ×{quantity}"
+    if category and name and name != category:
+        return f"{category}：{name}"
+    return f"{category or name} ✓"
+
+
+def _refresh_scheme2_attachment_summary(window):
+    summary = getattr(window, "scheme2_attachment_summary", None)
+    if not isinstance(summary, QFrame) or summary.layout() is None:
+        return
+    layout = summary.layout()
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget() is not None:
+            item.widget().deleteLater()
+    attachments = [item for item in getattr(window, "attachments", []) if isinstance(item, dict)]
+    if not attachments:
+        empty = QLabel("未选择附件")
+        empty.setObjectName("scheme2AttachmentEmpty")
+        layout.addWidget(empty)
+    else:
+        for attachment in attachments:
+            chip = QLabel(_attachment_chip_text(attachment))
+            chip.setObjectName("scheme2AttachmentChip")
+            chip.setProperty("temporary", bool(attachment.get("custom")))
+            chip.setWordWrap(True)
+            chip.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+            layout.addWidget(chip, 0, Qt.AlignmentFlag.AlignLeft)
+    manual = bool(getattr(window, "_scheme2_attachments_manual", False))
+    status = getattr(window, "scheme2_attachment_status", None)
+    if isinstance(status, QLabel):
+        status.setText("人工修改 ✎" if manual else "AI 已匹配 ✓")
+        status.setProperty("manual", manual)
+        status.style().unpolish(status)
+        status.style().polish(status)
+    card = getattr(window, "scheme2_attachment_card", None)
+    if isinstance(card, QFrame):
+        card.setProperty("provenanceState", "manual" if manual else "ai")
+        card.style().unpolish(card)
+        card.style().polish(card)
+    button = getattr(window, "scheme2_attachment_button", None)
+    if isinstance(button, QPushButton):
+        button.setText("修改…" if attachments else "选择附件…")
 
 
 def _configure_option_page(window, namespace):
@@ -2816,10 +3124,13 @@ def _configure_option_page(window, namespace):
     attachment_header = QHBoxLayout()
     attachment_header.addWidget(QLabel("附件"))
     attachment_header.addStretch(1)
+    attachment_status = QLabel()
+    attachment_status.setObjectName("scheme2AttachmentStatus")
+    attachment_header.addWidget(attachment_status)
     attachment_button = old_page.findChild(QPushButton, "quietAction")
     if attachment_button is not None:
         _detach(attachment_button)
-        attachment_button.setText("选择附件…")
+        attachment_button.setObjectName("scheme2AttachmentModify")
         try:
             attachment_button.clicked.disconnect()
         except RuntimeError:
@@ -2834,18 +3145,17 @@ def _configure_option_page(window, namespace):
     attachment_table = _detach(getattr(window, "attachment_summary_table", None))
     if isinstance(attachment_table, QTableWidget):
         attachment_table.hide()
-    selected_names = [
-        str(item.get("item_name") or item.get("name") or "附件")
-        for item in getattr(window, "attachments", []) if isinstance(item, dict)
-    ]
-    attachment_summary = QLabel(
-        "未选择附件" if not selected_names
-        else f"已选择 {len(selected_names)} 项：" + "、".join(selected_names[:3])
-    )
+    attachment_summary = QFrame()
     attachment_summary.setObjectName("scheme2AttachmentSummary")
-    attachment_summary.setWordWrap(True)
+    attachment_summary.setLayout(QVBoxLayout())
+    attachment_summary.layout().setContentsMargins(0, 0, 0, 0)
+    attachment_summary.layout().setSpacing(5)
     attachment_layout.addWidget(attachment_summary)
+    window.scheme2_attachment_card = attachment_card
+    window.scheme2_attachment_status = attachment_status
+    window.scheme2_attachment_button = attachment_button
     window.scheme2_attachment_summary = attachment_summary
+    _refresh_scheme2_attachment_summary(window)
     form.addWidget(attachment_card)
     form.addStretch(1)
     left_scroll.setWidget(left)
@@ -3314,6 +3624,17 @@ QMainWindow QWidget { font-family:"Microsoft YaHei UI","Microsoft YaHei","Segoe 
 QMainWindow, QWidget#scheme2OptionPage, QWidget#scheme2CostPage, QWidget#scheme2DetailPage { background:#FFFFFF; color:#1C1C1E; }
 QLabel#scheme2ServiceStatus { color:#3B6D11; background:#EAF3DE; border-radius:7px; padding:5px 6px; font-size:10px; }
 QDialog#scheme2ConfirmDialog { background:rgba(22,28,36,0.45); }
+QDialog#scheme2DimensionDialog { background:rgba(22,28,36,0.45); }
+QFrame#scheme2DimensionShell { background:#FFFFFF; border:0; border-radius:9px; }
+QFrame#scheme2DimensionTitleBar { background:#FFFFFF; border:0; border-bottom:1px solid #E2E5E9; border-top-left-radius:9px; border-top-right-radius:9px; min-height:40px; }
+QLabel#scheme2DimensionTitle { color:#1C1C1E; font-size:14px; font-weight:600; border:0; }
+QToolButton#scheme2DimensionClose { color:#8A8A86; background:transparent; border:0; font-size:16px; }
+QToolButton#scheme2DimensionClose:hover { color:#1C1C1E; }
+QLineEdit#scheme2DimensionInput { background:#FFFFFF; border:1px solid #2563EB; border-radius:7px; padding:6px 10px; min-height:24px; }
+QLabel#scheme2DimensionHint { color:#8A8A86; font-size:11px; margin-left:16px; margin-right:16px; }
+QPushButton#scheme2DimensionCancel { color:#1C1C1E; background:#FFFFFF; border:1px solid #C8CDD4; border-radius:7px; }
+QPushButton#scheme2DimensionConfirm { color:#FFFFFF; background:#2563EB; border:1px solid #2563EB; border-radius:7px; font-weight:600; }
+QPushButton#scheme2DimensionConfirm:disabled { background:#AFC7E8; border-color:#AFC7E8; }
 QFrame#scheme2ConfirmShell { background:#FFFFFF; border:1px solid #D7DCE3; border-radius:8px; }
 QFrame#scheme2ConfirmTitleBar { background:#FFFFFF; border:0; border-bottom:1px solid #E2E5E9; border-top-left-radius:8px; border-top-right-radius:8px; min-height:40px; }
 QLabel#scheme2ConfirmTitle { color:#1C1C1E; font-size:14px; font-weight:600; border:0; }
@@ -3354,8 +3675,16 @@ QFrame#scheme2GangedValue QLabel { font-size:15px; color:#1C1C1E; }
 QLabel#scheme2GangedAi { color:#3B6D11; font-size:13px; }
 QFrame#scheme2DoorValue QLabel { color:#5F5E5A; font-size:13px; }
 QFrame#scheme2DoorValue QComboBox { background:transparent; border:0; min-height:30px; }
-QFrame#scheme2AttachmentCard { background:#F6F7F9; border:1px solid rgba(0,0,0,.12); border-radius:11px; }
-QLabel#scheme2AttachmentSummary { min-height:28px; background:#FFFFFF; color:#8A8A86; border:1px solid rgba(0,0,0,.12); border-radius:7px; padding:8px 11px; font-size:14px; }
+QFrame#scheme2AttachmentCard { background:#FFFFFF; border:1px solid #85B7EB; border-radius:8px; }
+QFrame#scheme2AttachmentCard[provenanceState="manual"] { border-color:#F2A33A; }
+QFrame#scheme2AttachmentSummary { background:transparent; border:0; }
+QLabel#scheme2AttachmentEmpty { color:#8A8A86; background:transparent; border:0; font-size:13px; }
+QLabel#scheme2AttachmentChip { color:#185FA5; background:#E6F1FB; border:0; border-radius:6px; padding:3px 8px; font-size:13px; }
+QLabel#scheme2AttachmentChip[temporary="true"] { color:#854F0B; background:#FAEEDA; }
+QLabel#scheme2AttachmentStatus { color:#3B6D11; background:#EAF3DE; border:0; border-radius:9px; padding:2px 7px; font-size:11px; }
+QLabel#scheme2AttachmentStatus[manual="true"] { color:#854F0B; background:#FAEEDA; }
+QPushButton#scheme2AttachmentModify { color:#185FA5; background:transparent; border:0; padding:2px 0; min-height:22px; }
+QPushButton#scheme2AttachmentModify:hover { color:#0B326B; text-decoration:underline; }
 QFrame#scheme2AttachmentHeader { background:#E6F1FB; border:0; border-bottom:1px solid #85B7EB; }
 QLabel#scheme2AttachmentTitle { color:#185FA5; font-size:14px; font-weight:600; }
 QToolButton#scheme2AttachmentClose { color:#5F5E5A; background:transparent; border:0; border-radius:5px; font-size:18px; }
@@ -3385,12 +3714,34 @@ QFrame#navPanel QPushButton:checked { color:#FFFFFF; background:#2563EB; }
 QPushButton#scheme2CollapseButton { color:#5A7AAB; background:transparent; border:0; padding:0; text-align:center; font-size:13px; }
 QPushButton#scheme2CollapseButton:hover { background:#E6F1FB; }
 QFrame#scheme2CostSidebar { background:#DCE8F7; border-right:1px solid #BBD0EA; }
+QFrame#scheme2CostSidebar QDoubleSpinBox { background:#FFFFFF; border:1px solid #BBD0EA; border-radius:7px; padding:3px 22px 3px 7px; min-height:20px; }
+QFrame#scheme2CostSidebar QDoubleSpinBox:focus { border-color:#2563EB; }
 QFrame#scheme2CompactCoefficients { background:#DCE8F7; border:1px solid #BBD0EA; border-radius:7px; }
 QFrame#scheme2CostBody { background:#FFFFFF; }
+QFrame#scheme2CostCompanyField { background:transparent; border:0; }
 QFrame#scheme2UndoBar { background:#E6F1FB; border:1px solid #85B7EB; border-radius:7px; }
 QLabel#scheme2EmptyState { color:#8A8A86; background:#FFFFFF; font-size:13px; }
 QLabel#scheme2PageTitle { font-size:18px; font-weight:600; color:#1C1C1E; }
 QLabel#scheme2DialogTitle { font-size:15px; font-weight:600; color:#1C1C1E; padding-bottom:4px; }
+QDialog#scheme2AttachmentEditorDialog { background:transparent; }
+QFrame#scheme2AttachmentEditorShell { background:#FFFFFF; border:1px solid #B8BEC7; border-radius:14px; }
+QFrame#scheme2AttachmentEditorHeader { background:#F6F7F9; border:0; border-bottom:1px solid #D7DCE3; min-height:40px; }
+QLabel#scheme2AttachmentEditorTitle { color:#1C1C1E; font-size:14px; font-weight:600; border:0; }
+QToolButton#scheme2AttachmentEditorClose { color:#8A8A86; background:transparent; border:0; font-size:18px; }
+QToolButton#scheme2AttachmentEditorClose:hover { color:#1C1C1E; }
+QTableWidget#scheme2AttachmentEditorTable { background:#FFFFFF; alternate-background-color:#FFFFFF; border:0; gridline-color:transparent; outline:0; }
+QTableWidget#scheme2AttachmentEditorTable::item { padding:6px 8px; border:0; border-bottom:1px solid #D7DCE3; }
+QTableWidget#scheme2AttachmentEditorTable::item:selected { color:#1C1C1E; background:#E6F1FB; }
+QTableWidget#scheme2AttachmentEditorTable QHeaderView::section { background:#F6F7F9; color:#5F5E5A; border:0; border-bottom:1px solid #D7DCE3; padding:7px 8px; font-weight:400; }
+QSpinBox#scheme2AttachmentEditorQuantity { background:transparent; border:0; border-bottom:1px solid #5F5E5A; border-radius:0; padding:2px; min-height:24px; }
+QDoubleSpinBox#scheme2AttachmentEditorAmount { color:#1C1C1E; background:transparent; border:0; border-bottom:1px solid #5F5E5A; border-radius:0; padding:2px 15px 2px 2px; min-height:24px; }
+QDoubleSpinBox#scheme2AttachmentEditorAmount:focus { border-bottom:2px solid #2563EB; }
+QDoubleSpinBox#scheme2AttachmentEditorAmount[pending="true"] { color:#C62828; background:#FAEEDA; }
+QComboBox#scheme2AttachmentModelCombo { background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; border-radius:6px; padding:4px 24px 4px 8px; min-height:24px; }
+QComboBox#scheme2AttachmentModelCombo:focus, QComboBox#scheme2AttachmentModelCombo:on { border-color:#2563EB; }
+QComboBox#scheme2AttachmentModelCombo::drop-down { border:0; width:24px; }
+QAbstractItemView#scheme2AttachmentModelDropdown { background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; outline:0; selection-background-color:#F5F9FF; selection-color:#1C1C1E; }
+QAbstractItemView#scheme2AttachmentModelDropdown::item { min-height:34px; padding:0 8px; }
 QDialog#scheme2DiscountDialog { background:transparent; }
 QFrame#scheme2DiscountShell { background:#FFFFFF; border:1px solid #B8BEC7; border-radius:14px; }
 QFrame#scheme2DiscountHeader { background:#F6F7F9; border:0; border-bottom:1px solid #D7DCE3; }
@@ -3403,7 +3754,7 @@ QDoubleSpinBox#scheme2DiscountInput:focus { border:1px solid #2563EB; }
 QFrame#scheme2DiscountPreview { min-height:36px; color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:8px; }
 QFrame#scheme2DiscountPreview QLabel { color:#185FA5; }
 QPushButton#scheme2DiscountCancel { color:#5F5E5A; background:#FFFFFF; border:1px solid #D7DCE3; border-radius:7px; padding:8px 16px; }
-QLabel#scheme2SidebarTitle { font-size:14px; font-weight:600; color:#1F3A6A; }
+QLabel#scheme2SidebarTitle { font-size:14px; font-weight:600; color:#1F3A6A; background:#FFFFFF; border:0; border-radius:7px; padding:5px 8px; }
 QLabel#scheme2FieldLabel, QLabel#scheme2SidebarHint { font-size:10px; color:#5A7AAB; }
 QLabel#scheme2Hint { color:#8A8A86; font-size:11px; }
 QLabel#scheme2CompletionPill { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:12px; padding:4px 10px; }
@@ -3424,6 +3775,8 @@ QDoubleSpinBox#scheme2DetailFactor:focus { border-bottom:2px solid #2563EB; }
 QHeaderView::section { background:#F6F7F9; color:#5F5E5A; border:0; border-bottom:1px solid rgba(0,0,0,.12); padding:7px 8px; font-weight:500; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background:#FFFFFF; border:1px solid rgba(0,0,0,.18); border-radius:7px; padding:5px 7px; min-height:22px; }
 QComboBox[scheme2Multiline="true"] { padding:4px 5px; }
+QAbstractItemView#scheme2CompanyDropdown { min-width:320px; background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; outline:0; padding:0; }
+QAbstractItemView#scheme2CompanyDropdown::item { min-height:40px; padding:0; border:0; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color:#2563EB; }
 QProgressBar#scheme2AddProgress { background:#EEF0F3; border:0; border-radius:5px; text-align:center; color:#1F3A6A; min-height:20px; }
 QProgressBar#scheme2AddProgress::chunk { background:#97C459; border-radius:5px; }
@@ -3495,6 +3848,7 @@ def install_scheme2_ui(namespace):
         window._scheme2_edit_item = None
         window._scheme2_detail_item = None
         window._scheme2_active_settings = None
+        window._scheme2_attachments_manual = False
         window._scheme2_drawing_pages = []
         window._scheme2_drawing_page_index = -1
         window._scheme2_page_worker = None

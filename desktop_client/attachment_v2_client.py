@@ -30,6 +30,49 @@ def attachment_image_match_key(value):
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or ""))).casefold()
 
 
+def attachment_model_suffix(value, category):
+    """Return the comparable fan/filter model suffix, including its variant."""
+    normalized = attachment_image_match_key(value)
+    prefix = "ka" if str(category).strip() == "风机" else "fu-?" if str(category).strip() == "滤网" else ""
+    if not prefix:
+        return ""
+    match = re.search(rf"({prefix}[0-9a-z/-]+(?:\([^()]+\))?)$", normalized)
+    return match.group(1) if match else ""
+
+
+def _catalog_model_suffixes(item, category):
+    return {
+        suffix for suffix in (
+            attachment_model_suffix(item.get(field), category)
+            for field in ("item_name", "model_code", "category_level2", "category_level3")
+        ) if suffix
+    }
+
+
+def _visible_quote_dimensions(window):
+    """Prefer the dimensions currently typed in the visible option field."""
+    for name in ("quote_spec_edit", "model_edit"):
+        control = getattr(window, name, None)
+        text = control.text().strip() if control is not None and hasattr(control, "text") else ""
+        parsed = parse_base_specification(text)
+        if parsed is not None:
+            return tuple(float(value) for value in parsed[:3])
+        match = re.fullmatch(
+            r"\s*(\d+(?:\.\d+)?)\s*[xX×＊*]\s*"
+            r"(\d+(?:\.\d+)?)\s*[xX×＊*]\s*(\d+(?:\.\d+)?)\s*",
+            text,
+        )
+        if match:
+            width, depth, height = (float(value) for value in match.groups())
+            if min(width, height, depth) > 0:
+                return width, height, depth
+    controls = [getattr(window, name, None) for name in ("width_spin", "height_spin", "depth_spin")]
+    try:
+        return tuple(float(control.value()) for control in controls)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def attachment_images_for_name(image_catalog, item_name):
     wanted = attachment_image_match_key(item_name)
     if not wanted:
@@ -122,6 +165,23 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
     wanted_category = attachment_image_match_key(
         selection.get("category_level1") or selection.get("attachment_category")
     )
+    category = str(selection.get("category_level1") or selection.get("attachment_category") or "").strip()
+    name = str(selection.get("item_name") or selection.get("name") or "").strip()
+    if category in {"风机", "滤网"}:
+        wanted_suffix = attachment_model_suffix(name, category)
+        if wanted_suffix:
+            suffix_candidates = [
+                item for item in catalog if isinstance(item, dict)
+                and wanted_suffix in _catalog_model_suffixes(item, category)
+            ]
+            same_category = [
+                item for item in suffix_candidates
+                if attachment_image_match_key(item.get("category_level1")) == wanted_category
+            ]
+            if len(same_category) == 1:
+                return same_category[0]
+            if len(suffix_candidates) == 1:
+                return suffix_candidates[0]
     candidates = [
         item for item in catalog if isinstance(item, dict)
         and attachment_image_match_key(item.get("item_name")) == wanted_name
@@ -130,15 +190,30 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         item for item in candidates
         if attachment_image_match_key(item.get("category_level1")) == wanted_category
     ]
-    sized_candidates = category_matches or candidates
+    wanted_model = str(selection.get("model_code") or selection.get("specification") or "").strip().upper()
+    if wanted_model:
+        exact_models = [
+            item for item in (category_matches or candidates)
+            if str(item.get("model_code") or "").strip().upper() == wanted_model
+        ]
+        if len(exact_models) == 1:
+            return exact_models[0]
+    all_category_matches = [
+        item for item in catalog if isinstance(item, dict)
+        and attachment_image_match_key(item.get("category_level1")) == wanted_category
+    ]
+    sized_candidates = (
+        [item for item in all_category_matches if size_match_attachment_name(item) == "侧板"]
+        if category == "侧板" else category_matches or candidates
+    )
     if sized_candidates and target_dimensions is not None:
-        category = str(selection.get("category_level1") or selection.get("attachment_category") or "").strip()
-        name = str(selection.get("item_name") or selection.get("name") or "").strip()
         target = tuple(target_dimensions)
         if category == "底座" and base_height_mm is not None and len(target) >= 3:
             target = (target[0], float(base_height_mm), target[2])
         matched = None
-        if category == "安装板" and name in {"安装板", "JK安装板"}:
+        if category == "侧板":
+            matched = match_attachment_size(sized_candidates, sized_candidates[0], target)
+        elif category == "安装板" and name in {"安装板", "JK安装板"}:
             matched = match_installation_board_for_product(
                 catalog, sized_candidates[0], target, product_code
             )
@@ -176,11 +251,7 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
 
 def match_quote_attachment(window, selection, catalog):
     """Apply the retained quick-size rules immediately before quote pricing."""
-    controls = [getattr(window, name, None) for name in ("width_spin", "height_spin", "depth_spin")]
-    try:
-        dimensions = tuple(float(control.value()) for control in controls)
-    except (AttributeError, TypeError, ValueError):
-        dimensions = None
+    dimensions = _visible_quote_dimensions(window)
     product_getter = getattr(window, "selected_product_code", None)
     product_code = product_getter() if callable(product_getter) else ""
     return match_catalog_attachment(
@@ -676,6 +747,45 @@ def install_attachment_v2(namespace):
     window_class.resolve_attachments_for_quote = resolve_attachments_for_quote
 
     def recalculate_draft_attachment(window, quote_item, attachment, succeeded, failed):
+        if attachment.get("attachment_price_id") is None and attachment.get("model_code"):
+            base_url = str(window.base_url() or "")
+            url = base_url.split("/api/", 1)[0].rstrip("/") + "/api/attachments/catalog?v=2"
+            worker = worker_class(url, {}, window, method="GET")
+            active = getattr(window, "_scheme2_attachment_model_workers", set())
+            active.add(worker)
+            window._scheme2_attachment_model_workers = active
+
+            def catalog_loaded(body):
+                catalog = [dict(item) for item in body.get("items", []) if isinstance(item, dict)]
+                match = match_catalog_attachment(
+                    attachment,
+                    catalog,
+                    target_dimensions=(
+                        quote_item.get("width_mm"), quote_item.get("height_mm"), quote_item.get("depth_mm")
+                    ),
+                    product_code=str(quote_item.get("product_code") or ""),
+                )
+                if match is None:
+                    failed(f"价格库中未找到型号：{attachment.get('model_code')}")
+                    return
+                resolved = {
+                    **copy.deepcopy(match),
+                    **attachment,
+                    "attachment_price_id": match.get("attachment_price_id"),
+                    "catalog_version": body.get("data_version"),
+                }
+                recalculate_draft_attachment(window, quote_item, resolved, succeeded, failed)
+
+            worker.succeeded.connect(catalog_loaded)
+            worker.failed.connect(lambda message: failed(f"附件价格库读取失败：{message}"))
+
+            def catalog_finished():
+                getattr(window, "_scheme2_attachment_model_workers", set()).discard(worker)
+                worker.deleteLater()
+
+            worker.finished.connect(catalog_finished)
+            worker.start()
+            return
         settings = quote_item.get("scheme2_cost_settings") or getattr(window, "scheme2_defaults", {})
         payload = {
             "quote_id": "PREVIEW",
