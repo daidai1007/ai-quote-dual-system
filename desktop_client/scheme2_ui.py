@@ -1575,8 +1575,6 @@ def _cost_sidebar(window):
         if key in ("waste_factor", "labor_discount"):
             control.setRange(.01, 10)
             control.setDecimals(4)
-        if key == "surface_price":
-            control.setPrefix("橘纹 ")
         window.scheme2_cost_controls[key] = control
         field = _field(label, control)
         if key == "carbon_price":
@@ -1961,12 +1959,7 @@ def _sync_sidebar(window):
         stainless_label.setText(f"{material_code}价格" if stainless else "不锈钢价格")
     surface_control = getattr(window, "scheme2_cost_controls", {}).get("surface_price")
     if isinstance(surface_control, QDoubleSpinBox):
-        coating = str(
-            item.get("scheme2_selected_surface")
-            or _formula(item).get("coating_type")
-            or "橘纹"
-        ) if isinstance(item, dict) else "橘纹"
-        surface_control.setPrefix(f"{coating} ")
+        surface_control.setPrefix("")
     if hasattr(window, "scheme2_compact_key"):
         material_index = window.scheme2_compact_key.findData("carbon_price")
         if material_index >= 0:

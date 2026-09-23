@@ -44,25 +44,25 @@ def request_json(base, key, path, payload):
 
 
 DIMENSIONS = [
-    (600, 1800, 400), (800, 1800, 600), (1000, 1800, 600), (1200, 1800, 600),
-    (600, 2000, 600), (800, 2000, 600), (1000, 2000, 600), (1200, 2000, 600),
-    (600, 2000, 800), (800, 2000, 800), (1000, 2000, 800), (1200, 2000, 800),
-    (600, 2200, 600), (800, 2200, 600), (1000, 2200, 600), (1200, 2200, 600),
+    (200, 300, 155), (300, 300, 210), (300, 400, 210), (380, 300, 155),
+    (380, 300, 210), (380, 380, 210), (400, 400, 210), (300, 500, 210),
+    (400, 500, 210), (600, 380, 210), (600, 380, 350), (500, 500, 300),
+    (600, 600, 210), (600, 760, 210), (600, 800, 250), (760, 760, 210),
 ]
 
 config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
 base, key = api_base(config), str(config.get("api_key") or "").strip()
 namespace = v3_launcher.load_v3_namespace()
 calculators = {}
-for code in ("JP_SINGLE", "JP_DOUBLE"):
+for code in ("JA_SINGLE",):
     calculator = namespace["FormulaDatabaseCalculator"]()
     calculator.load_template(request_json(base, key, "/api/quotes/formula-template", {"product_code": code}))
     calculators[code] = calculator
 
 results = []
 for width, height, depth in DIMENSIONS:
-    product_code = "JP_DOUBLE" if width > 800 else "JP_SINGLE"
-    single, double = (0, 1) if width > 800 else (1, 0)
+    product_code = "JA_SINGLE"
+    single, double = (1, 0)
     weight, area = calculators[product_code].calculate(product_code, width, height, depth, single, double)
     payload = {
         "quote_id": f"CHECK-{uuid4().hex}", "product_code": product_code,
@@ -71,6 +71,7 @@ for width, height, depth in DIMENSIONS:
         "base_material_weight_kg": weight, "product_area_m2": area,
         "coating_type": "无", "variant_code": "DOUBLE" if double else "SINGLE",
         "single_door_count": single, "double_door_count": double, "attachments": [],
+        "freight_fee": 0,
         "material_unit_price_override": 16.0,
         "galvanized_sheet_unit_price_override": 4.55,
         "carbon_steel_unit_price_override": 4.2,
@@ -83,6 +84,11 @@ for width, height, depth in DIMENSIONS:
     results.append({
         "width": width, "height": height, "depth": depth,
         "cost": formula.get("total_cost"), "face": quick.get("total_cost"),
+        "material_cost": formula.get("material_cost"),
+        "labor_cost": formula.get("labor_cost"),
+        "management_fee": formula.get("management_fee"),
+        "auxiliary_cost": formula.get("auxiliary_cost"),
+        "weight": formula.get("billable_material_weight_kg") or formula.get("corrected_material_weight_kg"),
         "spray": formula.get("spray_cost"), "quick_match": quick.get("match_method"),
     })
 

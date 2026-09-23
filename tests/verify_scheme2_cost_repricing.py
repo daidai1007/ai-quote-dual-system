@@ -16,6 +16,8 @@ app = QApplication.instance() or QApplication([])
 assert scheme2_ui.STAINLESS_DEFAULT_PRICES == {"SUS304": 16.0, "SUS316": 32.4}
 assert scheme2_ui.SURFACE_DEFAULT_PRICES == {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
 assert [scheme2_ui._surface_default_price(value) for value in ("橘纹", "平光", "无")] == [26.0, 30.0, 0.0]
+source = (ROOT / "desktop_client" / "scheme2_ui.py").read_text(encoding="utf-8")
+assert 'setPrefix(f"{coating} ")' not in source and 'setPrefix("橘纹 ")' not in source
 table = QTableWidget(1, 1)
 table.setCurrentCell(0, 0)
 formula = {
