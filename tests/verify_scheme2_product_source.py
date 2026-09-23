@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "desktop_client"))
 from PySide6.QtWidgets import QApplication, QComboBox  # noqa: E402
 
 import scheme2_ui  # noqa: E402
+import layout_refresh  # noqa: E402
 
 
 app = QApplication.instance() or QApplication([])
@@ -42,4 +43,13 @@ assert scheme2_ui._row_values(item)[2] == "JA 控制箱"
 
 legacy = {"product_name": "不得采用", "product_code": "JE_SINGLE", "formula": {}, "quick": {}}
 assert scheme2_ui._row_values(legacy)[2] == "JE_SINGLE"
+
+# JA 0/1 still uses the sole JA formula template when no JA_DOUBLE row exists.
+ja_combo = QComboBox()
+ja_combo.addItem("JA", "JA")
+ja_window = SimpleNamespace(
+    product_combo=ja_combo,
+    product_catalog={"JA": {"codes": {"SINGLE": "JA_SINGLE"}}},
+)
+assert layout_refresh._ja_product_code_fallback(ja_window) == "JA_SINGLE"
 print("scheme2 product source contract passed")

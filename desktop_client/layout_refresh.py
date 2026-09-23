@@ -1749,6 +1749,19 @@ def _current_product_selection(window):
     return data or label or None
 
 
+def _ja_product_code_fallback(window) -> str:
+    """JA uses its single database template for every supported door type."""
+
+    selection = str(_current_product_selection(window) or "").strip()
+    family = selection.split("_", 1)[0].upper()
+    if family != "JA":
+        return ""
+    catalog = getattr(window, "product_catalog", {}) or {}
+    entry = catalog.get(selection) or catalog.get("JA") or {}
+    codes = entry.get("codes") or {}
+    return str(codes.get("SINGLE") or codes.get("DEFAULT") or "").strip()
+
+
 def _restore_product_selection(window, selection) -> bool:
     """Restore a retained product without inventing a catalogue option."""
 
@@ -7141,6 +7154,7 @@ def install_layout_refresh(namespace: dict) -> None:
     original_product_changed = getattr(main_window, "product_changed", None)
     original_door_counts_changed = getattr(main_window, "door_counts_changed", None)
     original_product_catalog_loaded = getattr(main_window, "product_catalog_loaded", None)
+    original_selected_product_code = getattr(main_window, "selected_product_code", None)
     original_refresh_formula_inputs = getattr(main_window, "refresh_formula_inputs", None)
     original_formula_template_loaded = getattr(main_window, "formula_template_loaded", None)
     original_formula_template_failed = getattr(main_window, "formula_template_failed", None)
@@ -7959,6 +7973,11 @@ def install_layout_refresh(namespace: dict) -> None:
             _restore_product_selection(self, retained_product)
             return loaded
         main_window.product_catalog_loaded = product_catalog_loaded_with_database_options
+    if callable(original_selected_product_code):
+        def selected_product_code_with_ja_fallback(self):
+            code = original_selected_product_code(self)
+            return code or _ja_product_code_fallback(self)
+        main_window.selected_product_code = selected_product_code_with_ja_fallback
     if callable(original_formula_template_loaded):
         def formula_template_loaded_with_perimeter_rule(self, *args, **kwargs):
             loaded = original_formula_template_loaded(self, *args, **kwargs)
