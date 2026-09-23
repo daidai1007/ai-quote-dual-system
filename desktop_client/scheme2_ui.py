@@ -64,6 +64,8 @@ COST_SIDEBAR_WIDTH = 130
 COMPANY_COMBO_HEIGHT = 56
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
+STAINLESS_DEFAULT_PRICES = {"SUS304": 16.0, "SUS316": 32.4}
+SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
 HEADERS = (
     "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "数量", "成本单价",
@@ -193,6 +195,14 @@ def _number(value, fallback=0.0):
 
 def _money(value):
     return f"{_number(value):,.2f}"
+
+
+def _surface_default_price(value):
+    text = str(value or "").strip()
+    for name, price in SURFACE_DEFAULT_PRICES.items():
+        if text == name or name in text:
+            return price
+    return SURFACE_DEFAULT_PRICES["橘纹"]
 
 
 def _formula(item):
@@ -1555,7 +1565,7 @@ def _cost_sidebar(window):
     controls = {
         "galvanized_price": ("镀锌板价格", _sidebar_price_spin(4.55, 2)),
         "carbon_price": ("碳钢价格", _sidebar_price_spin(4.20, 1)),
-        "stainless_price": ("不锈钢价格", _sidebar_price_spin(17.50, 2)),
+        "stainless_price": ("不锈钢价格", _sidebar_price_spin(STAINLESS_DEFAULT_PRICES["SUS304"], 2)),
         "waste_factor": ("废料系数", _sidebar_price_spin(1.20, 1, 4)),
         "labor_discount": ("人工折扣", _sidebar_price_spin(1.00, 2, 4)),
         "surface_price": ("表面处理价格", _sidebar_price_spin(26.00, 0)),
@@ -1951,7 +1961,11 @@ def _sync_sidebar(window):
         stainless_label.setText(f"{material_code}价格" if stainless else "不锈钢价格")
     surface_control = getattr(window, "scheme2_cost_controls", {}).get("surface_price")
     if isinstance(surface_control, QDoubleSpinBox):
-        coating = str(_formula(item).get("coating_type") or "橘纹") if isinstance(item, dict) else "橘纹"
+        coating = str(
+            item.get("scheme2_selected_surface")
+            or _formula(item).get("coating_type")
+            or "橘纹"
+        ) if isinstance(item, dict) else "橘纹"
         surface_control.setPrefix(f"{coating} ")
     if hasattr(window, "scheme2_compact_key"):
         material_index = window.scheme2_compact_key.findData("carbon_price")
@@ -3952,9 +3966,15 @@ def _finish_add(window):
         item["source_page_number"] = int(page["page_index"]) + 1
         item["source_page_count"] = int(page["page_count"])
     item.setdefault("quick_discount", 1.0)
-    item["scheme2_cost_settings"] = dict(
-        getattr(window, "_scheme2_active_settings", None) or window.scheme2_defaults
-    )
+    active_settings = getattr(window, "_scheme2_active_settings", None)
+    item["scheme2_cost_settings"] = dict(active_settings or window.scheme2_defaults)
+    material_code = str(item.get("material_code") or "").strip().upper()
+    if active_settings is None and material_code in STAINLESS_DEFAULT_PRICES:
+        item["scheme2_cost_settings"]["stainless_price"] = STAINLESS_DEFAULT_PRICES[material_code]
+    if active_settings is None:
+        item["scheme2_cost_settings"]["surface_price"] = _surface_default_price(
+            item["scheme2_selected_surface"]
+        )
     window._scheme2_active_settings = None
     window._scheme2_clear_attachments_on_return = True
     _clear_scheme2_attachments(window)
@@ -4390,15 +4410,27 @@ def install_scheme2_ui(namespace):
             if isinstance(payload, dict) and owner is not None and hasattr(owner, "scheme2_defaults"):
                 values = getattr(owner, "_scheme2_active_settings", None) or owner.scheme2_defaults
                 material_code = str(payload.get("material_code") or "").strip().upper()
+                coating = (
+                    owner.coating_combo.currentText().strip()
+                    if isinstance(getattr(owner, "coating_combo", None), QComboBox)
+                    else str(payload.get("coating_type") or "").strip()
+                )
                 updates = {
                     "galvanized_sheet_unit_price_override": values["galvanized_price"],
                     "carbon_steel_unit_price_override": values["carbon_price"],
-                    "surface_treatment_unit_price_override": values["surface_price"],
+                    "surface_treatment_unit_price_override": (
+                        values["surface_price"]
+                        if getattr(owner, "_scheme2_active_settings", None) is not None
+                        else _surface_default_price(coating)
+                    ),
                 }
-                # SUS304/SUS316 must retain the material price resolved by the
-                # database.  Only carbon-steel selections use the sidebar
-                # override during the initial quote calculation.
-                if material_code not in {"SUS304", "SUS316"}:
+                if material_code in STAINLESS_DEFAULT_PRICES:
+                    active = getattr(owner, "_scheme2_active_settings", None)
+                    updates["material_unit_price_override"] = (
+                        values["stainless_price"] if active is not None
+                        else STAINLESS_DEFAULT_PRICES[material_code]
+                    )
+                else:
                     updates["material_unit_price_override"] = values["carbon_price"]
                 pages = getattr(owner, "_scheme2_drawing_pages", [])
                 page_index = int(getattr(owner, "_scheme2_drawing_page_index", -1))
@@ -4441,7 +4473,8 @@ def install_scheme2_ui(namespace):
         window._scheme2_accept_paths = namespace["ImportDropZone"].accepted_paths
         window.scheme2_defaults = {
             "galvanized_price": 4.55, "carbon_price": 4.20, "waste_factor": 1.20,
-            "stainless_price": 17.50, "labor_discount": 1.0, "surface_price": 26.0,
+            "stainless_price": STAINLESS_DEFAULT_PRICES["SUS304"],
+            "labor_discount": 1.0, "surface_price": 26.0,
         }
         original_init(window, *args, **kwargs)
         # The reference explicitly supports the <900 logical-pixel stacked

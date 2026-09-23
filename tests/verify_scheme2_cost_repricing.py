@@ -13,6 +13,9 @@ from PySide6.QtWidgets import QApplication, QTableWidget  # noqa: E402
 import scheme2_ui  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
+assert scheme2_ui.STAINLESS_DEFAULT_PRICES == {"SUS304": 16.0, "SUS316": 32.4}
+assert scheme2_ui.SURFACE_DEFAULT_PRICES == {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
+assert [scheme2_ui._surface_default_price(value) for value in ("橘纹", "平光", "无")] == [26.0, 30.0, 0.0]
 table = QTableWidget(1, 1)
 table.setCurrentCell(0, 0)
 formula = {
@@ -49,5 +52,8 @@ assert formula["labor_cost"] == 64.0 and formula["management_fee"] == 8.0
 scheme2_ui._apply_cost_control(window, "surface_price", 30.0)
 assert formula["spray_cost"] == 46.15
 assert formula["total_cost"] == 396.59
+scheme2_ui._apply_cost_control(window, "surface_price", 0.0)
+assert formula["spray_cost"] == 0.0
+assert formula["total_cost"] == 350.44
 assert scheme2_ui._current_material_unit_price(item) == 20.0
 print("scheme2 cost repricing contract passed")
