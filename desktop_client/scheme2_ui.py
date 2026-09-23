@@ -60,6 +60,8 @@ DETAIL_ROUTE = 5
 NAV_EXPANDED_WIDTH = 128
 COST_SIDEBAR_WIDTH = 130
 COMPANY_COMBO_HEIGHT = 56
+DRAWING_FOOTER_HEIGHT = 46
+DRAWING_VERTICAL_CHROME = 118
 HEADERS = (
     "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "数量", "成本单价",
@@ -3527,6 +3529,8 @@ def _configure_option_page(window, namespace):
         right.show()
         footer = QFrame()
         footer.setObjectName("scheme2RecognitionFooter")
+        footer.setFixedHeight(DRAWING_FOOTER_HEIGHT)
+        footer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         row = QHBoxLayout(footer)
         row.setContentsMargins(10, 8, 10, 8)
         status = QLabel("等待图纸识别")
@@ -3980,10 +3984,9 @@ def _apply_responsive(window):
     preview = getattr(window, "quote_drawing_preview", None)
     canvas = getattr(preview, "canvas", None)
     if drawing is not None and canvas is not None and drawing.width() > 100:
-        height_limit = max(300, window.height() - 250)
-        a4_width = min(drawing.width() - 34, int(height_limit * (297 / 210)))
-        a4_height = int(a4_width / (297 / 210))
-        canvas.setFixedSize(a4_width, a4_height)
+        canvas_width = max(300, drawing.width() - 34)
+        canvas_height = max(300, drawing.height() - DRAWING_VERTICAL_CHROME)
+        canvas.setFixedSize(canvas_width, canvas_height)
         if preview.layout() is not None:
             preview.layout().setAlignment(canvas, Qt.AlignmentFlag.AlignHCenter)
     expand = getattr(window, "scheme2_expand_button", None)

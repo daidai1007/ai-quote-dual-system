@@ -478,7 +478,9 @@ for width, height in ((1680, 980), (1366, 820), (1100, 720), (1024, 700)):
     assert stack_host.height() - window.stack.height() <= 2, (
         stack_host.size(), window.stack.size()
     )
-    assert abs(window.quote_drawing_preview.canvas.width() / window.quote_drawing_preview.canvas.height() - 297 / 210) < .02
+    footer = window.quote_drawing_preview.findChild(QFrame, "scheme2RecognitionFooter")
+    assert footer.height() == scheme2_ui.DRAWING_FOOTER_HEIGHT
+    assert window.quote_drawing_preview.canvas.height() >= window.scheme2_drawing_widget.height() - scheme2_ui.DRAWING_VERTICAL_CHROME
     window.show_section(3)
     app.processEvents()
     window.grab().save(str(output / f"cost-{width}x{height}.png"))
