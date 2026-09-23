@@ -1420,8 +1420,6 @@ def _door_transform_matches_for_window(window, catalog: list[dict]) -> dict[str,
 def _sync_manual_specification_to_dimensions(window, text: str, parser=None) -> bool:
     """Populate dimension fields from a manual specification without recursion."""
 
-    if getattr(window, "active_drawing", None):
-        return False
     dimensions = _parse_specification_dimensions(text, parser)
     if dimensions is None:
         return False

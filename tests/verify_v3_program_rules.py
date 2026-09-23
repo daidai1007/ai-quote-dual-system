@@ -507,8 +507,8 @@ assert (manual.width_spin.value(), manual.depth_spin.value(), manual.height_spin
 assert manual.quote_parameter_source.text == "来源：人工输入规格"
 assert manual.calls == ["clear", "formula", "history", "ready"]
 manual.active_drawing = {"name": "drawing.pdf"}
-assert not layout_refresh._sync_manual_specification_to_dimensions(manual, "900*400*1400")
-assert manual.width_spin.value() == 1200
+assert layout_refresh._sync_manual_specification_to_dimensions(manual, "900*400*1400")
+assert (manual.width_spin.value(), manual.depth_spin.value(), manual.height_spin.value()) == (900, 400, 1400)
 
 ganged_manual = ManualWindow()
 ganged_manual.door_counts = lambda: (1, 0)
