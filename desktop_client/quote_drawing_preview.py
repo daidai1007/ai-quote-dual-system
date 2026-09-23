@@ -30,6 +30,7 @@ PDF_DETAIL_DELAY_MS = 180
 FIT_RENDER_OVERSAMPLE = 2.25
 PDF_ZOOM_OVERSAMPLE = 1.75
 CACHE_PIXEL_BUDGET = 80_000_000
+VECTOR_DETAIL_SUFFIXES = {'.pdf', '.dxf', '.dwg'}
 TOOL_HEIGHT = 34
 SPACE = 8
 COLORS = (('红色', '#d32f2f'), ('蓝色', '#1769aa'), ('黑色', '#20272e'), ('绿色', '#258450'))
@@ -477,6 +478,16 @@ class InkCanvas(QGraphicsView):
             self.fitInView(self.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
             self.zoomed.emit(self.current_scale())
 
+    def actual_size(self):
+        if self.scene().sceneRect().isEmpty():
+            return
+        self.fit_mode = False
+        self.resetTransform()
+        self.rotate(self.rotation_degrees)
+        physical_pixel_scale = 1 / max(self.viewport().devicePixelRatioF(), 1.0)
+        self.scale(physical_pixel_scale, physical_pixel_scale)
+        self.zoomed.emit(self.current_scale())
+
     def zoom(self, factor):
         scale = self.current_scale() * factor
         if .02 <= scale <= 16:
@@ -490,7 +501,9 @@ class InkCanvas(QGraphicsView):
             self.fit()
 
     def wheelEvent(self, event):
-        self.zoom(1.2 if event.angleDelta().y() > 0 else 1 / 1.2)
+        delta = event.pixelDelta().y() or event.angleDelta().y()
+        if delta:
+            self.zoom(pow(1.0015, delta))
         event.accept()
 
     def mousePressEvent(self, event):
@@ -617,6 +630,7 @@ class QuoteDrawingPreview(QFrame):
         self.rotate_right_button.setAccessibleName('图纸向右旋转90度')
         self.button('−', lambda: self.canvas.zoom(1 / 1.2), row).setAccessibleName('缩小图纸')
         self.button('+', lambda: self.canvas.zoom(1.2), row).setAccessibleName('放大图纸')
+        self.button('1:1', lambda: self.canvas.actual_size(), row).setAccessibleName('图纸原始像素大小')
         self.button('适应窗口', lambda: self.canvas.fit(), row)
         box.addLayout(row)
         ink = QHBoxLayout()
@@ -753,13 +767,13 @@ class QuoteDrawingPreview(QFrame):
 
     def schedule_pdf_detail(self):
         if (self.canvas.isEnabled() and self.path
-                and Path(self.path).suffix.lower() == '.pdf'
+                and Path(self.path).suffix.lower() in VECTOR_DETAIL_SUFFIXES
                 and not self.canvas.fit_mode):
             self._detail_timer.start()
 
     def load_pdf_detail(self):
         if (not self.canvas.isEnabled() or not self.path
-                or Path(self.path).suffix.lower() != '.pdf'):
+                or Path(self.path).suffix.lower() not in VECTOR_DETAIL_SUFFIXES):
             return
         logical_edge = max(self.canvas.scene().sceneRect().width(),
                            self.canvas.scene().sceneRect().height())
@@ -783,6 +797,7 @@ class QuoteDrawingPreview(QFrame):
         fit_edge = int(ceil(fit_required / PDF_RENDER_STEP) * PDF_RENDER_STEP)
         fit_edge = min(PDF_MAX_RENDER_EDGE, max(RENDER_EDGE, fit_edge))
         target_edge = int(render_edge or max(self.render_edges.get(page_key, RENDER_EDGE), fit_edge))
+        target_edge = min(PDF_MAX_RENDER_EDGE, max(RENDER_EDGE, target_edge))
         self._render_context[self.serial] = (target_edge, preserve_view)
         if not preserve_view:
             self.canvas.scene().clear()
@@ -836,7 +851,7 @@ class QuoteDrawingPreview(QFrame):
         self.canvas.set_image(image, strokes, self.rotations.get(page_key, 0),
                               logical_size, preserve_view=preserve_view)
         self.canvas.setEnabled(True)
-        detail = '，放大后自动提高清晰度' if kind == 'PDF' else ''
+        detail = '，放大后自动提高清晰度' if Path(self.path).suffix.lower() in VECTOR_DETAIL_SUFFIXES else ''
         self.message.setText(
             f'{kind} · 支持左右旋转和滚轮缩放{detail}；框选笔迹后可移动、改颜色/粗细或删除；'
             '关闭手写和框选后拖动平移；标注仅保留在本次会话。'

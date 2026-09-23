@@ -1,0 +1,82 @@
+"""Focused contract for the selected-attachment specification column."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import sys
+
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "desktop_client"))
+
+from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QFrame, QWidget  # noqa: E402
+
+import scheme2_ui  # noqa: E402
+
+
+app = QApplication.instance() or QApplication([])
+parent = QWidget()
+parent.refresh_summary = lambda: None
+rows = [
+    {
+        "item_name": "固定底座", "model_code": "BASE-800", "specification": "快速匹配",
+        "size_match_width_mm": 800, "size_match_depth_mm": 600, "size_match_height_mm": 100,
+    },
+    {
+        "item_name": "侧板", "model_code": "JP682060",
+        "height_mm": 2000, "depth_mm": 600,
+    },
+    {
+        "item_name": "滤网", "model_code": "FU-9803A", "specification": "普通规格",
+    },
+    {
+        "item_name": "安装板", "model_code": "BOARD-A", "specification": "760×500×100 mm",
+    },
+    {"item_name": "无规格附件", "specification": "普通附件"},
+]
+item = {"attachments": rows, "formula": {}, "quick": {}}
+editor = scheme2_ui.AttachmentEditor(parent, item)
+
+assert editor.table.item(0, 2).text() == "800×600×100 mm"
+assert editor.table.item(1, 2).text() == "深 600 × 高 2000 mm"
+assert editor.table.item(2, 2).text() == "FU-9803A"
+assert editor.table.item(3, 2).text() == "760×500×100 mm"
+assert editor.table.item(4, 2).text() == ""
+amount_editor = editor.table.cellWidget(0, 4)
+assert type(amount_editor) is QDoubleSpinBox
+assert amount_editor.lineEdit().textMargins().right() == 0
+
+header = editor.findChild(QFrame, "scheme2AttachmentEditorHeader")
+assert isinstance(header, scheme2_ui._SchemeAttachmentHeader)
+assert header.cursor().shape() == Qt.CursorShape.SizeAllCursor
+
+
+class DragEvent:
+    def __init__(self, position, buttons=Qt.MouseButton.LeftButton):
+        self.position = QPointF(position)
+        self._buttons = buttons
+
+    def button(self):
+        return Qt.MouseButton.LeftButton
+
+    def buttons(self):
+        return self._buttons
+
+    def globalPosition(self):
+        return self.position
+
+    def accept(self):
+        pass
+
+
+editor.move(100, 100)
+header.mousePressEvent(DragEvent(QPoint(120, 110)))
+header.mouseMoveEvent(DragEvent(QPoint(220, 160)))
+assert editor.pos() == QPoint(200, 150)
+header._drag_offset = None
+editor.accept()
+assert item["attachments"][4]["specification"] == "普通附件"
+print("scheme2 attachment specification contract passed")

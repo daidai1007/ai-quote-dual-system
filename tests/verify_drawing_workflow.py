@@ -15,11 +15,11 @@ sys.path.insert(0, str(ROOT / 'desktop_client'))
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QImage, QPainter, QPdfWriter, QTabletEvent, QPointingDevice, QInputDevice
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QGraphicsView, QLabel, QMessageBox, QPushButton
 import v3_launcher
 import drawing_workflow as workflow
 from freight_state import FreightState, billable_weight
-from quote_drawing_preview import resolve_document
+from quote_drawing_preview import PDF_MAX_RENDER_EDGE, resolve_document
 
 OUT = ROOT / 'outputs' / 'drawing-workflow-20260915'
 OUT.mkdir(parents=True, exist_ok=True)
@@ -122,6 +122,37 @@ class DrawingWorkflowTests(unittest.TestCase):
         p = self.w.quote_drawing_preview
         pump(lambda: not p._workers)
         return p
+
+    def test_high_dpi_fit_actual_size_and_dynamic_detail_render(self):
+        preview = self.bind(candidate('pdf'))
+        initial_edge = preview.current_render_edge
+        self.assertGreaterEqual(initial_edge, 3600)
+        self.assertLessEqual(initial_edge, PDF_MAX_RENDER_EDGE)
+        self.assertTrue(preview.canvas.fit_mode)
+        self.assertEqual(
+            preview.canvas.transformationAnchor(),
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse,
+        )
+        self.assertEqual(preview.canvas.dragMode(), QGraphicsView.DragMode.ScrollHandDrag)
+        self.assertTrue(any(button.text() == '1:1' for button in preview.findChildren(QPushButton)))
+        preview.canvas.actual_size()
+        self.assertFalse(preview.canvas.fit_mode)
+        expected_scale = 1 / max(preview.canvas.viewport().devicePixelRatioF(), 1.0)
+        self.assertAlmostEqual(preview.canvas.current_scale(), expected_scale)
+        preview.canvas.fit()
+        self.assertTrue(preview.canvas.fit_mode)
+        preview.canvas.zoom(6)
+        pump(lambda: not preview._workers and preview.current_render_edge > initial_edge)
+        self.assertGreater(preview.current_render_edge, initial_edge)
+        self.assertLessEqual(preview.current_render_edge, PDF_MAX_RENDER_EDGE)
+
+        cad_preview = self.bind(candidate('dxf', key='candidate-cad'))
+        cad_initial_edge = cad_preview.current_render_edge
+        self.assertEqual(cad_preview.current_kind, 'CAD 模型空间')
+        cad_preview.canvas.zoom(6)
+        pump(lambda: not cad_preview._workers and cad_preview.current_render_edge > cad_initial_edge)
+        self.assertGreater(cad_preview.current_render_edge, cad_initial_edge)
+        self.assertLessEqual(cad_preview.current_render_edge, PDF_MAX_RENDER_EDGE)
 
     def accept(self, payload):
         self.w.pending_quote_signature = self.w.quote_input_signature()

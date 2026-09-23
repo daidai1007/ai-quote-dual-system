@@ -14,7 +14,7 @@ import tempfile
 from types import MethodType
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QSettings, QSignalBlocker, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QDoubleValidator, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
@@ -67,6 +67,7 @@ HEADERS = (
 MONEY_COLUMNS = frozenset(range(4, 14))
 EDITABLE_COLUMNS = frozenset((10, 11))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
+ROLE_DERIVED_SPEC = ROLE_ROW + 1
 GALVANIZED_MATERIAL_CODES = frozenset(("SGCC", "DX51D", "GI"))
 THREE_ROW_BEAM_MODELS = ("JP760240", "JP760250", "JP760260", "JP760280", "JP760210")
 
@@ -168,6 +169,15 @@ def _attachment_total(item):
     return sum(_attachment_amount(row) for row in item.get("attachments", []) if isinstance(row, dict))
 
 
+def _cost_product(item):
+    return str(
+        item.get("scheme2_selected_product_name")
+        or item.get("scheme2_selected_product_code")
+        or item.get("product_code")
+        or "—"
+    )
+
+
 def _row_values(item):
     formula = _formula(item)
     quick = _quick(item)
@@ -178,7 +188,7 @@ def _row_values(item):
     face = face_base * _number(item.get("quick_discount", 1), 1)
     specification = str(item.get("specification") or item.get("model_code") or "—")
     name = str(item.get("name") or item.get("model_code") or "未命名")
-    product = str(item.get("product_name") or item.get("product_code") or "—")
+    product = _cost_product(item)
     attachments = [row for row in item.get("attachments", []) if isinstance(row, dict)]
     return (
         "", name, product, specification,
@@ -277,6 +287,20 @@ def _field(label, control):
     text.setObjectName("scheme2FieldLabel")
     layout.addWidget(text)
     layout.addWidget(control)
+    return box
+
+
+def _inline_field(label, control):
+    box = QFrame()
+    box.setObjectName("scheme2Field")
+    layout = QHBoxLayout(box)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(8)
+    text = QLabel(label)
+    text.setObjectName("scheme2FieldLabel")
+    text.setBuddy(control)
+    layout.addWidget(text)
+    layout.addWidget(control, 1)
     return box
 
 
@@ -391,6 +415,43 @@ class _SchemeDimensionEditor(QDialog):
         return {name: float(field.text().strip()) for name, field in self.fields.items()}
 
 
+def _attachment_dimension_or_model(source):
+    """Prefer matched dimensions, then catalogue dimensions, then model."""
+    has_matched_size = any(
+        source.get(f"size_match_{axis}_mm") is not None
+        for axis in ("width", "depth", "height")
+    )
+    dimensions = []
+    for axis, label in (("width", "宽"), ("depth", "深"), ("height", "高")):
+        key = f"{axis}_mm"
+        value = source.get(f"size_match_{key}") if has_matched_size else source.get(key)
+        if value is None and has_matched_size:
+            value = source.get(key)
+        number = _number(value)
+        if number > 0:
+            dimensions.append((axis, label, number))
+    if len(dimensions) == 3:
+        by_axis = {axis: value for axis, _label, value in dimensions}
+        return f"{by_axis['width']:g}×{by_axis['depth']:g}×{by_axis['height']:g} mm"
+    if dimensions:
+        return " × ".join(f"{label} {value:g}" for _axis, label, value in dimensions) + " mm"
+
+    manual = source.get("manual_inputs") if isinstance(source.get("manual_inputs"), dict) else {}
+    manual_dimensions = [
+        f"{name}={_number(value):g} mm"
+        for name, value in manual.items() if _number(value) > 0
+    ]
+    if manual_dimensions:
+        return "；".join(manual_dimensions)
+
+    specification = str(source.get("specification") or source.get("matched_specification") or "").strip()
+    if any(marker in specification.lower() for marker in ("×", "*", "mm")) and any(
+        character.isdigit() for character in specification
+    ):
+        return specification
+    return str(source.get("model_code") or "").strip()
+
+
 class AttachmentEditor(QDialog):
     def __init__(self, window, item):
         super().__init__(window)
@@ -409,7 +470,7 @@ class AttachmentEditor(QDialog):
         layout.setContentsMargins(0, 0, 0, 10)
         layout.setSpacing(0)
         outer.addWidget(shell)
-        header = QFrame()
+        header = _SchemeAttachmentHeader(self)
         header.setObjectName("scheme2AttachmentEditorHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(13, 0, 8, 0)
@@ -469,7 +530,7 @@ class AttachmentEditor(QDialog):
         self.table.insertRow(row)
         self.table.setRowHeight(row, 42)
         name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
-        spec = str(source.get("specification") or source.get("matched_specification") or "—")
+        spec = _attachment_dimension_or_model(source)
         image = QTableWidgetItem("▧")
         image.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         image.setData(Qt.ItemDataRole.ForegroundRole, QColor("#8A8A86"))
@@ -489,7 +550,9 @@ class AttachmentEditor(QDialog):
                 lambda _index, target_row=row, combo=selector: self._beam_model_changed(target_row, combo.currentData())
             )
         else:
-            self.table.setItem(row, 2, QTableWidgetItem(spec))
+            specification_item = QTableWidgetItem(spec)
+            specification_item.setData(ROLE_DERIVED_SPEC, spec)
+            self.table.setItem(row, 2, specification_item)
         quantity = QSpinBox()
         quantity.setObjectName("scheme2AttachmentEditorQuantity")
         quantity.setRange(-9999, 9999)
@@ -525,7 +588,7 @@ class AttachmentEditor(QDialog):
         formula_amount = 0.0 if pending else _number(source.get("formula_amount"), 0)
         amount_editor = self.table.cellWidget(row, 4)
         if not isinstance(amount_editor, QDoubleSpinBox):
-            amount_editor = _SchemePencilSpinBox(2)
+            amount_editor = QDoubleSpinBox()
             amount_editor.setObjectName("scheme2AttachmentEditorAmount")
             amount_editor.setRange(-999999.99, 999999.99)
             amount_editor.setDecimals(2)
@@ -664,12 +727,16 @@ class AttachmentEditor(QDialog):
             previous_formula_amount = _number(data.get("formula_amount"), 0)
             data["item_name"] = self.table.item(row, 1).text().strip() or "自定义附件"
             specification_editor = self.table.cellWidget(row, 2)
+            specification_item = self.table.item(row, 2)
             specification = (
                 str(specification_editor.currentData() or specification_editor.currentText()).strip()
                 if isinstance(specification_editor, QComboBox)
-                else self.table.item(row, 2).text().strip()
+                else specification_item.text().strip()
             )
-            data["specification"] = specification
+            if isinstance(specification_editor, QComboBox) or (
+                specification_item.data(ROLE_DERIVED_SPEC) != specification
+            ):
+                data["specification"] = specification
             if data.get("item_name") == "三排安装梁" and specification:
                 data["model_code"] = specification
             data["quantity"] = self.table.cellWidget(row, 3).value()
@@ -996,7 +1063,7 @@ def _show_detail(window, item):
     meta = getattr(window, "scheme2_detail_meta", None)
     if isinstance(meta, QLabel):
         name = str(item.get("name") or item.get("model_code") or "未命名")
-        product = str(item.get("product_code") or item.get("product_name") or "—")
+        product = _cost_product(item)
         specification = str(item.get("specification") or "—")
         meta.setText(f"名称 {name} · 产品 {product} · 规格 {specification}")
 
@@ -1224,7 +1291,16 @@ class _SchemeComboItemDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         painter.save()
         rect = option.rect
-        chosen = index.row() == self.combo.currentIndex() and self.combo.currentIndex() >= 0
+        placeholder_value = self.combo.property("schemePlaceholderIndex")
+        placeholder_index = int(placeholder_value) if placeholder_value is not None else -1
+        if hasattr(self.combo, "is_row_selected"):
+            chosen = self.combo.is_row_selected(index.row())
+        else:
+            chosen = (
+                index.row() == self.combo.currentIndex()
+                and self.combo.currentIndex() >= 0
+                and index.row() != placeholder_index
+            )
         hovered = bool(option.state & (QStyle.StateFlag.State_MouseOver | QStyle.StateFlag.State_Selected))
         if chosen:
             painter.fillRect(rect, QColor("#E6F1FB"))
@@ -1261,6 +1337,10 @@ class _DropdownPopupStateFilter(QObject):
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
             opened = event.type() == QEvent.Type.Show
+            placeholder_value = self.combo.property("schemePlaceholderIndex")
+            placeholder_index = int(placeholder_value) if placeholder_value is not None else -1
+            if opened and placeholder_index >= 0 and hasattr(self.combo.view(), "setRowHidden"):
+                self.combo.view().setRowHidden(placeholder_index, True)
             self.combo.setProperty("popupOpen", opened)
             self.shell.setProperty("popupOpen", opened)
             for widget in (self.combo, self.shell):
@@ -1330,6 +1410,15 @@ def _style_scheme_dropdown(combo, field, separator_index=-1):
     view.setItemDelegate(combo._scheme2_item_delegate)
     combo._scheme2_popup_filter = _DropdownPopupStateFilter(combo, shell)
     view.installEventFilter(combo._scheme2_popup_filter)
+
+
+def _refresh_product_placeholder(combo):
+    placeholder_value = combo.property("schemePlaceholderIndex")
+    placeholder_index = int(placeholder_value) if placeholder_value is not None else -1
+    combo.setProperty("placeholderActive", combo.currentIndex() == placeholder_index)
+    combo.style().unpolish(combo)
+    combo.style().polish(combo)
+    combo.update()
 
 
 def _cost_sidebar(window):
@@ -1457,7 +1546,7 @@ def _build_cost_page(window):
     header.addWidget(title)
     header.addWidget(hint)
     header.addStretch(1)
-    company_field = _field("下单公司", window.scheme2_company)
+    company_field = _inline_field("下单公司", window.scheme2_company)
     company_field.setObjectName("scheme2CostCompanyField")
     company_field.setFixedWidth(250)
     header.addWidget(company_field)
@@ -1525,10 +1614,13 @@ def _build_cost_page(window):
     up = QPushButton("↑ 上移")
     down = QPushButton("↓ 下移")
     back = QPushButton("返回")
-    back.setObjectName("scheme2CostReturn")
     secondary_size = delete.sizeHint()
     for button in (delete, up, down, back):
+        # Reuse the option page's "导入图纸" visual role so every
+        # interaction state continues to come from one shared QSS definition.
+        button.setObjectName("scheme2PrimaryGhost")
         button.setFixedSize(secondary_size)
+        button.setFixedHeight(28)
     export = QPushButton("导出报价单")
     export.setObjectName("scheme2PrimaryAction")
     action_buttons = (delete, up, down, back, export)
@@ -1817,7 +1909,7 @@ def _configure_navigation(window):
         button.show()
         button.setText(labels[route])
         button.setIcon(button.icon().__class__())
-        button.setFixedHeight(36)
+        button.setFixedHeight(28)
         try:
             button.clicked.disconnect()
         except RuntimeError:
@@ -2391,6 +2483,18 @@ def _current_product_code(window):
     return ""
 
 
+def _stamp_selected_product(window, item):
+    """Snapshot the option-page selection used by the cost table."""
+    combo = getattr(window, "product_combo", None)
+    if not isinstance(item, dict) or not isinstance(combo, QComboBox):
+        return
+    code = _current_product_code(window)
+    name = combo.currentText().strip()
+    if code:
+        item["scheme2_selected_product_code"] = code
+        item["scheme2_selected_product_name"] = name or code
+
+
 class _SchemeAttachmentHeader(QFrame):
     def __init__(self, dialog):
         super().__init__(dialog)
@@ -2419,6 +2523,75 @@ class _SchemeAttachmentHeader(QFrame):
 
 
 class _SchemeAttachmentCombo(QComboBox):
+    selectionChanged = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._selected_rows = set()
+        self.view().viewport().installEventFilter(self)
+
+    def is_row_selected(self, row):
+        return row in self._selected_rows
+
+    def selected_texts(self):
+        return [self.itemText(row) for row in sorted(self._selected_rows)]
+
+    def set_selected_texts(self, values):
+        wanted = {str(value).strip() for value in values if str(value).strip()}
+        self._selected_rows = {
+            row for row in range(1, self.count()) if self.itemText(row) in wanted
+        }
+        self._sync_current_row()
+
+    def clear_selection(self):
+        if not self._selected_rows:
+            self.setCurrentIndex(0)
+            return
+        self._selected_rows.clear()
+        self._sync_current_row()
+        self.selectionChanged.emit()
+
+    def toggle_row(self, row):
+        if row <= 0:
+            self._selected_rows.clear()
+        elif row in self._selected_rows:
+            self._selected_rows.remove(row)
+        else:
+            self._selected_rows.add(row)
+        self._sync_current_row(row)
+        self.selectionChanged.emit()
+
+    def _sync_current_row(self, preferred=None):
+        if preferred in self._selected_rows:
+            target = preferred
+        elif self._selected_rows:
+            target = min(self._selected_rows)
+        else:
+            target = 0
+        blocker = QSignalBlocker(self)
+        self.setCurrentIndex(target)
+        del blocker
+        self.view().viewport().update()
+        self.update()
+
+    def eventFilter(self, watched, event):
+        if watched is self.view().viewport():
+            if event.type() == QEvent.Type.MouseButtonPress:
+                return True
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                index = self.view().indexAt(event.position().toPoint())
+                if index.isValid():
+                    self.toggle_row(index.row())
+                return True
+            if event.type() == QEvent.Type.KeyPress and event.key() in (
+                Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
+            ):
+                index = self.view().currentIndex()
+                if index.isValid():
+                    self.toggle_row(index.row())
+                return True
+        return super().eventFilter(watched, event)
+
     def paintEvent(self, event):
         super().paintEvent(event)
         option = QStyleOptionComboBox()
@@ -2544,24 +2717,27 @@ class _SchemeAttachmentDialog(QDialog):
                 combo.view().setItemDelegate(combo._scheme2_item_delegate)
                 combo._scheme2_popup_filter = _DropdownPopupStateFilter(combo, card)
                 combo.view().installEventFilter(combo._scheme2_popup_filter)
-                selected_index = next((combo.findText(name) for name in options if is_selected(category, name)), 0)
-                category_check.setChecked(selected_index > 0)
-                combo.setCurrentIndex(max(0, selected_index))
+                selected_names = [name for name in options if is_selected(category, name)]
+                combo.set_selected_texts(selected_names)
+                category_check.setChecked(bool(selected_names))
                 combo.setEnabled(category_check.isChecked())
 
                 def toggle_category(enabled, selector=combo):
                     selector.setEnabled(enabled)
                     if not enabled:
-                        selector.setCurrentIndex(0)
+                        selector.clear_selection()
 
-                def select_option(index, category_toggle=category_check):
-                    if index <= 0:
-                        category_toggle.setChecked(False)
-                    elif not category_toggle.isChecked():
-                        category_toggle.setChecked(True)
+                def sync_category(category_toggle=category_check, selector=combo):
+                    has_selection = bool(selector.selected_texts())
+                    if category_toggle.isChecked() != has_selection:
+                        category_toggle.setChecked(has_selection)
+
+                def select_option(index, selector=combo):
+                    selector.toggle_row(index)
 
                 category_check.toggled.connect(toggle_category)
                 combo.activated.connect(select_option)
+                combo.selectionChanged.connect(sync_category)
                 self.category_checks[category] = category_check
                 self.category_combos[category] = combo
                 card_layout.addWidget(category_check)
@@ -2596,8 +2772,8 @@ class _SchemeAttachmentDialog(QDialog):
                 })
         for category, combo in self.category_combos.items():
             check = self.category_checks[category]
-            name = combo.currentText().strip()
-            if check.isChecked() and combo.currentIndex() > 0 and name:
+            names = combo.selected_texts() if check.isChecked() else []
+            for name in names:
                 selected.append({
                     "item_name": name,
                     "name": name,
@@ -2984,7 +3160,18 @@ def _configure_option_page(window, namespace):
     window.scheme2_name_edit = name_edit
     product = _detach(getattr(window, "product_combo", None))
     if product is not None:
-        form.addWidget(_option_field(window, "产品", product))
+        product.setObjectName("scheme2ProductCombo")
+        placeholder_index = next((
+            index for index in range(product.count())
+            if product.itemData(index) is None
+            and (index == 0 or "产品型号" in product.itemText(index))
+        ), -1)
+        product.setProperty("schemePlaceholderIndex", placeholder_index)
+        product_field = _option_field(window, "产品", product)
+        _style_scheme_dropdown(product, product_field)
+        _refresh_product_placeholder(product)
+        product.currentIndexChanged.connect(lambda *_: _refresh_product_placeholder(product))
+        form.addWidget(product_field)
     form.addWidget(_scheme2_group_title("尺寸（宽*深*高 mm）"))
     specification = _detach(getattr(window, "quote_spec_edit", None))
     if specification is not None:
@@ -3386,6 +3573,7 @@ def _finish_add(window):
     if len(getattr(window, "draft_items", [])) != before + 1:
         return
     item = window.draft_items[-1]
+    _stamp_selected_product(window, item)
     if editing_index is not None:
         window.draft_items.pop()
         window.draft_items[editing_index] = item
@@ -3619,29 +3807,33 @@ def _apply_responsive(window):
 
 
 def _apply_palette(window):
+    base_font = window.font()
+    base_font.setFeature(QFont.Tag.fromString("tnum"), 1)
+    window.setFont(base_font)
     window.setStyleSheet(window.styleSheet() + """
-QMainWindow QWidget { font-family:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI"; }
-QMainWindow, QWidget#scheme2OptionPage, QWidget#scheme2CostPage, QWidget#scheme2DetailPage { background:#FFFFFF; color:#1C1C1E; }
+QMainWindow QWidget { font-family:"Microsoft YaHei UI","Segoe UI"; font-size:13px; font-weight:400; color:#2A3541; }
+QMainWindow, QWidget#scheme2OptionPage, QWidget#scheme2CostPage, QWidget#scheme2DetailPage { background:#FFFFFF; color:#2A3541; }
+QMainWindow QPushButton { font-size:12px; font-weight:500; min-height:26px; max-height:26px; padding-top:0; padding-bottom:0; }
 QLabel#scheme2ServiceStatus { color:#3B6D11; background:#EAF3DE; border-radius:7px; padding:5px 6px; font-size:10px; }
 QDialog#scheme2ConfirmDialog { background:rgba(22,28,36,0.45); }
 QDialog#scheme2DimensionDialog { background:rgba(22,28,36,0.45); }
 QFrame#scheme2DimensionShell { background:#FFFFFF; border:0; border-radius:9px; }
 QFrame#scheme2DimensionTitleBar { background:#FFFFFF; border:0; border-bottom:1px solid #E2E5E9; border-top-left-radius:9px; border-top-right-radius:9px; min-height:40px; }
-QLabel#scheme2DimensionTitle { color:#1C1C1E; font-size:14px; font-weight:600; border:0; }
+QLabel#scheme2DimensionTitle { color:#1F3A6A; font-size:13px; font-weight:600; border:0; }
 QToolButton#scheme2DimensionClose { color:#8A8A86; background:transparent; border:0; font-size:16px; }
 QToolButton#scheme2DimensionClose:hover { color:#1C1C1E; }
 QLineEdit#scheme2DimensionInput { background:#FFFFFF; border:1px solid #2563EB; border-radius:7px; padding:6px 10px; min-height:24px; }
-QLabel#scheme2DimensionHint { color:#8A8A86; font-size:11px; margin-left:16px; margin-right:16px; }
+QLabel#scheme2DimensionHint { color:#2A3541; font-size:13px; margin-left:16px; margin-right:16px; }
 QPushButton#scheme2DimensionCancel { color:#1C1C1E; background:#FFFFFF; border:1px solid #C8CDD4; border-radius:7px; }
 QPushButton#scheme2DimensionConfirm { color:#FFFFFF; background:#2563EB; border:1px solid #2563EB; border-radius:7px; font-weight:600; }
 QPushButton#scheme2DimensionConfirm:disabled { background:#AFC7E8; border-color:#AFC7E8; }
 QFrame#scheme2ConfirmShell { background:#FFFFFF; border:1px solid #D7DCE3; border-radius:8px; }
 QFrame#scheme2ConfirmTitleBar { background:#FFFFFF; border:0; border-bottom:1px solid #E2E5E9; border-top-left-radius:8px; border-top-right-radius:8px; min-height:40px; }
-QLabel#scheme2ConfirmTitle { color:#1C1C1E; font-size:14px; font-weight:600; border:0; }
+QLabel#scheme2ConfirmTitle { color:#1F3A6A; font-size:13px; font-weight:600; border:0; }
 QToolButton#scheme2ConfirmClose { color:#8A8A86; background:transparent; border:0; font-size:16px; }
 QToolButton#scheme2ConfirmClose:hover { color:#1C1C1E; }
 QLabel#scheme2ConfirmWarningIcon { color:#B55D08; background:#FFF4E5; border:1px solid #F2A33A; border-radius:17px; font-size:16px; }
-QLabel#scheme2ConfirmMessage { color:#1C1C1E; background:transparent; border:0; font-size:13px; }
+QLabel#scheme2ConfirmMessage { color:#2A3541; background:transparent; border:0; font-size:13px; }
 QPushButton#scheme2ConfirmReject { color:#1C1C1E; background:#FFFFFF; border:1px solid #C8CDD4; border-radius:6px; padding:0 14px; }
 QPushButton#scheme2ConfirmDanger { color:#FFFFFF; background:#C9362B; border:1px solid #C9362B; border-radius:6px; padding:0 14px; font-weight:600; }
 QPushButton#scheme2ConfirmDanger:hover { background:#B52E25; border-color:#B52E25; }
@@ -3651,28 +3843,29 @@ QScrollArea#scheme2OptionScroll QScrollBar::handle:vertical { background:#C3CBD6
 QScrollArea#scheme2OptionScroll QScrollBar::add-line:vertical, QScrollArea#scheme2OptionScroll QScrollBar::sub-line:vertical { height:0; }
 QFrame#scheme2DrawingShell { background:#EEF0F3; border-left:1px solid rgba(0,0,0,.12); }
 QFrame#scheme2DrawingHeader { background:#FFFFFF; border-bottom:1px solid rgba(0,0,0,.12); }
-QLabel#scheme2SectionTitle { font-size:17px; font-weight:500; color:#1C1C1E; }
-QLabel#scheme2OptionGroupTitle { font-size:17px; font-weight:400; color:#5F5E5A; margin-top:3px; }
-QLabel#scheme2OptionLabel { font-size:15px; color:#777672; }
+QLabel#scheme2SectionTitle { font-size:16px; font-weight:600; color:#1F3A6A; }
+QLabel#scheme2OptionGroupTitle { font-size:13px; font-weight:600; color:#1F3A6A; margin-top:3px; }
+QLabel#scheme2OptionLabel { font-size:12px; font-weight:400; color:#3F5A82; }
 QFrame#scheme2OptionControlShell { min-height:52px; background:#FFFFFF; border:1px solid rgba(0,0,0,.16); border-radius:11px; }
 QFrame#scheme2OptionControlShell[schemeDropdown="true"] { border-color:#B8BEC7; border-radius:6px; }
 QFrame#scheme2OptionControlShell[schemeDropdown="true"][popupOpen="true"] { border-color:#2563EB; }
 QFrame#scheme2OptionControlShell[provenanceState="ai"] { background:#F6F7F9; }
 QFrame#scheme2OptionControlShell[provenanceState="manual"] { background:#FAEEDA; border-color:#EF9F27; }
-QFrame#scheme2OptionControlShell QLineEdit, QFrame#scheme2OptionControlShell QComboBox, QFrame#scheme2OptionControlShell QSpinBox, QFrame#scheme2OptionControlShell QDoubleSpinBox { background:transparent; border:0; border-radius:0; padding:8px 14px; min-height:34px; font-size:15px; color:#1C1C1E; }
+QFrame#scheme2OptionControlShell QLineEdit, QFrame#scheme2OptionControlShell QComboBox, QFrame#scheme2OptionControlShell QSpinBox, QFrame#scheme2OptionControlShell QDoubleSpinBox { background:transparent; border:0; border-radius:0; padding:8px 14px; min-height:34px; font-size:13px; font-weight:400; color:#2A3541; }
 QFrame#scheme2OptionControlShell QComboBox::drop-down, QFrame#scheme2DoorValue QComboBox::drop-down { border:0; width:28px; }
 QFrame#scheme2OptionControlShell QComboBox::down-arrow, QFrame#scheme2DoorValue QComboBox::down-arrow { width:8px; height:6px; }
+QComboBox#scheme2ProductCombo[placeholderActive="true"] { color:#8A8A86; }
 QAbstractItemView#scheme2OptionDropdown { background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; border-radius:6px; outline:0; padding:0; selection-background-color:#F5F9FF; selection-color:#1C1C1E; }
 QAbstractItemView#scheme2OptionDropdown::item { min-height:40px; padding:0; border:0; }
 QComboBox#scheme2ColorCombo[manualEntry="true"] QLineEdit#scheme2ColorManualInput { background:transparent; border:0; padding:8px 14px; }
 QLabel#scheme2ProvenancePending { font-size:10px; color:#8A8A86; }
-QLabel#scheme2ProvenanceAi { font-size:13px; color:#3B6D11; background:transparent; padding:1px 5px; }
-QLabel#scheme2ProvenanceManual { font-family:"Segoe UI Symbol","Microsoft YaHei UI"; font-size:13px; color:#854F0B; background:#FFFFFF; border-radius:12px; padding:4px 10px; }
+QLabel#scheme2ProvenanceAi { font-size:10px; color:#3B6D11; background:transparent; padding:1px 5px; }
+QLabel#scheme2ProvenanceManual { font-family:"Segoe UI Symbol","Microsoft YaHei UI"; font-size:10px; color:#854F0B; background:#FFFFFF; border-radius:12px; padding:4px 10px; }
 QFrame#scheme2GangedRow { background:transparent; border:0; }
-QLabel#scheme2GangedLabel { color:#777672; font-size:15px; }
+QLabel#scheme2GangedLabel { color:#3F5A82; font-size:12px; }
 QFrame#scheme2GangedValue, QFrame#scheme2DoorValue { min-height:42px; background:#F6F7F9; border:1px solid rgba(0,0,0,.14); border-radius:10px; }
-QFrame#scheme2GangedValue QLabel { font-size:15px; color:#1C1C1E; }
-QLabel#scheme2GangedAi { color:#3B6D11; font-size:13px; }
+QFrame#scheme2GangedValue QLabel { font-size:13px; color:#2A3541; }
+QLabel#scheme2GangedAi { color:#3B6D11; font-size:10px; }
 QFrame#scheme2DoorValue QLabel { color:#5F5E5A; font-size:13px; }
 QFrame#scheme2DoorValue QComboBox { background:transparent; border:0; min-height:30px; }
 QFrame#scheme2AttachmentCard { background:#FFFFFF; border:1px solid #85B7EB; border-radius:8px; }
@@ -3681,12 +3874,12 @@ QFrame#scheme2AttachmentSummary { background:transparent; border:0; }
 QLabel#scheme2AttachmentEmpty { color:#8A8A86; background:transparent; border:0; font-size:13px; }
 QLabel#scheme2AttachmentChip { color:#185FA5; background:#E6F1FB; border:0; border-radius:6px; padding:3px 8px; font-size:13px; }
 QLabel#scheme2AttachmentChip[temporary="true"] { color:#854F0B; background:#FAEEDA; }
-QLabel#scheme2AttachmentStatus { color:#3B6D11; background:#EAF3DE; border:0; border-radius:9px; padding:2px 7px; font-size:11px; }
+QLabel#scheme2AttachmentStatus { color:#3B6D11; background:#EAF3DE; border:0; border-radius:9px; padding:2px 7px; font-size:10px; }
 QLabel#scheme2AttachmentStatus[manual="true"] { color:#854F0B; background:#FAEEDA; }
 QPushButton#scheme2AttachmentModify { color:#185FA5; background:transparent; border:0; padding:2px 0; min-height:22px; }
 QPushButton#scheme2AttachmentModify:hover { color:#0B326B; text-decoration:underline; }
 QFrame#scheme2AttachmentHeader { background:#E6F1FB; border:0; border-bottom:1px solid #85B7EB; }
-QLabel#scheme2AttachmentTitle { color:#185FA5; font-size:14px; font-weight:600; }
+QLabel#scheme2AttachmentTitle { color:#1F3A6A; font-size:13px; font-weight:600; }
 QToolButton#scheme2AttachmentClose { color:#5F5E5A; background:transparent; border:0; border-radius:5px; font-size:18px; }
 QToolButton#scheme2AttachmentClose:hover { color:#1C1C1E; background:#FFFFFF; }
 QDialog#scheme2AttachmentOverlay { background:#FFFFFF; border:1px solid #85B7EB; }
@@ -3703,36 +3896,37 @@ QComboBox#scheme2AttachmentCombo::down-arrow { width:8px; height:6px; }
 QAbstractItemView#scheme2AttachmentDropdown { background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; border-radius:6px; outline:0; padding:0; selection-background-color:#F5F9FF; selection-color:#1C1C1E; }
 QAbstractItemView#scheme2AttachmentDropdown::item { min-height:40px; padding:0; border:0; }
 QDialogButtonBox#scheme2AttachmentActions { background:#FFFFFF; border-top:1px solid rgba(0,0,0,.12); padding:9px 10px; }
-QPushButton#scheme2AttachmentCancel { color:#185FA5; background:#FFFFFF; border:1px solid #85B7EB; border-radius:7px; padding:8px 16px; }
+QPushButton#scheme2AttachmentCancel { color:#185FA5; background:#FFFFFF; border:1px solid #85B7EB; border-radius:7px; padding:0 16px; }
 QWidget#scheme2DrawingCanvas { background:#FFFFFF; border:1px solid rgba(0,0,0,.24); }
 QFrame#navPanel { background:#DCE8F7; border:1px solid #BBD0EA; border-top-left-radius:13px; border-bottom-left-radius:13px; border-top-right-radius:0; border-bottom-right-radius:0; }
 QFrame#scheme2NavBrand { background:transparent; border:0; }
 QLabel#scheme2NavLogo { background:#2563EB; color:#FFFFFF; border-radius:6px; font-size:11px; font-weight:600; }
-QLabel#scheme2NavTitle { color:#0B326B; font-size:16px; font-weight:600; }
-QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:7px 10px; text-align:left; font-size:14px; }
+QLabel#scheme2NavTitle { color:#1F3A6A; font-size:13px; font-weight:600; }
+QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; min-height:28px; max-height:28px; text-align:left; font-size:12px; font-weight:500; }
 QFrame#navPanel QPushButton:checked { color:#FFFFFF; background:#2563EB; }
 QPushButton#scheme2CollapseButton { color:#5A7AAB; background:transparent; border:0; padding:0; text-align:center; font-size:13px; }
 QPushButton#scheme2CollapseButton:hover { background:#E6F1FB; }
 QFrame#scheme2CostSidebar { background:#DCE8F7; border-right:1px solid #BBD0EA; }
-QFrame#scheme2CostSidebar QDoubleSpinBox { background:#FFFFFF; border:1px solid #BBD0EA; border-radius:7px; padding:3px 22px 3px 7px; min-height:20px; }
+QFrame#scheme2CostSidebar QDoubleSpinBox { background:#FFFFFF; color:#2A3541; border:1px solid #BBD0EA; border-radius:7px; padding:3px 22px 3px 7px; min-height:20px; font-size:13px; font-weight:400; }
 QFrame#scheme2CostSidebar QDoubleSpinBox:focus { border-color:#2563EB; }
 QFrame#scheme2CompactCoefficients { background:#DCE8F7; border:1px solid #BBD0EA; border-radius:7px; }
 QFrame#scheme2CostBody { background:#FFFFFF; }
 QFrame#scheme2CostCompanyField { background:transparent; border:0; }
 QFrame#scheme2UndoBar { background:#E6F1FB; border:1px solid #85B7EB; border-radius:7px; }
 QLabel#scheme2EmptyState { color:#8A8A86; background:#FFFFFF; font-size:13px; }
-QLabel#scheme2PageTitle { font-size:18px; font-weight:600; color:#1C1C1E; }
-QLabel#scheme2DialogTitle { font-size:15px; font-weight:600; color:#1C1C1E; padding-bottom:4px; }
+QLabel#scheme2PageTitle { font-size:16px; font-weight:600; color:#1F3A6A; }
+QLabel#scheme2DialogTitle { font-size:13px; font-weight:600; color:#1F3A6A; padding-bottom:4px; }
 QDialog#scheme2AttachmentEditorDialog { background:transparent; }
 QFrame#scheme2AttachmentEditorShell { background:#FFFFFF; border:1px solid #B8BEC7; border-radius:14px; }
 QFrame#scheme2AttachmentEditorHeader { background:#F6F7F9; border:0; border-bottom:1px solid #D7DCE3; min-height:40px; }
-QLabel#scheme2AttachmentEditorTitle { color:#1C1C1E; font-size:14px; font-weight:600; border:0; }
+QLabel#scheme2AttachmentEditorTitle { color:#1F3A6A; font-size:13px; font-weight:600; border:0; }
 QToolButton#scheme2AttachmentEditorClose { color:#8A8A86; background:transparent; border:0; font-size:18px; }
 QToolButton#scheme2AttachmentEditorClose:hover { color:#1C1C1E; }
 QTableWidget#scheme2AttachmentEditorTable { background:#FFFFFF; alternate-background-color:#FFFFFF; border:0; gridline-color:transparent; outline:0; }
 QTableWidget#scheme2AttachmentEditorTable::item { padding:6px 8px; border:0; border-bottom:1px solid #D7DCE3; }
 QTableWidget#scheme2AttachmentEditorTable::item:selected { color:#1C1C1E; background:#E6F1FB; }
-QTableWidget#scheme2AttachmentEditorTable QHeaderView::section { background:#F6F7F9; color:#5F5E5A; border:0; border-bottom:1px solid #D7DCE3; padding:7px 8px; font-weight:400; }
+QTableWidget#scheme2AttachmentEditorTable { font-size:12px; color:#2A3541; }
+QTableWidget#scheme2AttachmentEditorTable QHeaderView::section { background:#2563EB; color:#FFFFFF; border:0; border-bottom:1px solid #D7DCE3; padding:7px 8px; font-size:12px; font-weight:600; }
 QSpinBox#scheme2AttachmentEditorQuantity { background:transparent; border:0; border-bottom:1px solid #5F5E5A; border-radius:0; padding:2px; min-height:24px; }
 QDoubleSpinBox#scheme2AttachmentEditorAmount { color:#1C1C1E; background:transparent; border:0; border-bottom:1px solid #5F5E5A; border-radius:0; padding:2px 15px 2px 2px; min-height:24px; }
 QDoubleSpinBox#scheme2AttachmentEditorAmount:focus { border-bottom:2px solid #2563EB; }
@@ -3748,32 +3942,32 @@ QFrame#scheme2DiscountHeader { background:#F6F7F9; border:0; border-bottom:1px s
 QToolButton#scheme2DiscountClose { background:transparent; color:#8A8A86; border:0; font-size:18px; }
 QToolButton#scheme2DiscountClose:hover { color:#1C1C1E; }
 QLabel#scheme2DiscountBase, QLabel#scheme2DiscountPreviewValue { font-weight:600; }
-QLabel#scheme2DiscountHint { color:#8A8A86; font-size:11px; }
+QLabel#scheme2DiscountHint { color:#2A3541; font-size:13px; }
 QDoubleSpinBox#scheme2DiscountInput { min-height:30px; border:1px solid #D7DCE3; border-radius:9px; padding:5px 10px; }
 QDoubleSpinBox#scheme2DiscountInput:focus { border:1px solid #2563EB; }
 QFrame#scheme2DiscountPreview { min-height:36px; color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:8px; }
 QFrame#scheme2DiscountPreview QLabel { color:#185FA5; }
-QPushButton#scheme2DiscountCancel { color:#5F5E5A; background:#FFFFFF; border:1px solid #D7DCE3; border-radius:7px; padding:8px 16px; }
-QLabel#scheme2SidebarTitle { font-size:14px; font-weight:600; color:#1F3A6A; background:#FFFFFF; border:0; border-radius:7px; padding:5px 8px; }
-QLabel#scheme2FieldLabel, QLabel#scheme2SidebarHint { font-size:10px; color:#5A7AAB; }
-QLabel#scheme2Hint { color:#8A8A86; font-size:11px; }
-QLabel#scheme2CompletionPill { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:12px; padding:4px 10px; }
+QPushButton#scheme2DiscountCancel { color:#5F5E5A; background:#FFFFFF; border:1px solid #D7DCE3; border-radius:7px; padding:0 16px; }
+QLabel#scheme2SidebarTitle { font-size:13px; font-weight:600; color:#1F3A6A; background:#FFFFFF; border:0; border-radius:7px; padding:5px 8px; }
+QLabel#scheme2FieldLabel, QLabel#scheme2SidebarHint { font-size:12px; font-weight:400; color:#3F5A82; }
+QLabel#scheme2Hint { color:#2A3541; font-size:13px; }
+QLabel#scheme2CompletionPill { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:12px; padding:4px 10px; font-size:10px; }
 QLabel#scheme2RecognitionStatus { color:#3B6D11; }
-QPushButton#scheme2PrimaryAction { color:#FFFFFF; background:#2563EB; border:1px solid #2563EB; border-radius:7px; padding:8px 16px; font-weight:600; }
+QPushButton#scheme2PrimaryAction { color:#FFFFFF; background:#2563EB; border:1px solid #2563EB; border-radius:7px; padding:0 16px; font-weight:500; }
 QPushButton#scheme2PrimaryAction:hover { background:#1D4ED8; }
 QPushButton#scheme2PrimaryAction:disabled { background:#AFC7E8; border-color:#AFC7E8; }
-QPushButton#scheme2PrimaryGhost, QPushButton#scheme2CollapseButton, QPushButton#scheme2ExpandButton { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:6px; padding:6px 10px; }
+QPushButton#scheme2PrimaryGhost, QPushButton#scheme2CollapseButton, QPushButton#scheme2ExpandButton { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:6px; padding:0 10px; }
 QFrame#scheme2RecognitionFooter { background:#FFFFFF; border-top:1px solid rgba(0,0,0,.12); }
-QTableWidget#summaryTable, QTableWidget#scheme2DetailTable { background:#FFFFFF; alternate-background-color:#F6F7F9; border:1px solid rgba(0,0,0,.12); border-radius:8px; gridline-color:rgba(0,0,0,.12); }
+QTableWidget#summaryTable, QTableWidget#scheme2DetailTable { background:#FFFFFF; color:#2A3541; alternate-background-color:#F6F7F9; border:1px solid rgba(0,0,0,.12); border-radius:8px; gridline-color:rgba(0,0,0,.12); font-size:12px; font-weight:400; }
 QTableWidget#summaryTable::item:selected, QTableWidget#scheme2DetailTable::item:selected { background:#E6F1FB; color:#1C1C1E; }
 QTableWidget#summaryTable::item:hover { background:#F5F9FF; }
-QTableWidget#scheme2DetailTable { font-size:12px; alternate-background-color:#F6F7F9; }
+QTableWidget#scheme2DetailTable { alternate-background-color:#F6F7F9; }
 QTableWidget#scheme2DetailTable::item { padding:5px 7px; }
 QLabel#scheme2DetailMeta { color:#8A8A86; font-size:12px; }
 QDoubleSpinBox#scheme2DetailFactor { background:transparent; border:0; border-bottom:1px solid #185FA5; border-radius:0; padding:2px 1px; min-height:24px; }
 QDoubleSpinBox#scheme2DetailFactor:focus { border-bottom:2px solid #2563EB; }
-QHeaderView::section { background:#F6F7F9; color:#5F5E5A; border:0; border-bottom:1px solid rgba(0,0,0,.12); padding:7px 8px; font-weight:500; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background:#FFFFFF; border:1px solid rgba(0,0,0,.18); border-radius:7px; padding:5px 7px; min-height:22px; }
+QHeaderView::section { background:#2563EB; color:#FFFFFF; border:0; border-bottom:1px solid rgba(0,0,0,.12); padding:7px 8px; font-size:12px; font-weight:600; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background:#FFFFFF; color:#2A3541; border:1px solid rgba(0,0,0,.18); border-radius:7px; padding:5px 7px; min-height:22px; font-size:13px; font-weight:400; }
 QComboBox[scheme2Multiline="true"] { padding:4px 5px; }
 QAbstractItemView#scheme2CompanyDropdown { min-width:320px; background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; outline:0; padding:0; }
 QAbstractItemView#scheme2CompanyDropdown::item { min-height:40px; padding:0; border:0; }
@@ -3782,6 +3976,12 @@ QProgressBar#scheme2AddProgress { background:#EEF0F3; border:0; border-radius:5p
 QProgressBar#scheme2AddProgress::chunk { background:#97C459; border-radius:5px; }
 QProgressBar#scheme2AddProgress[failed="true"]::chunk { background:#E24A4A; }
 """)
+    tabular_tag = QFont.Tag.fromString("tnum")
+    for control_type in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTableWidget):
+        for control in window.findChildren(control_type):
+            control_font = control.font()
+            control_font.setFeature(tabular_tag, 1)
+            control.setFont(control_font)
 
 
 def install_scheme2_ui(namespace):
