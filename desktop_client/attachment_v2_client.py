@@ -167,6 +167,14 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
     )
     category = str(selection.get("category_level1") or selection.get("attachment_category") or "").strip()
     name = str(selection.get("item_name") or selection.get("name") or "").strip()
+    if category in {"配置变形", "其他附件"}:
+        name_matches = [
+            item for item in catalog if isinstance(item, dict)
+            and attachment_image_match_key(item.get("category_level1")) == wanted_category
+            and attachment_image_match_key(item.get("item_name")) == wanted_name
+        ]
+        if len(name_matches) == 1:
+            return name_matches[0]
     ground_wire_aliases = {
         "接地线-黄绿线": ("黄绿线", "红绿线"),
         "接地线-编织带": ("编织带",),

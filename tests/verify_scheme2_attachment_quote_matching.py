@@ -40,6 +40,8 @@ catalog = [
     {"attachment_price_id": 32, "category_level1": "滤网", "item_name": "滤网", "model_code": "过滤网FU-9803A(卡固)", "price": 32},
     {"attachment_price_id": 33, "category_level1": "接地线", "category_level2": "红绿线", "item_name": "接地线", "model_code": "红绿线", "price": 6},
     {"attachment_price_id": 34, "category_level1": "接地线", "category_level2": "编织带", "item_name": "接地线", "model_code": "编织带", "price": 8},
+    {"attachment_price_id": 35, "category_level1": "配置变形", "category_level2": "不应参与匹配", "item_name": "福马轮", "model_code": "FM-01", "price": 50},
+    {"attachment_price_id": 36, "category_level1": "其他附件", "category_level2": "不应参与匹配", "item_name": "隔板", "model_code": "GB-01", "price": 60},
 ]
 
 assert match_quote_attachment(window, {"category_level1": "侧板", "item_name": "侧板"}, catalog)["attachment_price_id"] == 2
@@ -49,6 +51,8 @@ assert match_quote_attachment(window, {"category_level1": "风机", "item_name":
 assert match_quote_attachment(window, {"category_level1": "滤网", "item_name": "过滤网FU-9803A(卡固)"}, catalog)["attachment_price_id"] == 32
 assert match_quote_attachment(window, {"category_level1": "配置变形", "item_name": "接地线-黄绿线"}, catalog)["attachment_price_id"] == 33
 assert match_quote_attachment(window, {"category_level1": "配置变形", "item_name": "接地线-编织带"}, catalog)["attachment_price_id"] == 34
+assert match_quote_attachment(window, {"category_level1": "配置变形", "item_name": "福马轮"}, catalog)["attachment_price_id"] == 35
+assert match_quote_attachment(window, {"category_level1": "其他附件", "item_name": "隔板"}, catalog)["attachment_price_id"] == 36
 
 # Side panels are selected by the visible interface dimensions even when the
 # catalogue uses a more specific item name and the hidden spins are stale.

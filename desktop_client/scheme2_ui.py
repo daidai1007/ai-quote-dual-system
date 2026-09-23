@@ -2536,6 +2536,7 @@ class _SchemeAttachmentCombo(QComboBox):
         super().__init__(parent)
         self._selected_rows = set()
         self._keep_popup_open = False
+        self._pressed_popup_row = -1
         self._chip_hit_rects = {}
         self.view().viewport().installEventFilter(self)
 
@@ -2597,14 +2598,23 @@ class _SchemeAttachmentCombo(QComboBox):
 
     def eventFilter(self, watched, event):
         if watched is self.view().viewport():
-            if event.type() == QEvent.Type.MouseButtonPress:
-                return True
-            if event.type() == QEvent.Type.MouseButtonRelease:
+            if (
+                event.type() == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
                 index = self.view().indexAt(event.position().toPoint())
+                self._pressed_popup_row = index.row() if index.isValid() else -1
                 if index.isValid():
                     self._keep_popup_open = True
+                    self.view().setCurrentIndex(index)
                     self.toggle_row(index.row())
-                    QTimer.singleShot(0, self._release_popup_guard)
+                return True
+            if (
+                event.type() == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
+                self._pressed_popup_row = -1
+                QTimer.singleShot(0, self._release_popup_guard)
                 return True
             if event.type() == QEvent.Type.KeyPress and event.key() in (
                 Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
@@ -2649,6 +2659,20 @@ class _SchemeAttachmentCombo(QComboBox):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if self.view().isVisible():
+                option = QStyleOptionComboBox()
+                self.initStyleOption(option)
+                arrow_rect = self.style().subControlRect(
+                    QStyle.ComplexControl.CC_ComboBox,
+                    option,
+                    QStyle.SubControl.SC_ComboBoxArrow,
+                    self,
+                )
+                if arrow_rect.contains(event.position().toPoint()):
+                    self._keep_popup_open = False
+                    super().hidePopup()
+                    event.accept()
+                    return
             for row, rect in self._chip_hit_rects.items():
                 if rect.contains(event.position().toPoint()):
                     self.toggle_row(row)
@@ -2819,10 +2843,9 @@ class _SchemeAttachmentDialog(QDialog):
                 selected_names = [name for name in options if is_selected(category, name)]
                 combo.set_selected_texts(selected_names)
                 category_check.setChecked(bool(selected_names))
-                combo.setEnabled(category_check.isChecked())
+                combo.setEnabled(True)
 
                 def toggle_category(enabled, selector=combo):
-                    selector.setEnabled(enabled)
                     if not enabled:
                         selector.clear_selection()
 

@@ -19,7 +19,7 @@ app = QApplication.instance() or QApplication([])
 dialog = scheme2_ui._SchemeAttachmentDialog([], "JP")
 check = dialog.category_checks["安装附件"]
 combo = dialog.category_combos["安装附件"]
-check.setChecked(True)
+assert not check.isChecked() and combo.isEnabled()
 
 fixed = combo.findText("固定立柱")
 section = combo.findText("分段板")
@@ -86,10 +86,11 @@ assert combo.selected_texts() == ["分段板"]
 combo.toggle_row(section)
 assert combo.selected_texts() == [] and not check.isChecked()
 
-for category in ("资料盒", "配置变形"):
+for category in ("资料盒", "风机", "滤网", "门变形", "控制柜附件", "配置变形", "其他附件"):
     category_check = dialog.category_checks[category]
     category_combo = dialog.category_combos[category]
-    category_check.setChecked(True)
+    category_check.setChecked(False)
+    assert category_combo.isEnabled()
     first, second = 1, 2
     category_combo.showPopup()
     app.processEvents()
@@ -100,11 +101,57 @@ for category in ("资料盒", "配置变形"):
             pos=category_combo.view().visualRect(category_combo.model().index(row, 0)).center(),
         )
         app.processEvents()
+        assert category_combo.view().isVisible(), f"{category} popup closed after selecting row {row}"
+        assert category_check.isChecked(), f"{category} was not checked after selecting row {row}"
     category_combo.hidePopup()
     app.processEvents()
     expected = [category_combo.itemText(first), category_combo.itemText(second)]
     assert category_combo.selected_texts() == expected
     assert category_combo.display_text() == "\n".join(expected)
     assert category_check.isChecked()
+
+# A category can be selected directly from its dropdown; the category check
+# follows the selection. Only an explicit arrow click collapses the popup.
+direct_combo = dialog.category_combos["其他附件"]
+direct_check = dialog.category_checks["其他附件"]
+direct_check.setChecked(False)
+assert direct_combo.isEnabled()
+direct_combo.showPopup()
+app.processEvents()
+QTest.mouseClick(
+    direct_combo.view().viewport(), Qt.MouseButton.LeftButton,
+    pos=direct_combo.view().visualRect(direct_combo.model().index(1, 0)).center(),
+)
+app.processEvents()
+assert direct_check.isChecked() and direct_combo.view().isVisible()
+option = scheme2_ui.QStyleOptionComboBox()
+direct_combo.initStyleOption(option)
+arrow = direct_combo.style().subControlRect(
+    scheme2_ui.QStyle.ComplexControl.CC_ComboBox,
+    option,
+    scheme2_ui.QStyle.SubControl.SC_ComboBoxArrow,
+    direct_combo,
+)
+QTest.mouseClick(direct_combo, Qt.MouseButton.LeftButton, pos=arrow.center())
+app.processEvents()
+assert not direct_combo.view().isVisible()
+
+control_dialog = scheme2_ui._SchemeAttachmentDialog([], "JK")
+control_combo = control_dialog.category_combos["控制箱附件"]
+control_check = control_dialog.category_checks["控制箱附件"]
+assert not control_check.isChecked() and control_combo.isEnabled()
+control_dialog.show()
+control_combo.showPopup()
+app.processEvents()
+for row in (1, 2):
+    QTest.mouseClick(
+        control_combo.view().viewport(), Qt.MouseButton.LeftButton,
+        pos=control_combo.view().visualRect(control_combo.model().index(row, 0)).center(),
+    )
+    app.processEvents()
+    assert control_combo.view().isVisible()
+    assert control_check.isChecked()
+assert len(control_combo.selected_texts()) == 2
+control_dialog.close()
 dialog.close()
 print("scheme2 attachment multiselect contract passed")
