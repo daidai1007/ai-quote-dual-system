@@ -1646,6 +1646,7 @@ def _build_cost_page(window):
     window.scheme2_compact_value = compact_value
     window.scheme2_cost_empty = empty
     window.scheme2_cost_export = export
+    _install_export_busy_feedback(window, export)
     window.scheme2_cost_return = back
     window.scheme2_cost_undo = undo_bar
     window.scheme2_undo_timer = QTimer(window)
@@ -1657,6 +1658,23 @@ def _build_cost_page(window):
     window._scheme2_deleted = None
     _set_cost_column_mode(window, False)
     return page
+
+
+def _install_export_busy_feedback(window, export_button):
+    """Mirror the legacy exporter state onto the visible scheme-2 action."""
+
+    original = getattr(window, "set_export_busy", None)
+    if not callable(original) or getattr(window, "_scheme2_export_busy_installed", False):
+        return
+
+    def set_export_busy_with_visible_feedback(self, busy, message=""):
+        original(bool(busy), message)
+        export_button.setText("正在导出…" if busy else "导出报价单")
+        export_button.setEnabled(False if busy else bool(getattr(self, "draft_items", [])))
+        export_button.setToolTip(message or "")
+
+    window.set_export_busy = MethodType(set_export_busy_with_visible_feedback, window)
+    window._scheme2_export_busy_installed = True
 
 
 def _set_cost_column_mode(window, full):
@@ -3727,6 +3745,30 @@ def _set_dirty(window, dirty=True):
         label.style().polish(label)
 
 
+def _scheme2_quote_remark(item):
+    """Build the formal quote remark only from confirmed program fields."""
+
+    product = str(
+        item.get("scheme2_selected_product_name")
+        or item.get("scheme2_selected_product_code")
+        or item.get("product_family")
+        or item.get("product_code")
+        or ""
+    ).strip()
+    product = re.sub(r"_(?:SINGLE|DOUBLE|DEFAULT)$", "", product, flags=re.IGNORECASE)
+    material = str(item.get("scheme2_selected_material") or item.get("material_code") or "").strip()
+    surface = str(item.get("scheme2_selected_surface") or item.get("coating_type") or "").strip()
+    color = str(item.get("display_color") or "").strip()
+    attachment_names = []
+    for attachment in item.get("attachments") or []:
+        name = str(attachment.get("item_name") or attachment.get("name") or attachment.get("model_code") or "").strip()
+        if name and name not in attachment_names:
+            attachment_names.append(name)
+    attachments = "、".join(attachment_names) or "无附件"
+    parts = [f"仿威图{product}柜", material, surface, color, attachments]
+    return "，".join(part for part in parts if part) + "。"
+
+
 def _finish_add(window):
     before = len(getattr(window, "draft_items", []))
     editing = getattr(window, "_scheme2_edit_item", None)
@@ -3741,7 +3783,11 @@ def _finish_add(window):
         window.draft_items[editing_index] = item
     window._scheme2_edit_item = None
     item["name"] = window.scheme2_name_edit.text().strip() or item.get("model_code") or "未命名"
+    item["scheme2_selected_material"] = window.material_combo.currentText().strip()
+    item["scheme2_selected_surface"] = window.coating_combo.currentText().strip()
     item["display_color"] = window.scheme2_color_combo.currentText()
+    item["final_remark"] = _scheme2_quote_remark(item)
+    item["notes"] = item["final_remark"]
     pages = getattr(window, "_scheme2_drawing_pages", [])
     page_index = int(getattr(window, "_scheme2_drawing_page_index", -1))
     if 0 <= page_index < len(pages):
