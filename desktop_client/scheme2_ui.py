@@ -3993,10 +3993,9 @@ def _apply_responsive(window):
     host = window.stack.parentWidget()
     host_layout = host.layout() if host is not None else None
     if host_layout is not None:
-        # The stacked option page needs top pinning in its tall compact layout,
-        # while cost/detail pages must consume the whole available work area.
-        alignment = Qt.AlignmentFlag.AlignTop if route == OPTION_ROUTE else Qt.AlignmentFlag(0)
-        host_layout.setAlignment(window.stack, alignment)
+        # Every route must consume the available height.  Pinning the option
+        # page to the top leaves a grey strip when the window grows vertically.
+        host_layout.setAlignment(window.stack, Qt.AlignmentFlag(0))
         if route != OPTION_ROUTE and main_scroll is not None and main_scroll.widget() is not None:
             main_scroll.widget().setMinimumHeight(main_scroll.viewport().height())
         host_layout.invalidate()

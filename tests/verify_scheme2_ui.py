@@ -474,6 +474,10 @@ for width, height in ((1680, 980), (1366, 820), (1100, 720), (1024, 700)):
     splitter = window.scheme2_option_splitter
     assert splitter.orientation() == Qt.Orientation.Horizontal
     assert splitter.widget(0) is window.scheme2_option_form_widget
+    stack_host = window.stack.parentWidget()
+    assert stack_host.height() - window.stack.height() <= 2, (
+        stack_host.size(), window.stack.size()
+    )
     assert abs(window.quote_drawing_preview.canvas.width() / window.quote_drawing_preview.canvas.height() - 297 / 210) < .02
     window.show_section(3)
     app.processEvents()
