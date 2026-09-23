@@ -165,7 +165,10 @@ assert window.findChild(__import__("PySide6.QtWidgets").QtWidgets.QScrollArea, "
 assert not window.model_edit.isVisible()
 assert window.quote_spec_edit.isVisible()
 assert not window.width_spin.isVisible() and not window.depth_spin.isVisible() and not window.height_spin.isVisible()
-assert window.scheme2_completion.parentWidget().objectName() == "scheme2DrawingHeader"
+assert window.scheme2_completion.parentWidget() is window.quote_drawing_preview
+assert window.quote_drawing_preview.navigation_layout.indexOf(window.scheme2_completion) == 3
+assert window.scheme2_drawing_widget.findChild(QFrame, "scheme2DrawingHeader") is None
+assert window.quote_drawing_preview.message.isHidden()
 import_button = next(button for button in window.scheme2_drawing_widget.findChildren(QPushButton) if button.text() == "导入图纸")
 assert import_button.isVisibleTo(window)
 assert not any(button.text() == "导入 / 管理图纸" for button in window.findChildren(QPushButton))
@@ -225,6 +228,7 @@ with tempfile.TemporaryDirectory(prefix="scheme2-pages-") as folder:
     wait_until(lambda: window._scheme2_page_worker is None)
     assert len(recognition_calls) == 2
     assert window._scheme2_drawing_page_index == 1
+    assert window.scheme2_recognition_status.text().startswith("已识别第 2 页")
     scheme2_ui._change_scheme2_page(window, -1)
     app.processEvents()
     assert len(recognition_calls) == 2

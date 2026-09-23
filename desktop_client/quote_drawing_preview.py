@@ -631,6 +631,7 @@ class QuoteDrawingPreview(QFrame):
         self.filename.setWordWrap(True)
         box.addWidget(self.filename)
         row = QHBoxLayout()
+        self.navigation_layout = row
         self.previous = self.button('上一页', lambda: self.set_page(self.page - 1), row)
         self.counter = QLabel('0 / 0')
         row.addWidget(self.counter)

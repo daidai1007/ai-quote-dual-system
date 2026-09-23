@@ -2150,6 +2150,13 @@ def _sync_scheme2_page_navigation(window):
     if isinstance(completion, QLabel) and pages:
         recognized = sum(1 for entry in pages if entry.get("item") is not None)
         completion.setText(f"已识别 {recognized} / {len(pages)}")
+    status = getattr(window, "scheme2_recognition_status", None)
+    if (
+        isinstance(status, QLabel)
+        and 0 <= index < len(pages)
+        and pages[index].get("item") is not None
+    ):
+        status.setText(f"已识别第 {index + 1} 页：尺寸 / 材质 / 表面处理 / 颜色")
 
 
 def _show_scheme2_source_page(window, entry):
@@ -3501,16 +3508,8 @@ def _configure_option_page(window, namespace):
     right_layout = QVBoxLayout(right_shell)
     right_layout.setContentsMargins(0, 0, 0, 0)
     right_layout.setSpacing(0)
-    drawing_header = QFrame()
-    drawing_header.setObjectName("scheme2DrawingHeader")
-    drawing_header_layout = QHBoxLayout(drawing_header)
-    drawing_header_layout.setContentsMargins(12, 8, 12, 8)
-    drawing_header_layout.addWidget(QLabel("当前柜体图纸"))
-    drawing_header_layout.addStretch(1)
-    counter = QLabel("已完成 0 / 0")
+    counter = QLabel("已识别 0 / 0")
     counter.setObjectName("scheme2CompletionPill")
-    drawing_header_layout.addWidget(counter)
-    right_layout.addWidget(drawing_header)
     if right is not None:
         _detach(right)
         for label in right.findChildren(QLabel):
@@ -3522,6 +3521,8 @@ def _configure_option_page(window, namespace):
         canvas = getattr(right, "canvas", None)
         if canvas is not None:
             canvas.setObjectName("scheme2DrawingCanvas")
+        right.navigation_layout.insertWidget(3, counter)
+        right.message.hide()
         right_layout.addWidget(right, 1)
         right.show()
         footer = QFrame()
@@ -3817,6 +3818,9 @@ def _finish_add(window):
 
 
 def _sync_completion(window):
+    if getattr(window, "_scheme2_drawing_pages", None):
+        _sync_scheme2_page_navigation(window)
+        return
     drawings = [row for row in getattr(window, "recognized_drawings", []) if isinstance(row, dict)]
     total = sum(1 for row in drawings if row.get("verified") or row.get("confirmed") or row.get("candidate_id"))
     completed_keys = {

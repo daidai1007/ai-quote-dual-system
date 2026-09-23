@@ -574,6 +574,25 @@ assert formula.area_edit.value == f"{20 * expected_ratio:.1f}"
 assert abs(formula._nonstandard_perimeter_ratio - expected_ratio) < 1e-12
 
 
+class CompactJpCalculator:
+    @staticmethod
+    def calculate(code, width, height, depth, single, double):
+        assert (code, width, height, depth, single, double) == (
+            "JP_DOUBLE", 1250.0, 200.0, 400.0, 0, 1,
+        )
+        return 52.34, 3.21
+
+
+compact_jp = type("CompactJpWindow", (), {
+    "weight_edit": LineEdit(), "area_edit": LineEdit(),
+    "width_spin": DoubleSpin(1250), "height_spin": DoubleSpin(200), "depth_spin": DoubleSpin(400),
+    "formula_calculator": CompactJpCalculator(),
+    "door_counts": staticmethod(lambda: (0, 1)),
+})()
+assert layout_refresh._ensure_formula_outputs(compact_jp, "JP_DOUBLE")
+assert compact_jp.weight_edit.value == "52.3" and compact_jp.area_edit.value == "3.2"
+
+
 class GangedPayloadCalculator:
     @staticmethod
     def calculate(_code, width, _height, _depth, _single, _double):

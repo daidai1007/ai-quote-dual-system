@@ -2641,6 +2641,34 @@ def _apply_nonstandard_formula_ratio(window) -> bool:
     return True
 
 
+def _ensure_formula_outputs(window, product_code) -> bool:
+    """Recover valid workbook outputs before reporting a template failure."""
+
+    weight = _safe_float(getattr(window.weight_edit, "text", lambda: "")())
+    area = _safe_float(getattr(window.area_edit, "text", lambda: "")())
+    if weight is not None and area is not None and weight > 0 and area > 0:
+        return True
+    try:
+        single, double = window.door_counts()
+        values = window.formula_calculator.calculate(
+            product_code,
+            float(window.width_spin.value()),
+            float(window.height_spin.value()),
+            float(window.depth_spin.value()),
+            int(single),
+            int(double),
+        )
+        if values and float(values[0]) > 0 and float(values[1]) > 0:
+            window.weight_edit.setText(_formula_workbook_value(values[0]))
+            window.area_edit.setText(_formula_workbook_value(values[1]))
+            return True
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return _apply_nonstandard_formula_ratio(window) and bool(
+        _safe_float(window.weight_edit.text()) and _safe_float(window.area_edit.text())
+    )
+
+
 def _history_price_match_payload(window) -> dict | None:
     """Return the three visible values used by the exact historical lookup."""
 
@@ -7663,9 +7691,7 @@ def install_layout_refresh(namespace: dict) -> None:
                 if serial != self.template_serial:
                     return
                 self.formula_template_loaded(result, serial, code)
-                outcome["loaded"] = bool(
-                    self.weight_edit.text().strip() and self.area_edit.text().strip()
-                )
+                outcome["loaded"] = _ensure_formula_outputs(self, code)
                 if not outcome["loaded"]:
                     outcome["error"] = "公式模板未生成有效的材料重量和喷涂面积"
 

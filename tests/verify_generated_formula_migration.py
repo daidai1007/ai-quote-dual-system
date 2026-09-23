@@ -237,6 +237,11 @@ assert math.isclose(jp_area, 7.117694749999634, rel_tol=0, abs_tol=1e-8), jp_are
 assert formula_display_number(jp_weight) == "145.7"
 assert formula_display_number(jp_area) == "7.1"
 
+# Compact JP double-door cabinet entered as W*D*H = 1250*400*200.
+compact_jp_weight, compact_jp_area = calculator.calculate("JP_DOUBLE", 1250, 200, 400, 0, 1)
+assert compact_jp_weight > 0, compact_jp_weight
+assert compact_jp_area > 0, compact_jp_area
+
 # The request contained ``400*400*/400``.  Preserve both defensible readings:
 # literal 400 W x 400 D x 400 H and the likely 1400 mm height typo.  These
 # values come from Excel CalculateFullRebuild and guard JA/JE independently.
