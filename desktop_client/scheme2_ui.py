@@ -132,6 +132,28 @@ def _start_export_validation(window):
     worker.start()
 
 
+def _sync_export_company(window):
+    """Copy the visible Scheme-2 company into the legacy export controller."""
+
+    visible = getattr(window, "scheme2_company", None)
+    export_combo = getattr(window, "company_combo", None)
+    if not isinstance(visible, QComboBox) or not isinstance(export_combo, QComboBox):
+        return
+    text = visible.currentText().strip()
+    data = visible.currentData()
+    index = export_combo.findData(data) if data is not None else -1
+    if index < 0 and text:
+        index = export_combo.findText(text, Qt.MatchFlag.MatchFixedString)
+    with QSignalBlocker(export_combo):
+        if index >= 0:
+            export_combo.setCurrentIndex(index)
+        elif export_combo.isEditable():
+            export_combo.setEditText(text)
+        elif text:
+            export_combo.addItem(text, data)
+            export_combo.setCurrentIndex(export_combo.count() - 1)
+
+
 class _Scheme2PageRecognitionWorker(QThread):
     succeeded = Signal(object, object)
     failed = Signal(object, str)
@@ -2360,12 +2382,18 @@ def _confirm_scheme2_recognition(item):
 
     if not isinstance(item, dict):
         return item
+    item["classification"] = "cabinet"
     item["review_status"] = "confirmed"
     item["confirmed"] = True
     item["verified"] = True
     item["manual_reviewed"] = True
     item["manual_confirmation_checked"] = True
+    item["manual_reviewed_at"] = "scheme2-direct-recognition"
     item["remark_review_required"] = False
+    if not str(item.get("specification") or "").strip():
+        dimensions = list(item.get("dimensions") or [])
+        if dimensions and len(dimensions[0]) >= 3:
+            item["specification"] = "*".join(f"{_number(value):g}" for value in dimensions[0][:3])
     return item
 
 
@@ -4549,6 +4577,7 @@ def install_scheme2_ui(namespace):
         QTimer.singleShot(0, lambda: _apply_responsive(window))
 
     def confirm_and_export(window):
+        _sync_export_company(window)
         if not getattr(window, "_scheme2_export_validation_passed", False):
             _start_export_validation(window)
             return

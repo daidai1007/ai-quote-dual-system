@@ -178,7 +178,7 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
   }
 });
 
-test("formal workbook exports the revised presentation without changing quote detail", async () => {
+test("formal workbook preserves the legacy desktop quotation format", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-export-presentation-"));
   const outputPath = path.join(tempDir, "presentation-regression.xlsx");
   try {

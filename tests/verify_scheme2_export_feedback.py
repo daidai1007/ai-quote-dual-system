@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QPushButton, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QComboBox, QPushButton, QWidget  # noqa: E402
 
 import scheme2_ui  # noqa: E402
 
@@ -67,4 +67,12 @@ for _ in range(20):
     if export_window._scheme2_export_validation_worker is None:
         break
 assert export_window._scheme2_export_validation_worker is None
+
+visible = QComboBox()
+visible.addItem("示例科技有限公司", "COMPANY-01")
+legacy = QComboBox()
+company_window = SimpleNamespace(scheme2_company=visible, company_combo=legacy)
+scheme2_ui._sync_export_company(company_window)
+assert legacy.currentText() == "示例科技有限公司"
+assert legacy.currentData() == "COMPANY-01"
 print("scheme2 export feedback contract passed")

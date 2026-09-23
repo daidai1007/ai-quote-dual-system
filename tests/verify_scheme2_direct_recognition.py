@@ -32,11 +32,13 @@ class Window:
         self.refreshed += 1
 
 
-item = {"raw_text": "柜体含侧板和接地线"}
+item = {"raw_text": "柜体含侧板和接地线", "dimensions": [(600, 1800, 400)]}
 assert scheme2_ui._confirm_scheme2_recognition(item) is item
 assert item["review_status"] == "confirmed"
 assert item["confirmed"] and item["verified"]
 assert item["manual_reviewed"] and item["manual_confirmation_checked"]
+assert item["classification"] == "cabinet" and item["manual_reviewed_at"]
+assert item["specification"] == "600*1800*400"
 assert item["remark_review_required"] is False
 
 window = Window()

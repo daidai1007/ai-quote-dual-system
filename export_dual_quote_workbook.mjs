@@ -49,6 +49,13 @@ const sellerInformation = {
   fax: "0571-88520077",
   email: "",
 };
+// Keep customer-facing sheets on the established desktop-client template.
+const LEGACY_FORMULA_HEADERS = [
+  "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "总价", "备注",
+];
+const LEGACY_QUICK_HEADERS = [
+  "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价", "备注",
+];
 
 // Cross-sheet copyFrom() also does not reproduce the source worksheet's
 // merged cells, column widths or row heights. Apply the fixed template
@@ -192,9 +199,7 @@ function buildQuotationTemplate(targetWorkbook) {
   ], [
     sellerInformation.email,
   ]];
-  sheet.getRange("A10:H10").values = [[
-    "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "总价", "备注",
-  ]];
+  sheet.getRange("A10:H10").values = [LEGACY_FORMULA_HEADERS];
   sheet.getRange("L10:Y10").values = [[
     "柜体", "底座", "侧板", "三排纵梁", "安装板", "灯/开关", "文件夹",
     "风机滤网", "门限位器", "接地线", "双开门", "安装板单发", "运费", "折扣",
@@ -1363,15 +1368,13 @@ const assertNoWorkbookAnnotations = (buffer) => {
 const verifyWorkbookContents = (candidateWorkbook) => {
   attachWorkbookRangeApi(candidateWorkbook);
   const items = payload.items || [];
-  const formulaPublicHeaders = [
-    "序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "总价", "备注",
-  ];
+  const formulaPublicHeaders = LEGACY_FORMULA_HEADERS;
   const audit = {};
   for (const [sheetName, method] of [["公式法报价单", "formula"], ["快速报价单", "quick"]]) {
     const sheet = attachRangeApi(candidateWorkbook.getWorksheet(sheetName));
     if (!sheet) throw new Error(`saved workbook is missing sheet: ${sheetName}`);
     const publicHeaders = method === "quick"
-      ? ["序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价", "备注"]
+      ? LEGACY_QUICK_HEADERS
       : formulaPublicHeaders;
     assertRow(rangePlainValues(sheet, "A10:H10")[0], publicHeaders, `${sheetName} public headers`);
     assertRow(
