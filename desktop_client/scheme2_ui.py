@@ -10,10 +10,11 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
+import re
 import tempfile
 from types import MethodType
 
-from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QSettings, QSignalBlocker, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -68,6 +69,7 @@ MONEY_COLUMNS = frozenset(range(4, 14))
 EDITABLE_COLUMNS = frozenset((10, 11))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
+_FONT_SIZE_RULE = re.compile(r"font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
 GALVANIZED_MATERIAL_CODES = frozenset(("SGCC", "DX51D", "GI"))
 THREE_ROW_BEAM_MODELS = ("JP760240", "JP760250", "JP760260", "JP760280", "JP760210")
 
@@ -106,13 +108,17 @@ class _Scheme2PageRecognitionWorker(QThread):
             with tempfile.TemporaryDirectory(prefix="scheme2-recognition-") as folder:
                 if Path(source).suffix.lower() == ".pdf":
                     reader = PdfReader(source)
-                    if not 0 <= page_index < len(reader.pages):
-                        raise ValueError("图纸页码无效")
-                    writer = PdfWriter()
-                    writer.add_page(reader.pages[page_index])
-                    recognition_path = str(Path(folder) / f"page-{page_index + 1}.pdf")
-                    with open(recognition_path, "wb") as stream:
-                        writer.write(stream)
+                    try:
+                        if not 0 <= page_index < len(reader.pages):
+                            raise ValueError("图纸页码无效")
+                        writer = PdfWriter()
+                        writer.add_page(reader.pages[page_index])
+                        recognition_path = str(Path(folder) / f"page-{page_index + 1}.pdf")
+                        with open(recognition_path, "wb") as stream:
+                            writer.write(stream)
+                        writer.close()
+                    finally:
+                        reader.close()
                 item = self.recognition_tools.recognize_document(recognition_path)
             if not isinstance(item, dict):
                 raise ValueError("图纸识别未返回有效结果")
@@ -416,18 +422,10 @@ class _SchemeDimensionEditor(QDialog):
 
 
 def _attachment_dimension_or_model(source):
-    """Prefer matched dimensions, then catalogue dimensions, then model."""
-    has_matched_size = any(
-        source.get(f"size_match_{axis}_mm") is not None
-        for axis in ("width", "depth", "height")
-    )
+    """Show only attachment catalogue dimensions, never cabinet target size."""
     dimensions = []
     for axis, label in (("width", "宽"), ("depth", "深"), ("height", "高")):
-        key = f"{axis}_mm"
-        value = source.get(f"size_match_{key}") if has_matched_size else source.get(key)
-        if value is None and has_matched_size:
-            value = source.get(key)
-        number = _number(value)
+        number = _number(source.get(f"{axis}_mm"))
         if number > 0:
             dimensions.append((axis, label, number))
     if len(dimensions) == 3:
@@ -436,23 +434,16 @@ def _attachment_dimension_or_model(source):
     if dimensions:
         return " × ".join(f"{label} {value:g}" for _axis, label, value in dimensions) + " mm"
 
-    manual = source.get("manual_inputs") if isinstance(source.get("manual_inputs"), dict) else {}
-    manual_dimensions = [
-        f"{name}={_number(value):g} mm"
-        for name, value in manual.items() if _number(value) > 0
-    ]
-    if manual_dimensions:
-        return "；".join(manual_dimensions)
-
-    specification = str(source.get("specification") or source.get("matched_specification") or "").strip()
-    if any(marker in specification.lower() for marker in ("×", "*", "mm")) and any(
-        character.isdigit() for character in specification
-    ):
-        return specification
     return str(source.get("model_code") or "").strip()
 
 
 class AttachmentEditor(QDialog):
+    COL_NAME = 0
+    COL_SPECIFICATION = 1
+    COL_QUANTITY = 2
+    COL_AMOUNT = 3
+    COL_FORMULA_AMOUNT = 4
+
     def __init__(self, window, item):
         super().__init__(window)
         self.window = window
@@ -486,9 +477,9 @@ class AttachmentEditor(QDialog):
         header_layout.addStretch(1)
         header_layout.addWidget(close_button)
         layout.addWidget(header)
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 5)
         self.table.setObjectName("scheme2AttachmentEditorTable")
-        self.table.setHorizontalHeaderLabels(("图片", "名称", "尺寸 / 规格", "数量", "金额", "公式金额"))
+        self.table.setHorizontalHeaderLabels(("名称", "尺寸 / 规格", "数量", "金额", "公式金额"))
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -497,16 +488,14 @@ class AttachmentEditor(QDialog):
         self.table.setToolTip("右键可添加或删除临时附件；按 Esc 取消修改")
         self.table.customContextMenuRequested.connect(self._show_table_menu)
         table_header = self.table.horizontalHeader()
-        table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        table_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(0, 50)
-        self.table.setColumnWidth(3, 62)
-        self.table.setColumnWidth(4, 82)
-        self.table.setColumnWidth(5, 88)
+        table_header.setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeMode.Stretch)
+        table_header.setSectionResizeMode(self.COL_SPECIFICATION, QHeaderView.ResizeMode.Stretch)
+        table_header.setSectionResizeMode(self.COL_QUANTITY, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(self.COL_AMOUNT, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(self.COL_FORMULA_AMOUNT, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(self.COL_QUANTITY, 62)
+        self.table.setColumnWidth(self.COL_AMOUNT, 82)
+        self.table.setColumnWidth(self.COL_FORMULA_AMOUNT, 88)
         self.table.cellClicked.connect(self.edit_missing_dimensions)
         layout.addWidget(self.table, 1)
         for attachment in item.get("attachments", []):
@@ -531,11 +520,7 @@ class AttachmentEditor(QDialog):
         self.table.setRowHeight(row, 42)
         name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
         spec = _attachment_dimension_or_model(source)
-        image = QTableWidgetItem("▧")
-        image.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        image.setData(Qt.ItemDataRole.ForegroundRole, QColor("#8A8A86"))
-        self.table.setItem(row, 0, image)
-        self.table.setItem(row, 1, QTableWidgetItem(name))
+        self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
         if name == "三排安装梁":
             model = str(source.get("model_code") or source.get("specification") or "").strip().upper()
             selector = QComboBox()
@@ -545,22 +530,22 @@ class AttachmentEditor(QDialog):
             for option in THREE_ROW_BEAM_MODELS:
                 selector.addItem(option, option)
             selector.setCurrentIndex(max(0, selector.findData(model)))
-            self.table.setCellWidget(row, 2, selector)
+            self.table.setCellWidget(row, self.COL_SPECIFICATION, selector)
             selector.currentIndexChanged.connect(
                 lambda _index, target_row=row, combo=selector: self._beam_model_changed(target_row, combo.currentData())
             )
         else:
             specification_item = QTableWidgetItem(spec)
             specification_item.setData(ROLE_DERIVED_SPEC, spec)
-            self.table.setItem(row, 2, specification_item)
+            self.table.setItem(row, self.COL_SPECIFICATION, specification_item)
         quantity = QSpinBox()
         quantity.setObjectName("scheme2AttachmentEditorQuantity")
         quantity.setRange(-9999, 9999)
         quantity.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         quantity.setAlignment(Qt.AlignmentFlag.AlignCenter)
         quantity.setValue(max(-9999, min(9999, int(_number(source.get("quantity", 1), 1)))))
-        self.table.setCellWidget(row, 3, quantity)
-        self.table.item(row, 1).setData(ROLE_ROW, dict(source))
+        self.table.setCellWidget(row, self.COL_QUANTITY, quantity)
+        self.table.item(row, self.COL_NAME).setData(ROLE_ROW, dict(source))
         self._render_amounts(row, source)
         quantity.valueChanged.connect(lambda value, target_row=row: self._quantity_changed(target_row, value))
 
@@ -568,7 +553,7 @@ class AttachmentEditor(QDialog):
         model = str(model or "").strip().upper()
         if not model:
             return
-        source_item = self.table.item(row, 1)
+        source_item = self.table.item(row, self.COL_NAME)
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         if str(source.get("model_code") or "").strip().upper() == model:
             return
@@ -586,7 +571,7 @@ class AttachmentEditor(QDialog):
         pending = bool(self._pending_dimensions(source))
         quick_amount = 0.0 if pending else _number(source.get("quick_amount"), _attachment_amount(source))
         formula_amount = 0.0 if pending else _number(source.get("formula_amount"), 0)
-        amount_editor = self.table.cellWidget(row, 4)
+        amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if not isinstance(amount_editor, QDoubleSpinBox):
             amount_editor = QDoubleSpinBox()
             amount_editor.setObjectName("scheme2AttachmentEditorAmount")
@@ -595,7 +580,7 @@ class AttachmentEditor(QDialog):
             amount_editor.setSingleStep(1)
             amount_editor.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
             amount_editor.setAlignment(Qt.AlignmentFlag.AlignRight)
-            self.table.setCellWidget(row, 4, amount_editor)
+            self.table.setCellWidget(row, self.COL_AMOUNT, amount_editor)
             amount_editor.valueChanged.connect(lambda value, target_row=row: self._amount_changed(target_row, value))
         with QSignalBlocker(amount_editor):
             amount_editor.setValue(quick_amount)
@@ -614,27 +599,27 @@ class AttachmentEditor(QDialog):
             cell.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
             cell.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充")
             cell.setBackground(QColor("#FAEEDA"))
-        self.table.setItem(row, 5, cell)
-        specification = self.table.item(row, 2)
+        self.table.setItem(row, self.COL_FORMULA_AMOUNT, cell)
+        specification = self.table.item(row, self.COL_SPECIFICATION)
         if pending and specification is not None:
             specification.setText("点击补充：" + "、".join(self._pending_dimensions(source)))
             specification.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
-            for column in (0, 1, 2, 3):
+            for column in (self.COL_NAME, self.COL_SPECIFICATION, self.COL_QUANTITY):
                 cell = self.table.item(row, column)
                 if cell is not None:
                     cell.setBackground(QColor("#FAEEDA"))
 
     def _amount_changed(self, row, value):
-        editor = self.table.cellWidget(row, 4)
+        editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if editor is not None:
             editor.setProperty("schemeEdited", True)
-        formula = self.table.item(row, 5)
+        formula = self.table.item(row, self.COL_FORMULA_AMOUNT)
         if formula is not None:
             formula.setText(_money(value))
 
     def _quantity_changed(self, row, value):
-        amount_editor = self.table.cellWidget(row, 4)
-        source_item = self.table.item(row, 1)
+        amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
+        source_item = self.table.item(row, self.COL_NAME)
         if not isinstance(amount_editor, QDoubleSpinBox) or amount_editor.property("schemeEdited"):
             return
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
@@ -646,14 +631,14 @@ class AttachmentEditor(QDialog):
         with QSignalBlocker(amount_editor):
             amount_editor.setValue(unit_amount * value)
         previous_formula = _number(source.get("formula_amount"), 0)
-        formula = self.table.item(row, 5)
+        formula = self.table.item(row, self.COL_FORMULA_AMOUNT)
         if formula is not None:
             formula.setText(_money((previous_formula / previous_quantity if previous_quantity else 0) * value))
 
     def edit_missing_dimensions(self, row, column):
-        if column != 2 or not 0 <= row < self.table.rowCount():
+        if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
             return
-        source_item = self.table.item(row, 1)
+        source_item = self.table.item(row, self.COL_NAME)
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         missing = self._pending_dimensions(source)
         if not missing:
@@ -670,23 +655,23 @@ class AttachmentEditor(QDialog):
         values = editor.values()
         source["manual_inputs"] = {**manual, **values}
         source_item.setData(ROLE_ROW, source)
-        specification = self.table.item(row, 2)
+        specification = self.table.item(row, self.COL_SPECIFICATION)
         if specification is not None:
             specification.setText("；".join(f"{name}={value:g} mm" for name, value in values.items()))
             specification.setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
         self._reprice_row(row, source, specification)
 
     def _reprice_row(self, row, source, specification=None):
-        source_item = self.table.item(row, 1)
-        specification_editor = self.table.cellWidget(row, 2)
+        source_item = self.table.item(row, self.COL_NAME)
+        specification_editor = self.table.cellWidget(row, self.COL_SPECIFICATION)
         if isinstance(specification_editor, QComboBox):
             specification_editor.setEnabled(False)
-        amount_editor = self.table.cellWidget(row, 4)
+        amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if isinstance(amount_editor, QDoubleSpinBox):
             amount_editor.setEnabled(False)
             amount_editor.setToolTip("计算中…")
-        self.table.item(row, 5).setText("计算中…")
-        self.table.item(row, 5).setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
+        self.table.item(row, self.COL_FORMULA_AMOUNT).setText("计算中…")
+        self.table.item(row, self.COL_FORMULA_AMOUNT).setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
         reprice = getattr(self.window, "recalculate_draft_attachment", None)
         if not callable(reprice):
             QMessageBox.warning(self, "附件计算失败", "附件数据库计算功能不可用。")
@@ -710,8 +695,8 @@ class AttachmentEditor(QDialog):
                 amount_editor.setProperty("pending", True)
             if isinstance(specification_editor, QComboBox):
                 specification_editor.setEnabled(True)
-            self.table.item(row, 5).setText(_money(0))
-            self.table.item(row, 5).setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
+            self.table.item(row, self.COL_FORMULA_AMOUNT).setText(_money(0))
+            self.table.item(row, self.COL_FORMULA_AMOUNT).setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
             QMessageBox.warning(self, "附件计算失败", str(message))
 
         reprice(self.item, source, succeeded, failed)
@@ -721,13 +706,13 @@ class AttachmentEditor(QDialog):
         old_quick_total = _number(_quick(self.item).get("attachment_fee"), _attachment_total(self.item))
         rows = []
         for row in range(self.table.rowCount()):
-            data = self.table.item(row, 1).data(ROLE_ROW) or {}
+            data = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
             data = dict(data)
             previous_quantity = int(_number(data.get("quantity", 1), 1))
             previous_formula_amount = _number(data.get("formula_amount"), 0)
-            data["item_name"] = self.table.item(row, 1).text().strip() or "自定义附件"
-            specification_editor = self.table.cellWidget(row, 2)
-            specification_item = self.table.item(row, 2)
+            data["item_name"] = self.table.item(row, self.COL_NAME).text().strip() or "自定义附件"
+            specification_editor = self.table.cellWidget(row, self.COL_SPECIFICATION)
+            specification_item = self.table.item(row, self.COL_SPECIFICATION)
             specification = (
                 str(specification_editor.currentData() or specification_editor.currentText()).strip()
                 if isinstance(specification_editor, QComboBox)
@@ -739,8 +724,8 @@ class AttachmentEditor(QDialog):
                 data["specification"] = specification
             if data.get("item_name") == "三排安装梁" and specification:
                 data["model_code"] = specification
-            data["quantity"] = self.table.cellWidget(row, 3).value()
-            amount_editor = self.table.cellWidget(row, 4)
+            data["quantity"] = self.table.cellWidget(row, self.COL_QUANTITY).value()
+            amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
             amount = _number(amount_editor.value())
             amount_edited = bool(amount_editor.property("schemeEdited")) or not data
             data["quick_amount_override"] = round(amount, 2)
@@ -1157,7 +1142,9 @@ class _MultilineComboPaintFilter(QObject):
     def eventFilter(self, watched, event):
         if event.type() != QEvent.Type.Paint or not isinstance(watched, QComboBox):
             return super().eventFilter(watched, event)
-        if watched.isEditable() and watched.lineEdit() is not None and watched.lineEdit().hasFocus():
+        # Editable combo boxes already paint their line editor. Drawing the
+        # combo text again after focus leaves produces two overlapping names.
+        if watched.isEditable():
             return super().eventFilter(watched, event)
         option = QStyleOptionComboBox()
         watched.initStyleOption(option)
@@ -1442,7 +1429,7 @@ def _cost_sidebar(window):
     company.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     company.view().setObjectName("scheme2CompanyDropdown")
     company.view().setMinimumWidth(320)
-    company.view().setWordWrap(False)
+    company.view().setWordWrap(True)
     company.view().setTextElideMode(Qt.TextElideMode.ElideNone)
     company.view().setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     company.view().setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -1457,8 +1444,7 @@ def _cost_sidebar(window):
         editor.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         editor.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         editor.setStyleSheet(
-            "QLineEdit{background:transparent;border:0;color:transparent;"
-            "selection-color:transparent;selection-background-color:transparent;}"
+            "QLineEdit{background:transparent;border:0;color:#1C1C1E;}"
             "QLineEdit:focus{color:#1C1C1E;selection-color:#FFFFFF;selection-background-color:#2563EB;}"
         )
         editor.editingFinished.connect(lambda combo=company: _remember_custom_company(combo))
@@ -2270,7 +2256,14 @@ def _import_scheme2_drawings(window, paths=None):
     for raw_path in accepted:
         source = str(Path(raw_path).resolve())
         try:
-            page_count = len(PdfReader(source).pages) if Path(source).suffix.lower() == ".pdf" else 1
+            if Path(source).suffix.lower() == ".pdf":
+                reader = PdfReader(source)
+                try:
+                    page_count = len(reader.pages)
+                finally:
+                    reader.close()
+            else:
+                page_count = 1
         except Exception as error:
             QMessageBox.warning(window, "无法导入图纸", f"{Path(source).name}：{error}")
             continue
@@ -2525,16 +2518,31 @@ class _SchemeAttachmentHeader(QFrame):
 class _SchemeAttachmentCombo(QComboBox):
     selectionChanged = Signal()
 
+    _CHIP_HEIGHT = 24
+    _CHIP_GAP = 5
+    _CHIP_HORIZONTAL_PADDING = 9
+    _CHIP_CLOSE_WIDTH = 14
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._selected_rows = set()
+        self._keep_popup_open = False
+        self._chip_hit_rects = {}
         self.view().viewport().installEventFilter(self)
+
+    def hidePopup(self):
+        if self._keep_popup_open:
+            return
+        super().hidePopup()
 
     def is_row_selected(self, row):
         return row in self._selected_rows
 
     def selected_texts(self):
         return [self.itemText(row) for row in sorted(self._selected_rows)]
+
+    def display_text(self):
+        return "\n".join(self.selected_texts()) or self.itemText(0)
 
     def set_selected_texts(self, values):
         wanted = {str(value).strip() for value in values if str(value).strip()}
@@ -2571,6 +2579,10 @@ class _SchemeAttachmentCombo(QComboBox):
         blocker = QSignalBlocker(self)
         self.setCurrentIndex(target)
         del blocker
+        self.setToolTip("、".join(self.selected_texts()))
+        self.setAccessibleDescription(self.toolTip())
+        self._update_display_height()
+        self.updateGeometry()
         self.view().viewport().update()
         self.update()
 
@@ -2581,7 +2593,9 @@ class _SchemeAttachmentCombo(QComboBox):
             if event.type() == QEvent.Type.MouseButtonRelease:
                 index = self.view().indexAt(event.position().toPoint())
                 if index.isValid():
+                    self._keep_popup_open = True
                     self.toggle_row(index.row())
+                    QTimer.singleShot(0, self._release_popup_guard)
                 return True
             if event.type() == QEvent.Type.KeyPress and event.key() in (
                 Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
@@ -2592,10 +2606,88 @@ class _SchemeAttachmentCombo(QComboBox):
                 return True
         return super().eventFilter(watched, event)
 
+    def _release_popup_guard(self):
+        self._keep_popup_open = False
+
+    def _chip_layout(self, width=None):
+        available_width = max(40, int(width if width is not None else self.width()) - 40)
+        metrics = self.fontMetrics()
+        x = 7
+        y = 6
+        right = 7 + available_width
+        placements = []
+        for row in sorted(self._selected_rows):
+            chip_width = metrics.horizontalAdvance(self.itemText(row)) + (
+                self._CHIP_HORIZONTAL_PADDING * 2 + self._CHIP_CLOSE_WIDTH
+            )
+            chip_width = min(chip_width, available_width)
+            if placements and x + chip_width > right:
+                x = 7
+                y += self._CHIP_HEIGHT + self._CHIP_GAP
+            rect = QRect(x, y, chip_width, self._CHIP_HEIGHT)
+            placements.append((row, rect))
+            x += chip_width + self._CHIP_GAP
+        required_height = y + self._CHIP_HEIGHT + 6 if placements else 36
+        return placements, max(36, required_height)
+
+    def _update_display_height(self):
+        _placements, height = self._chip_layout()
+        self.setMinimumHeight(height)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_display_height()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            for row, rect in self._chip_hit_rects.items():
+                if rect.contains(event.position().toPoint()):
+                    self.toggle_row(row)
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
     def paintEvent(self, event):
-        super().paintEvent(event)
         option = QStyleOptionComboBox()
         self.initStyleOption(option)
+        option.currentText = ""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.style().drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option, painter, self)
+        self.style().drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option, painter, self)
+        text_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox,
+            option,
+            QStyle.SubControl.SC_ComboBoxEditField,
+            self,
+        ).adjusted(3, 3, -3, -3)
+        self._chip_hit_rects = {}
+        placements, _height = self._chip_layout()
+        if placements:
+            for row, chip_rect in placements:
+                chip_rect = chip_rect.intersected(text_rect.adjusted(-3, -3, 3, 3))
+                self._chip_hit_rects[row] = chip_rect
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor("#E6F1FB" if self.isEnabled() else "#EEF1F4"))
+                painter.drawRoundedRect(chip_rect, 5, 5)
+                painter.setPen(QColor("#2563EB" if self.isEnabled() else "#8A8A86"))
+                painter.drawText(
+                    chip_rect.adjusted(self._CHIP_HORIZONTAL_PADDING, 0, -self._CHIP_CLOSE_WIDTH, 0),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    self.itemText(row),
+                )
+                painter.drawText(
+                    chip_rect.adjusted(chip_rect.width() - self._CHIP_CLOSE_WIDTH - 4, 0, -4, 0),
+                    Qt.AlignmentFlag.AlignCenter,
+                    "×",
+                )
+        else:
+            painter.setPen(QColor("#8A8A86"))
+            painter.drawText(
+                text_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self.itemText(0),
+            )
         arrow_rect = self.style().subControlRect(
             QStyle.ComplexControl.CC_ComboBox,
             option,
@@ -2609,8 +2701,6 @@ class _SchemeAttachmentCombo(QComboBox):
             if opened else
             (QPoint(center.x() - 5, center.y() - 3), QPoint(center.x() + 5, center.y() - 3), QPoint(center.x(), center.y() + 3))
         )
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#1C1C1E" if self.isEnabled() else "#8A8A86"))
         painter.drawPolygon(QPolygon(points))
@@ -2732,11 +2822,7 @@ class _SchemeAttachmentDialog(QDialog):
                     if category_toggle.isChecked() != has_selection:
                         category_toggle.setChecked(has_selection)
 
-                def select_option(index, selector=combo):
-                    selector.toggle_row(index)
-
                 category_check.toggled.connect(toggle_category)
-                combo.activated.connect(select_option)
                 combo.selectionChanged.connect(sync_category)
                 self.category_checks[category] = category_check
                 self.category_combos[category] = combo
@@ -3498,6 +3584,49 @@ def _configure_option_page(window, namespace):
         window.quote_right_stack.setCurrentIndex(0)
 
 
+def _monitor_formula_calculation(window):
+    """Restore the scheme action when formula preparation ends without a quote."""
+
+    previous = getattr(window, "_scheme2_formula_monitor", None)
+    if isinstance(previous, QTimer):
+        previous.stop()
+        previous.deleteLater()
+    timer = QTimer(window)
+    timer.setInterval(200)
+    window._scheme2_formula_monitor = timer
+
+    def running(worker):
+        try:
+            return worker is not None and worker.isRunning()
+        except RuntimeError:
+            return False
+
+    def check():
+        if not getattr(window, "_scheme2_add_after_calculate", False):
+            timer.stop()
+            return
+        if getattr(window, "quote_calculation_in_progress", False) or running(getattr(window, "worker", None)):
+            timer.stop()
+            return
+        debounce = getattr(window, "_formula_template_debounce_timer", None)
+        if (
+            getattr(window, "_pending_formula_calculation", False)
+            or running(getattr(window, "template_worker", None))
+            or (isinstance(debounce, QTimer) and debounce.isActive())
+        ):
+            return
+        if isinstance(getattr(window, "current_result", None), dict):
+            timer.stop()
+            return
+        timer.stop()
+        risk = getattr(window, "risk_label", None)
+        detail = risk.text().strip() if isinstance(risk, QLabel) else ""
+        window.show_error(detail or "公式模板未能完成计算，请重试。")
+
+    timer.timeout.connect(check)
+    timer.start()
+
+
 def _calculate_and_add(window):
     if getattr(window, "quote_calculation_in_progress", False):
         return
@@ -3519,6 +3648,7 @@ def _calculate_and_add(window):
     def calculate_quote():
         _set_add_progress(window, 3, "读取公式模板并计算")
         window.calculate()
+        _monitor_formula_calculation(window)
 
     if pending_attachments:
         resolver = getattr(window, "resolve_attachments_for_quote", None)
@@ -3806,11 +3936,22 @@ def _apply_responsive(window):
     _apply_navigation_state(window)
 
 
+def _increase_font_sizes(style_sheet, step=1.0):
+    """Raise every existing explicit UI font by one shared type-scale step."""
+
+    def replace(match):
+        size = float(match.group(1)) + step
+        formatted = str(int(size)) if size.is_integer() else str(size).rstrip("0").rstrip(".")
+        return f"font-size:{formatted}{match.group(2)}"
+
+    return _FONT_SIZE_RULE.sub(replace, style_sheet)
+
+
 def _apply_palette(window):
     base_font = window.font()
     base_font.setFeature(QFont.Tag.fromString("tnum"), 1)
     window.setFont(base_font)
-    window.setStyleSheet(window.styleSheet() + """
+    scheme_style = """
 QMainWindow QWidget { font-family:"Microsoft YaHei UI","Segoe UI"; font-size:13px; font-weight:400; color:#2A3541; }
 QMainWindow, QWidget#scheme2OptionPage, QWidget#scheme2CostPage, QWidget#scheme2DetailPage { background:#FFFFFF; color:#2A3541; }
 QMainWindow QPushButton { font-size:12px; font-weight:500; min-height:26px; max-height:26px; padding-top:0; padding-bottom:0; }
@@ -3975,7 +4116,8 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-
 QProgressBar#scheme2AddProgress { background:#EEF0F3; border:0; border-radius:5px; text-align:center; color:#1F3A6A; min-height:20px; }
 QProgressBar#scheme2AddProgress::chunk { background:#97C459; border-radius:5px; }
 QProgressBar#scheme2AddProgress[failed="true"]::chunk { background:#E24A4A; }
-""")
+"""
+    window.setStyleSheet(_increase_font_sizes(window.styleSheet() + scheme_style))
     tabular_tag = QFont.Tag.fromString("tnum")
     for control_type in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTableWidget):
         for control in window.findChildren(control_type):

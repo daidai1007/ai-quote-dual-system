@@ -44,9 +44,9 @@ _COMPACT_HEIGHT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 # The recovered V3 core hard-codes its application font at 10pt inside
-# ``install_application_font``; the UI scaling pass bumps that literal to 11pt.
+# ``install_application_font``; the UI scaling pass bumps that literal to 12pt.
 _APPLICATION_FONT_BASE_SIZE = 10
-_APPLICATION_FONT_SCALED_SIZE = 11
+_APPLICATION_FONT_SCALED_SIZE = 12
 _LOGGER = logging.getLogger("ai_quote.client")
 
 

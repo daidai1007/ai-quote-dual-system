@@ -230,6 +230,9 @@ with tempfile.TemporaryDirectory(prefix="scheme2-pages-") as folder:
     assert len(recognition_calls) == 2
     assert window.quote_spec_edit.text() == "第一页人工保留"
     assert window.material_combo.currentData() == "SUS304"
+    # High-DPI preview rendering is asynchronous; let pdftoppm release the
+    # temporary source before TemporaryDirectory removes it on Windows.
+    wait_until(lambda: not window.quote_drawing_preview._workers)
 
 window.quote_spec_edit.setText("(400+400+400)*600*400")
 window.quote_spec_edit.textEdited.emit(window.quote_spec_edit.text())
@@ -285,7 +288,7 @@ actions.button(QDialogButtonBox.StandardButton.Ok).click()
 app.processEvents()
 assert window.attachments == [{
     "item_name": "固定立柱", "name": "固定立柱", "category_level1": "安装附件",
-    "attachment_category": "安装附件", "quantity": 1,
+    "category_level2": "固定立柱", "attachment_category": "安装附件", "quantity": 1,
 }]
 assert not any(key in window.attachments[0] for key in ("price", "matched_price", "unit_price_override", "attachment_price_id"))
 jk_overlay = scheme2_ui._SchemeAttachmentDialog([], "JK", window)

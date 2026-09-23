@@ -78,7 +78,14 @@ class RenderWorker(QThread):
             count, kind = 1, '图片'
             with tempfile.TemporaryDirectory(prefix='quote-view-') as folder:
                 if path.suffix.lower() == '.pdf':
-                    count = len(PdfReader(str(path)).pages)
+                    # Pass an explicitly scoped stream so Windows releases the
+                    # source PDF as soon as page metadata has been read.
+                    with path.open('rb') as stream:
+                        reader = PdfReader(stream)
+                        try:
+                            count = len(reader.pages)
+                        finally:
+                            reader.close()
                     if not count or self.page >= count:
                         raise ValueError('PDF 页码不可用。')
                     if not self.pdftoppm or not Path(self.pdftoppm).is_file():
@@ -91,7 +98,12 @@ class RenderWorker(QThread):
                                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
                     if run.returncode:
                         raise ValueError('PDF 渲染失败，请检查文件是否损坏或加密。')
-                    image, kind = QImage(prefix + '.png'), 'PDF'
+                    # Detach from the temporary PNG before its directory is
+                    # removed; Qt otherwise keeps the decoder file open on
+                    # some Windows builds.
+                    image = QImage()
+                    image.loadFromData(Path(prefix + '.png').read_bytes(), 'PNG')
+                    kind = 'PDF'
                 elif path.suffix.lower() in {'.dxf', '.dwg'}:
                     if ezdxf is None:
                         raise ValueError('缺少 CAD 预览组件，请修复客户端安装。')

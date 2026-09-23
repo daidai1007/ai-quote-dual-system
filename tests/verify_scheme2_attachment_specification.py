@@ -40,12 +40,16 @@ rows = [
 item = {"attachments": rows, "formula": {}, "quick": {}}
 editor = scheme2_ui.AttachmentEditor(parent, item)
 
-assert editor.table.item(0, 2).text() == "800×600×100 mm"
-assert editor.table.item(1, 2).text() == "深 600 × 高 2000 mm"
-assert editor.table.item(2, 2).text() == "FU-9803A"
-assert editor.table.item(3, 2).text() == "760×500×100 mm"
-assert editor.table.item(4, 2).text() == ""
-amount_editor = editor.table.cellWidget(0, 4)
+assert editor.table.columnCount() == 5
+assert [editor.table.horizontalHeaderItem(column).text() for column in range(5)] == [
+    "名称", "尺寸 / 规格", "数量", "金额", "公式金额",
+]
+assert editor.table.item(0, 1).text() == "BASE-800"
+assert editor.table.item(1, 1).text() == "深 600 × 高 2000 mm"
+assert editor.table.item(2, 1).text() == "FU-9803A"
+assert editor.table.item(3, 1).text() == "BOARD-A"
+assert editor.table.item(4, 1).text() == ""
+amount_editor = editor.table.cellWidget(0, 3)
 assert type(amount_editor) is QDoubleSpinBox
 assert amount_editor.lineEdit().textMargins().right() == 0
 

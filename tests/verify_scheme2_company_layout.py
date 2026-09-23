@@ -14,6 +14,7 @@ core = Path(os.environ.get("AI_QUOTE_V3_CORE_ROOT", ""))
 if not core.is_dir():
     raise RuntimeError("AI_QUOTE_V3_CORE_ROOT must point to the verified V3 core")
 
+from PySide6.QtCore import QEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel  # noqa: E402
 
 import v3_launcher  # noqa: E402
@@ -37,4 +38,10 @@ assert label.text() == "下单公司" and label.buddy() is combo
 assert label.geometry().right() < combo.geometry().left(), (label.geometry(), combo.geometry())
 assert label.geometry().top() < combo.geometry().bottom()
 assert combo.geometry().top() < label.geometry().bottom()
+combo.setEditText("杭州拓强机械股份有限公司")
+label.setFocus()
+app.processEvents()
+assert combo.lineEdit().text() == "杭州拓强机械股份有限公司"
+assert "color:transparent" not in combo.lineEdit().styleSheet().replace(" ", "")
+assert not combo._scheme2_multiline_filter.eventFilter(combo, QEvent(QEvent.Type.Paint))
 print("scheme2 company inline layout contract passed")
