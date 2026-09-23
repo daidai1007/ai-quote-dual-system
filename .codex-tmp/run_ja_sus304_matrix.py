@@ -36,7 +36,11 @@ def request_json(base, key, path, payload):
             with urllib.request.urlopen(request, timeout=180) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
-            raise RuntimeError(error.read().decode("utf-8", errors="replace")) from error
+            detail = error.read().decode("utf-8", errors="replace")
+            if error.code >= 500 and attempt < 2:
+                time.sleep(5)
+                continue
+            raise RuntimeError(detail) from error
         except (TimeoutError, urllib.error.URLError):
             if attempt == 2:
                 raise
@@ -44,25 +48,22 @@ def request_json(base, key, path, payload):
 
 
 DIMENSIONS = [
-    (200, 300, 155), (300, 300, 210), (300, 400, 210), (380, 300, 155),
-    (380, 300, 210), (380, 380, 210), (400, 400, 210), (300, 500, 210),
-    (400, 500, 210), (600, 380, 210), (600, 380, 350), (500, 500, 300),
-    (600, 600, 210), (600, 760, 210), (600, 800, 250), (760, 760, 210),
+    (1250, 2000, 400),
 ]
 
 config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
 base, key = api_base(config), str(config.get("api_key") or "").strip()
 namespace = v3_launcher.load_v3_namespace()
 calculators = {}
-for code in ("JA_SINGLE",):
+for code in ("JP_DOUBLE",):
     calculator = namespace["FormulaDatabaseCalculator"]()
     calculator.load_template(request_json(base, key, "/api/quotes/formula-template", {"product_code": code}))
     calculators[code] = calculator
 
 results = []
 for width, height, depth in DIMENSIONS:
-    product_code = "JA_SINGLE"
-    single, double = (1, 0)
+    product_code = "JP_DOUBLE"
+    single, double = (0, 1)
     weight, area = calculators[product_code].calculate(product_code, width, height, depth, single, double)
     payload = {
         "quote_id": f"CHECK-{uuid4().hex}", "product_code": product_code,
