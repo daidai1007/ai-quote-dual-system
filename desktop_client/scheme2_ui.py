@@ -2418,6 +2418,23 @@ def _apply_recognized_attachments(window, item):
     _refresh_scheme2_attachment_summary(window)
 
 
+def _synchronize_active_drawing_confirmation(window):
+    """Confirm the current Scheme-2 fields without the retired review workbench."""
+
+    item = getattr(window, "active_drawing", None)
+    if not isinstance(item, dict):
+        return
+    width = _number(window.width_spin.value())
+    height = _number(window.height_spin.value())
+    depth = _number(window.depth_spin.value())
+    specification = window.quote_spec_edit.text().strip()
+    item["dimensions"] = [(width, height, depth)]
+    item["specification"] = specification or f"{width:g}*{depth:g}*{height:g}"
+    item["reviewed_remark"] = window.notes_text.toPlainText().strip()
+    _confirm_scheme2_recognition(item)
+    window._quote_drawing = item
+
+
 def _fail_scheme2_page_recognition(window, key, message):
     entry = _scheme2_page_entry(window, key)
     if entry is not None:
@@ -3995,6 +4012,16 @@ def _scheme2_quote_remark(item):
     return "，".join(part for part in parts if part) + "。"
 
 
+def _synchronize_export_remark(item, remark):
+    """Keep the confirmed/exported remark fields on one authoritative value."""
+
+    value = str(remark or "").strip()
+    item["final_remark"] = value
+    item["notes"] = value
+    item["source_ocr_remark"] = value
+    item["source_reviewed_remark"] = value
+
+
 def _finish_add(window):
     before = len(getattr(window, "draft_items", []))
     editing = getattr(window, "_scheme2_edit_item", None)
@@ -4012,8 +4039,7 @@ def _finish_add(window):
     item["scheme2_selected_material"] = window.material_combo.currentText().strip()
     item["scheme2_selected_surface"] = window.coating_combo.currentText().strip()
     item["display_color"] = window.scheme2_color_combo.currentText()
-    item["final_remark"] = _scheme2_quote_remark(item)
-    item["notes"] = item["final_remark"]
+    _synchronize_export_remark(item, _scheme2_quote_remark(item))
     pages = getattr(window, "_scheme2_drawing_pages", [])
     page_index = int(getattr(window, "_scheme2_drawing_page_index", -1))
     if 0 <= page_index < len(pages):
@@ -4540,7 +4566,9 @@ def install_scheme2_ui(namespace):
         window.statusBar().hide()
         old_cost_page = window.stack.widget(COST_ROUTE)
         window.stack.removeWidget(old_cost_page)
+        old_cost_page.setParent(window)
         old_cost_page.hide()
+        window._scheme2_retired_pages = [old_cost_page]
         window.stack.insertWidget(COST_ROUTE, _build_cost_page(window))
         detail = _build_detail_page(window)
         while window.stack.count() < DETAIL_ROUTE:
@@ -4549,13 +4577,16 @@ def install_scheme2_ui(namespace):
         _configure_navigation(window)
         _configure_option_page(window, namespace)
         # Preserve route indices while removing the retired recognition and
-        # cabinet-review pages from the live interface.
+        # cabinet-review pages from the live interface.  Their nonvisual
+        # controller widgets are still used by quote/history payload builders,
+        # so keep the page objects alive instead of deleting their children.
         for route in (0, 4):
             retired = window.stack.widget(route)
             placeholder = QWidget()
             window.stack.removeWidget(retired)
+            retired.setParent(window)
             retired.hide()
-            retired.deleteLater()
+            window._scheme2_retired_pages.append(retired)
             window.stack.insertWidget(route, placeholder)
         preview = getattr(window, "quote_drawing_preview", None)
         if preview is not None:
@@ -4703,6 +4734,7 @@ def install_scheme2_ui(namespace):
         return result
 
     def add(window, *args, **kwargs):
+        _synchronize_active_drawing_confirmation(window)
         result = original_add(window, *args, **kwargs)
         _sync_completion(window)
         return result
