@@ -343,7 +343,10 @@ def install_drawing_workflow(namespace):
         window.freight_state = FreightState()
         original_init(window, *args, **kwargs)
         window._drawing_ready = namespace['drawing_candidate_ready_for_quote']
-        build_summary(window)
+        # The legacy recognition/review workbench is retired.  Reserve its
+        # former route only so later quote-page indices stay compatible; no
+        # page, controls or navigation entry from that workbench are created.
+        window.stack.insertWidget(CABINET_SUMMARY_ROUTE, QWidget())
         workspace = window.stack.widget(1).findChild(QSplitter, 'quoteWorkspace')
         result_panel = workspace.widget(1)
         window.quote_right_stack = QStackedWidget()

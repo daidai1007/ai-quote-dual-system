@@ -2325,6 +2325,7 @@ def _finish_scheme2_page_recognition(window, key, item):
     _Scheme2PageRecognitionWorker._apply_source_context(item, entry)
     for candidate in candidates:
         _Scheme2PageRecognitionWorker._apply_source_context(candidate, entry)
+        _confirm_scheme2_recognition(candidate)
     entry["document"] = item
     entry["item"] = candidates[0]
     window.recognized_documents = [
@@ -2352,6 +2353,41 @@ def _finish_scheme2_page_recognition(window, key, item):
             f"已识别第 {entry['page_index'] + 1} 页：尺寸 / 材质 / 表面处理 / 颜色"
         )
     _sync_scheme2_page_navigation(window)
+
+
+def _confirm_scheme2_recognition(item):
+    """Make current-page recognition quote-ready without the retired review desk."""
+
+    if not isinstance(item, dict):
+        return item
+    item["review_status"] = "confirmed"
+    item["confirmed"] = True
+    item["verified"] = True
+    item["manual_reviewed"] = True
+    item["manual_confirmation_checked"] = True
+    item["remark_review_required"] = False
+    return item
+
+
+def _apply_recognized_attachments(window, item):
+    """Display OCR attachment matches; existing quote resolution supplies prices."""
+
+    if getattr(window, "_scheme2_attachments_manual", False):
+        return
+    text = str(item.get("raw_text") or item.get("text") or "")
+    recommend = getattr(window, "recommend_attachment_names", None)
+    names = list(recommend(text) or []) if callable(recommend) else []
+    if not names:
+        return
+    window.recommended_attachments = names
+    window.attachments = [
+        {"item_name": name, "name": name, "quantity": 1, "recognized": True}
+        for name in names
+    ]
+    refresh = getattr(window, "update_attachment_view", None)
+    if callable(refresh):
+        refresh()
+    _refresh_scheme2_attachment_summary(window)
 
 
 def _fail_scheme2_page_recognition(window, key, message):
@@ -4484,6 +4520,22 @@ def install_scheme2_ui(namespace):
         window.stack.insertWidget(DETAIL_ROUTE, detail)
         _configure_navigation(window)
         _configure_option_page(window, namespace)
+        # Preserve route indices while removing the retired recognition and
+        # cabinet-review pages from the live interface.
+        for route in (0, 4):
+            retired = window.stack.widget(route)
+            placeholder = QWidget()
+            window.stack.removeWidget(retired)
+            retired.hide()
+            retired.deleteLater()
+            window.stack.insertWidget(route, placeholder)
+        preview = getattr(window, "quote_drawing_preview", None)
+        if preview is not None:
+            try:
+                preview.return_to_recognition.disconnect()
+            except RuntimeError:
+                pass
+            preview.return_to_recognition.connect(lambda: window.show_section(OPTION_ROUTE))
         _install_shortcuts(window)
         _apply_palette(window)
         window.scheme2_company.setFixedHeight(COMPANY_COMBO_HEIGHT)
@@ -4568,6 +4620,7 @@ def install_scheme2_ui(namespace):
         _sync_completion(window)
 
     def apply_drawing(window, item):
+        _confirm_scheme2_recognition(item)
         controls = {
             "dimensions": getattr(window, "quote_spec_edit", None),
             "material": getattr(window, "material_combo", None),
@@ -4616,6 +4669,7 @@ def install_scheme2_ui(namespace):
             stem = Path(source).stem if source else ""
             if stem:
                 model.setText(stem)
+        _apply_recognized_attachments(window, item)
         _sync_completion(window)
         return result
 
