@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QToolButton  # noqa: E402
 
 import scheme2_ui  # noqa: E402
 import v3_launcher  # noqa: E402
@@ -35,6 +35,13 @@ assert chips == ["安装附件：三排安装梁", "侧板 ✓", "临时：加�
 assert window.scheme2_attachment_status.text() == "人工修改 ✎"
 assert window.scheme2_attachment_card.property("provenanceState") == "manual"
 assert window.scheme2_attachment_button.text() == "修改…"
+
+remove_buttons = window.scheme2_attachment_summary.findChildren(QToolButton, "scheme2AttachmentRemove")
+assert len(remove_buttons) == 3
+remove_buttons[1].click()
+app.processEvents()
+assert [item["item_name"] for item in window.attachments] == ["三排安装梁", "加强条"]
+assert window._scheme2_attachments_manual is True
 
 window.close()
 app.processEvents()

@@ -723,7 +723,7 @@ def install_attachment_v2(namespace):
 
     def resolve_attachments_for_quote(window, succeeded, failed):
         rows = [dict(item) for item in getattr(window, "attachments", []) if isinstance(item, dict)]
-        pending = [item for item in rows if item.get("attachment_price_id") is None]
+        pending = [item for item in rows if not item.get("custom") and item.get("attachment_price_id") is None]
         if not pending:
             succeeded()
             return
@@ -745,6 +745,9 @@ def install_attachment_v2(namespace):
             resolved = []
             missing = []
             for source in rows:
+                if source.get("custom"):
+                    resolved.append(source)
+                    continue
                 if source.get("attachment_price_id") is not None:
                     resolved.append(source)
                     continue
@@ -875,9 +878,12 @@ def install_attachment_v2(namespace):
     # child-cabinet flow and commits one aggregate V2 attachment snapshot.
     worker_init = worker_class.__init__
     def init_worker(worker, url, payload, parent=None, *args, **kwargs):
-        if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent) and (payload.get("attachment_contract") == 2 or any(row.get("catalog_version") for row in payload.get("attachments", []))):
+        request_attachments = [row for row in payload.get("attachments", []) if not row.get("custom")]
+        if parent is not None:
+            parent._v2_custom_attachments = [copy.deepcopy(row) for row in payload.get("attachments", []) if row.get("custom")]
+        if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent) and (payload.get("attachment_contract") == 2 or any(row.get("catalog_version") for row in request_attachments)):
             automatic_base = base_height(parent)
-            payload = {**payload, "attachment_contract": 2, "attachments": [selected_input(x, automatic_base) for x in payload.get("attachments", [])]}
+            payload = {**payload, "attachment_contract": 2, "attachments": [selected_input(x, automatic_base) for x in request_attachments]}
             parent._v2_request_quote_id = payload.get("quote_id")
             parent._v2_request_environment = json.dumps(environment(parent, payload["attachments"]), sort_keys=True)
         elif str(url).endswith("/api/quotes/calculate-dual") and parent is not None:
@@ -895,7 +901,7 @@ def install_attachment_v2(namespace):
             return
         if result.get("attachment_contract") == 2 and getattr(window, "_v2_request_environment", None):
             automatic_base = base_height(window)
-            latest = json.dumps(environment(window, [selected_input(x, automatic_base) for x in window.attachments]), sort_keys=True)
+            latest = json.dumps(environment(window, [selected_input(x, automatic_base) for x in window.attachments if not x.get("custom")]), sort_keys=True)
             if latest != window._v2_request_environment or result.get("quote_id") != window._v2_request_quote_id:
                 return
         previous = getattr(window, "current_result", None)
@@ -907,7 +913,9 @@ def install_attachment_v2(namespace):
             window._v2_render_rows = None
         if result.get("attachment_contract") == 2 and getattr(window, "current_result", None) is not previous:
             automatic_base = base_height(window)
-            window.attachments = [merge_cost(original_rows[i] if i < len(original_rows) else {}, row, automatic_base) for i, row in enumerate(result.get("attachments", []))]
+            priced_rows = [row for row in original_rows if not row.get("custom")]
+            window.attachments = [merge_cost(priced_rows[i] if i < len(priced_rows) else {}, row, automatic_base) for i, row in enumerate(result.get("attachments", []))]
+            window.attachments.extend(copy.deepcopy(getattr(window, "_v2_custom_attachments", [])))
             window._attachment_v2_line_id = result.get("quote_line_id")
             window.update_attachment_view()
             window.refresh_discounted_totals()

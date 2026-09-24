@@ -88,6 +88,12 @@ with tempfile.TemporaryDirectory(prefix="scheme2-background-") as folder:
     assert window.quote_spec_edit.text() == "人工输入保留"
     assert "2 / 2" in window.scheme2_recognition_status.text()
     wait_until(lambda: not window.quote_drawing_preview._workers)
+    active_key = window._scheme2_drawing_pages[1]["key"]
+    window.show_section(scheme2_ui.COST_ROUTE)
+    window.show_section(scheme2_ui.OPTION_ROUTE)
+    app.processEvents()
+    assert window.quote_drawing_preview.document_key[0] == active_key
+    assert window.quote_drawing_preview.isVisibleTo(window)
 
 window.draft_items = []
 window.add_current_to_summary = lambda: window.draft_items.append({

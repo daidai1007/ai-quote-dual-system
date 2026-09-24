@@ -27,6 +27,11 @@ def test_order_number_restores_and_saves_all_three_page_data_online():
     assert '"option_state": _capture_scheme2_page_state(window)' in UI
     assert '"draft_items": deepcopy(getattr(window, "draft_items", []))' in UI
     assert '"company": window.scheme2_company.currentText()' in UI
+    assert '"active_route": int(window.stack.currentIndex())' in UI
+    assert '"detail_item_index": detail_index' in UI
+    assert 'window.show_section(route if route in (OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE)' in UI
+    assert '_show_detail(window, window.draft_items[detail_index])' in UI
+    assert '_save_order_workspace(window, lambda: window.close())' in UI
     assert '"/api/orders/workspace/load"' in UI
     assert '"/api/orders/workspace/save"' in UI
     assert "/api/orders/workspace/load" in API

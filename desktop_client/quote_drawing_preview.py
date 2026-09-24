@@ -637,10 +637,8 @@ class QuoteDrawingPreview(QFrame):
         row.addWidget(self.counter)
         self.next = self.button('下一页', lambda: self.set_page(self.page + 1), row)
         row.addStretch()
-        self.rotate_left_button = self.button('左转', lambda: self.rotate_page(-90), row)
-        self.rotate_left_button.setAccessibleName('图纸向左旋转90度')
-        self.rotate_right_button = self.button('右转', lambda: self.rotate_page(90), row)
-        self.rotate_right_button.setAccessibleName('图纸向右旋转90度')
+        self.rotate_button = self.button('旋转', lambda: self.rotate_page(90), row)
+        self.rotate_button.setAccessibleName('图纸顺时针旋转90度')
         self.button('−', lambda: self.canvas.zoom(1 / 1.2), row).setAccessibleName('缩小图纸')
         self.button('+', lambda: self.canvas.zoom(1.2), row).setAccessibleName('放大图纸')
         self.button('1:1', lambda: self.canvas.actual_size(), row).setAccessibleName('图纸原始像素大小')
@@ -750,8 +748,7 @@ class QuoteDrawingPreview(QFrame):
         self.previous.setEnabled(self.page > 0)
         self.next.setEnabled(self.page + 1 < self.page_count)
         drawing_ready = self.canvas.isEnabled() and self.page_count > 0
-        self.rotate_left_button.setEnabled(drawing_ready)
-        self.rotate_right_button.setEnabled(drawing_ready)
+        self.rotate_button.setEnabled(drawing_ready)
         self.pen_button.setEnabled(drawing_ready)
         self.select_button.setEnabled(drawing_ready)
         self.counter.setText(f'{self.page + 1} / {self.page_count}' if self.page_count else '0 / 0')
@@ -866,7 +863,7 @@ class QuoteDrawingPreview(QFrame):
         self.canvas.setEnabled(True)
         detail = '，放大后自动提高清晰度' if Path(self.path).suffix.lower() in VECTOR_DETAIL_SUFFIXES else ''
         self.message.setText(
-            f'{kind} · 支持左右旋转和滚轮缩放{detail}；框选笔迹后可移动、改颜色/粗细或删除；'
+            f'{kind} · 支持旋转和滚轮缩放{detail}；框选笔迹后可移动、改颜色/粗细或删除；'
             '关闭手写和框选后拖动平移；标注仅保留在本次会话。'
         )
         self.update_tools()

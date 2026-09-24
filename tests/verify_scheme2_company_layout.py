@@ -18,6 +18,7 @@ from PySide6.QtCore import QEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel  # noqa: E402
 
 import v3_launcher  # noqa: E402
+import scheme2_ui  # noqa: E402
 
 
 app = QApplication.instance() or QApplication([])
@@ -33,6 +34,7 @@ app.processEvents()
 field = window.scheme2_quote_company_field
 label = field.findChild(QLabel, "scheme2FieldLabel")
 combo = window.scheme2_company
+assert field.width() == round(scheme2_ui.QUOTE_COMPANY_FIELD_WIDTH * window._scheme2_scale)
 assert isinstance(field.layout(), QHBoxLayout)
 assert label.text() == "下单公司" and label.buddy() is combo
 assert label.geometry().right() < combo.geometry().left(), (label.geometry(), combo.geometry())

@@ -65,6 +65,7 @@ DETAIL_ROUTE = 5
 NAV_EXPANDED_WIDTH = 128
 COST_SIDEBAR_WIDTH = 130
 COMPANY_COMBO_HEIGHT = 56
+QUOTE_COMPANY_FIELD_WIDTH = 420
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
 STAINLESS_DEFAULT_PRICES = {"SUS304": 16.0, "SUS316": 32.4}
@@ -81,8 +82,10 @@ EDITABLE_COLUMNS = frozenset((10, 11, 14))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
 _FONT_SIZE_RULE = re.compile(r"font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
+_STYLE_LENGTH_RULE = re.compile(r"(?<![\w.-])(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
 GALVANIZED_MATERIAL_CODES = frozenset(("SGCC", "DX51D", "GI"))
 THREE_ROW_BEAM_MODELS = ("JP760240", "JP760250", "JP760260", "JP760280", "JP760210")
+LIGHT_SWITCH_MODELS = ("220V", "24V-0.28m", "24V-0.6m")
 
 
 class _ClickableProgressBar(QProgressBar):
@@ -616,13 +619,17 @@ class AttachmentEditor(QDialog):
         name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
         spec = _attachment_dimension_or_model(source)
         self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
-        if name == "三排安装梁":
+        model_options = {
+            "三排安装梁": THREE_ROW_BEAM_MODELS,
+            "照明灯/行程开关": LIGHT_SWITCH_MODELS,
+        }.get(name)
+        if model_options:
             model = str(source.get("model_code") or source.get("specification") or "").strip().upper()
             selector = QComboBox()
             selector.setObjectName("scheme2AttachmentModelCombo")
             selector.view().setObjectName("scheme2AttachmentModelDropdown")
             selector.addItem("未选择", "")
-            for option in THREE_ROW_BEAM_MODELS:
+            for option in model_options:
                 selector.addItem(option, option)
             selector.setCurrentIndex(max(0, selector.findData(model)))
             self.table.setCellWidget(row, self.COL_SPECIFICATION, selector)
@@ -857,7 +864,7 @@ class AttachmentEditor(QDialog):
                 specification_item.data(ROLE_DERIVED_SPEC) != specification
             ):
                 data["specification"] = specification
-            if data.get("item_name") == "三排安装梁" and specification:
+            if data.get("item_name") in {"三排安装梁", "照明灯/行程开关"} and specification:
                 data["model_code"] = specification
             data["quantity"] = self.table.cellWidget(row, self.COL_QUANTITY).value()
             amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
@@ -1031,7 +1038,7 @@ def _printable_quote_html(window, font_step=0) -> str:
     <tr><th>电话</th><td></td><th>电话</th><td colspan="5">0571-88520091</td></tr>
     <tr><th>传真</th><td></td><th>传真</th><td colspan="5">0571-88520077</td></tr>
     <tr><th>邮箱</th><td></td><th>邮箱</th><td colspan="5"></td></tr><tr><td colspan="8">&nbsp;</td></tr>
-    <tr><th>序号</th><th>名称</th><th>规格型号(W*D*H)</th><th>数量</th><th>单位</th><th>折后单价</th><th>折后总价</th><th>备注</th></tr>
+    <tr><th>序号</th><th>名称</th><th>规格型号(W*D*H)</th><th>数量</th><th>单位</th><th>单价</th><th>总价</th><th>备注</th></tr>
     {''.join(rows)}<tr class="total"><td></td><td>合计</td><td colspan="4"></td><td>{total:,.2f}</td><td></td></tr></table></body></html>
     """
 
@@ -1093,7 +1100,7 @@ def _refresh_quote_page(window):
                 preview.item(row, 0).setText(left_label); preview.item(row, 1).setText(left_value)
                 preview.item(row, 2).setText(right_label); preview.item(row, 3).setText(right_value)
                 preview.setSpan(row, 3, 1, 5)
-            headings = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价", "备注")
+            headings = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "总价", "备注")
             for column, heading in enumerate(headings):
                 preview.item(9, column).setText(heading)
             total = 0.0
@@ -1109,6 +1116,9 @@ def _refresh_quote_page(window):
             total_row = 10 + len(items)
             preview.item(total_row, 1).setText("合计")
             preview.item(total_row, 6).setText(_money(total))
+            preview.resizeRowsToContents()
+            for row in range(10, 10 + len(items)):
+                preview.setRowHeight(row, max(72, preview.rowHeight(row)))
         finally:
             window._scheme2_refreshing_quote = False
     enabled = bool(getattr(window, "draft_items", []))
@@ -1133,7 +1143,7 @@ def _build_quote_page(window):
     header.addStretch(1)
     company_field = _inline_field("下单公司", window.scheme2_company)
     company_field.setObjectName("scheme2QuoteCompanyField")
-    company_field.setFixedWidth(250)
+    company_field.setFixedWidth(QUOTE_COMPANY_FIELD_WIDTH)
     print_button = QPushButton("打印")
     print_button.setObjectName("scheme2PrimaryGhost")
     export_button = QPushButton("导出报价单")
@@ -1147,6 +1157,8 @@ def _build_quote_page(window):
     preview.horizontalHeader().hide()
     preview.verticalHeader().hide()
     preview.setAlternatingRowColors(False)
+    preview.setWordWrap(True)
+    preview.setTextElideMode(Qt.TextElideMode.ElideNone)
     preview.setColumnWidth(0, 58); preview.setColumnWidth(1, 145); preview.setColumnWidth(2, 180)
     preview.setColumnWidth(3, 72); preview.setColumnWidth(4, 58); preview.setColumnWidth(5, 105)
     preview.setColumnWidth(6, 115); preview.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
@@ -1154,6 +1166,7 @@ def _build_quote_page(window):
     print_button.clicked.connect(lambda: _print_quote(window))
     export_button.clicked.connect(lambda: window.confirm_and_export())
     preview.cellChanged.connect(lambda row, column: _quote_unit_price_changed(window, row, column))
+    window.scheme2_company.currentTextChanged.connect(lambda _text: _refresh_quote_page(window))
     window.scheme2_quote_page = page
     window.scheme2_quote_preview = preview
     window.scheme2_quote_company_field = company_field
@@ -1423,6 +1436,7 @@ def _show_detail(window, item):
     table.setRowHeight(summary_index, 46)
     window.stack.setCurrentIndex(DETAIL_ROUTE)
     _apply_responsive(window)
+    _schedule_order_workspace_save(window)
 
 
 class _MultilineComboPaintFilter(QObject):
@@ -2402,6 +2416,11 @@ def _json_order_value(value):
 
 def _order_workspace_payload(window):
     _save_current_scheme2_page(window)
+    detail_item = getattr(window, "_scheme2_detail_item", None)
+    detail_index = next((
+        index for index, item in enumerate(getattr(window, "draft_items", []))
+        if item is detail_item
+    ), -1)
     pages = []
     for page in getattr(window, "_scheme2_drawing_pages", []):
         if isinstance(page, dict):
@@ -2412,28 +2431,40 @@ def _order_workspace_payload(window):
         "drawing_page_index": int(getattr(window, "_scheme2_drawing_page_index", -1)),
         "draft_items": deepcopy(getattr(window, "draft_items", [])),
         "company": window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else "",
+        "active_route": int(window.stack.currentIndex()),
+        "detail_item_index": detail_index,
     })
 
 
-def _save_order_workspace(window):
+def _save_order_workspace(window, finished=None):
     order_number = window.scheme2_order_number.text().strip()
     if not order_number or getattr(window, "_scheme2_loading_order", False):
+        if callable(finished):
+            finished()
         return
     worker_class = getattr(window, "_scheme2_api_worker_class", None)
     if worker_class is None:
+        if callable(finished):
+            finished()
         return
     worker = worker_class(window.base_url() + "/api/orders/workspace/save", {
         "order_number": order_number, "payload": _order_workspace_payload(window),
     }, window)
     window._scheme2_order_save_worker = worker
-    worker.succeeded.connect(lambda _result: setattr(window, "_scheme2_order_save_worker", None))
-    worker.failed.connect(lambda _message: setattr(window, "_scheme2_order_save_worker", None))
+    def completed(_value):
+        window._scheme2_order_save_worker = None
+        if callable(finished):
+            finished()
+
+    worker.succeeded.connect(completed)
+    worker.failed.connect(completed)
     worker.start()
 
 
 def _schedule_order_workspace_save(window):
     timer = getattr(window, "_scheme2_order_save_timer", None)
-    if isinstance(timer, QTimer) and window.scheme2_order_number.text().strip():
+    if (isinstance(timer, QTimer) and window.scheme2_order_number.text().strip()
+            and not getattr(window, "_scheme2_loading_order", False)):
         timer.start()
 
 
@@ -2465,6 +2496,12 @@ def _load_order_workspace(window):
                 window.scheme2_company.setCurrentText(company)
             window.refresh_summary()
             _refresh_quote_page(window)
+            route = int(payload.get("active_route", OPTION_ROUTE))
+            detail_index = int(payload.get("detail_item_index", -1))
+            if route == DETAIL_ROUTE and 0 <= detail_index < len(window.draft_items):
+                _show_detail(window, window.draft_items[detail_index])
+            else:
+                window.show_section(route if route in (OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE) else OPTION_ROUTE)
             _set_dirty(window, False)
         finally:
             window._scheme2_loading_order = False
@@ -2634,6 +2671,20 @@ def _show_scheme2_source_page(window, entry):
         preview.pages[preview.document_key] = page_index
         preview.load_page()
     _sync_scheme2_page_navigation(window)
+
+
+def _restore_scheme2_drawing_on_option_page(window):
+    pages = getattr(window, "_scheme2_drawing_pages", [])
+    index = int(getattr(window, "_scheme2_drawing_page_index", -1))
+    if not (0 <= index < len(pages)):
+        return
+    _show_scheme2_source_page(window, pages[index])
+    drawing = getattr(window, "scheme2_drawing_widget", None)
+    preview = getattr(window, "quote_drawing_preview", None)
+    if drawing is not None:
+        drawing.show()
+    if preview is not None:
+        preview.show()
 
 
 def _finish_scheme2_page_recognition(window, key, item):
@@ -3812,6 +3863,20 @@ def _attachment_chip_text(item):
     return f"{category or name} ✓"
 
 
+def _remove_scheme2_attachment(window, index):
+    attachments = getattr(window, "attachments", [])
+    if not 0 <= index < len(attachments):
+        return
+    attachments.pop(index)
+    window._scheme2_attachments_manual = True
+    window.current_result = None
+    refresh = getattr(window, "update_attachment_view", None)
+    if callable(refresh):
+        refresh()
+    _refresh_scheme2_attachment_summary(window)
+    _set_dirty(window, True)
+
+
 def _refresh_scheme2_attachment_summary(window):
     summary = getattr(window, "scheme2_attachment_summary", None)
     if not isinstance(summary, QFrame) or summary.layout() is None:
@@ -3827,13 +3892,26 @@ def _refresh_scheme2_attachment_summary(window):
         empty.setObjectName("scheme2AttachmentEmpty")
         layout.addWidget(empty)
     else:
-        for attachment in attachments:
+        for index, attachment in enumerate(attachments):
+            row = QFrame()
+            row.setObjectName("scheme2AttachmentChipRow")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
             chip = QLabel(_attachment_chip_text(attachment))
             chip.setObjectName("scheme2AttachmentChip")
             chip.setProperty("temporary", bool(attachment.get("custom")))
             chip.setWordWrap(True)
             chip.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-            layout.addWidget(chip, 0, Qt.AlignmentFlag.AlignLeft)
+            remove = QToolButton()
+            remove.setObjectName("scheme2AttachmentRemove")
+            remove.setText("×")
+            remove.setToolTip("删除此附件")
+            remove.setAccessibleName(f"删除附件：{_attachment_chip_text(attachment)}")
+            remove.clicked.connect(lambda _checked=False, target=index: _remove_scheme2_attachment(window, target))
+            row_layout.addWidget(chip)
+            row_layout.addWidget(remove)
+            layout.addWidget(row, 0, Qt.AlignmentFlag.AlignLeft)
     manual = bool(getattr(window, "_scheme2_attachments_manual", False))
     status = getattr(window, "scheme2_attachment_status", None)
     if isinstance(status, QLabel):
@@ -4337,7 +4415,7 @@ def _calculate_and_add(window):
         elapsed_timer.start()
     pending_attachments = [
         item for item in getattr(window, "attachments", [])
-        if isinstance(item, dict) and item.get("attachment_price_id") is None
+        if isinstance(item, dict) and not item.get("custom") and item.get("attachment_price_id") is None
     ]
     current = getattr(window, "current_result", None)
     valid = not pending_attachments and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
@@ -4603,7 +4681,43 @@ def _install_shortcuts(window):
     window.scheme2_shortcuts = shortcuts
 
 
+def _scaled_style_metrics(style_sheet, scale):
+    def replace(match):
+        value = max(1.0, float(match.group(1)) * scale)
+        formatted = str(int(round(value))) if value >= 2 else f"{value:.2f}".rstrip("0").rstrip(".")
+        return f"{formatted}{match.group(2)}"
+
+    return _STYLE_LENGTH_RULE.sub(replace, style_sheet)
+
+
+def _apply_proportional_scale(window):
+    reference = getattr(window, "_scheme2_scale_reference", None)
+    styles = getattr(window, "_scheme2_scale_styles", None)
+    if reference is None or not styles:
+        return 1.0
+    scale = min(window.width() / max(1, reference.width()), window.height() / max(1, reference.height()))
+    if abs(scale - float(getattr(window, "_scheme2_scale", 0.0))) < 0.01:
+        return scale
+    window._scheme2_scale = scale
+    for widget, base_style in styles:
+        widget.setStyleSheet(_scaled_style_metrics(base_style, scale))
+    nav = getattr(window, "scheme2_nav", None)
+    if nav is not None:
+        nav.setFixedWidth(max(1, round(NAV_EXPANDED_WIDTH * scale)))
+    sidebar = getattr(window, "scheme2_cost_sidebar", None)
+    if sidebar is not None:
+        sidebar.setFixedWidth(max(1, round(COST_SIDEBAR_WIDTH * scale)))
+    company = getattr(window, "scheme2_company", None)
+    if company is not None:
+        company.setFixedHeight(max(1, round(COMPANY_COMBO_HEIGHT * scale)))
+    quote_company_field = getattr(window, "scheme2_quote_company_field", None)
+    if quote_company_field is not None:
+        quote_company_field.setFixedWidth(max(1, round(QUOTE_COMPANY_FIELD_WIDTH * scale)))
+    return scale
+
+
 def _apply_responsive(window):
+    scale = _apply_proportional_scale(window)
     splitter = getattr(window, "scheme2_option_splitter", None)
     route = window.stack.currentIndex()
     width = window.width()
@@ -4654,9 +4768,11 @@ def _apply_responsive(window):
             window.stack.setMinimumHeight(0)
             if main_scroll is not None and main_scroll.widget() is not None:
                 main_scroll.widget().setMinimumHeight(0)
-            form = min(420, max(340, (width - NAV_EXPANDED_WIDTH) // 3))
+            form_min = max(1, round(340 * scale))
+            form_max = max(form_min, round(420 * scale))
+            form = min(form_max, max(form_min, (width - round(NAV_EXPANDED_WIDTH * scale)) // 3))
             splitter.widget(0).setMinimumWidth(form)
-            splitter.widget(0).setMaximumWidth(420)
+            splitter.widget(0).setMaximumWidth(form_max)
             splitter.setSizes([form, max(500, width - form - 100)])
     sidebar = getattr(window, "scheme2_cost_sidebar", None)
     compact_coefficients = getattr(window, "scheme2_compact_coefficients", None)
@@ -4816,6 +4932,9 @@ QFrame#scheme2AttachmentSummary { background:transparent; border:0; }
 QLabel#scheme2AttachmentEmpty { color:#8A8A86; background:transparent; border:0; font-size:13px; }
 QLabel#scheme2AttachmentChip { color:#185FA5; background:#E6F1FB; border:0; border-radius:6px; padding:3px 8px; font-size:13px; }
 QLabel#scheme2AttachmentChip[temporary="true"] { color:#854F0B; background:#FAEEDA; }
+QFrame#scheme2AttachmentChipRow { background:transparent; border:0; }
+QToolButton#scheme2AttachmentRemove { color:#B42318; background:transparent; border:0; padding:0; min-width:22px; min-height:22px; font-size:16px; }
+QToolButton#scheme2AttachmentRemove:hover { background:#FEE4E2; border-radius:6px; }
 QLabel#scheme2AttachmentStatus { color:#3B6D11; background:#EAF3DE; border:0; border-radius:9px; padding:2px 7px; font-size:10px; }
 QLabel#scheme2AttachmentStatus[manual="true"] { color:#854F0B; background:#FAEEDA; }
 QPushButton#scheme2AttachmentModify { color:#185FA5; background:transparent; border:0; padding:2px 0; min-height:22px; }
@@ -5098,6 +5217,13 @@ def install_scheme2_ui(namespace):
         ):
             _increase_region_font_sizes(region, 2)
         window.scheme2_company.setFixedHeight(COMPANY_COMBO_HEIGHT)
+        window._scheme2_scale_reference = QSize(window.width(), window.height())
+        window._scheme2_scale_styles = [
+            (widget, widget.styleSheet())
+            for widget in (window, *window.findChildren(QWidget))
+            if widget.styleSheet()
+        ]
+        window._scheme2_scale = 0.0
         window.refresh_summary()
         window.show_section(OPTION_ROUTE)
         _set_dirty(window, False)
@@ -5130,8 +5256,18 @@ def install_scheme2_ui(namespace):
             worker.requestInterruption()
             event.ignore()
             return
+        if (window.scheme2_order_number.text().strip()
+                and not getattr(window, "_scheme2_close_after_workspace_save", False)):
+            timer = getattr(window, "_scheme2_order_save_timer", None)
+            if isinstance(timer, QTimer):
+                timer.stop()
+            window._scheme2_close_after_workspace_save = True
+            event.ignore()
+            _save_order_workspace(window, lambda: window.close())
+            return
         if getattr(window, "_scheme2_dirty", False) and window.isVisible():
             if not _confirm_discard_unsaved(window):
+                window._scheme2_close_after_workspace_save = False
                 event.ignore()
                 return
         original_close(window, event)
@@ -5147,6 +5283,8 @@ def install_scheme2_ui(namespace):
         result = original_section(window, index)
         if index == OPTION_ROUTE and hasattr(window, "quote_right_stack"):
             window.quote_right_stack.setCurrentIndex(0)
+        if index == OPTION_ROUTE:
+            QTimer.singleShot(0, lambda: _restore_scheme2_drawing_on_option_page(window))
         _sync_completion(window)
         _apply_responsive(window)
         QTimer.singleShot(0, lambda: _apply_responsive(window))
@@ -5154,6 +5292,7 @@ def install_scheme2_ui(namespace):
             if getattr(window, "_scheme2_clear_attachments_on_return", False):
                 window._scheme2_clear_attachments_on_return = False
                 QTimer.singleShot(0, lambda: _clear_scheme2_attachments(window))
+        _schedule_order_workspace_save(window)
         return result
 
     def show_result(window, payload, *args, **kwargs):
