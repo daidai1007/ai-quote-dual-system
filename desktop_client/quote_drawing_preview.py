@@ -6,10 +6,10 @@ import subprocess
 import tempfile
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPainterPath, QPen, QPixmap, QTransform
+from PySide6.QtGui import QColor, QFont, QImage, QImageReader, QPainter, QPainterPath, QPen, QPixmap, QTransform
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+    QComboBox, QFrame, QGraphicsItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView, QHBoxLayout, QLabel,
     QPushButton, QSizePolicy, QSpinBox, QVBoxLayout,
 )
 from pypdf import PdfReader
@@ -172,6 +172,7 @@ class InkCanvas(QGraphicsView):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.ink_enabled = False
         self.select_enabled = False
+        self.text_enabled = False
         self.color, self.stroke_width = COLORS[0][1], 3
         self.strokes, self._items = [], []
         self._points, self._path_item = None, None
@@ -200,6 +201,7 @@ class InkCanvas(QGraphicsView):
         self._finish_selection()
         self.ink_enabled = mode == 'ink'
         self.select_enabled = mode == 'select'
+        self.text_enabled = False
         self.setDragMode(
             QGraphicsView.DragMode.NoDrag
             if mode in {'ink', 'select'} else QGraphicsView.DragMode.ScrollHandDrag
@@ -208,6 +210,11 @@ class InkCanvas(QGraphicsView):
         self.viewport().setCursor(cursor)
         if mode != 'select':
             self.clear_selection()
+
+    def set_text(self, enabled):
+        self.set_tool('pan')
+        self.text_enabled = bool(enabled)
+        self.viewport().setCursor(Qt.CursorShape.IBeamCursor if enabled else Qt.CursorShape.OpenHandCursor)
 
     def set_image(self, image, strokes, rotation=0, logical_size=None, preserve_view=False):
         self.finish_stroke()
@@ -529,7 +536,19 @@ class InkCanvas(QGraphicsView):
         event.accept()
 
     def mousePressEvent(self, event):
-        if self.ink_enabled and event.button() == Qt.MouseButton.LeftButton:
+        if self.text_enabled and event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
+            item = QGraphicsTextItem("请输入文字")
+            item.setDefaultTextColor(QColor('#d32f2f'))
+            item.setFont(QFont("Microsoft YaHei UI", 14))
+            item.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+            item.setPos(self.mapToScene(event.position().toPoint()))
+            self.scene().addItem(item)
+            item.setFocus()
+            self.changed.emit()
+            event.accept()
+        elif self.ink_enabled and event.button() == Qt.MouseButton.LeftButton:
             if self._input_device is None:
                 self.begin_stroke(event.position())
             event.accept()
@@ -660,6 +679,9 @@ class QuoteDrawingPreview(QFrame):
         self.select_button = self.button('框选', self.toggle_select, ink)
         self.select_button.setCheckable(True)
         self.select_button.setAccessibleName('框选编辑笔迹')
+        self.text_button = self.button('文字框', self.toggle_text, ink)
+        self.text_button.setCheckable(True)
+        self.text_button.setAccessibleName('在图纸上添加红色文字框')
         self.color_combo = QComboBox()
         for name, value in COLORS:
             self.color_combo.addItem(name, value)
@@ -734,6 +756,19 @@ class QuoteDrawingPreview(QFrame):
         self.select_button.setText('关闭框选' if checked else '框选')
         self.update_tools()
 
+    def toggle_text(self):
+        checked = self.text_button.isChecked()
+        if checked:
+            for button, label in ((self.pen_button, '手写笔'), (self.select_button, '框选')):
+                button.blockSignals(True)
+                button.setChecked(False)
+                button.blockSignals(False)
+                button.setText(label)
+            self.color_combo.setCurrentIndex(0)
+        self.canvas.set_text(checked)
+        self.text_button.setText('关闭文字框' if checked else '文字框')
+        self.update_tools()
+
     def change_color(self):
         color = self.color_combo.currentData()
         self.canvas.color = color
@@ -761,6 +796,7 @@ class QuoteDrawingPreview(QFrame):
         self.rotate_button.setEnabled(drawing_ready)
         self.pen_button.setEnabled(drawing_ready)
         self.select_button.setEnabled(drawing_ready)
+        self.text_button.setEnabled(drawing_ready)
         self.counter.setText(f'{self.page + 1} / {self.page_count}' if self.page_count else '0 / 0')
         self.undo_button.setEnabled(bool(self.canvas.strokes))
         self.delete_selection_button.setEnabled(bool(self.canvas.selected_indices))

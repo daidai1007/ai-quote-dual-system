@@ -80,22 +80,26 @@ WORKBENCH_WINDOW_TITLE = ""
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
-    "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
-    "附件成本", "喷涂费用", "管理费用", "运费", "数量", "已选附件",
-    "面价", "折扣系数", "报价", "报价总价", "成本单价", "成本总价",
+    "序号", "名称", "产品", "尺寸", "数量", "已选附件", "面价", "折扣系数",
+    "报价", "报价总价", "成本单价", "材料成本", "辅材成本", "人工成本",
+    "附件成本", "喷涂费用", "管理费用", "运费", "成本总价",
     "毛利率", "自制件重量", "成本明细",
 )
-COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 92, 92, 92, 92, 92, 92, 92, 100, 92, 92, 92, 92, 92, 92, 92, 92, 88)
+COST_DISPLAY_ORDER = tuple(range(len(HEADERS)))
+COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88)
 DETAIL_COLUMN_WIDTHS = (72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)
-MONEY_COLUMNS = frozenset((*range(4, 11), 13, 15, 16, 17, 18))
-EDITABLE_COLUMNS = frozenset((10, 11, 14))
+MONEY_COLUMNS = frozenset((6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18))
+EDITABLE_COLUMNS = frozenset((4, 7, 17))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
 _FONT_SIZE_RULE = re.compile(r"font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
 _STYLE_LENGTH_RULE = re.compile(r"(?<![\w.-])(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
 GALVANIZED_MATERIAL_CODES = frozenset(("SGCC", "DX51D", "GI"))
 THREE_ROW_BEAM_MODELS = ("JP760240", "JP760250", "JP760260", "JP760280", "JP760210")
-LIGHT_SWITCH_MODELS = ("220V", "24V-0.28m", "24V-0.6m")
+LIGHT_SWITCH_OPTIONS = (
+    "行程开关", "照明灯220V长款", "照明灯220V短款",
+    "照明灯24V-0.28m", "照明灯24V-0.6m",
+)
 
 
 class _ClickableProgressBar(QProgressBar):
@@ -641,14 +645,23 @@ class AttachmentEditor(QDialog):
         self.table.insertRow(row)
         self.table.setRowHeight(row, 42)
         name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
+        is_light_switch = (
+            str(source.get("category_level1") or "").strip() == "照明灯/行程开关"
+            or name == "照明灯/行程开关"
+            or name in LIGHT_SWITCH_OPTIONS
+        )
+        if is_light_switch:
+            name = "照明灯/行程开关"
         spec = _attachment_dimension_or_model(source)
         self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
-        model_options = {
+        model_options = LIGHT_SWITCH_OPTIONS if is_light_switch else {
             "三排安装梁": THREE_ROW_BEAM_MODELS,
-            "照明灯/行程开关": LIGHT_SWITCH_MODELS,
         }.get(name)
         if model_options:
-            model = str(source.get("model_code") or source.get("specification") or "").strip().upper()
+            model = str(
+                source.get("item_name") if is_light_switch and source.get("item_name") in LIGHT_SWITCH_OPTIONS
+                else source.get("model_code") or source.get("specification") or ""
+            ).strip()
             selector = QComboBox()
             selector.setObjectName("scheme2AttachmentModelCombo")
             selector.view().setObjectName("scheme2AttachmentModelDropdown")
@@ -658,7 +671,8 @@ class AttachmentEditor(QDialog):
             selector.setCurrentIndex(max(0, selector.findData(model)))
             self.table.setCellWidget(row, self.COL_SPECIFICATION, selector)
             selector.currentIndexChanged.connect(
-                lambda _index, target_row=row, combo=selector: self._beam_model_changed(target_row, combo.currentData())
+                lambda _index, target_row=row, combo=selector, light=is_light_switch:
+                    self._attachment_option_changed(target_row, combo.currentData(), light)
             )
         else:
             specification_item = QTableWidgetItem(spec)
@@ -675,15 +689,21 @@ class AttachmentEditor(QDialog):
         self._render_amounts(row, source)
         quantity.valueChanged.connect(lambda value, target_row=row: self._quantity_changed(target_row, value))
 
-    def _beam_model_changed(self, row, model):
-        model = str(model or "").strip().upper()
+    def _attachment_option_changed(self, row, model, is_light_switch=False):
+        model = str(model or "").strip()
         if not model:
             return
         source_item = self.table.item(row, self.COL_NAME)
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
-        if str(source.get("model_code") or "").strip().upper() == model:
+        current = source.get("item_name") if is_light_switch else source.get("model_code")
+        if str(current or "").strip() == model:
             return
-        source.update({"model_code": model, "specification": model, "matched_specification": model})
+        if is_light_switch:
+            source.update({"category_level1": "照明灯/行程开关", "item_name": model, "specification": model})
+            source.pop("model_code", None)
+            source.pop("matched_specification", None)
+        else:
+            source.update({"model_code": model.upper(), "specification": model.upper(), "matched_specification": model.upper()})
         for key in ("attachment_price_id", "unit_price_override", "matched_price", "quick_amount", "formula_amount"):
             source.pop(key, None)
         source_item.setData(ROLE_ROW, source)
@@ -888,7 +908,10 @@ class AttachmentEditor(QDialog):
                 specification_item.data(ROLE_DERIVED_SPEC) != specification
             ):
                 data["specification"] = specification
-            if data.get("item_name") in {"三排安装梁", "照明灯/行程开关"} and specification:
+            if data.get("category_level1") == "照明灯/行程开关" and specification:
+                data["item_name"] = specification
+                data.pop("model_code", None)
+            elif data.get("item_name") == "三排安装梁" and specification:
                 data["model_code"] = specification
             data["quantity"] = self.table.cellWidget(row, self.COL_QUANTITY).value()
             amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
@@ -1925,7 +1948,7 @@ def _build_cost_page(window):
         table.setColumnWidth(column, width)
     window.summary_table = table
     body_layout.addWidget(table, 1)
-    empty = QLabel("在选项配置页点击加入报价清单后，柜型会出现在这里", table.viewport())
+    empty = QLabel("在选型配置页点击加入报价清单后，柜型会出现在这里", table.viewport())
     empty.setObjectName("scheme2EmptyState")
     empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
     empty.hide()
@@ -2104,7 +2127,14 @@ def _edit_selected(window):
     window._scheme2_active_settings = dict(
         item.get("scheme2_cost_settings", window.scheme2_defaults)
     )
+    preserved_attachments = deepcopy(item.get("attachments", []))
     window.load_draft_item(item)
+    window.attachments = preserved_attachments
+    window._scheme2_attachments_manual = True
+    refresh = getattr(window, "update_attachment_view", None)
+    if callable(refresh):
+        refresh()
+    _refresh_scheme2_attachment_summary(window)
     window.scheme2_name_edit.setText(str(item.get("name") or item.get("model_code") or ""))
     window.show_section(OPTION_ROUTE)
 
@@ -2123,9 +2153,9 @@ def _cost_cell_changed(window, row, column):
         window.refresh_summary()
         return
     item = items[row]
-    if column == 10:
+    if column == 17:
         item["freight_fee"] = value
-    elif column == 11:
+    elif column == 4:
         item["quantity"] = max(1, int(value))
         drawing_ref = getattr(window, "_draft_drawing_refs", {}).get(id(item))
         if drawing_ref and drawing_ref[0] is not None:
@@ -2144,7 +2174,7 @@ def _cost_cell_clicked(window, row, column):
         product = _cost_product(item)
         targets = [candidate for candidate in items if _cost_product(candidate) == product]
         FaceDiscountEditor(window, item, targets).exec()
-    elif column == 12:
+    elif column == 5:
         AttachmentEditor(window, item).exec()
     elif column == 21:
         _show_detail(window, item)
@@ -2204,14 +2234,15 @@ def _refresh_cost_table(window):
             return
         table.setRowCount(len(items) + 1)
         for row, item in enumerate(items):
-            values = list(_row_values(item))
-            values[0] = row + 1
+            canonical = list(_row_values(item))
+            canonical[0] = row + 1
+            values = [canonical[index] for index in COST_DISPLAY_ORDER]
             for column, value in enumerate(values):
-                text = _money(value) if column in MONEY_COLUMNS and column != 11 else str(value)
+                text = _money(value) if column in MONEY_COLUMNS else str(value)
                 cell = QTableWidgetItem(text)
                 if column not in EDITABLE_COLUMNS:
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if column in (2, 12, 21):
+                if column in (2, 5, 21):
                     cell.setForeground(QColor("#185FA5"))
                     font = cell.font()
                     font.setUnderline(True)
@@ -2231,9 +2262,9 @@ def _refresh_cost_table(window):
         for column in range(len(HEADERS)):
             if column == 0:
                 text = "汇总"
-            elif column == 11:
+            elif column == 4:
                 text = str(quantity_total)
-            elif column == 16:
+            elif column == 9:
                 text = _money(quote_total)
             elif column == 18:
                 text = _money(cost_total)
@@ -2280,7 +2311,7 @@ def _configure_navigation(window):
         wanted.setdefault(OPTION_ROUTE, visible[0])
         wanted.setdefault(COST_ROUTE, visible[-1])
     wanted[QUOTE_ROUTE] = spare[0] if spare else QPushButton(nav)
-    labels = {OPTION_ROUTE: "选项配置", COST_ROUTE: "成本计算", QUOTE_ROUTE: "报价单"}
+    labels = {OPTION_ROUTE: "选型配置", COST_ROUTE: "成本计算", QUOTE_ROUTE: "报价单"}
     for route, button in wanted.items():
         button.show()
         button.setText(labels[route])
@@ -2293,7 +2324,7 @@ def _configure_navigation(window):
         button.clicked.connect(lambda _checked=False, value=route: window.show_section(value))
     window.nav_buttons = [wanted[OPTION_ROUTE], wanted[COST_ROUTE], wanted[QUOTE_ROUTE]]
     window.nav_routes = (
-        (OPTION_ROUTE, "选项配置", "", None),
+        (OPTION_ROUTE, "选型配置", "", None),
         (COST_ROUTE, "成本计算", "", None),
         (QUOTE_ROUTE, "报价单", "", None),
     )
@@ -2659,13 +2690,8 @@ def _save_order_workspace(window, finished=None):
 
 
 def _manual_save_order_workspace(window):
-    order_number = window.scheme2_order_number.text().strip()
+    order_number = f"本机报价-{time.strftime('%Y%m%d-%H%M%S')}"
     button = getattr(window, "scheme2_save_button", None)
-    if not order_number:
-        window.scheme2_order_number.setFocus()
-        if button is not None:
-            button.setToolTip("请先输入订单号")
-        return
     default_path = str(Path.home() / f"{order_number}{ORDER_WORKSPACE_SUFFIX}")
     destination, _selected_filter = QFileDialog.getSaveFileName(
         window,
@@ -2675,34 +2701,18 @@ def _manual_save_order_workspace(window):
     )
     if not destination:
         return
-    if button is not None:
-        button.setEnabled(False)
-        button.setToolTip("正在保存当前订单进度…")
-
-    def finished(success):
+    try:
+        saved_path = _write_order_workspace_file(order_number, _order_workspace_payload(window), destination)
         if button is not None:
-            button.setEnabled(True)
-            button.setToolTip("订单进度已保存" if success else "保存失败，请检查网络后重试")
-        if success:
-            try:
-                payload = _load_local_order_workspace(order_number) or _order_workspace_payload(window)
-                saved_path = _write_order_workspace_file(order_number, payload, destination)
-                if button is not None:
-                    button.setToolTip(f"订单进度已保存：{saved_path}")
-            except OSError:
-                if button is not None:
-                    button.setToolTip("订单已同步，但指定文件保存失败")
-                return
-            _set_dirty(window, False)
-
-    _save_order_workspace(window, finished)
+            button.setToolTip(f"报价进度已保存：{saved_path}")
+        _set_dirty(window, False)
+    except OSError:
+        if button is not None:
+            button.setToolTip("指定文件保存失败")
 
 
 def _schedule_order_workspace_save(window):
-    timer = getattr(window, "_scheme2_order_save_timer", None)
-    if (isinstance(timer, QTimer) and window.scheme2_order_number.text().strip()
-            and not getattr(window, "_scheme2_loading_order", False)):
-        timer.start()
+    return
 
 
 def _load_order_workspace(window):
@@ -2886,12 +2896,18 @@ def _sync_scheme2_page_navigation(window):
         failed = sum(1 for entry in pages if entry.get("error"))
         active_key = getattr(window, "_scheme2_recognition_key", None)
         active_index = next((i for i, entry in enumerate(pages) if entry["key"] == active_key), -1)
+        started = getattr(window, "_scheme2_recognition_started_at", None)
+        elapsed = max(0.0, time.monotonic() - started) if started is not None else 0.0
+        elapsed_text = f" · {elapsed:.1f}秒"
         if active_index >= 0:
-            status.setText(f"图片识别进度：{recognized} / {len(pages)}，后台正在识别第 {active_index + 1} 页")
+            status.setText(f"图片识别进度：{recognized} / {len(pages)}，后台正在识别第 {active_index + 1} 页{elapsed_text}")
         elif recognized + failed >= len(pages):
-            status.setText(f"图片识别完成：{recognized} / {len(pages)}")
+            status.setText(f"图片识别完成：{recognized} / {len(pages)}{elapsed_text}")
+            timer = getattr(window, "_scheme2_recognition_elapsed_timer", None)
+            if isinstance(timer, QTimer):
+                timer.stop()
         else:
-            status.setText(f"图片识别进度：{recognized} / {len(pages)}")
+            status.setText(f"图片识别进度：{recognized} / {len(pages)}{elapsed_text}")
     _sync_scheme2_quoted_badge(window)
 
 
@@ -3090,7 +3106,7 @@ def _activate_scheme2_page(window, index):
         window._quote_drawing = entry.get("item")
         _restore_scheme2_page_state(window, entry["state"])
         window.scheme2_recognition_status.setText(
-            f"已恢复第 {entry['page_index'] + 1} 页的选项配置"
+            f"已恢复第 {entry['page_index'] + 1} 页的选型配置"
         )
     elif entry.get("item") is not None:
         window.scheme2_manual_fields.clear()
@@ -3117,6 +3133,10 @@ def _import_scheme2_drawings(window, paths=None):
     accepted = list(window._scheme2_accept_paths(list(paths or [])))
     if not accepted:
         return
+    window._scheme2_recognition_started_at = time.monotonic()
+    timer = getattr(window, "_scheme2_recognition_elapsed_timer", None)
+    if isinstance(timer, QTimer):
+        timer.start()
     pages = getattr(window, "_scheme2_drawing_pages", [])
     had_pages = bool(pages)
     known = {entry["key"] for entry in pages}
@@ -3153,6 +3173,29 @@ def _import_scheme2_drawings(window, paths=None):
         _activate_scheme2_page(window, first_new)
     else:
         _sync_scheme2_page_navigation(window)
+    _start_next_scheme2_recognition(window)
+
+
+def _replace_current_scheme2_drawing(window):
+    paths, _selected_filter = QFileDialog.getOpenFileNames(
+        window, "替换当前图纸", "",
+        "图纸文件 (*.pdf *.dwg *.dxf *.png *.jpg *.jpeg *.bmp *.tif *.tiff)",
+    )
+    accepted = list(window._scheme2_accept_paths(list(paths or [])))
+    pages = getattr(window, "_scheme2_drawing_pages", [])
+    index = int(getattr(window, "_scheme2_drawing_page_index", -1))
+    if not accepted or not 0 <= index < len(pages):
+        return
+    source = str(Path(accepted[0]).resolve())
+    pages[index] = {
+        "key": f"{source.casefold()}#page=1", "source_path": source,
+        "page_index": 0, "page_count": 1, "item": None, "state": None,
+    }
+    window._scheme2_recognition_started_at = time.monotonic()
+    timer = getattr(window, "_scheme2_recognition_elapsed_timer", None)
+    if isinstance(timer, QTimer):
+        timer.start()
+    _activate_scheme2_page(window, index)
     _start_next_scheme2_recognition(window)
 
 
@@ -4221,7 +4264,7 @@ def _configure_option_page(window, namespace):
     form = QVBoxLayout(left)
     form.setContentsMargins(14, 4, 14, 16)
     form.setSpacing(11)
-    form_title = QLabel("选项配置")
+    form_title = QLabel("选型配置")
     form_title.setObjectName("scheme2SectionTitle")
     form.addWidget(form_title)
     window.scheme2_provenance_labels = {}
@@ -4229,23 +4272,8 @@ def _configure_option_page(window, namespace):
 
     order_number = QLineEdit()
     order_number.setObjectName("scheme2OrderNumber")
-    order_number.setPlaceholderText("请输入订单号")
-    order_field = _option_field(window, "订单号", order_number)
-    _promote_option_label(order_field)
-    form.addWidget(order_field)
+    order_number.hide()
     window.scheme2_order_number = order_number
-    order_load_timer = QTimer(window)
-    order_load_timer.setSingleShot(True)
-    order_load_timer.setInterval(500)
-    order_load_timer.timeout.connect(lambda: _load_order_workspace(window))
-    window._scheme2_order_load_timer = order_load_timer
-    order_number.textEdited.connect(lambda _text: order_load_timer.start())
-
-    def load_order_now():
-        order_load_timer.stop()
-        _load_order_workspace(window)
-
-    order_number.editingFinished.connect(load_order_now)
 
     name_edit = QLineEdit()
     name_edit.setObjectName("scheme2NameInput")
@@ -4510,16 +4538,21 @@ def _configure_option_page(window, namespace):
         progress.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         progress.hide()
         more = QToolButton()
+        more.setObjectName("scheme2MoreMenu")
         more.setText("更多")
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(more)
         more.setMenu(menu)
-        secondary = {"手写笔", "框选", "撤销", "删除选中", "清除"}
-        for tool in right.findChildren(QPushButton):
-            if tool.text().strip() in secondary:
-                action = menu.addAction(tool.text().strip())
+        tools_by_text = {tool.text().strip(): tool for tool in right.findChildren(QPushButton)}
+        for tool_name in ("手写笔", "文字框", "框选", "撤销", "删除选中", "清除"):
+            tool = tools_by_text.get(tool_name)
+            if tool is not None:
+                action = menu.addAction(tool_name)
                 action.triggered.connect(tool.click)
                 tool.hide()
+        menu.addSeparator()
+        replace_action = menu.addAction("替换当前图纸")
+        replace_action.triggered.connect(lambda: _replace_current_scheme2_drawing(window))
         for control_type in (QComboBox, QSpinBox):
             for control in right.findChildren(control_type):
                 control.hide()
@@ -5441,6 +5474,12 @@ def install_scheme2_ui(namespace):
         window._scheme2_add_elapsed_timer = QTimer(window)
         window._scheme2_add_elapsed_timer.setInterval(100)
         window._scheme2_add_elapsed_timer.timeout.connect(lambda: _refresh_add_progress_display(window))
+        window._scheme2_recognition_started_at = None
+        window._scheme2_recognition_elapsed_timer = QTimer(window)
+        window._scheme2_recognition_elapsed_timer.setInterval(100)
+        window._scheme2_recognition_elapsed_timer.timeout.connect(
+            lambda: _sync_scheme2_page_navigation(window)
+        )
         # The reference explicitly supports the <900 logical-pixel stacked
         # layout; the recovered client used a wider fixed minimum.
         window.setMinimumSize(1024, 700)
@@ -5535,10 +5574,6 @@ def install_scheme2_ui(namespace):
 
     def confirm_and_export(window):
         _sync_export_company(window)
-        if not getattr(window, "_scheme2_export_validation_passed", False):
-            _start_export_validation(window)
-            return
-        window._scheme2_export_validation_passed = False
         had_override = "validate_export_environment" in window.__dict__
         previous = window.__dict__.get("validate_export_environment")
         window.validate_export_environment = MethodType(lambda _self: None, window)
@@ -5555,15 +5590,6 @@ def install_scheme2_ui(namespace):
         if worker is not None and worker.isRunning():
             worker.requestInterruption()
             event.ignore()
-            return
-        if (window.scheme2_order_number.text().strip()
-                and not getattr(window, "_scheme2_close_after_workspace_save", False)):
-            timer = getattr(window, "_scheme2_order_save_timer", None)
-            if isinstance(timer, QTimer):
-                timer.stop()
-            window._scheme2_close_after_workspace_save = True
-            event.ignore()
-            _save_order_workspace(window, lambda _success: window.close())
             return
         if getattr(window, "_scheme2_dirty", False) and window.isVisible():
             if not _confirm_discard_unsaved(window):
@@ -5588,10 +5614,6 @@ def install_scheme2_ui(namespace):
         _sync_completion(window)
         _apply_responsive(window)
         QTimer.singleShot(0, lambda: _apply_responsive(window))
-        if index == OPTION_ROUTE and previous_index == COST_ROUTE:
-            if getattr(window, "_scheme2_clear_attachments_on_return", False):
-                window._scheme2_clear_attachments_on_return = False
-                QTimer.singleShot(0, lambda: _clear_scheme2_attachments(window))
         _schedule_order_workspace_save(window)
         return result
 

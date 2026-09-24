@@ -42,13 +42,18 @@ def wait_until(predicate, attempts=500):
     raise AssertionError("timed out waiting for focused UI state")
 
 
-assert [button.text() for button in window.nav_buttons] == ["选项配置", "成本计算", "报价单"]
+assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单"]
 assert window.stack.widget(scheme2_ui.QUOTE_ROUTE).objectName() == "scheme2QuotePage"
 assert [button.text() for button in window.scheme2_cost_page.findChildren(QPushButton)].count("打印") == 0
 assert [button.text() for button in window.scheme2_cost_page.findChildren(QPushButton)].count("导出报价单") == 0
 assert window.scheme2_cost_generate.text() == "生成报价单"
 assert window.scheme2_quote_print.text() == "打印"
 assert window.scheme2_quote_export.text() == "导出报价单"
+assert window.scheme2_order_number.isHidden()
+more_menu = window.scheme2_drawing_widget.findChild(scheme2_ui.QToolButton, "scheme2MoreMenu").menu()
+menu_labels = [action.text() for action in more_menu.actions()]
+assert menu_labels.index("文字框") == menu_labels.index("手写笔") + 1
+assert "替换当前图纸" in menu_labels
 
 window._scheme2_add_started_at = time.monotonic() - 1.2
 scheme2_ui._set_add_progress(window, 2, "后台处理")
@@ -94,6 +99,7 @@ with tempfile.TemporaryDirectory(prefix="scheme2-background-") as folder:
     assert window._scheme2_drawing_page_index == 1
     assert window.quote_spec_edit.text() == "人工输入保留"
     assert "2 / 2" in window.scheme2_recognition_status.text()
+    assert "秒" in window.scheme2_recognition_status.text()
     wait_until(lambda: not window.quote_drawing_preview._workers)
     active_key = window._scheme2_drawing_pages[1]["key"]
     window.quote_drawing_preview.canvas.scene().clear()
@@ -125,6 +131,15 @@ assert window.stack.currentIndex() == scheme2_ui.OPTION_ROUTE
 assert window._scheme2_drawing_pages[1]["quoted"] is True
 assert window.scheme2_quoted_badge.isVisibleTo(window)
 assert len(window.draft_items) == 1
+window.draft_items[0]["attachments"] = [{"item_name": "照明灯/行程开关", "model_code": "220V"}]
+window.summary_table.selectRow(0)
+original_load_draft_item = window.load_draft_item
+window.load_draft_item = lambda _item: setattr(window, "attachments", [])
+try:
+    scheme2_ui._edit_selected(window)
+finally:
+    window.load_draft_item = original_load_draft_item
+assert window.attachments == [{"item_name": "照明灯/行程开关", "model_code": "220V"}]
 
 window.show_section(scheme2_ui.COST_ROUTE)
 window.scheme2_cost_generate.click()

@@ -18,10 +18,9 @@ scheme2_ui._set_cost_column_mode(window, False)
 visible = {column for column in range(len(scheme2_ui.HEADERS)) if not window.summary_table.isColumnHidden(column)}
 expected = set(range(len(scheme2_ui.HEADERS)))
 assert visible == expected
-assert scheme2_ui.HEADERS[10] == "运费"
-assert scheme2_ui.HEADERS[12:] == (
-    "已选附件", "面价", "折扣系数", "报价", "报价总价",
-    "成本单价", "成本总价", "成本明细",
+assert scheme2_ui.HEADERS[10] == "成本单价"
+assert scheme2_ui.HEADERS[11:19] == (
+    "材料成本", "辅材成本", "人工成本", "附件成本", "喷涂费用", "管理费用", "运费", "成本总价",
 )
 
 scheme2_ui._set_cost_column_mode(window, True)
