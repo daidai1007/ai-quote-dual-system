@@ -77,6 +77,7 @@ HEADERS = (
     "面价", "折扣系数", "报价", "报价总价", "成本单价", "成本总价",
     "毛利率", "自制件重量", "成本明细",
 )
+COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 92, 92, 92, 92, 92, 92, 92, 100, 92, 92, 92, 92, 92, 92, 92, 92, 88)
 MONEY_COLUMNS = frozenset((*range(4, 11), 13, 15, 16, 17, 18))
 EDITABLE_COLUMNS = frozenset((10, 11, 14))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
@@ -291,7 +292,7 @@ def _row_values(item):
         _number(formula.get("management_fee")),
         freight, quantity, f"{len(attachments)} 项 ›", face_base, discount,
         quote, quote_total, formula_unit, cost_total,
-        f"{gross_margin:.2%}", billable_weight, "明细 ›",
+        f"{gross_margin:.2%}", f"{billable_weight:.2f}", "明细 ›",
     )
 
 
@@ -1897,14 +1898,8 @@ def _build_cost_page(window):
     table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
     table.verticalHeader().hide()
     table.horizontalHeader().setMinimumSectionSize(66)
-    table.setColumnWidth(0, 52)
-    table.setColumnWidth(1, 140)
-    table.setColumnWidth(2, 90)
-    table.setColumnWidth(3, 160)
-    for column in range(4, len(HEADERS)):
-        table.setColumnWidth(column, 92)
-    table.setColumnWidth(12, 100)
-    table.setColumnWidth(21, 88)
+    for column, width in enumerate(COST_COLUMN_WIDTHS):
+        table.setColumnWidth(column, width)
     window.summary_table = table
     body_layout.addWidget(table, 1)
     empty = QLabel("在选项配置页点击加入报价清单后，柜型会出现在这里", table.viewport())
@@ -4521,6 +4516,11 @@ def _scheme2_quote_remark(item):
     attachment_names = []
     for attachment in item.get("attachments") or []:
         name = str(attachment.get("item_name") or attachment.get("name") or attachment.get("model_code") or "").strip()
+        category = str(attachment.get("category_level1") or "").strip()
+        if "照明灯/行程开关" in (name, category):
+            model = str(attachment.get("model_code") or attachment.get("specification") or "").strip()
+            if model and model != name:
+                name = f"{name}（{model}）"
         if name and name not in attachment_names:
             attachment_names.append(name)
     attachments = "、".join(attachment_names) or "无附件"
@@ -4716,6 +4716,11 @@ def _apply_proportional_scale(window):
     quote_company_field = getattr(window, "scheme2_quote_company_field", None)
     if quote_company_field is not None:
         quote_company_field.setFixedWidth(max(1, round(QUOTE_COMPANY_FIELD_WIDTH * scale)))
+    cost_table = getattr(window, "summary_table", None)
+    if isinstance(cost_table, QTableWidget):
+        cost_table.horizontalHeader().setMinimumSectionSize(max(1, round(66 * scale)))
+        for column, width in enumerate(COST_COLUMN_WIDTHS):
+            cost_table.setColumnWidth(column, max(1, round(width * scale)))
     return scale
 
 

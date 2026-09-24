@@ -34,6 +34,8 @@ assert 1.19 <= window._scheme2_scale <= 1.21
 assert window.scheme2_nav.width() == round(scheme2_ui.NAV_EXPANDED_WIDTH * window._scheme2_scale)
 assert window.scheme2_cost_sidebar.width() == round(scheme2_ui.COST_SIDEBAR_WIDTH * window._scheme2_scale)
 assert window.scheme2_company.height() == round(scheme2_ui.COMPANY_COMBO_HEIGHT * window._scheme2_scale)
+assert window.summary_table.columnWidth(1) == round(scheme2_ui.COST_COLUMN_WIDTHS[1] * window._scheme2_scale)
+assert window.summary_table.columnWidth(19) == round(scheme2_ui.COST_COLUMN_WIDTHS[19] * window._scheme2_scale)
 assert window.styleSheet() != base_style
 assert "font-size:16px" in window.styleSheet()
 

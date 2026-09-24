@@ -24,6 +24,7 @@ rows = [
     {
         "item_name": "固定底座", "model_code": "BASE-800", "specification": "快速匹配",
         "size_match_width_mm": 800, "size_match_depth_mm": 600, "size_match_height_mm": 100,
+        "custom": True,
     },
     {
         "item_name": "侧板", "model_code": "JP682060",
@@ -51,7 +52,7 @@ assert editor.table.item(3, 1).text() == "BOARD-A"
 assert editor.table.item(4, 1).text() == ""
 cost_editor = editor.table.cellWidget(0, 3)
 amount_editor = editor.table.cellWidget(0, 4)
-assert type(cost_editor) is QDoubleSpinBox
+assert isinstance(cost_editor, QDoubleSpinBox)
 assert type(amount_editor) is QDoubleSpinBox
 assert amount_editor.lineEdit().textMargins().right() == 0
 

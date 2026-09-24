@@ -21,7 +21,7 @@ def test_margin_and_billable_weight_columns():
     values = scheme2_ui._row_values(sample_item())
     assert scheme2_ui.HEADERS[19:22] == ("毛利率", "自制件重量", "成本明细")
     assert values[16] == 1600 and values[18] == 1200
-    assert values[19] == "25.00%" and values[20] == 42.5 and values[21] == "明细 ›"
+    assert values[19] == "25.00%" and values[20] == "42.50" and values[21] == "明细 ›"
 
 
 def test_discount_coefficient_is_directly_editable_like_freight():
