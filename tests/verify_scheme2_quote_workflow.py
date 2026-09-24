@@ -53,6 +53,13 @@ assert window.scheme2_quote_export.text() == "导出报价单"
 window._scheme2_add_started_at = time.monotonic() - 1.2
 scheme2_ui._set_add_progress(window, 2, "后台处理")
 assert "秒" in window.scheme2_add_progress.format()
+for width, height in ((1024, 700), (1680, 980)):
+    window.resize(width, height)
+    app.processEvents()
+    scheme2_ui._apply_responsive(window)
+    progress_text = window.scheme2_add_progress.format()
+    assert "秒" in progress_text
+    assert window.scheme2_add_progress.width() >= window.scheme2_add_progress.fontMetrics().horizontalAdvance(progress_text) + 30
 
 
 class FakeRecognition:

@@ -29,6 +29,9 @@ def test_order_number_restores_and_saves_all_three_page_data_online():
     assert '"company": window.scheme2_company.currentText()' in UI
     assert '"active_route": int(window.stack.currentIndex())' in UI
     assert '"detail_item_index": detail_index' in UI
+    assert 'order_load_timer.setInterval(500)' in UI
+    assert 'order_number.textEdited.connect(lambda _text: order_load_timer.start())' in UI
+    assert 'window.scheme2_order_number.setToolTip("订单进度已恢复")' in UI
     assert 'window.show_section(route if route in (OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE)' in UI
     assert '_show_detail(window, window.draft_items[detail_index])' in UI
     assert '_save_order_workspace(window, lambda _success: window.close())' in UI

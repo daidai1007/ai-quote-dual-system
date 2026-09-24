@@ -2496,11 +2496,15 @@ def _load_order_workspace(window):
         return
     worker = worker_class(window.base_url() + "/api/orders/workspace/load", {"order_number": order_number}, window)
     window._scheme2_order_load_worker = worker
+    window.scheme2_order_number.setToolTip("正在查询订单进度…")
 
     def loaded(result):
         window._scheme2_order_load_worker = None
+        if window.scheme2_order_number.text().strip() != order_number:
+            return
         payload = result.get("payload") if isinstance(result, dict) else None
         if not isinstance(payload, dict):
+            window.scheme2_order_number.setToolTip("未找到该订单号的已保存进度")
             return
         window._scheme2_loading_order = True
         try:
@@ -2522,11 +2526,17 @@ def _load_order_workspace(window):
             else:
                 window.show_section(route if route in (OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE) else OPTION_ROUTE)
             _set_dirty(window, False)
+            window.scheme2_order_number.setToolTip("订单进度已恢复")
         finally:
             window._scheme2_loading_order = False
 
     worker.succeeded.connect(loaded)
-    worker.failed.connect(lambda _message: setattr(window, "_scheme2_order_load_worker", None))
+    def failed(_message):
+        window._scheme2_order_load_worker = None
+        if window.scheme2_order_number.text().strip() == order_number:
+            window.scheme2_order_number.setToolTip("订单进度读取失败，请检查网络后重试")
+
+    worker.failed.connect(failed)
     worker.start()
 
 
@@ -4013,7 +4023,18 @@ def _configure_option_page(window, namespace):
     _promote_option_label(order_field)
     form.addWidget(order_field)
     window.scheme2_order_number = order_number
-    order_number.editingFinished.connect(lambda: _load_order_workspace(window))
+    order_load_timer = QTimer(window)
+    order_load_timer.setSingleShot(True)
+    order_load_timer.setInterval(500)
+    order_load_timer.timeout.connect(lambda: _load_order_workspace(window))
+    window._scheme2_order_load_timer = order_load_timer
+    order_number.textEdited.connect(lambda _text: order_load_timer.start())
+
+    def load_order_now():
+        order_load_timer.stop()
+        _load_order_workspace(window)
+
+    order_number.editingFinished.connect(load_order_now)
 
     name_edit = QLineEdit()
     name_edit.setObjectName("scheme2NameInput")
@@ -4275,7 +4296,7 @@ def _configure_option_page(window, namespace):
         progress.setObjectName("scheme2AddProgress")
         progress.setRange(0, 5)
         progress.setTextVisible(True)
-        progress.setFixedWidth(190)
+        progress.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         progress.hide()
         more = QToolButton()
         more.setText("更多")
@@ -4472,7 +4493,12 @@ def _refresh_add_progress_display(window):
     label = str(progress.property("stepLabel") or "")
     started = getattr(window, "_scheme2_add_started_at", None)
     elapsed = max(0.0, time.monotonic() - started) if started is not None else 0.0
-    progress.setFormat(f"{step}/5 {label} · {elapsed:.1f}秒")
+    footer = progress.parentWidget()
+    compact = footer is not None and footer.width() < 650
+    display = f"{step}/5 · {elapsed:.1f}秒" if compact else f"{step}/5 {label} · {elapsed:.1f}秒"
+    progress.setFormat(display)
+    text_width = QFontMetrics(progress.font()).horizontalAdvance(display)
+    progress.setFixedWidth(max(110, text_width + 30))
 
 
 def _set_add_progress(window, step, label, failed=False):
@@ -4836,6 +4862,8 @@ def _apply_responsive(window):
         canvas.setFixedSize(canvas_width, canvas_height)
         if preview.layout() is not None:
             preview.layout().setAlignment(canvas, Qt.AlignmentFlag.AlignHCenter)
+    if getattr(window, "scheme2_add_progress", None) is not None:
+        _refresh_add_progress_display(window)
     expand = getattr(window, "scheme2_expand_button", None)
     if expand is not None:
         expand.move(0, max(90, (window.height() - expand.height()) // 2))
