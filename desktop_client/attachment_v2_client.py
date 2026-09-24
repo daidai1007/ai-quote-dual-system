@@ -878,10 +878,11 @@ def install_attachment_v2(namespace):
     # child-cabinet flow and commits one aggregate V2 attachment snapshot.
     worker_init = worker_class.__init__
     def init_worker(worker, url, payload, parent=None, *args, **kwargs):
-        request_attachments = [row for row in payload.get("attachments", []) if not row.get("custom")]
+        all_attachments = list(payload.get("attachments", []))
+        request_attachments = [row for row in all_attachments if not row.get("custom")]
         if parent is not None:
-            parent._v2_custom_attachments = [copy.deepcopy(row) for row in payload.get("attachments", []) if row.get("custom")]
-        if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent) and (payload.get("attachment_contract") == 2 or any(row.get("catalog_version") for row in request_attachments)):
+            parent._v2_custom_attachments = [copy.deepcopy(row) for row in all_attachments if row.get("custom")]
+        if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent) and (payload.get("attachment_contract") == 2 or all_attachments):
             automatic_base = base_height(parent)
             payload = {**payload, "attachment_contract": 2, "attachments": [selected_input(x, automatic_base) for x in request_attachments]}
             parent._v2_request_quote_id = payload.get("quote_id")

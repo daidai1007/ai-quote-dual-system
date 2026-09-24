@@ -184,6 +184,20 @@ assert sent["attachment_contract"] == 2
 assert set(sent["attachments"][0]) == {"attachment_price_id", "quantity", "attachment_price_sign", "manual_inputs"}
 assert window.current_result["formula"]["attachment_fee"] == 12
 assert window.current_result["quick"]["attachment_fee"] == 40
+
+# Restored/legacy-shaped selections can lack catalog metadata, but an active
+# V2 server rejects every attachment-bearing legacy calculation with 426.
+legacy_shaped = copy.deepcopy(window.attachments[0])
+for key in ("catalog_version", "data_version", "status"):
+    legacy_shaped.pop(key, None)
+window.attachments = [legacy_shaped]
+window.current_result = None
+request_count = len(requests)
+window.calculate()
+spin_until(lambda: len(requests) > request_count and window.current_result is not None, "metadata-free attachment did not calculate")
+sent = next(payload for url, payload in reversed(requests) if url.endswith("/calculate-dual"))
+assert sent["attachment_contract"] == 2
+
 window.add_current_to_summary()
 item = window.draft_items[-1]
 assert item["attachment_contract"] == 2 and item["quote_line_id"] == fixture["result"]["quote_line_id"]
