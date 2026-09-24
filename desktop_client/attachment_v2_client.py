@@ -225,6 +225,15 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         ]
         if len(exact_models) == 1:
             return exact_models[0]
+    light_switch_key = attachment_image_match_key("照明灯/行程开关")
+    if wanted_name == light_switch_key or wanted_category == light_switch_key:
+        light_switch_matches = category_matches or candidates
+        default_220v = [
+            item for item in light_switch_matches
+            if str(item.get("model_code") or "").strip().upper() == "220V"
+        ]
+        if len(default_220v) == 1:
+            return default_220v[0]
     all_category_matches = [
         item for item in catalog if isinstance(item, dict)
         and attachment_image_match_key(item.get("category_level1")) == wanted_category

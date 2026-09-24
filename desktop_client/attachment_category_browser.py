@@ -196,7 +196,15 @@ def _unique_match(items: Iterable[dict], predicate) -> dict | None:
 
 
 def match_default_light_switch(items: Iterable[dict]) -> dict | None:
-    return _unique_match(items, lambda item: category_value(item, 0) == "灯开关")
+    matches = [
+        item for item in items
+        if category_value(item, 0) in {"灯开关", "照明灯/行程开关"}
+    ]
+    default_220v = [
+        item for item in matches
+        if str(item.get("model_code") or "").strip().upper() == "220V"
+    ]
+    return default_220v[0] if len(default_220v) == 1 else (matches[0] if len(matches) == 1 else None)
 
 
 def match_default_a4_folder(items: Iterable[dict]) -> dict | None:

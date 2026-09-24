@@ -107,7 +107,12 @@ window.show_section(scheme2_ui.COST_ROUTE)
 window.scheme2_cost_generate.click()
 app.processEvents()
 assert window.stack.currentIndex() == scheme2_ui.QUOTE_ROUTE
-quote_text = window.scheme2_quote_preview.toPlainText()
+quote_text = " ".join(
+    window.scheme2_quote_preview.item(row, column).text()
+    for row in range(window.scheme2_quote_preview.rowCount())
+    for column in range(window.scheme2_quote_preview.columnCount())
+    if window.scheme2_quote_preview.item(row, column) is not None
+)
 assert "报价单" in quote_text and "100.00" in quote_text
 assert window.scheme2_quote_print.isEnabled() and window.scheme2_quote_export.isEnabled()
 

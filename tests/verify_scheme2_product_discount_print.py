@@ -46,7 +46,7 @@ assert row2[13] == 200 and row2[14] == 0.8 and row2[15] == 160 and row2[16] == 1
 
 quote = scheme2_ui._printable_quote_html(window)
 assert "示例&lt;&amp;公司" in quote and "JS" in quote and "JP" in quote
-assert "合计：620.00 元" in quote
+assert "合计" in quote and "620.00" in quote
 
 source = (ROOT / "desktop_client" / "scheme2_ui.py").read_text(encoding="utf-8")
 assert 'print_button = QPushButton("打印")' in source

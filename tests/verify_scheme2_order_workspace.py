@@ -23,6 +23,7 @@ def test_requested_option_labels_share_door_heading_style():
 
 def test_order_number_restores_and_saves_all_three_page_data_online():
     assert 'order_number.setPlaceholderText("请输入订单号")' in UI
+    assert '_promote_option_label(order_field)' in UI
     assert '"option_state": _capture_scheme2_page_state(window)' in UI
     assert '"draft_items": deepcopy(getattr(window, "draft_items", []))' in UI
     assert '"company": window.scheme2_company.currentText()' in UI

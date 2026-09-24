@@ -73,10 +73,11 @@ WORKBENCH_WINDOW_TITLE = "AI 智能报价 · V0 交互工作台"
 HEADERS = (
     "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "数量", "已选附件",
-    "面价", "折扣系数", "报价", "报价总价", "成本单价", "成本总价", "成本明细",
+    "面价", "折扣系数", "报价", "报价总价", "成本单价", "成本总价",
+    "毛利率", "自制件重量", "成本明细",
 )
 MONEY_COLUMNS = frozenset((*range(4, 11), 13, 15, 16, 17, 18))
-EDITABLE_COLUMNS = frozenset((10, 11))
+EDITABLE_COLUMNS = frozenset((10, 11, 14))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
 _FONT_SIZE_RULE = re.compile(r"font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
@@ -269,6 +270,10 @@ def _row_values(item):
     face_base = _number(quick.get("total_cost")) + freight
     discount = _number(item.get("quick_discount", 1), 1)
     quote = face_base * discount
+    quote_total = quote * quantity
+    cost_total = formula_unit * quantity
+    gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0
+    billable_weight = _number(formula.get("corrected_material_weight_kg"))
     specification = str(item.get("specification") or item.get("model_code") or "—")
     name = str(item.get("name") or item.get("model_code") or "未命名")
     product = _cost_product(item)
@@ -282,7 +287,8 @@ def _row_values(item):
         _number(formula.get("spray_cost")),
         _number(formula.get("management_fee")),
         freight, quantity, f"{len(attachments)} 项 ›", face_base, discount,
-        quote, quote * quantity, formula_unit, formula_unit * quantity, "明细 ›",
+        quote, quote_total, formula_unit, cost_total,
+        f"{gross_margin:.2%}", billable_weight, "明细 ›",
     )
 
 
@@ -414,7 +420,7 @@ def _sidebar_price_spin(value, display_decimals=2, decimals=2):
     control.setDecimals(decimals)
     control.setSingleStep(.1)
     control.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-    control.setFixedHeight(28)
+    control.setFixedHeight(36)
     control.setValue(value)
     return control
 
@@ -1000,23 +1006,33 @@ class FaceDiscountEditor(QDialog):
 
 def _printable_quote_html(window, font_step=0) -> str:
     company = html.escape(str(getattr(window, "scheme2_company", None).currentText() if getattr(window, "scheme2_company", None) is not None else ""))
+    order_number = html.escape(str(getattr(window, "scheme2_order_number", None).text() if getattr(window, "scheme2_order_number", None) is not None else ""))
+    quote_date = date.today().isoformat()
     rows = []
     total = 0.0
     for index, item in enumerate(getattr(window, "draft_items", []), 1):
         values = _row_values(item)
         amount = _number(values[16])
         total += amount
-        cells = (index, values[1], values[2], values[3], values[11], f"{_number(values[15]):,.2f}", f"{amount:,.2f}")
+        remark = str(item.get("final_remark") or _scheme2_quote_remark(item))
+        cells = (index, values[1], values[3], values[11], "台", f"{_number(values[15]):,.2f}", f"{amount:,.2f}", remark)
         rows.append("<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in cells) + "</tr>")
     return f"""
     <html><head><style>
     body{{font-family:'Microsoft YaHei UI';font-size:{10 + font_step}pt;color:#202B38}}
     h1{{text-align:center;font-size:{18 + font_step}pt}} table{{width:100%;border-collapse:collapse}}
     th,td{{border:1px solid #64748B;padding:6px;text-align:center}} th{{background:#DCE8F7}}
-    .meta{{margin-bottom:12px}} .total{{text-align:right;font-size:{12 + font_step}pt;font-weight:600;margin-top:10px}}
-    </style></head><body><h1>报价单</h1><div class="meta">下单公司：{company}</div>
-    <table><tr><th>序号</th><th>名称</th><th>产品</th><th>规格</th><th>数量</th><th>面价</th><th>金额</th></tr>
-    {''.join(rows)}</table><div class="total">合计：{total:,.2f} 元</div></body></html>
+    .meta td{{text-align:left}} .total{{font-weight:600}}
+    </style></head><body><table class="meta">
+    <tr><th>报价单</th><td>{order_number}</td><td colspan="6"></td></tr>
+    <tr><th>日期</th><td>{quote_date}</td><td colspan="6"></td></tr><tr><td colspan="8">&nbsp;</td></tr>
+    <tr><th>买方</th><td>{company}</td><th>卖方</th><td colspan="5">浙江京能电力设备有限公司</td></tr>
+    <tr><th>地址</th><td></td><th>地址</th><td colspan="5">杭州临安横畈工业功能区桑园路18号</td></tr>
+    <tr><th>电话</th><td></td><th>电话</th><td colspan="5">0571-88520091</td></tr>
+    <tr><th>传真</th><td></td><th>传真</th><td colspan="5">0571-88520077</td></tr>
+    <tr><th>邮箱</th><td></td><th>邮箱</th><td colspan="5"></td></tr><tr><td colspan="8">&nbsp;</td></tr>
+    <tr><th>序号</th><th>名称</th><th>规格型号(W*D*H)</th><th>数量</th><th>单位</th><th>折后单价</th><th>折后总价</th><th>备注</th></tr>
+    {''.join(rows)}<tr class="total"><td></td><td>合计</td><td colspan="4"></td><td>{total:,.2f}</td><td></td></tr></table></body></html>
     """
 
 
@@ -1034,10 +1050,67 @@ def _print_quote(window):
     document.print_(printer)
 
 
+def _quote_unit_price_changed(window, row, column):
+    if getattr(window, "_scheme2_refreshing_quote", False) or column != 5 or row < 10:
+        return
+    items = getattr(window, "draft_items", [])
+    index = row - 10
+    if not 0 <= index < len(items):
+        return
+    cell = window.scheme2_quote_preview.item(row, column)
+    unit_price = _number(cell.text().replace(",", ""), -1) if cell is not None else -1
+    face_price = _number(_row_values(items[index])[13])
+    if unit_price < 0 or face_price <= 0:
+        _refresh_quote_page(window)
+        return
+    items[index]["quick_discount"] = unit_price / face_price
+    window.refresh_summary()
+
+
 def _refresh_quote_page(window):
     preview = getattr(window, "scheme2_quote_preview", None)
-    if isinstance(preview, QTextBrowser):
-        preview.setHtml(_printable_quote_html(window, 2))
+    if isinstance(preview, QTableWidget):
+        items = getattr(window, "draft_items", [])
+        company = window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else ""
+        order_number = window.scheme2_order_number.text() if hasattr(window, "scheme2_order_number") else ""
+        window._scheme2_refreshing_quote = True
+        try:
+            preview.clearSpans()
+            preview.setRowCount(11 + len(items))
+            meta = (
+                (0, "报价单", order_number, "", ""), (1, "日期", date.today().isoformat(), "", ""),
+                (3, "买方", company, "卖方", "浙江京能电力设备有限公司"),
+                (4, "地址", "", "地址", "杭州临安横畈工业功能区桑园路18号"),
+                (5, "电话", "", "电话", "0571-88520091"),
+                (6, "传真", "", "传真", "0571-88520077"), (7, "邮箱", "", "邮箱", ""),
+            )
+            for row in range(preview.rowCount()):
+                for column in range(8):
+                    cell = QTableWidgetItem("")
+                    cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    preview.setItem(row, column, cell)
+            for row, left_label, left_value, right_label, right_value in meta:
+                preview.item(row, 0).setText(left_label); preview.item(row, 1).setText(left_value)
+                preview.item(row, 2).setText(right_label); preview.item(row, 3).setText(right_value)
+                preview.setSpan(row, 3, 1, 5)
+            headings = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价", "备注")
+            for column, heading in enumerate(headings):
+                preview.item(9, column).setText(heading)
+            total = 0.0
+            for index, item in enumerate(items):
+                row = 10 + index
+                values = _row_values(item)
+                amount = _number(values[16]); total += amount
+                remark = str(item.get("final_remark") or _scheme2_quote_remark(item))
+                data = (index + 1, values[1], values[3], values[11], "台", _money(values[15]), _money(amount), remark)
+                for column, value in enumerate(data):
+                    preview.item(row, column).setText(str(value))
+                preview.item(row, 5).setFlags(preview.item(row, 5).flags() | Qt.ItemFlag.ItemIsEditable)
+            total_row = 10 + len(items)
+            preview.item(total_row, 1).setText("合计")
+            preview.item(total_row, 6).setText(_money(total))
+        finally:
+            window._scheme2_refreshing_quote = False
     enabled = bool(getattr(window, "draft_items", []))
     for button in (
         getattr(window, "scheme2_quote_print", None),
@@ -1056,10 +1129,7 @@ def _build_quote_page(window):
     header = QHBoxLayout()
     title = QLabel("报价单")
     title.setObjectName("scheme2PageTitle")
-    hint = QLabel("预览格式与打印、导出报价单保持一致")
-    hint.setObjectName("scheme2Hint")
     header.addWidget(title)
-    header.addWidget(hint)
     header.addStretch(1)
     company_field = _inline_field("下单公司", window.scheme2_company)
     company_field.setObjectName("scheme2QuoteCompanyField")
@@ -1072,12 +1142,18 @@ def _build_quote_page(window):
     header.addWidget(print_button)
     header.addWidget(export_button)
     layout.addLayout(header)
-    preview = QTextBrowser()
+    preview = QTableWidget(0, 8)
     preview.setObjectName("scheme2QuotePreview")
-    preview.setOpenExternalLinks(False)
+    preview.horizontalHeader().hide()
+    preview.verticalHeader().hide()
+    preview.setAlternatingRowColors(False)
+    preview.setColumnWidth(0, 58); preview.setColumnWidth(1, 145); preview.setColumnWidth(2, 180)
+    preview.setColumnWidth(3, 72); preview.setColumnWidth(4, 58); preview.setColumnWidth(5, 105)
+    preview.setColumnWidth(6, 115); preview.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
     layout.addWidget(preview, 1)
     print_button.clicked.connect(lambda: _print_quote(window))
     export_button.clicked.connect(lambda: window.confirm_and_export())
+    preview.cellChanged.connect(lambda row, column: _quote_unit_price_changed(window, row, column))
     window.scheme2_quote_page = page
     window.scheme2_quote_preview = preview
     window.scheme2_quote_company_field = company_field
@@ -1814,7 +1890,7 @@ def _build_cost_page(window):
     for column in range(4, len(HEADERS)):
         table.setColumnWidth(column, 92)
     table.setColumnWidth(12, 100)
-    table.setColumnWidth(19, 88)
+    table.setColumnWidth(21, 88)
     window.summary_table = table
     body_layout.addWidget(table, 1)
     empty = QLabel("在选项配置页点击加入报价清单后，柜型会出现在这里", table.viewport())
@@ -2017,11 +2093,13 @@ def _cost_cell_changed(window, row, column):
     item = items[row]
     if column == 10:
         item["freight_fee"] = value
-    else:
+    elif column == 11:
         item["quantity"] = max(1, int(value))
         drawing_ref = getattr(window, "_draft_drawing_refs", {}).get(id(item))
         if drawing_ref and drawing_ref[0] is not None:
             drawing_ref[0]["quantity"] = item["quantity"]
+    else:
+        item["quick_discount"] = value
     window.refresh_summary()
 
 
@@ -2036,7 +2114,7 @@ def _cost_cell_clicked(window, row, column):
         FaceDiscountEditor(window, item, targets).exec()
     elif column == 12:
         AttachmentEditor(window, item).exec()
-    elif column == 19:
+    elif column == 21:
         _show_detail(window, item)
 
 
@@ -2101,7 +2179,7 @@ def _refresh_cost_table(window):
                 cell = QTableWidgetItem(text)
                 if column not in EDITABLE_COLUMNS:
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if column in (2, 12, 19):
+                if column in (2, 12, 21):
                     cell.setForeground(QColor("#185FA5"))
                     font = cell.font()
                     font.setUnderline(True)
@@ -2113,6 +2191,11 @@ def _refresh_cost_table(window):
         quantity_total = sum(max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
         quote_total = sum(_row_values(item)[16] for item in items)
         cost_total = sum(_row_values(item)[18] for item in items)
+        weight_total = sum(
+            _number(_row_values(item)[20]) * max(1, int(_number(item.get("quantity", 1), 1)))
+            for item in items
+        )
+        gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0
         for column in range(len(HEADERS)):
             if column == 0:
                 text = "汇总"
@@ -2122,6 +2205,10 @@ def _refresh_cost_table(window):
                 text = _money(quote_total)
             elif column == 18:
                 text = _money(cost_total)
+            elif column == 19:
+                text = f"{gross_margin:.2%}"
+            elif column == 20:
+                text = _money(weight_total)
             else:
                 text = "—"
             cell = QTableWidgetItem(text)
@@ -3826,6 +3913,7 @@ def _configure_option_page(window, namespace):
     order_number.setObjectName("scheme2OrderNumber")
     order_number.setPlaceholderText("请输入订单号")
     order_field = _option_field(window, "订单号", order_number)
+    _promote_option_label(order_field)
     form.addWidget(order_field)
     window.scheme2_order_number = order_number
     order_number.editingFinished.connect(lambda: _load_order_workspace(window))
@@ -4756,12 +4844,12 @@ QFrame#navPanel { background:#DCE8F7; border:1px solid #BBD0EA; border-top-left-
 QFrame#scheme2NavBrand { background:transparent; border:0; }
 QLabel#scheme2NavLogo { background:#2563EB; color:#FFFFFF; border-radius:6px; font-size:11px; font-weight:600; }
 QLabel#scheme2NavTitle { color:#1F3A6A; font-size:13px; font-weight:600; }
-QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; min-height:28px; max-height:28px; text-align:left; font-size:13px; font-weight:500; }
+QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; min-height:28px; max-height:28px; text-align:left; font-size:15px; font-weight:500; }
 QFrame#navPanel QPushButton:checked { color:#FFFFFF; background:#2563EB; }
 QPushButton#scheme2CollapseButton { color:#5A7AAB; background:transparent; border:0; padding:0; text-align:center; font-size:13px; }
 QPushButton#scheme2CollapseButton:hover { background:#E6F1FB; }
 QFrame#scheme2CostSidebar { background:#DCE8F7; border-right:1px solid #BBD0EA; }
-QFrame#scheme2CostSidebar QDoubleSpinBox { background:#FFFFFF; color:#2A3541; border:1px solid #BBD0EA; border-radius:7px; padding:3px 22px 3px 7px; min-height:20px; font-size:13px; font-weight:400; }
+QFrame#scheme2CostSidebar QDoubleSpinBox { background:#FFFFFF; color:#2A3541; border:1px solid #BBD0EA; border-radius:7px; padding:1px 22px 1px 7px; min-height:28px; font-size:13px; font-weight:400; }
 QFrame#scheme2CostSidebar QDoubleSpinBox:focus { border-color:#2563EB; }
 QFrame#scheme2CompactCoefficients { background:#DCE8F7; border:1px solid #BBD0EA; border-radius:7px; }
 QFrame#scheme2CostBody { background:#FFFFFF; }
@@ -4802,7 +4890,7 @@ QDoubleSpinBox#scheme2DiscountInput:focus { border:1px solid #2563EB; }
 QFrame#scheme2DiscountPreview { min-height:36px; color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:8px; }
 QFrame#scheme2DiscountPreview QLabel { color:#185FA5; }
 QPushButton#scheme2DiscountCancel { color:#5F5E5A; background:#FFFFFF; border:1px solid #D7DCE3; border-radius:7px; padding:0 16px; }
-QLabel#scheme2SidebarTitle { font-size:13px; font-weight:600; color:#1F3A6A; background:#FFFFFF; border:0; border-radius:7px; padding:5px 8px; }
+QLabel#scheme2SidebarTitle { font-size:13px; font-weight:600; color:#1F3A6A; background:transparent; border:0; padding:0; }
 QLabel#scheme2FieldLabel, QLabel#scheme2SidebarHint { font-size:12px; font-weight:400; color:#3F5A82; }
 QLabel#scheme2Hint { color:#2A3541; font-size:13px; }
 QLabel#scheme2CompletionPill { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:12px; padding:4px 10px; font-size:10px; }

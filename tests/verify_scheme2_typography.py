@@ -51,7 +51,7 @@ quote_page = window.stack.widget(2)
 pixel_size(quote_page.findChild(QLabel, "scheme2PageTitle"), 19)
 pixel_size(window.scheme2_company, 16)
 pixel_size(window.scheme2_quote_print, 15)
-assert "font-size:12pt" in window.scheme2_quote_preview.toHtml()
+pixel_size(window.scheme2_quote_preview, 16)
 tabular_tag = QFont.Tag.fromString("tnum")
 assert window.quote_spec_edit.font().featureValue(tabular_tag) == 1
 assert window.scheme2_cost_controls["carbon_price"].font().featureValue(tabular_tag) == 1
