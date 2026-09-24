@@ -28,6 +28,7 @@ PDF_RENDER_STEP = 1200
 PDF_MAX_RENDER_EDGE = 9600
 PDF_DETAIL_DELAY_MS = 180
 FIT_RENDER_OVERSAMPLE = 2.25
+DEFAULT_READABLE_ZOOM = 1.30
 PDF_ZOOM_OVERSAMPLE = 1.75
 CACHE_PIXEL_BUDGET = 80_000_000
 VECTOR_DETAIL_SUFFIXES = {'.pdf', '.dxf', '.dwg'}
@@ -184,6 +185,7 @@ class InkCanvas(QGraphicsView):
         self._input_device = None
         self._touch_position = None
         self.fit_mode = True
+        self.fit_zoom = DEFAULT_READABLE_ZOOM
         self.rotation_degrees = 0
         self.set_ink(False)
 
@@ -488,12 +490,19 @@ class InkCanvas(QGraphicsView):
         self.fit_mode = True
         if not self.scene().sceneRect().isEmpty():
             self.fitInView(self.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            if self.fit_zoom > 1:
+                self.scale(self.fit_zoom, self.fit_zoom)
             self.zoomed.emit(self.current_scale())
+
+    def fit_exact(self):
+        self.fit_zoom = 1.0
+        self.fit()
 
     def actual_size(self):
         if self.scene().sceneRect().isEmpty():
             return
         self.fit_mode = False
+        self.fit_zoom = 1.0
         self.resetTransform()
         self.rotate(self.rotation_degrees)
         physical_pixel_scale = 1 / max(self.viewport().devicePixelRatioF(), 1.0)
@@ -504,6 +513,7 @@ class InkCanvas(QGraphicsView):
         scale = self.current_scale() * factor
         if .02 <= scale <= 16:
             self.fit_mode = False
+            self.fit_zoom = 1.0
             self.scale(factor, factor)
             self.zoomed.emit(scale)
 
@@ -642,7 +652,7 @@ class QuoteDrawingPreview(QFrame):
         self.button('−', lambda: self.canvas.zoom(1 / 1.2), row).setAccessibleName('缩小图纸')
         self.button('+', lambda: self.canvas.zoom(1.2), row).setAccessibleName('放大图纸')
         self.button('1:1', lambda: self.canvas.actual_size(), row).setAccessibleName('图纸原始像素大小')
-        self.button('适应窗口', lambda: self.canvas.fit(), row)
+        self.button('适应窗口', lambda: self.canvas.fit_exact(), row)
         box.addLayout(row)
         ink = QHBoxLayout()
         self.pen_button = self.button('手写笔', self.toggle_pen, ink)
@@ -761,6 +771,7 @@ class QuoteDrawingPreview(QFrame):
         if identity == self.document_key:
             return
         self.canvas.finish_stroke()
+        self.canvas.fit_zoom = DEFAULT_READABLE_ZOOM
         self.document_key, self.source, self.path = identity, source, path
         self.page = self.pages.get(identity, 0)
         self.page_count = 0

@@ -4705,6 +4705,8 @@ def _install_shortcuts(window):
         if window.stack.currentIndex() != OPTION_ROUTE:
             return
         focus = window.focusWidget()
+        if focus is getattr(window, "scheme2_order_number", None):
+            return
         if isinstance(focus, (QComboBox, QAbstractSpinBox)) or isinstance(
                 focus.parentWidget() if focus is not None else None, QComboBox):
             return
