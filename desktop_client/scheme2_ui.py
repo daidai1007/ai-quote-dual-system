@@ -2447,6 +2447,14 @@ def _order_workspace_cache_dir(order_number):
     return Path(root) / "order-workspaces" / key
 
 
+def _resolve_workspace_drawing_source(order_number, source_path):
+    source = Path(str(source_path or ""))
+    if source.is_file():
+        return source
+    migrated = _order_workspace_cache_dir(order_number) / "drawings" / source.name
+    return migrated if source.name and migrated.is_file() else source
+
+
 def _save_local_order_workspace(order_number, payload):
     folder = _order_workspace_cache_dir(order_number)
     drawings = folder / "drawings"
@@ -2454,7 +2462,7 @@ def _save_local_order_workspace(order_number, payload):
     local_payload = deepcopy(payload)
     copied = {}
     for page in local_payload.get("drawing_pages") or []:
-        source = Path(str(page.get("source_path") or ""))
+        source = _resolve_workspace_drawing_source(order_number, page.get("source_path"))
         if not source.is_file():
             continue
         source_key = str(source.resolve()).casefold()
@@ -2484,7 +2492,14 @@ def _load_local_order_workspace(order_number):
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    for page in payload.get("drawing_pages") or []:
+        source = _resolve_workspace_drawing_source(order_number, page.get("source_path"))
+        if source.is_file():
+            page["source_path"] = str(source)
+            page["key"] = f"{str(source).casefold()}#page={int(page.get('page_index', 0)) + 1}"
+    return payload
 
 
 def _write_order_workspace_file(order_number, payload, destination):
@@ -2495,7 +2510,7 @@ def _write_order_workspace_file(order_number, payload, destination):
     portable = deepcopy(payload)
     drawing_sources = {}
     for page in portable.get("drawing_pages") or []:
-        source = Path(str(page.get("source_path") or ""))
+        source = _resolve_workspace_drawing_source(order_number, page.get("source_path"))
         if not source.is_file():
             continue
         source_key = str(source.resolve()).casefold()
