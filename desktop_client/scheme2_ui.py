@@ -85,8 +85,18 @@ HEADERS = (
     "附件成本", "喷涂费用", "管理费用", "运费", "成本总价",
     "毛利率", "自制件重量", "成本明细",
 )
-COST_DISPLAY_ORDER = tuple(range(len(HEADERS)))
+COST_DISPLAY_ORDER = (0, 1, 2, 3, 11, 12, 13, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21)
 COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88)
+COST_HEADER_GROUPS = (
+    ("柜体信息", 0, 3), ("数量", 4, 4), ("附件", 5, 5), ("报价结果", 6, 9),
+    ("成本数据", 10, 18), ("利润率", 19, 19), ("自制件重量", 20, 20), ("操作", 21, 21),
+)
+COST_COLUMN_BACKGROUNDS = (
+    "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#F5F6F8",
+    "#FFF7E6", "#FFF7E6", "#FFF7E6", "#FFF7E6",
+    "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD",
+    "#F5F0FA", "#ECF4F1", "#F5F6F8",
+)
 DETAIL_COLUMN_WIDTHS = (72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)
 MONEY_COLUMNS = frozenset((6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18))
 EDITABLE_COLUMNS = frozenset((4, 7, 17))
@@ -116,6 +126,56 @@ class _ClickableProgressBar(QProgressBar):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+class _GroupedCostHeader(QHeaderView):
+    """Two-tier cost header: business groups above their leaf columns."""
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setMinimumHeight(76)
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        return QSize(hint.width(), max(76, hint.height()))
+
+    def paintEvent(self, event):
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        top_height = 36
+        bottom_height = max(36, self.height() - top_height)
+        white_pen = QPen(QColor("#FFFFFF"), 1)
+        painter.setPen(white_pen)
+        painter.setFont(self.font())
+        for title, first, last in COST_HEADER_GROUPS:
+            left = self.sectionViewportPosition(first)
+            right = self.sectionViewportPosition(last) + self.sectionSize(last)
+            rect = QRect(left, 0, right - left, top_height)
+            painter.fillRect(rect, QColor("#213F70"))
+            painter.drawRect(rect.adjusted(0, 0, -1, -1))
+            painter.drawText(rect.adjusted(4, 2, -4, -2), Qt.AlignmentFlag.AlignCenter, title)
+        for section in range(self.count()):
+            left = self.sectionViewportPosition(section)
+            rect = QRect(left, top_height, self.sectionSize(section), bottom_height)
+            painter.fillRect(rect, QColor("#1F65A8"))
+            painter.drawRect(rect.adjusted(0, 0, -1, -1))
+            label = str(self.model().headerData(section, Qt.Orientation.Horizontal) or "")
+            painter.drawText(
+                rect.adjusted(4, 2, -4, -2),
+                Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+                label,
+            )
+
+
+class _CostCellDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if index.column() == 4:
+            painter.save()
+            painter.setPen(QPen(QColor("#90A8C5"), 2))
+            painter.drawLine(option.rect.topLeft(), option.rect.bottomLeft())
+            painter.drawLine(option.rect.topRight(), option.rect.bottomRight())
+            painter.restore()
 
 
 class _ExportValidationWorker(QThread):
@@ -1935,6 +1995,8 @@ def _build_cost_page(window):
     body_layout.addWidget(compact)
     table = QTableWidget(0, len(HEADERS))
     table.setObjectName("summaryTable")
+    table.setHorizontalHeader(_GroupedCostHeader(table))
+    table.setItemDelegate(_CostCellDelegate(table))
     table.setHorizontalHeaderLabels(HEADERS)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -2249,6 +2311,9 @@ def _refresh_cost_table(window):
                     cell.setFont(font)
                 if column in MONEY_COLUMNS:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
+                if column == 19:
+                    cell.setForeground(QColor("#D97706"))
                 table.setItem(row, column, cell)
         total_row = len(items)
         quantity_total = sum(max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
@@ -2279,7 +2344,9 @@ def _refresh_cost_table(window):
             font = cell.font()
             font.setBold(True)
             cell.setFont(font)
-            cell.setBackground(QColor("#F6F7F9"))
+            cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
+            if column == 19:
+                cell.setForeground(QColor("#D97706"))
             table.setItem(total_row, column, cell)
         if 0 <= selected < len(items):
             table.selectRow(selected)
@@ -3347,6 +3414,7 @@ CONTROL_BOX_ATTACHMENT_PRODUCTS = frozenset(("JA", "JE", "JK", "JM"))
 ATTACHMENT_OPTIONS = {
     "安装附件": ("固定立柱", "三排安装梁", "分段板", "绑线条"),
     "底座": ("固定底座", "活动底座"),
+    "照明灯/行程开关": LIGHT_SWITCH_OPTIONS,
     "资料盒": ("A3资料盒", "A4资料盒"),
     "风机": (
         "KA1238HA2/B(卡固)", "KA1238DC/24V(卡固)", "KA1725HA2/B(卡固)",

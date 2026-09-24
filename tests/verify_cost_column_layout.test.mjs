@@ -5,7 +5,7 @@ import test from 'node:test';
 const source = fs.readFileSync(new URL('../desktop_client/scheme2_ui.py', import.meta.url), 'utf8');
 
 test('成本计算各列按表头顺序显示', () => {
-  assert.match(source, /COST_DISPLAY_ORDER = tuple\(range\(len\(HEADERS\)\)\)/);
+  assert.match(source, /COST_DISPLAY_ORDER = \(0, 1, 2, 3, 11, 12, 13, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21\)/);
   const expected = [
     '序号', '名称', '产品', '尺寸', '数量', '已选附件', '面价', '折扣系数',
     '报价', '报价总价', '成本单价', '材料成本', '辅材成本', '人工成本',
