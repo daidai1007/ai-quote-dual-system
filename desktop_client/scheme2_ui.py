@@ -23,7 +23,7 @@ from types import MethodType
 import zipfile
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, QStandardPaths, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut, QTextDocument
+from PySide6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut, QTextDocument
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStyle,
+    QStyleOptionViewItem,
     QStyledItemDelegate,
     QStyleOptionComboBox,
     QTableWidget,
@@ -169,7 +170,21 @@ class _GroupedCostHeader(QHeaderView):
 
 class _CostCellDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
-        super().paint(painter, option, index)
+        # Paint the business-group color explicitly; QSS selection, hover and
+        # alternating-row rules must never replace it.
+        paint_option = QStyleOptionViewItem(option)
+        brush = index.data(Qt.ItemDataRole.BackgroundRole)
+        if not isinstance(brush, QBrush):
+            brush = QBrush(QColor(COST_COLUMN_BACKGROUNDS[index.column()]))
+        painter.fillRect(option.rect, brush)
+        color = brush.color()
+        paint_option.backgroundBrush = brush
+        paint_option.palette.setColor(paint_option.palette.ColorRole.Base, color)
+        paint_option.palette.setColor(paint_option.palette.ColorRole.AlternateBase, color)
+        paint_option.state &= ~QStyle.StateFlag.State_HasFocus
+        paint_option.state &= ~QStyle.StateFlag.State_MouseOver
+        paint_option.features &= ~QStyleOptionViewItem.ViewItemFeature.Alternate
+        super().paint(painter, paint_option, index)
         if index.column() == 4:
             painter.save()
             painter.setPen(QPen(QColor("#90A8C5"), 2))

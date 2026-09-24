@@ -8,6 +8,7 @@ database catalogue presentation and API interactions approved for V3.
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import logging
 import math
@@ -401,7 +402,10 @@ def _formula_template_error_is_transient(error: Exception) -> bool:
         return error.code in (408, 425, 429) or error.code >= 500
     # ssl.SSLError inherits OSError. URLError also covers DNS, connection and
     # TLS failures raised by urllib on Windows.
-    return isinstance(error, (urllib.error.URLError, TimeoutError, OSError))
+    return isinstance(
+        error,
+        (urllib.error.URLError, TimeoutError, OSError, http.client.IncompleteRead, http.client.RemoteDisconnected),
+    )
 
 
 def _formula_template_input_signature(window) -> tuple:
