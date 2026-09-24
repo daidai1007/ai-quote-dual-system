@@ -41,11 +41,17 @@ pixel_size(option_page.findChild(QLabel, "scheme2OptionLabel"), 13)
 pixel_size(window.product_combo, 14)
 
 cost_page = window.stack.widget(3)
-pixel_size(cost_page.findChild(QLabel, "scheme2PageTitle"), 17)
-pixel_size(cost_page.findChild(QLabel, "scheme2SidebarTitle"), 14)
-pixel_size(cost_page.findChild(QLabel, "scheme2FieldLabel"), 13)
-pixel_size(window.scheme2_cost_controls["carbon_price"], 14)
-pixel_size(window.summary_table, 13)
+pixel_size(cost_page.findChild(QLabel, "scheme2PageTitle"), 19)
+pixel_size(cost_page.findChild(QLabel, "scheme2SidebarTitle"), 16)
+pixel_size(cost_page.findChild(QLabel, "scheme2FieldLabel"), 15)
+pixel_size(window.scheme2_cost_controls["carbon_price"], 16)
+pixel_size(window.summary_table, 15)
+pixel_size(window._scheme2_import_button, 15)
+quote_page = window.stack.widget(2)
+pixel_size(quote_page.findChild(QLabel, "scheme2PageTitle"), 19)
+pixel_size(window.scheme2_company, 16)
+pixel_size(window.scheme2_quote_print, 15)
+assert "font-size:12pt" in window.scheme2_quote_preview.toHtml()
 tabular_tag = QFont.Tag.fromString("tnum")
 assert window.quote_spec_edit.font().featureValue(tabular_tag) == 1
 assert window.scheme2_cost_controls["carbon_price"].font().featureValue(tabular_tag) == 1
@@ -53,7 +59,7 @@ assert window.summary_table.font().featureValue(tabular_tag) == 1
 
 buttons = [window._scheme2_import_button, *window.scheme2_cost_action_buttons]
 for button in buttons:
-    pixel_size(button, 13)
+    pixel_size(button, 15)
     assert button.height() == 28, (button.text(), button.size())
 assert all(button.height() == 28 for button in window.nav_buttons)
 

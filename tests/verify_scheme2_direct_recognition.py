@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 import scheme2_ui
 
 
@@ -86,6 +86,13 @@ assert active["dimensions"] == [(1250, 2000, 400)]
 assert active["specification"] == "1250*400*2000"
 assert active["reviewed_remark"] == "JP 柜体"
 assert quote_window._quote_drawing is active
+
+state_window = type("StateWindow", (), {})()
+state_window.scheme2_add_button = QPushButton("已加入")
+state_window.scheme2_saved_status = None
+scheme2_ui._set_dirty(state_window, True)
+assert state_window.scheme2_add_button.text() == "加入报价清单"
+assert state_window.scheme2_add_button.isEnabled()
 
 export_item = {"source_reviewed_remark": "旧图纸备注"}
 scheme2_ui._synchronize_export_remark(export_item, "仿威图JP柜，SUS304，无，RAL7035，无附件。")

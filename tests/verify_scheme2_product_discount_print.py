@@ -39,7 +39,10 @@ editor.discount.setValue(0.8)
 editor.accept()
 assert js1["quick_discount"] == 0.8 and js2["quick_discount"] == 0.8
 assert "quick_discount" not in jp and window.refresh_count == 1
-assert scheme2_ui._row_values(js1)[13] == 80 and scheme2_ui._row_values(js2)[13] == 160
+row1 = scheme2_ui._row_values(js1)
+row2 = scheme2_ui._row_values(js2)
+assert row1[13] == 100 and row1[14] == 0.8 and row1[15] == 80 and row1[16] == 160
+assert row2[13] == 200 and row2[14] == 0.8 and row2[15] == 160 and row2[16] == 160
 
 quote = scheme2_ui._printable_quote_html(window)
 assert "示例&lt;&amp;公司" in quote and "JS" in quote and "JP" in quote
@@ -48,6 +51,8 @@ assert "合计：620.00 元" in quote
 source = (ROOT / "desktop_client" / "scheme2_ui.py").read_text(encoding="utf-8")
 assert 'print_button = QPushButton("打印")' in source
 assert "print_button.clicked.connect(lambda: _print_quote(window))" in source
-assert "action_buttons = (delete, up, down, back, print_button, export)" in source
+assert "action_buttons = (delete, up, down, edit, back, generate)" in source
+assert 'generate = QPushButton("生成报价单")' in source
+assert "generate.clicked.connect(lambda: window.show_section(QUOTE_ROUTE))" in source
 
 print("scheme2 product discount and print contract passed")

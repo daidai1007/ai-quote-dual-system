@@ -13,6 +13,7 @@ import html
 from pathlib import Path
 import re
 import tempfile
+import time
 from types import MethodType
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, Qt, QThread, QTimer, Signal
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
     QStyleOptionComboBox,
     QTableWidget,
     QTableWidgetItem,
+    QTextBrowser,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -57,6 +59,7 @@ from pypdf import PdfReader, PdfWriter
 
 
 OPTION_ROUTE = 1
+QUOTE_ROUTE = 2
 COST_ROUTE = 3
 DETAIL_ROUTE = 5
 NAV_EXPANDED_WIDTH = 128
@@ -66,12 +69,13 @@ DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
 STAINLESS_DEFAULT_PRICES = {"SUS304": 16.0, "SUS316": 32.4}
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
+WORKBENCH_WINDOW_TITLE = "AI 智能报价 · V0 交互工作台"
 HEADERS = (
     "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
-    "附件成本", "喷涂费用", "管理费用", "运费", "数量", "成本单价",
-    "面价", "已选附件", "成本明细",
+    "附件成本", "喷涂费用", "管理费用", "运费", "数量", "已选附件",
+    "面价", "折扣系数", "报价", "报价总价", "成本单价", "成本总价", "成本明细",
 )
-MONEY_COLUMNS = frozenset(range(4, 14))
+MONEY_COLUMNS = frozenset((*range(4, 11), 13, 15, 16, 17, 18))
 EDITABLE_COLUMNS = frozenset((10, 11))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
@@ -263,7 +267,8 @@ def _row_values(item):
     freight = max(0.0, _number(item.get("freight_fee", item.get("freight", 0))))
     formula_unit = _number(formula.get("total_cost")) + freight
     face_base = _number(quick.get("total_cost")) + freight
-    face = face_base * _number(item.get("quick_discount", 1), 1)
+    discount = _number(item.get("quick_discount", 1), 1)
+    quote = face_base * discount
     specification = str(item.get("specification") or item.get("model_code") or "—")
     name = str(item.get("name") or item.get("model_code") or "未命名")
     product = _cost_product(item)
@@ -276,8 +281,8 @@ def _row_values(item):
         _number(formula.get("attachment_fee"), _attachment_total(item)),
         _number(formula.get("spray_cost")),
         _number(formula.get("management_fee")),
-        freight, quantity, formula_unit, face,
-        f"{len(attachments)} 项 ›", "明细 ›",
+        freight, quantity, f"{len(attachments)} 项 ›", face_base, discount,
+        quote, quote * quantity, formula_unit, formula_unit * quantity, "明细 ›",
     )
 
 
@@ -525,8 +530,8 @@ class AttachmentEditor(QDialog):
     COL_NAME = 0
     COL_SPECIFICATION = 1
     COL_QUANTITY = 2
-    COL_AMOUNT = 3
-    COL_FORMULA_AMOUNT = 4
+    COL_FORMULA_AMOUNT = 3
+    COL_AMOUNT = 4
 
     def __init__(self, window, item):
         super().__init__(window)
@@ -563,7 +568,7 @@ class AttachmentEditor(QDialog):
         layout.addWidget(header)
         self.table = QTableWidget(0, 5)
         self.table.setObjectName("scheme2AttachmentEditorTable")
-        self.table.setHorizontalHeaderLabels(("名称", "尺寸 / 规格", "数量", "金额", "公式金额"))
+        self.table.setHorizontalHeaderLabels(("名称", "尺寸 / 规格", "数量", "成本", "金额"))
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -653,8 +658,26 @@ class AttachmentEditor(QDialog):
 
     def _render_amounts(self, row, source):
         pending = bool(self._pending_dimensions(source))
-        quick_amount = 0.0 if pending else _number(source.get("quick_amount"), _attachment_amount(source))
         formula_amount = 0.0 if pending else _number(source.get("formula_amount"), 0)
+        custom = bool(source.get("custom"))
+        quick_fallback = formula_amount * 1.2 if custom else _attachment_amount(source)
+        quick_amount = 0.0 if pending else _number(source.get("quick_amount"), quick_fallback)
+        if custom:
+            cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
+            if not isinstance(cost_editor, QDoubleSpinBox):
+                cost_editor = QDoubleSpinBox()
+                cost_editor.setObjectName("scheme2AttachmentEditorCost")
+                cost_editor.setRange(-999999.99, 999999.99)
+                cost_editor.setDecimals(2)
+                cost_editor.setSingleStep(1)
+                cost_editor.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+                cost_editor.setAlignment(Qt.AlignmentFlag.AlignRight)
+                self.table.setCellWidget(row, self.COL_FORMULA_AMOUNT, cost_editor)
+                cost_editor.valueChanged.connect(lambda value, target_row=row: self._custom_cost_changed(target_row, value))
+            with QSignalBlocker(cost_editor):
+                cost_editor.setValue(formula_amount)
+            cost_editor.setProperty("schemeEdited", bool(source.get("custom_cost_edited")))
+            cost_editor.setToolTip("人工填写成本；未手工改金额时，金额=成本×1.2")
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if not isinstance(amount_editor, QDoubleSpinBox):
             amount_editor = QDoubleSpinBox()
@@ -670,20 +693,21 @@ class AttachmentEditor(QDialog):
             amount_editor.setValue(quick_amount)
         amount_editor.setProperty("schemeEdited", False)
         amount_editor.setProperty("pending", pending)
-        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "修改后同时计入成本和快速报价")
+        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "金额支持人工修改")
         amount_editor.style().unpolish(amount_editor)
         amount_editor.style().polish(amount_editor)
 
-        cell = QTableWidgetItem(_money(formula_amount))
-        cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        font = cell.font()
-        font.setUnderline(True)
-        cell.setFont(font)
-        if pending:
-            cell.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
-            cell.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充")
-            cell.setBackground(QColor("#FAEEDA"))
-        self.table.setItem(row, self.COL_FORMULA_AMOUNT, cell)
+        if not custom:
+            cell = QTableWidgetItem(_money(formula_amount))
+            cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            font = cell.font()
+            font.setUnderline(True)
+            cell.setFont(font)
+            if pending:
+                cell.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
+                cell.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充")
+                cell.setBackground(QColor("#FAEEDA"))
+            self.table.setItem(row, self.COL_FORMULA_AMOUNT, cell)
         specification = self.table.item(row, self.COL_SPECIFICATION)
         if pending and specification is not None:
             specification.setText("点击补充：" + "、".join(self._pending_dimensions(source)))
@@ -697,9 +721,15 @@ class AttachmentEditor(QDialog):
         editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if editor is not None:
             editor.setProperty("schemeEdited", True)
-        formula = self.table.item(row, self.COL_FORMULA_AMOUNT)
-        if formula is not None:
-            formula.setText(_money(value))
+
+    def _custom_cost_changed(self, row, value):
+        cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
+        if isinstance(cost_editor, QDoubleSpinBox):
+            cost_editor.setProperty("schemeEdited", True)
+        amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
+        if isinstance(amount_editor, QDoubleSpinBox) and not amount_editor.property("schemeEdited"):
+            with QSignalBlocker(amount_editor):
+                amount_editor.setValue(value * 1.2)
 
     def _quantity_changed(self, row, value):
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
@@ -708,6 +738,17 @@ class AttachmentEditor(QDialog):
             return
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         previous_quantity = int(_number(source.get("quantity", 1), 1))
+        if source.get("custom"):
+            cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
+            if isinstance(cost_editor, QDoubleSpinBox):
+                previous_cost = cost_editor.value()
+                unit_cost = previous_cost / previous_quantity if previous_quantity else previous_cost
+                with QSignalBlocker(cost_editor):
+                    cost_editor.setValue(unit_cost * value)
+                if not amount_editor.property("schemeEdited"):
+                    with QSignalBlocker(amount_editor):
+                        amount_editor.setValue(unit_cost * value * 1.2)
+            return
         unit_amount = (
             _number(source.get("quick_amount"), _attachment_amount(source)) / previous_quantity
             if previous_quantity else 0
@@ -754,8 +795,10 @@ class AttachmentEditor(QDialog):
         if isinstance(amount_editor, QDoubleSpinBox):
             amount_editor.setEnabled(False)
             amount_editor.setToolTip("计算中…")
-        self.table.item(row, self.COL_FORMULA_AMOUNT).setText("计算中…")
-        self.table.item(row, self.COL_FORMULA_AMOUNT).setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
+        formula_item = self.table.item(row, self.COL_FORMULA_AMOUNT)
+        if formula_item is not None:
+            formula_item.setText("计算中…")
+            formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
         reprice = getattr(self.window, "recalculate_draft_attachment", None)
         if not callable(reprice):
             QMessageBox.warning(self, "附件计算失败", "附件数据库计算功能不可用。")
@@ -779,8 +822,10 @@ class AttachmentEditor(QDialog):
                 amount_editor.setProperty("pending", True)
             if isinstance(specification_editor, QComboBox):
                 specification_editor.setEnabled(True)
-            self.table.item(row, self.COL_FORMULA_AMOUNT).setText(_money(0))
-            self.table.item(row, self.COL_FORMULA_AMOUNT).setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
+            formula_item = self.table.item(row, self.COL_FORMULA_AMOUNT)
+            if formula_item is not None:
+                formula_item.setText(_money(0))
+                formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
             QMessageBox.warning(self, "附件计算失败", str(message))
 
         reprice(self.item, source, succeeded, failed)
@@ -811,11 +856,15 @@ class AttachmentEditor(QDialog):
             data["quantity"] = self.table.cellWidget(row, self.COL_QUANTITY).value()
             amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
             amount = _number(amount_editor.value())
-            amount_edited = bool(amount_editor.property("schemeEdited")) or not data
+            custom = bool(data.get("custom"))
+            cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
+            if custom and isinstance(cost_editor, QDoubleSpinBox):
+                data["formula_amount"] = round(cost_editor.value(), 2)
+                data["custom_cost"] = round(cost_editor.value(), 2)
+                data["custom_cost_edited"] = bool(cost_editor.property("schemeEdited"))
             data["quick_amount_override"] = round(amount, 2)
             data["quick_amount"] = round(amount, 2)
-            if amount_edited:
-                data["formula_amount"] = round(amount, 2)
+            if custom:
                 unit_price = amount / data["quantity"] if data["quantity"] else amount
                 data["unit_price_override"] = unit_price
                 data["matched_price"] = unit_price
@@ -949,22 +998,22 @@ class FaceDiscountEditor(QDialog):
         super().accept()
 
 
-def _printable_quote_html(window) -> str:
+def _printable_quote_html(window, font_step=0) -> str:
     company = html.escape(str(getattr(window, "scheme2_company", None).currentText() if getattr(window, "scheme2_company", None) is not None else ""))
     rows = []
     total = 0.0
     for index, item in enumerate(getattr(window, "draft_items", []), 1):
         values = _row_values(item)
-        amount = _number(values[13]) * max(1, int(_number(values[11], 1)))
+        amount = _number(values[16])
         total += amount
-        cells = (index, values[1], values[2], values[3], values[11], f"{_number(values[13]):,.2f}", f"{amount:,.2f}")
+        cells = (index, values[1], values[2], values[3], values[11], f"{_number(values[15]):,.2f}", f"{amount:,.2f}")
         rows.append("<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in cells) + "</tr>")
     return f"""
     <html><head><style>
-    body{{font-family:'Microsoft YaHei UI';font-size:10pt;color:#202B38}}
-    h1{{text-align:center;font-size:18pt}} table{{width:100%;border-collapse:collapse}}
+    body{{font-family:'Microsoft YaHei UI';font-size:{10 + font_step}pt;color:#202B38}}
+    h1{{text-align:center;font-size:{18 + font_step}pt}} table{{width:100%;border-collapse:collapse}}
     th,td{{border:1px solid #64748B;padding:6px;text-align:center}} th{{background:#DCE8F7}}
-    .meta{{margin-bottom:12px}} .total{{text-align:right;font-size:12pt;font-weight:600;margin-top:10px}}
+    .meta{{margin-bottom:12px}} .total{{text-align:right;font-size:{12 + font_step}pt;font-weight:600;margin-top:10px}}
     </style></head><body><h1>报价单</h1><div class="meta">下单公司：{company}</div>
     <table><tr><th>序号</th><th>名称</th><th>产品</th><th>规格</th><th>数量</th><th>面价</th><th>金额</th></tr>
     {''.join(rows)}</table><div class="total">合计：{total:,.2f} 元</div></body></html>
@@ -983,6 +1032,60 @@ def _print_quote(window):
     document = QTextDocument(window)
     document.setHtml(_printable_quote_html(window))
     document.print_(printer)
+
+
+def _refresh_quote_page(window):
+    preview = getattr(window, "scheme2_quote_preview", None)
+    if isinstance(preview, QTextBrowser):
+        preview.setHtml(_printable_quote_html(window, 2))
+    enabled = bool(getattr(window, "draft_items", []))
+    for button in (
+        getattr(window, "scheme2_quote_print", None),
+        getattr(window, "scheme2_quote_export", None),
+    ):
+        if isinstance(button, QPushButton):
+            button.setEnabled(enabled)
+
+
+def _build_quote_page(window):
+    page = QWidget()
+    page.setObjectName("scheme2QuotePage")
+    layout = QVBoxLayout(page)
+    layout.setContentsMargins(14, 12, 14, 12)
+    layout.setSpacing(10)
+    header = QHBoxLayout()
+    title = QLabel("报价单")
+    title.setObjectName("scheme2PageTitle")
+    hint = QLabel("预览格式与打印、导出报价单保持一致")
+    hint.setObjectName("scheme2Hint")
+    header.addWidget(title)
+    header.addWidget(hint)
+    header.addStretch(1)
+    company_field = _inline_field("下单公司", window.scheme2_company)
+    company_field.setObjectName("scheme2QuoteCompanyField")
+    company_field.setFixedWidth(250)
+    print_button = QPushButton("打印")
+    print_button.setObjectName("scheme2PrimaryGhost")
+    export_button = QPushButton("导出报价单")
+    export_button.setObjectName("scheme2PrimaryAction")
+    header.addWidget(company_field)
+    header.addWidget(print_button)
+    header.addWidget(export_button)
+    layout.addLayout(header)
+    preview = QTextBrowser()
+    preview.setObjectName("scheme2QuotePreview")
+    preview.setOpenExternalLinks(False)
+    layout.addWidget(preview, 1)
+    print_button.clicked.connect(lambda: _print_quote(window))
+    export_button.clicked.connect(lambda: window.confirm_and_export())
+    window.scheme2_quote_page = page
+    window.scheme2_quote_preview = preview
+    window.scheme2_quote_company_field = company_field
+    window.scheme2_quote_print = print_button
+    window.scheme2_quote_export = export_button
+    _install_export_busy_feedback(window, export_button)
+    _refresh_quote_page(window)
+    return page
 
 
 def _detail_rows(item):
@@ -1672,18 +1775,8 @@ def _build_cost_page(window):
     header = QHBoxLayout()
     title = QLabel("成本计算")
     title.setObjectName("scheme2PageTitle")
-    hint = QLabel("运费、数量可直接编辑；点击面价设置折扣")
-    hint.setObjectName("scheme2Hint")
     header.addWidget(title)
-    header.addWidget(hint)
     header.addStretch(1)
-    company_field = _inline_field("下单公司", window.scheme2_company)
-    company_field.setObjectName("scheme2CostCompanyField")
-    company_field.setFixedWidth(250)
-    header.addWidget(company_field)
-    column_mode = QPushButton("完整 16 列")
-    column_mode.setObjectName("scheme2PrimaryGhost")
-    header.addWidget(column_mode)
     body_layout.addLayout(header)
     compact = QFrame()
     compact.setObjectName("scheme2CompactCoefficients")
@@ -1718,10 +1811,10 @@ def _build_cost_page(window):
     table.setColumnWidth(1, 140)
     table.setColumnWidth(2, 90)
     table.setColumnWidth(3, 160)
-    for column in range(4, 14):
+    for column in range(4, len(HEADERS)):
         table.setColumnWidth(column, 92)
-    table.setColumnWidth(14, 100)
-    table.setColumnWidth(15, 88)
+    table.setColumnWidth(12, 100)
+    table.setColumnWidth(19, 88)
     window.summary_table = table
     body_layout.addWidget(table, 1)
     empty = QLabel("在选项配置页点击加入报价清单后，柜型会出现在这里", table.viewport())
@@ -1745,34 +1838,32 @@ def _build_cost_page(window):
     delete = QPushButton("× 删除")
     up = QPushButton("↑ 上移")
     down = QPushButton("↓ 下移")
+    edit = QPushButton("编辑")
     back = QPushButton("返回")
-    print_button = QPushButton("打印")
+    generate = QPushButton("生成报价单")
     secondary_size = delete.sizeHint()
-    for button in (delete, up, down, back, print_button):
+    for button in (delete, up, down, edit, back):
         # Reuse the option page's "导入图纸" visual role so every
         # interaction state continues to come from one shared QSS definition.
         button.setObjectName("scheme2PrimaryGhost")
         button.setFixedSize(secondary_size)
         button.setFixedHeight(28)
-    export = QPushButton("导出报价单")
-    export.setObjectName("scheme2PrimaryAction")
-    action_buttons = (delete, up, down, back, print_button, export)
-    for column, button in enumerate(action_buttons[:3]):
+    generate.setObjectName("scheme2PrimaryAction")
+    action_buttons = (delete, up, down, edit, back, generate)
+    for column, button in enumerate(action_buttons[:4]):
         actions.addWidget(button, 0, column)
-    actions.setColumnStretch(3, 1)
-    actions.addWidget(back, 0, 4)
-    actions.addWidget(print_button, 0, 5)
-    actions.addWidget(export, 0, 6)
+    actions.setColumnStretch(4, 1)
+    actions.addWidget(back, 0, 5)
+    actions.addWidget(generate, 0, 6)
     body_layout.addWidget(action_widget)
     outer.addWidget(body, 1)
     delete.clicked.connect(lambda: _delete_selected(window))
     up.clicked.connect(lambda: window.move_selected_item(-1))
     down.clicked.connect(lambda: window.move_selected_item(1))
+    edit.clicked.connect(lambda: _edit_selected(window))
     back.clicked.connect(lambda: window.show_section(OPTION_ROUTE))
-    print_button.clicked.connect(lambda: _print_quote(window))
-    export.clicked.connect(lambda: window.confirm_and_export())
+    generate.clicked.connect(lambda: window.show_section(QUOTE_ROUTE))
     undo.clicked.connect(lambda: _undo_delete(window))
-    column_mode.clicked.connect(lambda: _set_cost_column_mode(window, not window._scheme2_full_columns))
     compact_key.currentIndexChanged.connect(lambda: _sync_compact_control(window))
     compact_value.editingFinished.connect(lambda: _apply_compact_control(window))
     table.cellChanged.connect(lambda row, column: _cost_cell_changed(window, row, column))
@@ -1780,14 +1871,11 @@ def _build_cost_page(window):
     table.itemSelectionChanged.connect(lambda: _sync_sidebar(window))
     window.scheme2_cost_page = page
     window.scheme2_cost_sidebar = page.findChild(QFrame, "scheme2CostSidebar")
-    window.scheme2_cost_company_field = company_field
     window.scheme2_compact_coefficients = compact
     window.scheme2_compact_key = compact_key
     window.scheme2_compact_value = compact_value
     window.scheme2_cost_empty = empty
-    window.scheme2_cost_export = export
-    window.scheme2_cost_print = print_button
-    _install_export_busy_feedback(window, export)
+    window.scheme2_cost_generate = generate
     window.scheme2_cost_return = back
     window.scheme2_cost_undo = undo_bar
     window.scheme2_undo_timer = QTimer(window)
@@ -1795,9 +1883,9 @@ def _build_cost_page(window):
     window.scheme2_undo_timer.timeout.connect(undo_bar.hide)
     window.scheme2_cost_action_grid = actions
     window.scheme2_cost_action_buttons = action_buttons
-    window._scheme2_full_columns = False
+    window._scheme2_full_columns = True
     window._scheme2_deleted = None
-    _set_cost_column_mode(window, False)
+    _set_cost_column_mode(window, True)
     return page
 
 
@@ -1819,14 +1907,10 @@ def _install_export_busy_feedback(window, export_button):
 
 
 def _set_cost_column_mode(window, full):
-    window._scheme2_full_columns = bool(full)
-    core = {0, 1, 2, 3, 10, 11, 12, 13, 14, 15}
+    """Keep all cost columns visible; retained for compatibility with older callers."""
+    window._scheme2_full_columns = True
     for column in range(len(HEADERS)):
-        window.summary_table.setColumnHidden(column, not full and column not in core)
-    buttons = window.scheme2_cost_page.findChildren(QPushButton) if hasattr(window, "scheme2_cost_page") else []
-    toggle = next((button for button in buttons if button.text() in ("完整 16 列", "核心 10 列")), None)
-    if toggle is not None:
-        toggle.setText("核心 10 列" if full else "完整 16 列")
+        window.summary_table.setColumnHidden(column, False)
 
 
 def _sync_compact_control(window):
@@ -1891,17 +1975,15 @@ def _layout_cost_actions(window, compact):
     while grid.count():
         grid.takeAt(0)
     if compact:
-        for column, button in enumerate(buttons[:3]):
+        for column, button in enumerate(buttons[:4]):
             grid.addWidget(button, 0, column)
-        grid.addWidget(buttons[3], 1, 0)
-        grid.addWidget(buttons[4], 1, 1)
-        grid.addWidget(buttons[5], 1, 2)
+        grid.addWidget(buttons[4], 1, 0)
+        grid.addWidget(buttons[5], 1, 1)
         grid.setColumnStretch(1, 1)
     else:
-        for column, button in enumerate(buttons[:3]):
+        for column, button in enumerate(buttons[:4]):
             grid.addWidget(button, 0, column)
-        grid.setColumnStretch(3, 1)
-        grid.addWidget(buttons[3], 0, 4)
+        grid.setColumnStretch(4, 1)
         grid.addWidget(buttons[4], 0, 5)
         grid.addWidget(buttons[5], 0, 6)
 
@@ -1952,11 +2034,9 @@ def _cost_cell_clicked(window, row, column):
         product = _cost_product(item)
         targets = [candidate for candidate in items if _cost_product(candidate) == product]
         FaceDiscountEditor(window, item, targets).exec()
-    elif column == 13:
-        FaceDiscountEditor(window, item).exec()
-    elif column == 14:
+    elif column == 12:
         AttachmentEditor(window, item).exec()
-    elif column == 15:
+    elif column == 19:
         _show_detail(window, item)
 
 
@@ -2002,13 +2082,13 @@ def _refresh_cost_table(window):
     window._scheme2_refreshing = True
     try:
         empty = getattr(window, "scheme2_cost_empty", None)
-        export = getattr(window, "scheme2_cost_export", None)
+        generate = getattr(window, "scheme2_cost_generate", None)
         if empty is not None:
             empty.setGeometry(table.viewport().rect())
             empty.setVisible(not items)
             empty.raise_()
-        if export is not None:
-            export.setEnabled(bool(items))
+        if generate is not None:
+            generate.setEnabled(bool(items))
         if not items:
             table.setRowCount(0)
             return
@@ -2021,7 +2101,7 @@ def _refresh_cost_table(window):
                 cell = QTableWidgetItem(text)
                 if column not in EDITABLE_COLUMNS:
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if column in (13, 14, 15):
+                if column in (2, 12, 19):
                     cell.setForeground(QColor("#185FA5"))
                     font = cell.font()
                     font.setUnderline(True)
@@ -2031,17 +2111,17 @@ def _refresh_cost_table(window):
                 table.setItem(row, column, cell)
         total_row = len(items)
         quantity_total = sum(max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
-        cost_total = sum(_row_values(item)[12] * max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
-        face_total = sum(_row_values(item)[13] * max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
+        quote_total = sum(_row_values(item)[16] for item in items)
+        cost_total = sum(_row_values(item)[18] for item in items)
         for column in range(len(HEADERS)):
             if column == 0:
                 text = "汇总"
             elif column == 11:
                 text = str(quantity_total)
-            elif column == 12:
+            elif column == 16:
+                text = _money(quote_total)
+            elif column == 18:
                 text = _money(cost_total)
-            elif column == 13:
-                text = _money(face_total)
             else:
                 text = "—"
             cell = QTableWidgetItem(text)
@@ -2066,6 +2146,7 @@ def _configure_navigation(window):
     nav = _find_nav(window)
     window.scheme2_nav = nav
     wanted = {}
+    spare = []
     for button in list(getattr(window, "nav_buttons", [])):
         text = button.text().replace("&", "").strip()
         if text == "报价计算":
@@ -2074,11 +2155,13 @@ def _configure_navigation(window):
             wanted[COST_ROUTE] = button
         else:
             button.hide()
+            spare.append(button)
     if OPTION_ROUTE not in wanted or COST_ROUTE not in wanted:
         visible = [button for button in getattr(window, "nav_buttons", []) if isinstance(button, QPushButton)]
         wanted.setdefault(OPTION_ROUTE, visible[0])
         wanted.setdefault(COST_ROUTE, visible[-1])
-    labels = {OPTION_ROUTE: "选项配置", COST_ROUTE: "成本计算"}
+    wanted[QUOTE_ROUTE] = spare[0] if spare else QPushButton(nav)
+    labels = {OPTION_ROUTE: "选项配置", COST_ROUTE: "成本计算", QUOTE_ROUTE: "报价单"}
     for route, button in wanted.items():
         button.show()
         button.setText(labels[route])
@@ -2089,8 +2172,12 @@ def _configure_navigation(window):
         except RuntimeError:
             pass
         button.clicked.connect(lambda _checked=False, value=route: window.show_section(value))
-    window.nav_buttons = [wanted[OPTION_ROUTE], wanted[COST_ROUTE]]
-    window.nav_routes = ((OPTION_ROUTE, "选项配置", "", None), (COST_ROUTE, "成本计算", "", None))
+    window.nav_buttons = [wanted[OPTION_ROUTE], wanted[COST_ROUTE], wanted[QUOTE_ROUTE]]
+    window.nav_routes = (
+        (OPTION_ROUTE, "选项配置", "", None),
+        (COST_ROUTE, "成本计算", "", None),
+        (QUOTE_ROUTE, "报价单", "", None),
+    )
     if nav is not None:
         nav.setFixedWidth(NAV_EXPANDED_WIDTH)
         nav.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -2125,6 +2212,7 @@ def _configure_navigation(window):
         nav_layout.addWidget(nav_brand)
         nav_layout.addWidget(wanted[OPTION_ROUTE])
         nav_layout.addWidget(wanted[COST_ROUTE])
+        nav_layout.addWidget(wanted[QUOTE_ROUTE])
         nav_layout.addStretch(1)
         nav_layout.addWidget(collapse, 0, Qt.AlignmentFlag.AlignLeft)
     expand = QPushButton("»", window)
@@ -2203,6 +2291,100 @@ def _option_field(window, title, control, provenance=None):
     block._scheme2_label = label
     block._scheme2_shell = shell
     return block
+
+
+def _promote_option_label(field):
+    """Use the same typography as the 门型 section heading."""
+
+    label = getattr(field, "_scheme2_label", None)
+    if isinstance(label, QLabel):
+        label.setObjectName("scheme2OptionGroupTitle")
+
+
+def _json_order_value(value):
+    if isinstance(value, set):
+        return sorted(value)
+    if isinstance(value, dict):
+        return {str(key): _json_order_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_order_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _order_workspace_payload(window):
+    _save_current_scheme2_page(window)
+    pages = []
+    for page in getattr(window, "_scheme2_drawing_pages", []):
+        if isinstance(page, dict):
+            pages.append({key: deepcopy(value) for key, value in page.items() if key not in {"item", "pixmap"}})
+    return _json_order_value({
+        "option_state": _capture_scheme2_page_state(window),
+        "drawing_pages": pages,
+        "drawing_page_index": int(getattr(window, "_scheme2_drawing_page_index", -1)),
+        "draft_items": deepcopy(getattr(window, "draft_items", [])),
+        "company": window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else "",
+    })
+
+
+def _save_order_workspace(window):
+    order_number = window.scheme2_order_number.text().strip()
+    if not order_number or getattr(window, "_scheme2_loading_order", False):
+        return
+    worker_class = getattr(window, "_scheme2_api_worker_class", None)
+    if worker_class is None:
+        return
+    worker = worker_class(window.base_url() + "/api/orders/workspace/save", {
+        "order_number": order_number, "payload": _order_workspace_payload(window),
+    }, window)
+    window._scheme2_order_save_worker = worker
+    worker.succeeded.connect(lambda _result: setattr(window, "_scheme2_order_save_worker", None))
+    worker.failed.connect(lambda _message: setattr(window, "_scheme2_order_save_worker", None))
+    worker.start()
+
+
+def _schedule_order_workspace_save(window):
+    timer = getattr(window, "_scheme2_order_save_timer", None)
+    if isinstance(timer, QTimer) and window.scheme2_order_number.text().strip():
+        timer.start()
+
+
+def _load_order_workspace(window):
+    order_number = window.scheme2_order_number.text().strip()
+    if not order_number:
+        return
+    worker_class = getattr(window, "_scheme2_api_worker_class", None)
+    if worker_class is None:
+        return
+    worker = worker_class(window.base_url() + "/api/orders/workspace/load", {"order_number": order_number}, window)
+    window._scheme2_order_load_worker = worker
+
+    def loaded(result):
+        window._scheme2_order_load_worker = None
+        payload = result.get("payload") if isinstance(result, dict) else None
+        if not isinstance(payload, dict):
+            return
+        window._scheme2_loading_order = True
+        try:
+            window.draft_items = deepcopy(payload.get("draft_items") or [])
+            pages = deepcopy(payload.get("drawing_pages") or [])
+            if pages:
+                window._scheme2_drawing_pages = pages
+                window._scheme2_drawing_page_index = int(payload.get("drawing_page_index", -1))
+            _restore_scheme2_page_state(window, payload.get("option_state") or {})
+            company = str(payload.get("company") or "").strip()
+            if company:
+                window.scheme2_company.setCurrentText(company)
+            window.refresh_summary()
+            _refresh_quote_page(window)
+            _set_dirty(window, False)
+        finally:
+            window._scheme2_loading_order = False
+
+    worker.succeeded.connect(loaded)
+    worker.failed.connect(lambda _message: setattr(window, "_scheme2_order_load_worker", None))
+    worker.start()
 
 
 def _scheme2_combo_state(combo):
@@ -2291,33 +2473,66 @@ def _scheme2_page_entry(window, key):
 def _save_current_scheme2_page(window):
     pages = getattr(window, "_scheme2_drawing_pages", [])
     index = int(getattr(window, "_scheme2_drawing_page_index", -1))
-    if 0 <= index < len(pages) and pages[index].get("item") is not None:
+    if (
+        0 <= index < len(pages)
+        and pages[index].get("visited")
+        and (pages[index].get("item") is not None or getattr(window, "_scheme2_dirty", False))
+    ):
         pages[index]["state"] = _capture_scheme2_page_state(window)
+
+
+def _sync_scheme2_add_action(window, quoted):
+    add_button = getattr(window, "scheme2_add_button", None)
+    if isinstance(add_button, QPushButton):
+        add_button.setText("已加入" if quoted else "加入报价清单")
+        add_button.setEnabled(True)
+
+
+def _sync_scheme2_quoted_badge(window):
+    badge = getattr(window, "scheme2_quoted_badge", None)
+    if not isinstance(badge, QLabel):
+        return
+    pages = getattr(window, "_scheme2_drawing_pages", [])
+    index = int(getattr(window, "_scheme2_drawing_page_index", -1))
+    quoted = 0 <= index < len(pages) and bool(pages[index].get("quoted"))
+    badge.setVisible(quoted)
+    _sync_scheme2_add_action(window, quoted)
 
 
 def _sync_scheme2_page_navigation(window):
     pages = getattr(window, "_scheme2_drawing_pages", [])
     index = int(getattr(window, "_scheme2_drawing_page_index", -1))
-    busy = bool(getattr(window, "_scheme2_page_worker", None))
     preview = getattr(window, "quote_drawing_preview", None)
     if preview is not None:
-        preview.previous.setEnabled(not busy and index > 0)
-        preview.next.setEnabled(not busy and 0 <= index < len(pages) - 1)
+        preview.previous.setEnabled(index > 0)
+        preview.next.setEnabled(0 <= index < len(pages) - 1)
         preview.counter.setText(f"{index + 1} / {len(pages)}" if 0 <= index < len(pages) else "0 / 0")
+    selector = getattr(window, "scheme2_page_selector", None)
+    if isinstance(selector, QSpinBox):
+        with QSignalBlocker(selector):
+            selector.setRange(1 if pages else 0, len(pages))
+            selector.setValue(index + 1 if 0 <= index < len(pages) else 0)
+        selector.setEnabled(bool(pages))
     button = getattr(window, "_scheme2_import_button", None)
     if isinstance(button, QPushButton):
-        button.setEnabled(not busy)
+        button.setEnabled(True)
     completion = getattr(window, "scheme2_completion", None)
     if isinstance(completion, QLabel) and pages:
         recognized = sum(1 for entry in pages if entry.get("item") is not None)
         completion.setText(f"已识别 {recognized} / {len(pages)}")
     status = getattr(window, "scheme2_recognition_status", None)
-    if (
-        isinstance(status, QLabel)
-        and 0 <= index < len(pages)
-        and pages[index].get("item") is not None
-    ):
-        status.setText(f"已识别第 {index + 1} 页：尺寸 / 材质 / 表面处理 / 颜色")
+    if isinstance(status, QLabel) and pages:
+        recognized = sum(1 for entry in pages if entry.get("item") is not None)
+        failed = sum(1 for entry in pages if entry.get("error"))
+        active_key = getattr(window, "_scheme2_recognition_key", None)
+        active_index = next((i for i, entry in enumerate(pages) if entry["key"] == active_key), -1)
+        if active_index >= 0:
+            status.setText(f"图片识别进度：{recognized} / {len(pages)}，后台正在识别第 {active_index + 1} 页")
+        elif recognized + failed >= len(pages):
+            status.setText(f"图片识别完成：{recognized} / {len(pages)}")
+        else:
+            status.setText(f"图片识别进度：{recognized} / {len(pages)}")
+    _sync_scheme2_quoted_badge(window)
 
 
 def _show_scheme2_source_page(window, entry):
@@ -2364,16 +2579,18 @@ def _finish_scheme2_page_recognition(window, key, item):
     window.recognized_drawings = retained + candidates
     pages = getattr(window, "_scheme2_drawing_pages", [])
     index = int(getattr(window, "_scheme2_drawing_page_index", -1))
-    if 0 <= index < len(pages) and pages[index]["key"] == key:
+    if (
+        0 <= index < len(pages)
+        and pages[index]["key"] == key
+        and entry.get("state") is None
+        and not getattr(window, "_scheme2_dirty", False)
+    ):
         window.active_drawing = entry["item"]
         window._quote_drawing = entry["item"]
         window.scheme2_manual_fields.clear()
         window._apply_confirmed_drawing_to_quote(entry["item"])
         entry["state"] = _capture_scheme2_page_state(window)
         _set_dirty(window, False)
-        window.scheme2_recognition_status.setText(
-            f"已识别第 {entry['page_index'] + 1} 页：尺寸 / 材质 / 表面处理 / 颜色"
-        )
     _sync_scheme2_page_navigation(window)
 
 
@@ -2439,41 +2656,56 @@ def _fail_scheme2_page_recognition(window, key, message):
     entry = _scheme2_page_entry(window, key)
     if entry is not None:
         entry["error"] = str(message)
-    status = getattr(window, "scheme2_recognition_status", None)
-    if isinstance(status, QLabel):
-        status.setText(f"当前页识别失败：{message}")
     _sync_scheme2_page_navigation(window)
 
 
 def _recognize_scheme2_page(window, entry):
     if entry.get("item") is not None or getattr(window, "_scheme2_page_worker", None) is not None:
         return
-    status = getattr(window, "scheme2_recognition_status", None)
-    if isinstance(status, QLabel):
-        status.setText(f"正在识别第 {entry['page_index'] + 1} / {entry['page_count']} 页…")
     worker = _Scheme2PageRecognitionWorker(window._scheme2_recognition_tools, entry, window)
     window._scheme2_page_worker = worker
+    window._scheme2_recognition_key = entry["key"]
     worker.succeeded.connect(lambda key, item: _finish_scheme2_page_recognition(window, key, item))
     worker.failed.connect(lambda key, message: _fail_scheme2_page_recognition(window, key, message))
 
     def finished():
         if getattr(window, "_scheme2_page_worker", None) is worker:
             window._scheme2_page_worker = None
+            window._scheme2_recognition_key = None
         worker.deleteLater()
         _sync_scheme2_page_navigation(window)
+        QTimer.singleShot(0, lambda: _start_next_scheme2_recognition(window))
 
     worker.finished.connect(finished)
     _sync_scheme2_page_navigation(window)
     worker.start()
 
 
+def _start_next_scheme2_recognition(window):
+    if getattr(window, "_scheme2_page_worker", None) is not None:
+        return
+    entry = next(
+        (
+            candidate for candidate in getattr(window, "_scheme2_drawing_pages", [])
+            if candidate.get("item") is None and not candidate.get("error")
+        ),
+        None,
+    )
+    if entry is not None:
+        _recognize_scheme2_page(window, entry)
+    else:
+        _sync_scheme2_page_navigation(window)
+
+
 def _activate_scheme2_page(window, index):
     pages = getattr(window, "_scheme2_drawing_pages", [])
-    if getattr(window, "_scheme2_page_worker", None) is not None or not 0 <= index < len(pages):
+    if not 0 <= index < len(pages):
         return
+    _restore_add_action(window)
     _save_current_scheme2_page(window)
     window._scheme2_drawing_page_index = index
     entry = pages[index]
+    entry["visited"] = True
     _show_scheme2_source_page(window, entry)
     if entry.get("state") is not None:
         window.active_drawing = entry.get("item")
@@ -2482,10 +2714,13 @@ def _activate_scheme2_page(window, index):
         window.scheme2_recognition_status.setText(
             f"已恢复第 {entry['page_index'] + 1} 页的选项配置"
         )
-    else:
+    elif entry.get("item") is not None:
         window.scheme2_manual_fields.clear()
+        window.active_drawing = entry["item"]
+        window._quote_drawing = entry["item"]
+        window._apply_confirmed_drawing_to_quote(entry["item"])
+        entry["state"] = _capture_scheme2_page_state(window)
         _set_dirty(window, False)
-        _recognize_scheme2_page(window, entry)
     _sync_scheme2_page_navigation(window)
 
 
@@ -2505,6 +2740,7 @@ def _import_scheme2_drawings(window, paths=None):
     if not accepted:
         return
     pages = getattr(window, "_scheme2_drawing_pages", [])
+    had_pages = bool(pages)
     known = {entry["key"] for entry in pages}
     first_new = len(pages)
     for raw_path in accepted:
@@ -2535,10 +2771,11 @@ def _import_scheme2_drawings(window, paths=None):
             })
             known.add(key)
     window._scheme2_drawing_pages = pages
-    if len(pages) > first_new:
+    if len(pages) > first_new and not had_pages:
         _activate_scheme2_page(window, first_new)
     else:
         _sync_scheme2_page_navigation(window)
+    _start_next_scheme2_recognition(window)
 
 
 def _scheme2_group_title(text):
@@ -2997,6 +3234,7 @@ class _SchemeAttachmentDialog(QDialog):
         self.category_checks = {}
         self.category_combos = {}
         self.direct_checks = {}
+        self.custom_rows = [dict(item) for item in selected if isinstance(item, dict) and item.get("custom")]
         selected_pairs = set()
         legacy_selected_names = set()
         for item in selected:
@@ -3106,6 +3344,55 @@ class _SchemeAttachmentDialog(QDialog):
                 card_layout.addWidget(category_check)
                 card_layout.addWidget(combo)
             cards.addWidget(card)
+        custom_card = QFrame()
+        custom_card.setObjectName("scheme2CustomAttachmentCard")
+        custom_layout = QHBoxLayout(custom_card)
+        custom_layout.setContentsMargins(10, 7, 10, 7)
+        custom_toggle = QPushButton("＋ 新增附件")
+        custom_toggle.setObjectName("scheme2AddAttachment")
+        custom_name = QLineEdit()
+        custom_name.setObjectName("scheme2CustomAttachmentName")
+        custom_name.setPlaceholderText("请输入附件名称")
+        custom_add = QPushButton("添加")
+        custom_add.setObjectName("scheme2CustomAttachmentConfirm")
+        custom_cancel = QPushButton("取消")
+        custom_cancel.setObjectName("scheme2CustomAttachmentCancel")
+        for widget in (custom_name, custom_add, custom_cancel):
+            widget.hide()
+        custom_layout.addWidget(custom_toggle)
+        custom_layout.addWidget(custom_name, 1)
+        custom_layout.addWidget(custom_add)
+        custom_layout.addWidget(custom_cancel)
+
+        def show_custom_input():
+            custom_toggle.hide()
+            for widget in (custom_name, custom_add, custom_cancel):
+                widget.show()
+            custom_name.setFocus()
+
+        def cancel_custom_input():
+            custom_name.clear()
+            for widget in (custom_name, custom_add, custom_cancel):
+                widget.hide()
+            custom_toggle.show()
+
+        def add_custom():
+            name = custom_name.text().strip()
+            if not name:
+                return
+            self.custom_rows.append({
+                "item_name": name, "name": name, "category_level1": "其他附件",
+                "attachment_category": "其他附件", "quantity": 1,
+                "matched_price": 0, "formula_amount": 0, "custom": True,
+            })
+            custom_toggle.setText(f"＋ 新增附件（已新增 {len(self.custom_rows)} 项）")
+            cancel_custom_input()
+
+        custom_toggle.clicked.connect(show_custom_input)
+        custom_add.clicked.connect(add_custom)
+        custom_cancel.clicked.connect(cancel_custom_input)
+        custom_name.returnPressed.connect(add_custom)
+        cards.addWidget(custom_card)
         cards.addStretch(1)
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
@@ -3145,6 +3432,7 @@ class _SchemeAttachmentDialog(QDialog):
                     "attachment_category": category,
                     "quantity": 1,
                 })
+        selected.extend(dict(item) for item in self.custom_rows)
         return selected
 
 
@@ -3363,6 +3651,7 @@ def _open_legacy_attachment_overlay(window, dialog_class, anchor):
         if callable(refresh):
             refresh()
         window._scheme2_attachments_manual = True
+        _set_dirty(window, True)
         _refresh_scheme2_attachment_summary(window)
         window._scheme2_attachment_overlay = None
         dialog.deleteLater()
@@ -3407,6 +3696,7 @@ def _open_attachment_overlay(window, _dialog_class, anchor):
         if callable(refresh):
             refresh()
         window._scheme2_attachments_manual = True
+        _set_dirty(window, True)
         _refresh_scheme2_attachment_summary(window)
         window._scheme2_attachment_overlay = None
         dialog.deleteLater()
@@ -3532,6 +3822,14 @@ def _configure_option_page(window, namespace):
     window.scheme2_provenance_labels = {}
     window.scheme2_manual_fields = set()
 
+    order_number = QLineEdit()
+    order_number.setObjectName("scheme2OrderNumber")
+    order_number.setPlaceholderText("请输入订单号")
+    order_field = _option_field(window, "订单号", order_number)
+    form.addWidget(order_field)
+    window.scheme2_order_number = order_number
+    order_number.editingFinished.connect(lambda: _load_order_workspace(window))
+
     name_edit = QLineEdit()
     name_edit.setObjectName("scheme2NameInput")
     name_edit.setPlaceholderText("名称（默认取图纸文件名，可修改）")
@@ -3547,6 +3845,7 @@ def _configure_option_page(window, namespace):
         ), -1)
         product.setProperty("schemePlaceholderIndex", placeholder_index)
         product_field = _option_field(window, "产品", product)
+        _promote_option_label(product_field)
         _style_scheme_dropdown(product, product_field)
         _refresh_product_placeholder(product)
         product.currentIndexChanged.connect(lambda *_: _refresh_product_placeholder(product))
@@ -3571,7 +3870,9 @@ def _configure_option_page(window, namespace):
     window.scheme2_ganged_dimensions = ganged_dimensions
     quantity = _detach(getattr(window, "quantity_spin", None))
     if quantity is not None:
-        form.addWidget(_option_field(window, "数量", quantity))
+        quantity_field = _option_field(window, "数量", quantity)
+        _promote_option_label(quantity_field)
+        form.addWidget(quantity_field)
 
     form.addWidget(_scheme2_group_title("材质 / 表面处理 / 颜色"))
     material = _detach(getattr(window, "material_combo", None))
@@ -3656,7 +3957,9 @@ def _configure_option_page(window, namespace):
     form.addWidget(color_field)
     thickness = _detach(getattr(window, "cabinet_body_thickness_spin", None))
     if thickness is not None:
-        form.addWidget(_option_field(window, "箱体料厚", thickness))
+        thickness_field = _option_field(window, "箱体料厚", thickness)
+        _promote_option_label(thickness_field)
+        form.addWidget(thickness_field)
 
     form.addWidget(_scheme2_group_title("门型"))
     door_host = QFrame()
@@ -3688,7 +3991,9 @@ def _configure_option_page(window, namespace):
     attachment_layout.setContentsMargins(10, 9, 10, 10)
     attachment_layout.setSpacing(6)
     attachment_header = QHBoxLayout()
-    attachment_header.addWidget(QLabel("附件"))
+    attachment_title = QLabel("附件")
+    attachment_title.setObjectName("scheme2OptionGroupTitle")
+    attachment_header.addWidget(attachment_title)
     attachment_header.addStretch(1)
     attachment_status = QLabel()
     attachment_status.setObjectName("scheme2AttachmentStatus")
@@ -3746,6 +4051,16 @@ def _configure_option_page(window, namespace):
     right_layout.setSpacing(0)
     counter = QLabel("已识别 0 / 0")
     counter.setObjectName("scheme2CompletionPill")
+    page_selector = QSpinBox()
+    page_selector.setObjectName("scheme2PageSelector")
+    page_selector.setPrefix("第 ")
+    page_selector.setSuffix(" 页")
+    page_selector.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
+    page_selector.setFixedWidth(82)
+    page_selector.setEnabled(False)
+    quoted_badge = QLabel("已报价")
+    quoted_badge.setObjectName("scheme2QuotedBadge")
+    quoted_badge.hide()
     if right is not None:
         _detach(right)
         for label in right.findChildren(QLabel):
@@ -3758,6 +4073,8 @@ def _configure_option_page(window, namespace):
         if canvas is not None:
             canvas.setObjectName("scheme2DrawingCanvas")
         right.navigation_layout.insertWidget(3, counter)
+        right.navigation_layout.insertWidget(4, page_selector)
+        right.navigation_layout.addWidget(quoted_badge)
         right.message.hide()
         right_layout.addWidget(right, 1)
         right.show()
@@ -3812,6 +4129,11 @@ def _configure_option_page(window, namespace):
             pass
         right.previous.clicked.connect(lambda: _change_scheme2_page(window, -1))
         right.next.clicked.connect(lambda: _change_scheme2_page(window, 1))
+        page_selector.valueChanged.connect(
+            lambda value: _activate_scheme2_page(window, value - 1)
+            if value > 0 and value - 1 != getattr(window, "_scheme2_drawing_page_index", -1)
+            else None
+        )
         original_update_tools = right.update_tools
 
         def update_page_tools(preview):
@@ -3822,6 +4144,8 @@ def _configure_option_page(window, namespace):
         window._scheme2_import_button = manage
         window.scheme2_recognition_status = status
         window.scheme2_completion = counter
+        window.scheme2_page_selector = page_selector
+        window.scheme2_quoted_badge = quoted_badge
         window.scheme2_add_button = add
         window.scheme2_add_progress = progress
         _sync_scheme2_page_navigation(window)
@@ -3919,6 +4243,10 @@ def _monitor_formula_calculation(window):
 def _calculate_and_add(window):
     if getattr(window, "quote_calculation_in_progress", False):
         return
+    window._scheme2_add_started_at = time.monotonic()
+    elapsed_timer = getattr(window, "_scheme2_add_elapsed_timer", None)
+    if isinstance(elapsed_timer, QTimer):
+        elapsed_timer.start()
     pending_attachments = [
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and item.get("attachment_price_id") is None
@@ -3951,13 +4279,26 @@ def _calculate_and_add(window):
     calculate_quote()
 
 
+def _refresh_add_progress_display(window):
+    progress = getattr(window, "scheme2_add_progress", None)
+    if progress is None:
+        return
+    step = int(progress.property("step") or 0)
+    label = str(progress.property("stepLabel") or "")
+    started = getattr(window, "_scheme2_add_started_at", None)
+    elapsed = max(0.0, time.monotonic() - started) if started is not None else 0.0
+    progress.setFormat(f"{step}/5 {label} · {elapsed:.1f}秒")
+
+
 def _set_add_progress(window, step, label, failed=False):
     progress = getattr(window, "scheme2_add_progress", None)
     if progress is None:
         return
     progress.show()
     progress.setValue(step)
-    progress.setFormat(f"{step}/5 {label}")
+    progress.setProperty("step", int(step))
+    progress.setProperty("stepLabel", str(label))
+    _refresh_add_progress_display(window)
     progress.setProperty("failed", failed)
     progress.setProperty("failureReason", str(label).removeprefix("失败：").strip() if failed else "")
     progress.setToolTip("点击查看完整失败原因" if failed else "")
@@ -3965,6 +4306,10 @@ def _set_add_progress(window, step, label, failed=False):
     progress.setFocusPolicy(Qt.FocusPolicy.StrongFocus if failed else Qt.FocusPolicy.NoFocus)
     progress.style().unpolish(progress)
     progress.style().polish(progress)
+    if failed:
+        timer = getattr(window, "_scheme2_add_elapsed_timer", None)
+        if isinstance(timer, QTimer):
+            timer.stop()
 
 
 def _show_add_failure_reason(window):
@@ -3976,16 +4321,21 @@ def _show_add_failure_reason(window):
 
 def _set_dirty(window, dirty=True):
     window._scheme2_dirty = bool(dirty)
-    add_button = getattr(window, "scheme2_add_button", None)
-    if dirty and isinstance(add_button, QPushButton) and add_button.text() == "已加入":
-        add_button.setText("加入报价清单")
-        add_button.setEnabled(True)
+    if dirty:
+        _restore_add_action(window)
     label = getattr(window, "scheme2_saved_status", None)
     if label is not None:
         label.setText("有未保存变更" if dirty else "快照已保存")
         label.setProperty("dirty", bool(dirty))
         label.style().unpolish(label)
         label.style().polish(label)
+
+
+def _restore_add_action(window):
+    add_button = getattr(window, "scheme2_add_button", None)
+    if isinstance(add_button, QPushButton) and add_button.text() == "已加入":
+        add_button.setText("加入报价清单")
+        add_button.setEnabled(True)
 
 
 def _scheme2_quote_remark(item):
@@ -4044,6 +4394,7 @@ def _finish_add(window):
     page_index = int(getattr(window, "_scheme2_drawing_page_index", -1))
     if 0 <= page_index < len(pages):
         page = pages[page_index]
+        page["quoted"] = True
         item["source_path"] = page["source_path"]
         item["source_page_index"] = int(page["page_index"])
         item["source_page_number"] = int(page["page_index"]) + 1
@@ -4062,10 +4413,14 @@ def _finish_add(window):
     window._scheme2_clear_attachments_on_return = True
     _clear_scheme2_attachments(window)
     _set_add_progress(window, 5, "已完成")
+    timer = getattr(window, "_scheme2_add_elapsed_timer", None)
+    if isinstance(timer, QTimer):
+        timer.stop()
     window.scheme2_add_button.setText("已加入")
     _set_dirty(window, False)
     window.refresh_summary()
-    window.show_section(COST_ROUTE)
+    _sync_scheme2_quoted_badge(window)
+    _refresh_quote_page(window)
     target_row = editing_index if editing_index is not None else len(window.draft_items) - 1
     if target_row >= 0:
         window.summary_table.selectRow(target_row)
@@ -4149,6 +4504,7 @@ def _install_shortcuts(window):
 
     bind("Ctrl+1", lambda: window.show_section(OPTION_ROUTE))
     bind("Ctrl+2", lambda: window.show_section(COST_ROUTE))
+    bind("Ctrl+3", lambda: window.show_section(QUOTE_ROUTE))
     bind("Return", submit)
     bind("Enter", submit)
     bind("Escape", escape)
@@ -4286,6 +4642,24 @@ def _increase_font_sizes(style_sheet, step=1.0):
     return _FONT_SIZE_RULE.sub(replace, style_sheet)
 
 
+def _increase_region_font_sizes(root, step=2):
+    """Apply a one-time pixel-size increase to one complete UI region."""
+
+    if root is None or root.property("scheme2FontIncrease"):
+        return
+    widgets = [root, *root.findChildren(QWidget)]
+    sizes = []
+    for widget in widgets:
+        widget.ensurePolished()
+        size = widget.font().pixelSize()
+        if size > 0:
+            sizes.append((widget, size + step))
+    for widget, size in sizes:
+        existing = widget.styleSheet().rstrip().rstrip(";")
+        widget.setStyleSheet(f"{existing};font-size:{size}px;" if existing else f"font-size:{size}px;")
+    root.setProperty("scheme2FontIncrease", True)
+
+
 def _apply_palette(window):
     base_font = window.font()
     base_font.setFeature(QFont.Tag.fromString("tnum"), 1)
@@ -4294,7 +4668,7 @@ def _apply_palette(window):
 QMainWindow QWidget { font-family:"Microsoft YaHei UI","Segoe UI"; font-size:13px; font-weight:400; color:#2A3541; }
 QMainWindow, QWidget#scheme2OptionPage, QWidget#scheme2CostPage, QWidget#scheme2DetailPage { background:#FFFFFF; color:#2A3541; }
 QMainWindow QPushButton { font-size:12px; font-weight:500; min-height:26px; max-height:26px; padding-top:0; padding-bottom:0; }
-QLabel#scheme2ServiceStatus { color:#3B6D11; background:#EAF3DE; border-radius:7px; padding:5px 6px; font-size:10px; }
+QLabel#scheme2ServiceStatus { color:#3B6D11; background:#EAF3DE; border-radius:7px; padding:5px 6px; font-size:11px; }
 QDialog#scheme2ConfirmDialog { background:rgba(22,28,36,0.45); }
 QDialog#scheme2DimensionDialog { background:rgba(22,28,36,0.45); }
 QFrame#scheme2DimensionShell { background:#FFFFFF; border:0; border-radius:9px; }
@@ -4382,7 +4756,7 @@ QFrame#navPanel { background:#DCE8F7; border:1px solid #BBD0EA; border-top-left-
 QFrame#scheme2NavBrand { background:transparent; border:0; }
 QLabel#scheme2NavLogo { background:#2563EB; color:#FFFFFF; border-radius:6px; font-size:11px; font-weight:600; }
 QLabel#scheme2NavTitle { color:#1F3A6A; font-size:13px; font-weight:600; }
-QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; min-height:28px; max-height:28px; text-align:left; font-size:12px; font-weight:500; }
+QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; min-height:28px; max-height:28px; text-align:left; font-size:13px; font-weight:500; }
 QFrame#navPanel QPushButton:checked { color:#FFFFFF; background:#2563EB; }
 QPushButton#scheme2CollapseButton { color:#5A7AAB; background:transparent; border:0; padding:0; text-align:center; font-size:13px; }
 QPushButton#scheme2CollapseButton:hover { background:#E6F1FB; }
@@ -4391,7 +4765,7 @@ QFrame#scheme2CostSidebar QDoubleSpinBox { background:#FFFFFF; color:#2A3541; bo
 QFrame#scheme2CostSidebar QDoubleSpinBox:focus { border-color:#2563EB; }
 QFrame#scheme2CompactCoefficients { background:#DCE8F7; border:1px solid #BBD0EA; border-radius:7px; }
 QFrame#scheme2CostBody { background:#FFFFFF; }
-QFrame#scheme2CostCompanyField { background:transparent; border:0; }
+QFrame#scheme2QuoteCompanyField { background:transparent; border:0; }
 QFrame#scheme2UndoBar { background:#E6F1FB; border:1px solid #85B7EB; border-radius:7px; }
 QLabel#scheme2EmptyState { color:#8A8A86; background:#FFFFFF; font-size:13px; }
 QLabel#scheme2PageTitle { font-size:16px; font-weight:600; color:#1F3A6A; }
@@ -4432,6 +4806,7 @@ QLabel#scheme2SidebarTitle { font-size:13px; font-weight:600; color:#1F3A6A; bac
 QLabel#scheme2FieldLabel, QLabel#scheme2SidebarHint { font-size:12px; font-weight:400; color:#3F5A82; }
 QLabel#scheme2Hint { color:#2A3541; font-size:13px; }
 QLabel#scheme2CompletionPill { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:12px; padding:4px 10px; font-size:10px; }
+QLabel#scheme2QuotedBadge { color:#B42318; background:#FEE4E2; border:1px solid #FDA29B; border-radius:10px; padding:3px 9px; font-weight:600; }
 QLabel#scheme2RecognitionStatus { color:#3B6D11; }
 QPushButton#scheme2PrimaryAction { color:#FFFFFF; background:#2563EB; border:1px solid #2563EB; border-radius:7px; padding:0 16px; font-weight:500; }
 QPushButton#scheme2PrimaryAction:hover { background:#1D4ED8; }
@@ -4551,8 +4926,10 @@ def install_scheme2_ui(namespace):
         window._scheme2_drawing_pages = []
         window._scheme2_drawing_page_index = -1
         window._scheme2_page_worker = None
+        window._scheme2_recognition_key = None
         window._scheme2_recognition_tools = namespace["DrawingRecognitionTools"]
         window._scheme2_candidate_builder = namespace.get("build_review_candidates")
+        window._scheme2_api_worker_class = namespace.get("ApiWorker")
         window._scheme2_accept_paths = namespace["ImportDropZone"].accepted_paths
         window.scheme2_defaults = {
             "galvanized_price": 4.55, "carbon_price": 4.20, "waste_factor": 1.20,
@@ -4560,6 +4937,11 @@ def install_scheme2_ui(namespace):
             "labor_discount": 1.0, "surface_price": 26.0,
         }
         original_init(window, *args, **kwargs)
+        window.setWindowTitle(WORKBENCH_WINDOW_TITLE)
+        window._scheme2_add_started_at = None
+        window._scheme2_add_elapsed_timer = QTimer(window)
+        window._scheme2_add_elapsed_timer.setInterval(100)
+        window._scheme2_add_elapsed_timer.timeout.connect(lambda: _refresh_add_progress_display(window))
         # The reference explicitly supports the <900 logical-pixel stacked
         # layout; the recovered client used a wider fixed minimum.
         window.setMinimumSize(1024, 700)
@@ -4570,12 +4952,36 @@ def install_scheme2_ui(namespace):
         old_cost_page.hide()
         window._scheme2_retired_pages = [old_cost_page]
         window.stack.insertWidget(COST_ROUTE, _build_cost_page(window))
+        old_quote_page = window.stack.widget(QUOTE_ROUTE)
+        window.stack.removeWidget(old_quote_page)
+        old_quote_page.setParent(window)
+        old_quote_page.hide()
+        window._scheme2_retired_pages.append(old_quote_page)
+        window.stack.insertWidget(QUOTE_ROUTE, _build_quote_page(window))
         detail = _build_detail_page(window)
         while window.stack.count() < DETAIL_ROUTE:
             window.stack.addWidget(QWidget())
         window.stack.insertWidget(DETAIL_ROUTE, detail)
         _configure_navigation(window)
         _configure_option_page(window, namespace)
+        window._scheme2_loading_order = False
+        window._scheme2_order_save_worker = None
+        window._scheme2_order_load_worker = None
+        window._scheme2_order_save_timer = QTimer(window)
+        window._scheme2_order_save_timer.setSingleShot(True)
+        window._scheme2_order_save_timer.setInterval(600)
+        window._scheme2_order_save_timer.timeout.connect(lambda: _save_order_workspace(window))
+        for control in (
+            window.scheme2_name_edit, window.quote_spec_edit, window.product_combo,
+            window.quantity_spin, window.cabinet_body_thickness_spin, window.material_combo,
+            window.coating_combo, window.scheme2_color_combo, window.single_door_combo,
+            window.double_door_combo, window.scheme2_company,
+        ):
+            signal = (getattr(control, "textChanged", None)
+                      or getattr(control, "currentTextChanged", None)
+                      or getattr(control, "valueChanged", None))
+            if signal is not None:
+                signal.connect(lambda *_: _schedule_order_workspace_save(window))
         # Preserve route indices while removing the retired recognition and
         # cabinet-review pages from the live interface.  Their nonvisual
         # controller widgets are still used by quote/history payload builders,
@@ -4597,6 +5003,12 @@ def install_scheme2_ui(namespace):
             preview.return_to_recognition.connect(lambda: window.show_section(OPTION_ROUTE))
         _install_shortcuts(window)
         _apply_palette(window)
+        for region in (
+            getattr(window, "scheme2_drawing_widget", None),
+            getattr(window, "scheme2_cost_page", None),
+            getattr(window, "scheme2_quote_page", None),
+        ):
+            _increase_region_font_sizes(region, 2)
         window.scheme2_company.setFixedHeight(COMPANY_COMBO_HEIGHT)
         window.refresh_summary()
         window.show_section(OPTION_ROUTE)
@@ -4642,6 +5054,8 @@ def install_scheme2_ui(namespace):
         previous_index = window.stack.currentIndex()
         if index == COST_ROUTE:
             window.refresh_summary()
+        elif index == QUOTE_ROUTE:
+            _refresh_quote_page(window)
         result = original_section(window, index)
         if index == OPTION_ROUTE and hasattr(window, "quote_right_stack"):
             window.quote_right_stack.setCurrentIndex(0)
@@ -4649,7 +5063,6 @@ def install_scheme2_ui(namespace):
         _apply_responsive(window)
         QTimer.singleShot(0, lambda: _apply_responsive(window))
         if index == OPTION_ROUTE and previous_index == COST_ROUTE:
-            QTimer.singleShot(0, lambda: _change_scheme2_page(window, 1))
             if getattr(window, "_scheme2_clear_attachments_on_return", False):
                 window._scheme2_clear_attachments_on_return = False
                 QTimer.singleShot(0, lambda: _clear_scheme2_attachments(window))
@@ -4677,7 +5090,9 @@ def install_scheme2_ui(namespace):
 
     def refresh(window):
         _refresh_cost_table(window)
+        _refresh_quote_page(window)
         _sync_completion(window)
+        _schedule_order_workspace_save(window)
 
     def apply_drawing(window, item):
         _confirm_scheme2_recognition(item)

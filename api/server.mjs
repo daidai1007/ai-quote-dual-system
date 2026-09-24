@@ -775,6 +775,43 @@ SELECT jsonb_build_object(
 )::text;`;
 };
 
+const orderNumberValue = (input) => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
+  const value = String(input.order_number || '').trim();
+  if (!value) throw new Error('order_number is required');
+  if (value.length > 100) throw new Error('order_number is too long');
+  return value;
+};
+
+const loadOrderWorkspaceSql = (input) => {
+  const orderNumber = orderNumberValue(input);
+  return `
+SELECT COALESCE((
+  SELECT jsonb_build_object(
+    'found', TRUE, 'order_number', order_number, 'payload', workspace_payload,
+    'updated_at', updated_at
+  )
+  FROM calc.client_order_workspace
+  WHERE order_number = ${sqlUnicodeText(orderNumber)}
+), jsonb_build_object('found', FALSE, 'order_number', ${sqlUnicodeText(orderNumber)}))::text;`;
+};
+
+const saveOrderWorkspaceSql = (input) => {
+  const orderNumber = orderNumberValue(input);
+  if (!input.payload || typeof input.payload !== 'object' || Array.isArray(input.payload)) {
+    throw new Error('payload must be an object');
+  }
+  return `
+INSERT INTO calc.client_order_workspace (order_number, workspace_payload, updated_at)
+VALUES (${sqlUnicodeText(orderNumber)}, ${sqlUnicodeText(JSON.stringify(input.payload))}::jsonb, now())
+ON CONFLICT (order_number) DO UPDATE SET
+  workspace_payload = EXCLUDED.workspace_payload,
+  updated_at = now()
+RETURNING jsonb_build_object(
+  'saved', TRUE, 'order_number', order_number, 'updated_at', updated_at
+)::text;`;
+};
+
 const readBody = (req) => new Promise((resolve, reject) => {
   const chunks = [];
   let byteLength = 0;
@@ -950,6 +987,22 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { items: output ? JSON.parse(output) : [], source: 'postgresql' });
     } catch (error) {
       return json(res, 500, { error: 'company_catalog_failed', message: error.message });
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/orders/workspace/load') {
+    try {
+      const output = await runPsql(loadOrderWorkspaceSql(await readBody(req)));
+      return json(res, 200, output ? JSON.parse(output) : { found: false });
+    } catch (error) {
+      return json(res, clientErrorStatus(error), { error: 'order_workspace_load_failed', message: error.message });
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/orders/workspace/save') {
+    try {
+      const output = await runPsql(saveOrderWorkspaceSql(await readBody(req)));
+      return json(res, 200, output ? JSON.parse(output) : { saved: false });
+    } catch (error) {
+      return json(res, clientErrorStatus(error), { error: 'order_workspace_save_failed', message: error.message });
     }
   }
   if (req.method === 'POST' && req.url === '/api/company-history/match') {

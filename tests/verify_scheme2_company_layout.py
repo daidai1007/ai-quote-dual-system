@@ -27,10 +27,10 @@ namespace["MainWindow"].load_catalogs = lambda self: None
 window = namespace["MainWindow"]()
 window.resize(1366, 820)
 window.show()
-window.show_section(3)
+window.show_section(2)
 app.processEvents()
 
-field = window.scheme2_cost_company_field
+field = window.scheme2_quote_company_field
 label = field.findChild(QLabel, "scheme2FieldLabel")
 combo = window.scheme2_company
 assert isinstance(field.layout(), QHBoxLayout)
@@ -44,4 +44,5 @@ app.processEvents()
 assert combo.lineEdit().text() == "杭州拓强机械股份有限公司"
 assert "color:transparent" not in combo.lineEdit().styleSheet().replace(" ", "")
 assert not combo._scheme2_multiline_filter.eventFilter(combo, QEvent(QEvent.Type.Paint))
-print("scheme2 company inline layout contract passed")
+assert all(label.text() != "下单公司" for label in window.scheme2_cost_page.findChildren(QLabel))
+print("scheme2 quote company inline layout contract passed")
