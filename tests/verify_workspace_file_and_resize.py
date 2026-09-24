@@ -18,6 +18,9 @@ import scheme2_ui  # noqa: E402
 import v3_launcher  # noqa: E402
 
 
+assert scheme2_ui.ORDER_WORKSPACE_ROOT == Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
+
+
 app = QApplication.instance() or QApplication([])
 namespace = v3_launcher.load_v3_namespace()
 namespace["AttachmentDialog"].load_catalog = lambda self, url: None

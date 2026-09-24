@@ -78,6 +78,7 @@ STAINLESS_DEFAULT_PRICES = {"SUS304": 16.0, "SUS316": 32.4}
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
 WORKBENCH_WINDOW_TITLE = ""
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
+ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
     "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "数量", "已选附件",
@@ -2441,9 +2442,7 @@ def _order_workspace_payload(window):
 
 
 def _order_workspace_cache_dir(order_number):
-    root = os.environ.get("AI_QUOTE_ORDER_CACHE_ROOT") or QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.AppDataLocation
-    )
+    root = os.environ.get("AI_QUOTE_ORDER_CACHE_ROOT") or ORDER_WORKSPACE_ROOT
     key = hashlib.sha256(order_number.encode("utf-8")).hexdigest()
     return Path(root) / "order-workspaces" / key
 
