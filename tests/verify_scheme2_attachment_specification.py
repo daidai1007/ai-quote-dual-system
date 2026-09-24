@@ -42,14 +42,16 @@ editor = scheme2_ui.AttachmentEditor(parent, item)
 
 assert editor.table.columnCount() == 5
 assert [editor.table.horizontalHeaderItem(column).text() for column in range(5)] == [
-    "名称", "尺寸 / 规格", "数量", "金额", "公式金额",
+    "名称", "尺寸 / 规格", "数量", "成本", "金额",
 ]
 assert editor.table.item(0, 1).text() == "BASE-800"
 assert editor.table.item(1, 1).text() == "深 600 × 高 2000 mm"
 assert editor.table.item(2, 1).text() == "FU-9803A"
 assert editor.table.item(3, 1).text() == "BOARD-A"
 assert editor.table.item(4, 1).text() == ""
-amount_editor = editor.table.cellWidget(0, 3)
+cost_editor = editor.table.cellWidget(0, 3)
+amount_editor = editor.table.cellWidget(0, 4)
+assert type(cost_editor) is QDoubleSpinBox
 assert type(amount_editor) is QDoubleSpinBox
 assert amount_editor.lineEdit().textMargins().right() == 0
 

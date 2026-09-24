@@ -4539,12 +4539,15 @@ def _synchronize_export_remark(item, remark):
 
 
 def _finish_add(window):
+    source_route = window.stack.currentIndex()
     before = len(getattr(window, "draft_items", []))
     editing = getattr(window, "_scheme2_edit_item", None)
     editing_index = window.draft_items.index(editing) if editing in window.draft_items else None
     window.add_current_to_summary()
     if len(getattr(window, "draft_items", [])) != before + 1:
         return
+    if source_route == OPTION_ROUTE and window.stack.currentIndex() != OPTION_ROUTE:
+        window.show_section(OPTION_ROUTE)
     item = window.draft_items[-1]
     _stamp_selected_product(window, item)
     if editing_index is not None:

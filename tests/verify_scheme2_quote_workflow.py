@@ -96,11 +96,16 @@ with tempfile.TemporaryDirectory(prefix="scheme2-background-") as folder:
     assert window.quote_drawing_preview.isVisibleTo(window)
 
 window.draft_items = []
-window.add_current_to_summary = lambda: window.draft_items.append({
-    "name": "JP 测试", "product_code": "JP", "specification": "800*600*2000",
-    "quantity": 1, "formula": {"total_cost": 80}, "quick": {"total_cost": 100},
-    "attachments": [],
-})
+def add_and_simulate_legacy_cost_jump():
+    window.draft_items.append({
+        "name": "JP 测试", "product_code": "JP", "specification": "800*600*2000",
+        "quantity": 1, "formula": {"total_cost": 80}, "quick": {"total_cost": 100},
+        "attachments": [],
+    })
+    window.stack.setCurrentIndex(scheme2_ui.COST_ROUTE)
+
+
+window.add_current_to_summary = add_and_simulate_legacy_cost_jump
 window.show_section(scheme2_ui.OPTION_ROUTE)
 scheme2_ui._finish_add(window)
 app.processEvents()
