@@ -45,7 +45,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='AIQuoteDualSystem_layout_v6',
+    name='AIQuoteDualSystem_layout_v0',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -66,5 +66,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='AIQuoteDualSystem_layout_v6',
+    name='AIQuoteDualSystem_layout_v0',
 )

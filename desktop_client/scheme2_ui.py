@@ -70,7 +70,7 @@ DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
 STAINLESS_DEFAULT_PRICES = {"SUS304": 16.0, "SUS316": 32.4}
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 智能报价 · V0 交互工作台"
+WORKBENCH_WINDOW_TITLE = ""
 HEADERS = (
     "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "数量", "已选附件",
@@ -2289,14 +2289,16 @@ def _configure_navigation(window):
         nav_brand_layout = QHBoxLayout(nav_brand)
         nav_brand_layout.setContentsMargins(0, 0, 0, 6)
         nav_brand_layout.setSpacing(7)
-        nav_logo = QLabel("AI")
-        nav_logo.setObjectName("scheme2NavLogo")
-        nav_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        nav_logo.setFixedSize(26, 26)
-        nav_title = QLabel("智能报价")
-        nav_title.setObjectName("scheme2NavTitle")
-        nav_brand_layout.addWidget(nav_logo)
-        nav_brand_layout.addWidget(nav_title)
+        save_button = QToolButton()
+        save_button.setObjectName("scheme2SaveButton")
+        save_button.setIcon(window.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        save_button.setAccessibleName("保存当前订单进度")
+        save_button.setToolTip("保存当前页面、图纸、报价、成本明细及报价单")
+        save_button.setFixedSize(30, 30)
+        save_button.clicked.connect(lambda: _manual_save_order_workspace(window))
+        nav_brand_layout.addWidget(save_button)
+        nav_brand_layout.addStretch(1)
+        window.scheme2_save_button = save_button
         nav.layout().insertWidget(0, nav_brand)
         collapse = QPushButton("«")
         collapse.setObjectName("scheme2CollapseButton")
@@ -2435,25 +2437,47 @@ def _save_order_workspace(window, finished=None):
     order_number = window.scheme2_order_number.text().strip()
     if not order_number or getattr(window, "_scheme2_loading_order", False):
         if callable(finished):
-            finished()
+            finished(False)
         return
     worker_class = getattr(window, "_scheme2_api_worker_class", None)
     if worker_class is None:
         if callable(finished):
-            finished()
+            finished(False)
         return
     worker = worker_class(window.base_url() + "/api/orders/workspace/save", {
         "order_number": order_number, "payload": _order_workspace_payload(window),
     }, window)
     window._scheme2_order_save_worker = worker
-    def completed(_value):
+    def completed(_value, success):
         window._scheme2_order_save_worker = None
         if callable(finished):
-            finished()
+            finished(success)
 
-    worker.succeeded.connect(completed)
-    worker.failed.connect(completed)
+    worker.succeeded.connect(lambda value: completed(value, True))
+    worker.failed.connect(lambda value: completed(value, False))
     worker.start()
+
+
+def _manual_save_order_workspace(window):
+    order_number = window.scheme2_order_number.text().strip()
+    button = getattr(window, "scheme2_save_button", None)
+    if not order_number:
+        window.scheme2_order_number.setFocus()
+        if button is not None:
+            button.setToolTip("请先输入订单号")
+        return
+    if button is not None:
+        button.setEnabled(False)
+        button.setToolTip("正在保存当前订单进度…")
+
+    def finished(success):
+        if button is not None:
+            button.setEnabled(True)
+            button.setToolTip("订单进度已保存" if success else "保存失败，请检查网络后重试")
+        if success:
+            _set_dirty(window, False)
+
+    _save_order_workspace(window, finished)
 
 
 def _schedule_order_workspace_save(window):
@@ -5271,7 +5295,7 @@ def install_scheme2_ui(namespace):
                 timer.stop()
             window._scheme2_close_after_workspace_save = True
             event.ignore()
-            _save_order_workspace(window, lambda: window.close())
+            _save_order_workspace(window, lambda _success: window.close())
             return
         if getattr(window, "_scheme2_dirty", False) and window.isVisible():
             if not _confirm_discard_unsaved(window):

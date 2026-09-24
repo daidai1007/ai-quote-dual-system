@@ -86,8 +86,8 @@ finally {
     Pop-Location
 }
 
-$builtClient = Join-Path $distRoot "AIQuoteDualSystem_layout_v6"
-Copy-Item -LiteralPath (Join-Path $builtClient "AIQuoteDualSystem_layout_v6.exe") -Destination (Join-Path $stageRoot "AIQuoteDualSystem_layout_v6.exe") -Force
+$builtClient = Join-Path $distRoot "AIQuoteDualSystem_layout_v0"
+Copy-Item -LiteralPath (Join-Path $builtClient "AIQuoteDualSystem_layout_v0.exe") -Destination (Join-Path $stageRoot "AIQuoteDualSystem_layout_v0.exe") -Force
 Copy-Item -LiteralPath (Join-Path $currentClient "_internal") -Destination (Join-Path $stageRoot "_internal") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $currentClient "runtime") -Destination (Join-Path $stageRoot "runtime") -Recurse -Force
 foreach ($name in @("client_config.json", "PROJECT-LICENSE.txt", "README.txt", "THIRD_PARTY_NOTICES.txt")) {
@@ -111,7 +111,7 @@ if ($sourceCoreFiles.Count -ne $stagedCoreFiles.Count) {
     throw "V3 runtime core file count changed during staging: source=$($sourceCoreFiles.Count), stage=$($stagedCoreFiles.Count)"
 }
 
-$entryPath = Join-Path $stageRoot "AIQuoteDualSystem_layout_v6.exe"
+$entryPath = Join-Path $stageRoot "AIQuoteDualSystem_layout_v0.exe"
 $iconPath = Join-Path $stageRoot "AIQuoteDualSystem.ico"
 $entryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $entryPath).Hash
 $iconHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $iconPath).Hash
@@ -119,7 +119,7 @@ $files = Get-ChildItem -LiteralPath $stageRoot -Recurse -File
 $manifest = [ordered]@{
     product = "AI Quote Dual System"
     version = $Version
-    entry = "AIQuoteDualSystem_layout_v6.exe"
+    entry = "AIQuoteDualSystem_layout_v0.exe"
     built_at = (Get-Date).ToUniversalTime().ToString("o")
     architecture = "win-x64"
     installer = "NSIS 3.12"
@@ -128,7 +128,7 @@ $manifest = [ordered]@{
     package_bytes = [long](($files | Measure-Object Length -Sum).Sum)
     note = "2026.09.11 formula-cost catalogs: attachments, cabinet material, spray, auxiliary BOM, labor, V2 ganged attachment snapshots and detailed export."
     critical_files = @(
-        [ordered]@{ path = "AIQuoteDualSystem_layout_v6.exe"; bytes = (Get-Item -LiteralPath $entryPath).Length; sha256 = $entryHash },
+        [ordered]@{ path = "AIQuoteDualSystem_layout_v0.exe"; bytes = (Get-Item -LiteralPath $entryPath).Length; sha256 = $entryHash },
         [ordered]@{ path = "AIQuoteDualSystem.ico"; bytes = (Get-Item -LiteralPath $iconPath).Length; sha256 = $iconHash }
     )
 }

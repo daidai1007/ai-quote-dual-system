@@ -14,7 +14,7 @@ if (-not $reviewRoot.StartsWith($repoPath, [StringComparison]::OrdinalIgnoreCase
     throw 'Review builds must stay inside the repository.'
 }
 if (Test-Path -LiteralPath $reviewRoot) { throw "Review output already exists: $reviewRoot" }
-$entry = Join-Path $currentClient 'AIQuoteDualSystem_layout_v6.exe'
+$entry = Join-Path $currentClient 'AIQuoteDualSystem_layout_v0.exe'
 $config = Join-Path $currentClient 'client_config.json'
 $protectedBefore = @(Get-FileHash -LiteralPath $entry,$config -Algorithm SHA256)
 New-Item -ItemType Directory -Path $reviewRoot | Out-Null
@@ -35,7 +35,7 @@ try {
     $buildExit = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($buildExit -ne 0) { throw "Build failed; see $reviewRoot\build.log" }
-    $built = Join-Path $reviewRoot 'dist\AIQuoteDualSystem_layout_v6'
+    $built = Join-Path $reviewRoot 'dist\AIQuoteDualSystem_layout_v0'
     $portable = Join-Path $reviewRoot 'AIQuoteDualSystem'
     New-Item -ItemType Directory -Path $portable | Out-Null
     # The verified recovered core and tools are unchanged. New Python/Qt/CAD
@@ -45,12 +45,12 @@ try {
     Get-ChildItem -LiteralPath (Join-Path $built '_internal') | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $portable '_internal') -Recurse -Force
     }
-    Copy-Item -LiteralPath (Join-Path $built 'AIQuoteDualSystem_layout_v6.exe') -Destination $portable
+    Copy-Item -LiteralPath (Join-Path $built 'AIQuoteDualSystem_layout_v0.exe') -Destination $portable
     foreach ($name in @('client_config.json','PROJECT-LICENSE.txt','THIRD_PARTY_NOTICES.txt')) {
         Copy-Item -LiteralPath (Join-Path $currentClient $name) -Destination $portable
     }
     New-Item -ItemType Directory -Path (Join-Path $portable 'output') | Out-Null
-    $builtEntry = Join-Path $portable 'AIQuoteDualSystem_layout_v6.exe'
+    $builtEntry = Join-Path $portable 'AIQuoteDualSystem_layout_v0.exe'
     $protectedAfter = @(Get-FileHash -LiteralPath $entry,$config -Algorithm SHA256)
     if (Compare-Object $protectedBefore.Hash $protectedAfter.Hash) { throw 'Protected files unexpectedly changed.' }
     $coreBefore = Get-FileHash -LiteralPath (Join-Path $currentClient '_internal\v3_core\main.raw')

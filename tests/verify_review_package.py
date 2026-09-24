@@ -24,7 +24,7 @@ def hash_file(path):
 def verify(directory):
     directory = Path(directory).resolve()
     current = ROOT.parent / 'AIQuoteDualSystem'
-    entry = directory / 'AIQuoteDualSystem_layout_v6.exe'
+    entry = directory / 'AIQuoteDualSystem_layout_v0.exe'
     reader = CArchiveReader(str(entry))
     checked = []
     with tempfile.TemporaryDirectory(prefix='quote-package-check-') as folder:

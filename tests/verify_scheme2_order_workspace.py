@@ -31,7 +31,10 @@ def test_order_number_restores_and_saves_all_three_page_data_online():
     assert '"detail_item_index": detail_index' in UI
     assert 'window.show_section(route if route in (OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE)' in UI
     assert '_show_detail(window, window.draft_items[detail_index])' in UI
-    assert '_save_order_workspace(window, lambda: window.close())' in UI
+    assert '_save_order_workspace(window, lambda _success: window.close())' in UI
+    assert 'def _manual_save_order_workspace(window):' in UI
+    assert 'save_button.setObjectName("scheme2SaveButton")' in UI
+    assert 'save_button.clicked.connect(lambda: _manual_save_order_workspace(window))' in UI
     assert '"/api/orders/workspace/load"' in UI
     assert '"/api/orders/workspace/save"' in UI
     assert "/api/orders/workspace/load" in API
