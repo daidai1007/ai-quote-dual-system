@@ -40,6 +40,8 @@ rows = [
 ]
 item = {"attachments": rows, "formula": {}, "quick": {}}
 editor = scheme2_ui.AttachmentEditor(parent, item)
+editor.show()
+app.processEvents()
 
 assert editor.table.columnCount() == 5
 assert [editor.table.horizontalHeaderItem(column).text() for column in range(5)] == [
@@ -55,6 +57,16 @@ amount_editor = editor.table.cellWidget(0, 4)
 assert isinstance(cost_editor, QDoubleSpinBox)
 assert type(amount_editor) is QDoubleSpinBox
 assert amount_editor.lineEdit().textMargins().right() == 0
+assert editor.size().width() == 650 and editor.size().height() == 315
+original_size = editor.size()
+parent.resize(1800, 1000)
+app.processEvents()
+assert editor.size() == original_size
+for row in range(editor.table.rowCount()):
+    for column in range(editor.table.columnCount()):
+        widget = editor.table.cellWidget(row, column)
+        if widget is not None:
+            assert widget.height() <= editor.table.rowHeight(row)
 
 header = editor.findChild(QFrame, "scheme2AttachmentEditorHeader")
 assert isinstance(header, scheme2_ui._SchemeAttachmentHeader)

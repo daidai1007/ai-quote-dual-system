@@ -86,6 +86,7 @@ HEADERS = (
     "毛利率", "自制件重量", "成本明细",
 )
 COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 92, 92, 92, 92, 92, 92, 92, 100, 92, 92, 92, 92, 92, 92, 92, 92, 88)
+DETAIL_COLUMN_WIDTHS = (72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)
 MONEY_COLUMNS = frozenset((*range(4, 11), 13, 15, 16, 17, 18))
 EDITABLE_COLUMNS = frozenset((10, 11, 14))
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
@@ -559,7 +560,21 @@ class AttachmentEditor(QDialog):
         self.setObjectName("scheme2AttachmentEditorDialog")
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(650, 315)
+        # Keep this editor independent from the main-window proportional style
+        # scaling.  Otherwise inherited enlarged fonts overflow the fixed table
+        # columns after maximizing the main window.
+        self.setStyleSheet("""
+            QDialog#scheme2AttachmentEditorDialog { background:transparent; font-size:12px; }
+            QFrame#scheme2AttachmentEditorShell { background:#FFFFFF; border:1px solid #B8BEC7; border-radius:14px; }
+            QFrame#scheme2AttachmentEditorHeader { background:#F6F7F9; border:0; border-bottom:1px solid #D7DCE3; min-height:40px; max-height:40px; }
+            QLabel#scheme2AttachmentEditorTitle { color:#1F3A6A; font-size:13px; font-weight:600; border:0; }
+            QToolButton#scheme2AttachmentEditorClose { color:#8A8A86; background:transparent; border:0; font-size:18px; }
+            QTableWidget#scheme2AttachmentEditorTable { background:#FFFFFF; border:0; gridline-color:transparent; outline:0; font-size:12px; color:#2A3541; }
+            QTableWidget#scheme2AttachmentEditorTable::item { padding:6px 8px; border:0; border-bottom:1px solid #D7DCE3; }
+            QTableWidget#scheme2AttachmentEditorTable QHeaderView::section { background:#2563EB; color:#FFFFFF; border:0; padding:7px 8px; font-size:12px; font-weight:600; }
+            QSpinBox#scheme2AttachmentEditorQuantity, QDoubleSpinBox#scheme2AttachmentEditorCost, QDoubleSpinBox#scheme2AttachmentEditorAmount, QComboBox#scheme2AttachmentModelCombo { font-size:12px; min-height:24px; max-height:30px; }
+        """)
+        self.setFixedSize(650, 315)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         shell = QFrame()
@@ -1329,7 +1344,7 @@ def _build_detail_page(window):
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
     table.horizontalHeader().setMinimumHeight(44)
     table.horizontalHeader().setStretchLastSection(True)
-    for column, width in enumerate((72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)):
+    for column, width in enumerate(DETAIL_COLUMN_WIDTHS):
         table.setColumnWidth(column, width)
     table.verticalHeader().setVisible(False)
     table.verticalHeader().setDefaultSectionSize(46)
@@ -4975,6 +4990,14 @@ def _apply_proportional_scale(window):
         cost_table.horizontalHeader().setMinimumSectionSize(max(1, round(66 * scale)))
         for column, width in enumerate(COST_COLUMN_WIDTHS):
             cost_table.setColumnWidth(column, max(1, round(width * scale)))
+    detail_table = getattr(window, "scheme2_detail_table", None)
+    if isinstance(detail_table, QTableWidget):
+        detail_table.horizontalHeader().setMinimumHeight(max(44, round(44 * scale)))
+        detail_table.verticalHeader().setDefaultSectionSize(max(46, round(46 * scale)))
+        for column, width in enumerate(DETAIL_COLUMN_WIDTHS):
+            detail_table.setColumnWidth(column, max(1, round(width * scale)))
+        for row in range(detail_table.rowCount()):
+            detail_table.setRowHeight(row, max(46, round(46 * scale)))
     return scale
 
 
