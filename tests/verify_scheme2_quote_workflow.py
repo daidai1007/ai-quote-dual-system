@@ -96,6 +96,11 @@ with tempfile.TemporaryDirectory(prefix="scheme2-background-") as folder:
     assert "2 / 2" in window.scheme2_recognition_status.text()
     wait_until(lambda: not window.quote_drawing_preview._workers)
     active_key = window._scheme2_drawing_pages[1]["key"]
+    window.quote_drawing_preview.canvas.scene().clear()
+    window.quote_drawing_preview.canvas.setEnabled(False)
+    window.product_combo.activated.emit(window.product_combo.currentIndex())
+    wait_until(lambda: window.quote_drawing_preview.canvas.isEnabled()
+               and not window.quote_drawing_preview.canvas.scene().sceneRect().isEmpty())
     window.show_section(scheme2_ui.COST_ROUTE)
     window.show_section(scheme2_ui.OPTION_ROUTE)
     app.processEvents()

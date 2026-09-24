@@ -47,7 +47,7 @@ def test_order_number_restores_and_saves_all_three_page_data_online():
 
 
 def test_local_order_fallback_archives_and_restores_drawing(tmp_path, monkeypatch):
-    from desktop_client import scheme2_ui
+    import scheme2_ui
 
     source = tmp_path / "drawing.png"
     source.write_bytes(b"drawing-content")

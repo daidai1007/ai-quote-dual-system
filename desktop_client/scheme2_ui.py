@@ -2782,6 +2782,10 @@ def _restore_scheme2_drawing_on_option_page(window):
     _show_scheme2_source_page(window, pages[index])
     drawing = getattr(window, "scheme2_drawing_widget", None)
     preview = getattr(window, "quote_drawing_preview", None)
+    canvas = getattr(preview, "canvas", None)
+    if (preview is not None and canvas is not None
+            and (not canvas.isEnabled() or canvas.scene().sceneRect().isEmpty())):
+        preview.load_page()
     if drawing is not None:
         drawing.show()
     if preview is not None:
@@ -4451,12 +4455,18 @@ def _configure_option_page(window, namespace):
     ):
         if control is None:
             continue
+        keep_drawing = lambda *_: QTimer.singleShot(
+            0, lambda: _restore_scheme2_drawing_on_option_page(window)
+        )
         if isinstance(control, QLineEdit):
             control.textEdited.connect(lambda *_: _set_dirty(window, True))
+            control.textEdited.connect(keep_drawing)
         elif isinstance(control, QComboBox):
             control.activated.connect(lambda *_: _set_dirty(window, True))
+            control.activated.connect(keep_drawing)
         elif isinstance(control, QAbstractSpinBox):
             control.editingFinished.connect(lambda: _set_dirty(window, True))
+            control.editingFinished.connect(keep_drawing)
 
     for name in ("primaryQuoteAction", "secondaryQuoteAction", "quietQuoteAction"):
         button = window.findChild(QPushButton, name)
