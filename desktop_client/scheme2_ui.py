@@ -16,9 +16,11 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import tempfile
 import time
 from types import MethodType
+import zipfile
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, QStandardPaths, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut, QTextDocument
@@ -75,6 +77,7 @@ DRAWING_VERTICAL_CHROME = 118
 STAINLESS_DEFAULT_PRICES = {"SUS304": 16.0, "SUS316": 32.4}
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
 WORKBENCH_WINDOW_TITLE = ""
+ORDER_WORKSPACE_SUFFIX = ".aiquote"
 HEADERS = (
     "序号", "名称", "产品", "尺寸", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "数量", "已选附件",
@@ -2485,6 +2488,91 @@ def _load_local_order_workspace(order_number):
     return payload if isinstance(payload, dict) else None
 
 
+def _write_order_workspace_file(order_number, payload, destination):
+    """Write a portable order workspace, including imported drawings."""
+    destination = Path(destination)
+    if destination.suffix.lower() != ORDER_WORKSPACE_SUFFIX:
+        destination = destination.with_suffix(ORDER_WORKSPACE_SUFFIX)
+    portable = deepcopy(payload)
+    drawing_sources = {}
+    for page in portable.get("drawing_pages") or []:
+        source = Path(str(page.get("source_path") or ""))
+        if not source.is_file():
+            continue
+        source_key = str(source.resolve()).casefold()
+        stored = drawing_sources.get(source_key)
+        if stored is None:
+            archive_name = f"drawings/{hashlib.sha256(str(source.resolve()).casefold().encode('utf-8')).hexdigest()[:16]}{source.suffix.lower()}"
+            drawing_sources[source_key] = (source, archive_name)
+        else:
+            archive_name = stored[1]
+        page["source_path"] = archive_name
+        page["key"] = f"{archive_name.casefold()}#page={int(page.get('page_index', 0)) + 1}"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".tmp")
+    with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("workspace.json", json.dumps(portable, ensure_ascii=False))
+        archive.writestr("order-number.txt", order_number)
+        for source, archive_name in drawing_sources.values():
+            archive.write(source, archive_name)
+    temporary.replace(destination)
+    return destination
+
+
+def _read_order_workspace_file(path):
+    """Read a portable workspace and restore its drawings to the local cache."""
+    path = Path(path)
+    with zipfile.ZipFile(path, "r") as archive:
+        payload = json.loads(archive.read("workspace.json").decode("utf-8"))
+        order_number = archive.read("order-number.txt").decode("utf-8").strip()
+        if not isinstance(payload, dict) or not order_number:
+            raise ValueError("无效的订单进度文件")
+        drawing_dir = _order_workspace_cache_dir(order_number) / "drawings"
+        drawing_dir.mkdir(parents=True, exist_ok=True)
+        for page in payload.get("drawing_pages") or []:
+            member = str(page.get("source_path") or "").replace("\\", "/")
+            if not member.startswith("drawings/") or ".." in Path(member).parts:
+                continue
+            target = drawing_dir / Path(member).name
+            target.write_bytes(archive.read(member))
+            page["source_path"] = str(target)
+            page["key"] = f"{str(target).casefold()}#page={int(page.get('page_index', 0)) + 1}"
+    return order_number, payload
+
+
+def _open_order_workspace_file(window, path):
+    try:
+        order_number, payload = _read_order_workspace_file(path)
+        _save_local_order_workspace(order_number, payload)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        QMessageBox.warning(window, "打开失败", "订单进度文件无法读取或已经损坏。")
+        return False
+    window.scheme2_order_number.setText(order_number)
+    _apply_order_workspace_payload(window, payload, f"已打开：{Path(path).name}")
+    return True
+
+
+def _register_order_workspace_file_type():
+    """Associate portable order files with the currently running V0 client."""
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return
+    try:
+        import winreg
+        executable = str(Path(sys.executable).resolve())
+        file_type = "AIQuoteDualSystem.OrderWorkspace"
+        entries = {
+            rf"Software\Classes\{ORDER_WORKSPACE_SUFFIX}": file_type,
+            rf"Software\Classes\{file_type}": "AI 双报价订单进度",
+            rf"Software\Classes\{file_type}\DefaultIcon": f'"{executable}",0',
+            rf"Software\Classes\{file_type}\shell\open\command": f'"{executable}" "%1"',
+        }
+        for key_path, value in entries.items():
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, value)
+    except OSError:
+        pass
+
+
 def _apply_order_workspace_payload(window, payload, status):
     window._scheme2_loading_order = True
     try:
@@ -2549,6 +2637,15 @@ def _manual_save_order_workspace(window):
         if button is not None:
             button.setToolTip("请先输入订单号")
         return
+    default_path = str(Path.home() / f"{order_number}{ORDER_WORKSPACE_SUFFIX}")
+    destination, _selected_filter = QFileDialog.getSaveFileName(
+        window,
+        "保存订单进度",
+        default_path,
+        f"AI 双报价订单 (*{ORDER_WORKSPACE_SUFFIX})",
+    )
+    if not destination:
+        return
     if button is not None:
         button.setEnabled(False)
         button.setToolTip("正在保存当前订单进度…")
@@ -2558,6 +2655,15 @@ def _manual_save_order_workspace(window):
             button.setEnabled(True)
             button.setToolTip("订单进度已保存" if success else "保存失败，请检查网络后重试")
         if success:
+            try:
+                payload = _load_local_order_workspace(order_number) or _order_workspace_payload(window)
+                saved_path = _write_order_workspace_file(order_number, payload, destination)
+                if button is not None:
+                    button.setToolTip(f"订单进度已保存：{saved_path}")
+            except OSError:
+                if button is not None:
+                    button.setToolTip("订单已同步，但指定文件保存失败")
+                return
             _set_dirty(window, False)
 
     _save_order_workspace(window, finished)
@@ -4874,6 +4980,7 @@ def _apply_responsive(window):
             window.stack.setMinimumHeight(0)
             if main_scroll is not None and main_scroll.widget() is not None:
                 main_scroll.widget().setMinimumHeight(0)
+                main_scroll.verticalScrollBar().setValue(0)
         elif width < 900:
             drawing = getattr(window, "scheme2_drawing_widget", None)
             form_widget = getattr(window, "scheme2_option_form_widget", None)
@@ -4967,6 +5074,10 @@ def _apply_responsive(window):
             window.stack.setMinimumHeight(max(
                 0, host.height() - margins.top() - margins.bottom()
             ))
+            window.stack.updateGeometry()
+            current_page = window.stack.currentWidget()
+            if current_page is not None:
+                current_page.updateGeometry()
         target_height = max(
             window.stack.minimumHeight(),
             host.height() - margins.top() - margins.bottom(),
@@ -5315,6 +5426,7 @@ def install_scheme2_ui(namespace):
         window.stack.insertWidget(DETAIL_ROUTE, detail)
         _configure_navigation(window)
         _configure_option_page(window, namespace)
+        _register_order_workspace_file_type()
         window._scheme2_loading_order = False
         window._scheme2_order_save_worker = None
         window._scheme2_order_load_worker = None
@@ -5372,6 +5484,13 @@ def install_scheme2_ui(namespace):
         window.show_section(OPTION_ROUTE)
         _set_dirty(window, False)
         _apply_responsive(window)
+        startup_workspace = next((
+            argument for argument in sys.argv[1:]
+            if str(argument).lower().endswith(ORDER_WORKSPACE_SUFFIX)
+            and Path(argument).is_file()
+        ), None)
+        if startup_workspace:
+            QTimer.singleShot(0, lambda path=startup_workspace: _open_order_workspace_file(window, path))
 
     def resize(window, event):
         original_resize(window, event)
