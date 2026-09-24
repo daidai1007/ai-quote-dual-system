@@ -31,7 +31,8 @@ def test_order_number_restores_and_saves_all_three_page_data_online():
     assert '"detail_item_index": detail_index' in UI
     assert 'order_load_timer.setInterval(500)' in UI
     assert 'order_number.textEdited.connect(lambda _text: order_load_timer.start())' in UI
-    assert 'window.scheme2_order_number.setToolTip("订单进度已恢复")' in UI
+    assert '"已从本机恢复订单进度及图纸"' in UI
+    assert '"订单进度已恢复并同步到本机"' in UI
     assert 'window.show_section(route if route in (OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE)' in UI
     assert '_show_detail(window, window.draft_items[detail_index])' in UI
     assert '_save_order_workspace(window, lambda _success: window.close())' in UI
@@ -43,3 +44,24 @@ def test_order_number_restores_and_saves_all_three_page_data_online():
     assert "/api/orders/workspace/load" in API
     assert "/api/orders/workspace/save" in API
     assert "calc.client_order_workspace" in SQL
+
+
+def test_local_order_fallback_archives_and_restores_drawing(tmp_path, monkeypatch):
+    from desktop_client import scheme2_ui
+
+    source = tmp_path / "drawing.png"
+    source.write_bytes(b"drawing-content")
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("AI_QUOTE_ORDER_CACHE_ROOT", str(cache))
+    payload = {
+        "drawing_pages": [{
+            "key": f"{str(source).casefold()}#page=1",
+            "source_path": str(source), "page_index": 0, "page_count": 1,
+        }],
+        "draft_items": [],
+    }
+    saved = scheme2_ui._save_local_order_workspace("123", payload)
+    stored = Path(saved["drawing_pages"][0]["source_path"])
+    assert stored.is_file() and stored.read_bytes() == b"drawing-content"
+    assert stored != source
+    assert scheme2_ui._load_local_order_workspace("123") == saved

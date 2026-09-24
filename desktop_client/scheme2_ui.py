@@ -9,14 +9,18 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import date
+import hashlib
 import html
+import json
+import os
 from pathlib import Path
 import re
+import shutil
 import tempfile
 import time
 from types import MethodType
 
-from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, QStandardPaths, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut, QTextDocument
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
@@ -2433,25 +2437,104 @@ def _order_workspace_payload(window):
     })
 
 
+def _order_workspace_cache_dir(order_number):
+    root = os.environ.get("AI_QUOTE_ORDER_CACHE_ROOT") or QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppDataLocation
+    )
+    key = hashlib.sha256(order_number.encode("utf-8")).hexdigest()
+    return Path(root) / "order-workspaces" / key
+
+
+def _save_local_order_workspace(order_number, payload):
+    folder = _order_workspace_cache_dir(order_number)
+    drawings = folder / "drawings"
+    drawings.mkdir(parents=True, exist_ok=True)
+    local_payload = deepcopy(payload)
+    copied = {}
+    for page in local_payload.get("drawing_pages") or []:
+        source = Path(str(page.get("source_path") or ""))
+        if not source.is_file():
+            continue
+        source_key = str(source.resolve()).casefold()
+        stored = copied.get(source_key)
+        if stored is None:
+            if source.resolve().parent == drawings.resolve():
+                stored = source.resolve()
+            else:
+                stored = drawings / f"{hashlib.sha256(source_key.encode('utf-8')).hexdigest()[:16]}{source.suffix.lower()}"
+                if not stored.is_file() or stored.stat().st_size != source.stat().st_size:
+                    shutil.copy2(source, stored)
+            copied[source_key] = stored
+        page["source_path"] = str(stored)
+        page["key"] = f"{str(stored).casefold()}#page={int(page.get('page_index', 0)) + 1}"
+    temporary = folder / "workspace.json.tmp"
+    target = folder / "workspace.json"
+    temporary.write_text(json.dumps(local_payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(target)
+    return local_payload
+
+
+def _load_local_order_workspace(order_number):
+    path = _order_workspace_cache_dir(order_number) / "workspace.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _apply_order_workspace_payload(window, payload, status):
+    window._scheme2_loading_order = True
+    try:
+        window.draft_items = deepcopy(payload.get("draft_items") or [])
+        pages = deepcopy(payload.get("drawing_pages") or [])
+        window._scheme2_drawing_pages = pages
+        window._scheme2_drawing_page_index = int(payload.get("drawing_page_index", -1))
+        _restore_scheme2_page_state(window, payload.get("option_state") or {})
+        company = str(payload.get("company") or "").strip()
+        if company:
+            window.scheme2_company.setCurrentText(company)
+        window.refresh_summary()
+        _refresh_quote_page(window)
+        route = int(payload.get("active_route", OPTION_ROUTE))
+        detail_index = int(payload.get("detail_item_index", -1))
+        if route == DETAIL_ROUTE and 0 <= detail_index < len(window.draft_items):
+            _show_detail(window, window.draft_items[detail_index])
+        else:
+            window.show_section(route if route in (OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE) else OPTION_ROUTE)
+        _set_dirty(window, False)
+        window.scheme2_order_number.setToolTip(status)
+    finally:
+        window._scheme2_loading_order = False
+
+
 def _save_order_workspace(window, finished=None):
     order_number = window.scheme2_order_number.text().strip()
     if not order_number or getattr(window, "_scheme2_loading_order", False):
         if callable(finished):
             finished(False)
         return
+    payload = _order_workspace_payload(window)
+    try:
+        _save_local_order_workspace(order_number, payload)
+        local_saved = True
+    except OSError:
+        local_saved = False
     worker_class = getattr(window, "_scheme2_api_worker_class", None)
     if worker_class is None:
         if callable(finished):
-            finished(False)
+            finished(local_saved)
         return
     worker = worker_class(window.base_url() + "/api/orders/workspace/save", {
-        "order_number": order_number, "payload": _order_workspace_payload(window),
+        "order_number": order_number, "payload": payload,
     }, window)
     window._scheme2_order_save_worker = worker
     def completed(_value, success):
         window._scheme2_order_save_worker = None
         if callable(finished):
-            finished(success)
+            finished(success or local_saved)
 
     worker.succeeded.connect(lambda value: completed(value, True))
     worker.failed.connect(lambda value: completed(value, False))
@@ -2491,6 +2574,9 @@ def _load_order_workspace(window):
     order_number = window.scheme2_order_number.text().strip()
     if not order_number:
         return
+    local_payload = _load_local_order_workspace(order_number)
+    if local_payload is not None:
+        _apply_order_workspace_payload(window, local_payload, "已从本机恢复订单进度及图纸")
     worker_class = getattr(window, "_scheme2_api_worker_class", None)
     if worker_class is None:
         return
@@ -2504,37 +2590,23 @@ def _load_order_workspace(window):
             return
         payload = result.get("payload") if isinstance(result, dict) else None
         if not isinstance(payload, dict):
-            window.scheme2_order_number.setToolTip("未找到该订单号的已保存进度")
+            if local_payload is None:
+                window.scheme2_order_number.setToolTip("未找到该订单号的已保存进度")
             return
-        window._scheme2_loading_order = True
         try:
-            window.draft_items = deepcopy(payload.get("draft_items") or [])
-            pages = deepcopy(payload.get("drawing_pages") or [])
-            if pages:
-                window._scheme2_drawing_pages = pages
-                window._scheme2_drawing_page_index = int(payload.get("drawing_page_index", -1))
-            _restore_scheme2_page_state(window, payload.get("option_state") or {})
-            company = str(payload.get("company") or "").strip()
-            if company:
-                window.scheme2_company.setCurrentText(company)
-            window.refresh_summary()
-            _refresh_quote_page(window)
-            route = int(payload.get("active_route", OPTION_ROUTE))
-            detail_index = int(payload.get("detail_item_index", -1))
-            if route == DETAIL_ROUTE and 0 <= detail_index < len(window.draft_items):
-                _show_detail(window, window.draft_items[detail_index])
-            else:
-                window.show_section(route if route in (OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE) else OPTION_ROUTE)
-            _set_dirty(window, False)
-            window.scheme2_order_number.setToolTip("订单进度已恢复")
-        finally:
-            window._scheme2_loading_order = False
+            _save_local_order_workspace(order_number, payload)
+        except OSError:
+            pass
+        _apply_order_workspace_payload(window, payload, "订单进度已恢复并同步到本机")
 
     worker.succeeded.connect(loaded)
     def failed(_message):
         window._scheme2_order_load_worker = None
         if window.scheme2_order_number.text().strip() == order_number:
-            window.scheme2_order_number.setToolTip("订单进度读取失败，请检查网络后重试")
+            window.scheme2_order_number.setToolTip(
+                "已从本机恢复；线上同步失败" if local_payload is not None
+                else "订单进度读取失败，请检查网络后重试"
+            )
 
     worker.failed.connect(failed)
     worker.start()
