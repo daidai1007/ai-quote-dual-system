@@ -4818,6 +4818,15 @@ def _calculate_and_add(window):
     calculate_quote()
 
 
+def _stamp_quote_result_signature(window):
+    """Mark a completed quote reusable until a pricing input changes."""
+
+    result = getattr(window, "current_result", None)
+    signature_builder = getattr(window, "quote_input_signature", None)
+    if isinstance(result, dict) and callable(signature_builder):
+        result["input_signature"] = signature_builder()
+
+
 def _refresh_add_progress_display(window):
     progress = getattr(window, "scheme2_add_progress", None)
     if progress is None:
@@ -5702,6 +5711,7 @@ def install_scheme2_ui(namespace):
 
     def show_result(window, payload, *args, **kwargs):
         result = original_show_result(window, payload, *args, **kwargs)
+        _stamp_quote_result_signature(window)
         if hasattr(window, "quote_right_stack"):
             window.quote_right_stack.setCurrentIndex(0)
         if window._scheme2_add_after_calculate and isinstance(getattr(window, "current_result", None), dict):
