@@ -26,4 +26,10 @@ assert "仿威图（JP）柜" not in remark and "仿威图(JP)柜" not in remark
 
 item["attachments"] = []
 assert _scheme2_quote_remark(item).endswith("，无附件。")
+
+item["material_code"] = "SUS304"
+item["scheme2_selected_material"] = "不锈钢 SUS304"
+remark = _scheme2_quote_remark(item)
+assert "，不锈钢304，" in remark
+assert "不锈钢 SUS304" not in remark
 print("scheme2 quote remark contract passed")

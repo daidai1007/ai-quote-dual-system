@@ -76,31 +76,33 @@ QUOTE_COMPANY_FIELD_WIDTH = 420
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
 STAINLESS_DEFAULT_PRICES = {"SUS304": 16.0, "SUS316": 32.4}
+DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE = 25.0
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
 WORKBENCH_WINDOW_TITLE = ""
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
-    "序号", "名称", "产品", "尺寸", "数量", "已选附件", "面价", "折扣系数",
+    "序号", "名称", "产品", "尺寸", "数量", "已选附件", "面价", "材料差价", "折扣系数",
     "报价", "报价总价", "成本单价", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "成本总价",
     "毛利率", "自制件重量", "成本明细",
 )
-COST_DISPLAY_ORDER = (0, 1, 2, 3, 11, 12, 13, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21)
-COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88)
+COST_DISPLAY_ORDER = (0, 1, 2, 3, 11, 12, 13, 22, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21)
+COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88)
 COST_HEADER_GROUPS = (
-    ("柜体信息", 0, 3), ("数量", 4, 4), ("附件", 5, 5), ("报价结果", 6, 9),
-    ("成本数据", 10, 18), ("利润率", 19, 19), ("自制件重量", 20, 20), ("操作", 21, 21),
+    ("柜体信息", 0, 3), ("数量", 4, 4), ("附件", 5, 5), ("报价结果", 6, 10),
+    ("成本数据", 11, 19), ("利润率", 20, 20), ("自制件重量", 21, 21), ("操作", 22, 22),
 )
 COST_COLUMN_BACKGROUNDS = (
     "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#F5F6F8",
-    "#FFF7E6", "#FFF7E6", "#FFF7E6", "#FFF7E6",
+    "#FFF7E6", "#FFF7E6", "#FFF7E6", "#FFF7E6", "#FFF7E6",
     "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD",
     "#F5F0FA", "#ECF4F1", "#F5F6F8",
 )
 DETAIL_COLUMN_WIDTHS = (72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)
-MONEY_COLUMNS = frozenset((6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18))
-EDITABLE_COLUMNS = frozenset((4, 7, 17))
+MONEY_COLUMNS = frozenset((6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19))
+EDITABLE_COLUMNS = frozenset((4, 8, 18))
+MATERIAL_DIFFERENCE_COLUMN = 7
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
 _FONT_SIZE_RULE = re.compile(r"font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
@@ -353,6 +355,23 @@ def _cost_product(item):
     )
 
 
+def _material_difference_amount(item):
+    """Return the undiscounted SUS316 material surcharge for one cabinet."""
+
+    material_code = str(item.get("material_code") or "").strip().upper()
+    if material_code != "SUS316":
+        return 0.0
+    state = item.get("scheme2_cost_settings")
+    if not isinstance(state, dict):
+        state = {}
+    unit_price = max(
+        0.0,
+        _number(state.get("material_difference"), DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE),
+    )
+    weight = max(0.0, _number(_formula(item).get("corrected_material_weight_kg")))
+    return weight * unit_price
+
+
 def _row_values(item):
     formula = _formula(item)
     quick = _quick(item)
@@ -361,7 +380,8 @@ def _row_values(item):
     formula_unit = _number(formula.get("total_cost")) + freight
     face_base = _number(quick.get("total_cost")) + freight
     discount = _number(item.get("quick_discount", 1), 1)
-    quote = face_base * discount
+    material_difference = _material_difference_amount(item)
+    quote = face_base * discount + material_difference
     quote_total = quote * quantity
     cost_total = formula_unit * quantity
     gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0
@@ -381,6 +401,7 @@ def _row_values(item):
         freight, quantity, f"{len(attachments)} 项 ›", face_base, discount,
         quote, quote_total, formula_unit, cost_total,
         f"{gross_margin:.2%}", f"{billable_weight:.2f}", "明细 ›",
+        material_difference,
     )
 
 
@@ -1084,6 +1105,7 @@ class FaceDiscountEditor(QDialog):
         header_layout.addWidget(close)
         layout.addWidget(header)
         base = _number(_quick(item).get("total_cost")) + _number(item.get("freight_fee", 0))
+        material_difference = _material_difference_amount(item)
         base_row = QHBoxLayout()
         base_row.addWidget(QLabel("原面价"))
         base_row.addStretch(1)
@@ -1112,7 +1134,9 @@ class FaceDiscountEditor(QDialog):
         self.preview.setObjectName("scheme2DiscountPreviewValue")
         preview_layout.addWidget(self.preview)
         layout.addWidget(preview_frame)
-        self.discount.valueChanged.connect(lambda value: self.preview.setText(f"{_money(base * value)} 元"))
+        self.discount.valueChanged.connect(
+            lambda value: self.preview.setText(f"{_money(base * value + material_difference)} 元")
+        )
         self.discount.valueChanged.emit(self.discount.value())
         actions = QHBoxLayout()
         confirm = QPushButton("确定")
@@ -1189,10 +1213,11 @@ def _quote_unit_price_changed(window, row, column):
     cell = window.scheme2_quote_preview.item(row, column)
     unit_price = _number(cell.text().replace(",", ""), -1) if cell is not None else -1
     face_price = _number(_row_values(items[index])[13])
-    if unit_price < 0 or face_price <= 0:
+    discounted_face_price = unit_price - _material_difference_amount(items[index])
+    if discounted_face_price < 0 or face_price <= 0:
         _refresh_quote_page(window)
         return
-    items[index]["quick_discount"] = unit_price / face_price
+    items[index]["quick_discount"] = discounted_face_price / face_price
     window.refresh_summary()
 
 
@@ -1903,6 +1928,7 @@ def _cost_sidebar(window):
         "galvanized_price": ("镀锌板价格", _sidebar_price_spin(4.55, 2)),
         "carbon_price": ("碳钢价格", _sidebar_price_spin(4.20, 1)),
         "stainless_price": ("不锈钢价格", _sidebar_price_spin(STAINLESS_DEFAULT_PRICES["SUS304"], 2)),
+        "material_difference": ("材料差价", _sidebar_price_spin(DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE, 0)),
         "waste_factor": ("废料系数", _sidebar_price_spin(1.20, 1, 4)),
         "labor_discount": ("人工折扣", _sidebar_price_spin(1.00, 2, 4)),
         "surface_price": ("表面处理价格", _sidebar_price_spin(26.00, 0)),
@@ -1919,6 +1945,9 @@ def _cost_sidebar(window):
         if key == "stainless_price":
             window.scheme2_stainless_price_field = field
             window.scheme2_stainless_price_label = field.findChild(QLabel, "scheme2FieldLabel")
+            field.hide()
+        if key == "material_difference":
+            window.scheme2_material_difference_field = field
             field.hide()
         layout.addWidget(field)
         control.editingFinished.connect(lambda k=key, c=control: _apply_cost_control(window, k, c.value()))
@@ -1999,7 +2028,7 @@ def _build_cost_page(window):
     compact_value = _price_spin(1.0)
     for key, label in (
         ("galvanized_price", "镀锌板价格"), ("carbon_price", "当前材质价格"),
-        ("stainless_price", "不锈钢价格"),
+        ("stainless_price", "不锈钢价格"), ("material_difference", "材料差价"),
         ("waste_factor", "废料系数"), ("labor_discount", "人工折扣"),
         ("surface_price", "表面处理价格"),
     ):
@@ -2119,6 +2148,11 @@ def _set_cost_column_mode(window, full):
     window._scheme2_full_columns = True
     for column in range(len(HEADERS)):
         window.summary_table.setColumnHidden(column, False)
+    items = getattr(window, "draft_items", [])
+    window.summary_table.setColumnHidden(
+        MATERIAL_DIFFERENCE_COLUMN,
+        not any(str(item.get("material_code") or "").strip().upper() == "SUS316" for item in items),
+    )
 
 
 def _sync_compact_control(window):
@@ -2230,7 +2264,7 @@ def _cost_cell_changed(window, row, column):
         window.refresh_summary()
         return
     item = items[row]
-    if column == 17:
+    if column == 18:
         item["freight_fee"] = value
     elif column == 4:
         item["quantity"] = max(1, int(value))
@@ -2253,17 +2287,21 @@ def _cost_cell_clicked(window, row, column):
         FaceDiscountEditor(window, item, targets).exec()
     elif column == 5:
         AttachmentEditor(window, item).exec()
-    elif column == 21:
+    elif column == 22:
         _show_detail(window, item)
 
 
 def _sync_sidebar(window):
+    if not hasattr(window, "scheme2_defaults") or not hasattr(window, "scheme2_cost_controls"):
+        return
     item = _selected_item(window)
     state = item.get("scheme2_cost_settings", {}) if isinstance(item, dict) else window.scheme2_defaults
     material_code = str(item.get("material_code") or "").strip().upper() if isinstance(item, dict) else ""
     stainless = material_code in {"SUS304", "SUS316"}
     if stainless and "stainless_price" not in state:
         state["stainless_price"] = _current_material_unit_price(item) or window.scheme2_defaults["stainless_price"]
+    if material_code == "SUS316" and "material_difference" not in state:
+        state["material_difference"] = window.scheme2_defaults["material_difference"]
     for key, control in window.scheme2_cost_controls.items():
         with QSignalBlocker(control):
             control.setValue(_number(state.get(key), window.scheme2_defaults[key]))
@@ -2276,6 +2314,9 @@ def _sync_sidebar(window):
     stainless_label = getattr(window, "scheme2_stainless_price_label", None)
     if isinstance(stainless_label, QLabel):
         stainless_label.setText(f"{material_code}价格" if stainless else "不锈钢价格")
+    difference_field = getattr(window, "scheme2_material_difference_field", None)
+    if difference_field is not None:
+        difference_field.setVisible(material_code == "SUS316")
     surface_control = getattr(window, "scheme2_cost_controls", {}).get("surface_price")
     if isinstance(surface_control, QDoubleSpinBox):
         surface_control.setPrefix("")
@@ -2288,6 +2329,16 @@ def _sync_sidebar(window):
             window.scheme2_compact_key.setItemText(
                 stainless_index, f"{material_code}价格" if stainless else "不锈钢价格"
             )
+        difference_index = window.scheme2_compact_key.findData("material_difference")
+        if difference_index >= 0:
+            window.scheme2_compact_key.view().setRowHidden(
+                difference_index, material_code != "SUS316"
+            )
+            if material_code != "SUS316" and window.scheme2_compact_key.currentData() == "material_difference":
+                fallback_key = "stainless_price" if stainless else "carbon_price"
+                fallback_index = window.scheme2_compact_key.findData(fallback_key)
+                if fallback_index >= 0:
+                    window.scheme2_compact_key.setCurrentIndex(fallback_index)
     if hasattr(window, "scheme2_compact_key"):
         _sync_compact_control(window)
 
@@ -2308,18 +2359,26 @@ def _refresh_cost_table(window):
             generate.setEnabled(bool(items))
         if not items:
             table.setRowCount(0)
+            table.setColumnHidden(MATERIAL_DIFFERENCE_COLUMN, True)
             return
+        table.setColumnHidden(
+            MATERIAL_DIFFERENCE_COLUMN,
+            not any(str(item.get("material_code") or "").strip().upper() == "SUS316" for item in items),
+        )
         table.setRowCount(len(items) + 1)
         for row, item in enumerate(items):
             canonical = list(_row_values(item))
             canonical[0] = row + 1
             values = [canonical[index] for index in COST_DISPLAY_ORDER]
             for column, value in enumerate(values):
-                text = _money(value) if column in MONEY_COLUMNS else str(value)
+                if column == MATERIAL_DIFFERENCE_COLUMN and str(item.get("material_code") or "").strip().upper() != "SUS316":
+                    text = "—"
+                else:
+                    text = _money(value) if column in MONEY_COLUMNS else str(value)
                 cell = QTableWidgetItem(text)
                 if column not in EDITABLE_COLUMNS:
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if column in (2, 5, 21):
+                if column in (2, 5, 22):
                     cell.setForeground(QColor("#185FA5"))
                     font = cell.font()
                     font.setUnderline(True)
@@ -2327,7 +2386,7 @@ def _refresh_cost_table(window):
                 if column in MONEY_COLUMNS:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
-                if column == 19:
+                if column == 20:
                     cell.setForeground(QColor("#D97706"))
                 table.setItem(row, column, cell)
         total_row = len(items)
@@ -2344,13 +2403,13 @@ def _refresh_cost_table(window):
                 text = "汇总"
             elif column == 4:
                 text = str(quantity_total)
-            elif column == 9:
+            elif column == 10:
                 text = _money(quote_total)
-            elif column == 18:
-                text = _money(cost_total)
             elif column == 19:
-                text = f"{gross_margin:.2%}"
+                text = _money(cost_total)
             elif column == 20:
+                text = f"{gross_margin:.2%}"
+            elif column == 21:
                 text = _money(weight_total)
             else:
                 text = "—"
@@ -2360,13 +2419,14 @@ def _refresh_cost_table(window):
             font.setBold(True)
             cell.setFont(font)
             cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
-            if column == 19:
+            if column == 20:
                 cell.setForeground(QColor("#D97706"))
             table.setItem(total_row, column, cell)
         if 0 <= selected < len(items):
             table.selectRow(selected)
     finally:
         window._scheme2_refreshing = False
+        _sync_sidebar(window)
 
 
 def _find_nav(window):
@@ -4902,7 +4962,12 @@ def _scheme2_quote_remark(item):
         or ""
     ).strip()
     product = re.sub(r"_(?:SINGLE|DOUBLE|DEFAULT)$", "", product, flags=re.IGNORECASE)
-    material = str(item.get("scheme2_selected_material") or item.get("material_code") or "").strip()
+    material_code = str(item.get("material_code") or "").strip().upper()
+    material = str(item.get("scheme2_selected_material") or material_code).strip()
+    if material_code == "SUS304":
+        material = "不锈钢304"
+    elif material_code == "SUS316":
+        material = "不锈钢316"
     surface = str(item.get("scheme2_selected_surface") or item.get("coating_type") or "").strip()
     color = str(item.get("display_color") or "").strip()
     attachment_names = []
@@ -5558,6 +5623,7 @@ def install_scheme2_ui(namespace):
         window.scheme2_defaults = {
             "galvanized_price": 4.55, "carbon_price": 4.20, "waste_factor": 1.20,
             "stainless_price": STAINLESS_DEFAULT_PRICES["SUS304"],
+            "material_difference": DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE,
             "labor_discount": 1.0, "surface_price": 26.0,
         }
         original_init(window, *args, **kwargs)
