@@ -64,6 +64,8 @@ from PySide6.QtWidgets import (
 )
 from pypdf import PdfReader, PdfWriter
 
+from attachment_category_browser import door_transformation_default_names
+
 
 OPTION_ROUTE = 1
 QUOTE_ROUTE = 2
@@ -2353,6 +2355,25 @@ def _sync_sidebar(window):
         _sync_compact_control(window)
 
 
+def _select_cost_item_for_current_material(window):
+    """Select the latest cost row matching the material left on the option page."""
+
+    material_combo = getattr(window, "material_combo", None)
+    if not isinstance(material_combo, QComboBox):
+        return
+    material_code = str(material_combo.currentData() or "").strip().upper()
+    if not material_code:
+        return
+    items = getattr(window, "draft_items", [])
+    matching_row = next((
+        row for row in range(len(items) - 1, -1, -1)
+        if str(items[row].get("material_code") or "").strip().upper() == material_code
+    ), -1)
+    if matching_row >= 0:
+        window.summary_table.selectRow(matching_row)
+        _sync_sidebar(window)
+
+
 def _refresh_cost_table(window):
     table = window.summary_table
     items = getattr(window, "draft_items", [])
@@ -3798,7 +3819,7 @@ class _SchemeAttachmentCombo(QComboBox):
 class _SchemeAttachmentDialog(QDialog):
     """Price-free attachment picker matching the approved scheme."""
 
-    def __init__(self, selected, product_code, parent=None):
+    def __init__(self, selected, product_code, parent=None, door_counts=None):
         super().__init__(parent)
         self.setObjectName("scheme2AttachmentOverlay")
         self.setWindowTitle("附件选择")
@@ -3821,8 +3842,21 @@ class _SchemeAttachmentDialog(QDialog):
             elif name:
                 legacy_selected_names.add(name)
 
+        default_door_transformations = set()
+        if door_counts is not None:
+            try:
+                default_door_transformations.update(
+                    door_transformation_default_names(product_code, *door_counts)
+                )
+            except (TypeError, ValueError):
+                pass
+
         def is_selected(category, name):
-            return (category, name) in selected_pairs or name in legacy_selected_names
+            return (
+                (category, name) in selected_pairs
+                or name in legacy_selected_names
+                or (category == "门变形" and name in default_door_transformations)
+            )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -4252,10 +4286,13 @@ def _open_attachment_overlay(window, _dialog_class, anchor):
             return
         except RuntimeError:
             window._scheme2_attachment_overlay = None
+    door_counts_getter = getattr(window, "door_counts", None)
+    door_counts = door_counts_getter() if callable(door_counts_getter) else None
     dialog = _SchemeAttachmentDialog(
         [dict(item) for item in getattr(window, "attachments", []) if isinstance(item, dict)],
         _current_product_code(window),
         window,
+        door_counts=door_counts,
     )
     top_left = anchor.mapTo(window, QPoint(0, 0))
     dialog.setGeometry(top_left.x(), top_left.y(), anchor.width(), anchor.height())
@@ -5772,6 +5809,8 @@ def install_scheme2_ui(namespace):
         previous_index = window.stack.currentIndex()
         if index == COST_ROUTE:
             window.refresh_summary()
+            if previous_index != COST_ROUTE:
+                _select_cost_item_for_current_material(window)
         elif index == QUOTE_ROUTE:
             _refresh_quote_page(window)
         result = original_section(window, index)

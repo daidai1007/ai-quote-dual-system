@@ -58,4 +58,21 @@ assert controls["material_difference"].value() == 25.0
 assert not compact_key.view().isRowHidden(compact_key.findData("material_difference"))
 scheme2_ui._apply_cost_control(window, "material_difference", 30.0)
 assert item["scheme2_cost_settings"]["material_difference"] == 30.0
+
+sus304_item = {
+    "material_code": "SUS304", "scheme2_cost_settings": {**defaults, "stainless_price": 16.0},
+    "formula": {}, "quick": {}, "quantity": 1,
+}
+window.draft_items = [item, sus304_item]
+window.material_combo = QComboBox()
+window.material_combo.addItem("不锈钢 SUS316", "SUS316")
+window.material_combo.addItem("不锈钢 SUS304", "SUS304")
+window.material_combo.setCurrentIndex(1)
+scheme2_ui._refresh_cost_table(window)
+table.selectRow(0)
+scheme2_ui._select_cost_item_for_current_material(window)
+assert table.currentRow() == 1
+assert window.scheme2_stainless_price_label.text() == "SUS304价格"
+assert controls["stainless_price"].value() == 16.0
+assert window.scheme2_material_difference_field.isHidden()
 print("scheme2 material price sidebar contract passed")
