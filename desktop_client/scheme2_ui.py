@@ -368,8 +368,18 @@ def _material_difference_amount(item):
         0.0,
         _number(state.get("material_difference"), DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE),
     )
-    weight = max(0.0, _number(_formula(item).get("corrected_material_weight_kg")))
-    return weight * unit_price
+    formula = _formula(item)
+    total_weight = max(0.0, _number(formula.get("corrected_material_weight_kg")))
+    material_rows = formula.get("material_details")
+    if not isinstance(material_rows, list) or not material_rows:
+        material_rows = formula.get("cabinet_material_part_details") or []
+    sgcc_weight = sum(
+        max(0.0, _number(row.get("billable_weight_kg")))
+        for row in material_rows
+        if isinstance(row, dict)
+        and str(row.get("material_code") or "").strip().upper() == "SGCC"
+    )
+    return max(0.0, total_weight - sgcc_weight) * unit_price
 
 
 def _row_values(item):

@@ -17,7 +17,11 @@ item = {
     "quick_discount": 0.9, "quick": {"total_cost": 500},
     "formula": {"total_cost": 300, "material_cost": 100, "auxiliary_cost": 20,
                 "labor_cost": 30, "attachment_fee": 40, "spray_cost": 50,
-                "management_fee": 60, "corrected_material_weight_kg": 12.345},
+                "management_fee": 60, "corrected_material_weight_kg": 12.345,
+                "material_details": [
+                    {"material_code": "SUS316", "billable_weight_kg": 10.0},
+                    {"material_code": "SGCC", "billable_weight_kg": 2.345},
+                ]},
     "freight_fee": 10, "attachments": [{"item_name": "附件"}],
 }
 table = QTableWidget(0, len(scheme2_ui.HEADERS))
@@ -37,8 +41,8 @@ item["material_code"] = "SUS316"
 item["scheme2_cost_settings"] = {"material_difference": 25.0}
 scheme2_ui._refresh_cost_table(window)
 assert not table.isColumnHidden(scheme2_ui.MATERIAL_DIFFERENCE_COLUMN)
-assert table.item(0, 7).text() == "308.62"
-assert table.item(0, 9).text() == "767.62"
-assert table.item(0, 10).text() == "1,535.25"
+assert table.item(0, 7).text() == "250.00"
+assert table.item(0, 9).text() == "709.00"
+assert table.item(0, 10).text() == "1,418.00"
 table.close()
 print("PASS: cost row values align with all 23 conditional headers")
