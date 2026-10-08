@@ -17,6 +17,7 @@ import time
 import unicodedata
 import urllib.error
 import urllib.request
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -2259,7 +2260,17 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
 
 
 def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | None:
-    rows = [item for item in getattr(window, "attachments", []) if isinstance(item, dict)]
+    window._v2_custom_attachments = [
+        deepcopy(item) for item in getattr(window, "attachments", [])
+        if isinstance(item, dict) and item.get("custom")
+    ]
+    # Custom rows are kept in the locally aggregated attachment total, but
+    # they have no catalogue identity and must not participate in a V2
+    # snapshot.  Ordinary quotes already apply the same exclusion.
+    rows = [
+        item for item in getattr(window, "attachments", [])
+        if isinstance(item, dict) and not item.get("custom")
+    ]
     v2_rows = [item for item in rows if item.get("catalog_version")]
     if not v2_rows:
         return None
