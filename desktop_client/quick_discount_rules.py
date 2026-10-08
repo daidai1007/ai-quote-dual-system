@@ -87,6 +87,10 @@ def formula_attachment_excluded(item: Mapping[str, Any] | None) -> bool:
 
 
 def formula_attachment_line_amount(item):
+    if (item or {}).get("custom") is True:
+        if item.get("formula_amount") is None:
+            raise ValueError("人工新增附件公式成本未完成，不能汇总")
+        return float(item["formula_amount"])
     if (item or {}).get("catalog_version"):
         if item.get("status") == "QUICK_ONLY":
             return 0.0
@@ -103,7 +107,7 @@ def effective_formula_attachment_line_amount(item, cabinet_quantity, ganged_cabi
 
 def quick_attachment_line_amount(item: Mapping[str, Any] | None) -> float:
     item = item or {}
-    if item.get("catalog_version") and item.get("quick_amount") is not None:
+    if (item.get("catalog_version") or item.get("custom") is True) and item.get("quick_amount") is not None:
         return float(item["quick_amount"])
     sign = -1.0 if _number(item.get("attachment_price_sign"), 1.0) == -1.0 else 1.0
     for key in ("total_price", "total_cost", "amount", "subtotal"):

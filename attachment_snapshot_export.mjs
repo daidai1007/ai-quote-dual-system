@@ -12,6 +12,14 @@ export function addAttachmentSnapshotSheet(workbook, payload) {
   for(const item of items){
     if(item.attachment_contract!==2) continue;
     for(const row of item.attachments||[]){
+      if(row.custom===true){
+        const values=[item.quote_line_id,null,item.name||item.model_code,'其他附件',null,row.item_name,null,row.unit,row.quantity,row.attachment_price_sign,
+          row.unit_price_override,row.quick_amount,null,null,null,null,null,null,null,null,
+          null,null,row.formula_amount,null,'人工新增','人工新增附件；无目录选择ID，金额由操作员输入并在确认时校验。',
+          item.material_code,null,item.quote_date,null,null];
+        sheet.addRow(values.map(value=>value??null));
+        continue;
+      }
       if(!item.quote_line_id||!row.attachment_selection_id||row.quote_line_id!==item.quote_line_id) throw new Error('附件导出缺少准确的报价行/选择ID关联');
       if(row.status==='ERROR') throw new Error(`${row.item_name}：${row.error||'附件计算错误'}`);
       const env=row.environment||{};

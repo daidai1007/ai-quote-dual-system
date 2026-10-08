@@ -41,6 +41,48 @@ export const attachmentInput = a => {
   return {attachment_price_id:id(a.attachment_price_id),quantity,attachment_price_sign:sign,
     manual_inputs:manual,...(gangedIndex===null?{}:{ganged_cabinet_index:gangedIndex})};
 };
+const customText=(value,label,max=200)=>{
+  const text=String(value??'').trim();
+  if(!text) throw new Error(`人工新增附件${label}不能为空`);
+  if(text.length>max) throw new Error(`人工新增附件${label}过长`);
+  return text;
+};
+const customAmount=(value,label)=>{
+  const number=Number(value);
+  if(!Number.isFinite(number)||number<0||number>1e8) throw new Error(`人工新增附件${label}必须为有效非负数`);
+  return number;
+};
+export const customAttachmentInput = value => {
+  if(!value||typeof value!=='object'||Array.isArray(value)||value.custom!==true)
+    throw new Error('人工新增附件必须明确标记 custom');
+  const itemName=customText(value.item_name??value.name,'名称');
+  const quantity=Number(value.quantity??1),sign=Number(value.attachment_price_sign??1);
+  if(!Number.isFinite(quantity)||quantity<=0||quantity>10000) throw new Error('人工新增附件数量必须为有效正数');
+  if(![1,-1].includes(sign)) throw new Error('人工新增附件加减符号无效');
+  const unitSource=[value.unit_price_override,value.matched_price,value.unit_price,value.price]
+    .find(entry=>entry!==null&&entry!==undefined&&entry!==''&&Number.isFinite(Number(entry)));
+  const unitPrice=unitSource===undefined?null:customAmount(unitSource,'单价');
+  const quickSource=[value.quick_amount_override,value.quick_amount]
+    .find(entry=>entry!==null&&entry!==undefined&&entry!==''&&Number.isFinite(Number(entry)));
+  const quickUnsigned=customAmount(
+    quickSource===undefined?(unitPrice??0)*quantity:Math.abs(Number(quickSource)), '快速金额');
+  const formulaSource=[value.formula_amount,value.custom_cost]
+    .find(entry=>entry!==null&&entry!==undefined&&entry!==''&&Number.isFinite(Number(entry)));
+  const formulaUnsigned=customAmount(
+    formulaSource===undefined?quickUnsigned:Math.abs(Number(formulaSource)), '公式金额');
+  const normalizedUnit=unitPrice??(quantity?quickUnsigned/quantity:0);
+  return {custom:true,item_name:itemName,name:itemName,category_level1:'其他附件',
+    attachment_category:'其他附件',unit:String(value.unit||'件').trim().slice(0,30)||'件',quantity,
+    attachment_price_sign:sign,unit_price_override:normalizedUnit,matched_price:normalizedUnit,
+    quick_amount_override:round(quickUnsigned*sign),quick_amount:round(quickUnsigned*sign),
+    formula_amount:round(formulaUnsigned*sign),custom_cost:round(formulaUnsigned*sign)};
+};
+const addCustomAmount=(quote,amount)=>{
+  const output={...(quote||{})};
+  output.attachment_fee=round(Number(output.attachment_fee||0)+amount);
+  if(output.total_cost!=null) output.total_cost=round(Number(output.total_cost)+amount);
+  return output;
+};
 export function applyAttachmentTotals(base,rows) {
   const totals=attachmentTotals(rows),formula={...(base.formula_cost||{})},quick={...(base.quick_quote||{})};
   formula.total_cost=formula.total_cost==null||totals.formula_attachment_fee==null?null:round(Number(formula.total_cost)-Number(formula.attachment_fee||0)+totals.formula_attachment_fee);
@@ -162,14 +204,17 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
       }
       const saved=await query(snapshotSql(item.quote_line_id));
       if(!saved) throw new Error('附件报价行不存在，请重新计算');
+      const providedAttachments=Array.isArray(item.attachments)?item.attachments:[];
+      const customAttachments=providedAttachments.filter(row=>row?.custom===true).map(customAttachmentInput);
+      const catalogAttachments=providedAttachments.filter(row=>row?.custom!==true);
       const changedKey=attachmentEnvironmentChange(item,saved.environment);
       if(changedKey) throw new Error(`报价环境已变化（${changedKey}），请重新计算附件`);
       if(Number(item.ganged_cabinet_count||1)!==Number(saved.environment.ganged_cabinet_count||1)
         ||canonical(item.ganged_cabinets||[])!==canonical(saved.environment.ganged_cabinets||[])) throw new Error('并柜明细已变化，请重新计算附件');
-      if(canonical((item.attachments||[]).map(attachmentInput))!==canonical(saved.attachments.map(attachmentInput))) throw new Error('附件选择或人工参数已变化，请重新计算');
+      if(canonical(catalogAttachments.map(attachmentInput))!==canonical(saved.attachments.map(attachmentInput))) throw new Error('附件选择或人工参数已变化，请重新计算');
       if(saved.attachments.some(a=>a.status==='ERROR')) throw new Error('附件成本存在错误，不能确认或导出');
       const result=saved.environment.quote_result;
-      const formula={...result.formula_cost};
+      let formula={...result.formula_cost};
       // Preserve the existing PRODUCT labor adjustment (13% management), never
       // apply it to attachment labor or introduce an attachment surcharge.
       const multiplier=Number(item.labor_multiplier??1);
@@ -179,9 +224,13 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
         formula.total_cost=Number(formula.total_cost)-Number(formula.labor_cost)-Number(formula.management_fee)+labor+management;
         formula.labor_cost=labor;formula.management_fee=management;
       }
+      const customFormulaTotal=customAttachments.reduce((sum,row)=>sum+Number(row.formula_amount),0);
+      const customQuickTotal=customAttachments.reduce((sum,row)=>sum+Number(row.quick_amount),0);
+      formula=addCustomAmount(formula,customFormulaTotal);
+      const quick=addCustomAmount(result.quick_quote,customQuickTotal);
       // A frozen service result remains independent of later catalog and price updates.
-      items.push({...item,attachments:saved.attachments,formula_base:result.formula_cost,
-        formula,quick:result.quick_quote});
+      items.push({...item,attachments:[...saved.attachments,...customAttachments],formula_base:result.formula_cost,
+        formula,quick});
     }
     return {...input,items};
   }

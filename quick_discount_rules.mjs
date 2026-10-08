@@ -69,7 +69,7 @@ export function formulaAttachmentExcluded(item = {}) {
 }
 
 export function quickAttachmentLineAmount(item = {}) {
-  if(item.catalog_version && item.quick_amount != null) return Number(item.quick_amount);
+  if((item.catalog_version||item.custom===true) && item.quick_amount != null) return Number(item.quick_amount);
   const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
   for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
     if (hasFiniteNumber(item[key])) {
@@ -119,6 +119,11 @@ export function effectiveAttachmentLineAmount(
 }
 
 export function formulaAttachmentLineAmount(item = {}) {
+  if(item.custom===true) {
+    if(item.formula_amount==null||!Number.isFinite(Number(item.formula_amount)))
+      throw new Error('人工新增附件公式成本未完成，不能汇总');
+    return Number(item.formula_amount);
+  }
   if(!item.catalog_version) return quickAttachmentLineAmount(item);
   if(item.status==='QUICK_ONLY') return 0;
   if(item.status==='ERROR'||item.formula_amount==null) throw new Error('附件公式成本未完成，不能汇总');
