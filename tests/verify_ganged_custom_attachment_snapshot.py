@@ -60,3 +60,54 @@ else:
     raise AssertionError("real legacy catalogue rows must still be rejected")
 
 print("ganged custom attachment snapshot passed")
+
+# The attachment snapshot is a distinct API request, so it must retain the
+# same sidebar material prices used for both child-cabinet calculations.  The
+# two automatic fixed bases must also keep their own child index and base
+# height, while the custom row remains local-only.
+first_base = {
+    **v2_attachment,
+    "attachment_price_id": 1043,
+    "ganged_fixed_base_index": 0,
+    "ganged_fixed_base_match": True,
+    "required_parameters": [{"name": "底座高度", "source": "MANUAL"}],
+}
+second_base = {
+    **v2_attachment,
+    "attachment_price_id": 1042,
+    "ganged_fixed_base_index": 1,
+    "ganged_fixed_base_match": True,
+    "required_parameters": [{"name": "底座高度", "source": "MANUAL"}],
+}
+window = SimpleNamespace(
+    attachments=[first_base, second_base, custom_attachment],
+    ganged_cabinets=[
+        {"width_mm": 800, "height_mm": 1800, "depth_mm": 800, "base_height_mm": 100},
+        {"width_mm": 600, "height_mm": 1800, "depth_mm": 800, "base_height_mm": 100},
+    ],
+    selected_product_code=lambda: "JP_SINGLE",
+)
+child_payloads = [
+    {
+        "quote_id": "TMP-BASE-1",
+        "material_unit_price_override": 4.2,
+        "galvanized_sheet_unit_price_override": 4.55,
+        "carbon_steel_unit_price_override": 4.2,
+        "surface_treatment_unit_price_override": 26.0,
+    },
+    {"quote_id": "TMP-BASE-2"},
+]
+payload = layout_refresh._build_ganged_attachment_payload(window, child_payloads)
+assert payload["material_unit_price_override"] == 4.2
+assert payload["galvanized_sheet_unit_price_override"] == 4.55
+assert payload["carbon_steel_unit_price_override"] == 4.2
+assert payload["surface_treatment_unit_price_override"] == 26.0
+assert [row["ganged_cabinet_index"] for row in payload["attachments"]] == [0, 1]
+assert [row["manual_inputs"]["底座高度"] for row in payload["attachments"]] == [100.0, 100.0]
+assert len(payload["attachments"]) == 2
+assert window._v2_custom_attachments == [custom_attachment]
+assert layout_refresh._ganged_error_text(
+    '{"error":"attachment_ganged_snapshot_failed","message":"当前材质价格必须由成本计算副导航栏提供有效正数"}'
+) == "当前材质价格必须由成本计算副导航栏提供有效正数"
+
+print("ganged fixed-base snapshot prices passed")

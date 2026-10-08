@@ -820,8 +820,8 @@ def _ganged_error_text(message) -> str:
             payload = None
         if isinstance(payload, dict):
             text = str(
-                payload.get("error")
-                or payload.get("message")
+                payload.get("message")
+                or payload.get("error")
                 or payload.get("detail")
                 or text
             ).strip()
@@ -2455,6 +2455,20 @@ def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | Non
         if ganged_index is not None:
             selected["ganged_cabinet_index"] = int(ganged_index)
         attachments.append(selected)
+    # Attachment pricing is a separate request after every child cabinet has
+    # been calculated.  It must receive the same operator-owned material
+    # prices as those child requests; otherwise the API cannot evaluate any
+    # catalogue attachment (including automatic fixed bases).
+    price_overrides = {
+        key: payloads[0][key]
+        for key in (
+            "galvanized_sheet_unit_price_override",
+            "carbon_steel_unit_price_override",
+            "material_unit_price_override",
+            "surface_treatment_unit_price_override",
+        )
+        if payloads and payloads[0].get(key) is not None
+    }
     return {
         "quote_id": payloads[0].get("quote_id", "") if payloads else "",
         "product_code": selected_code() if callable(selected_code) else None,
@@ -2472,6 +2486,7 @@ def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | Non
         "ganged_cabinet_count": len(ganged_rows),
         "ganged_cabinets": ganged_rows,
         "ganged_cabinet_inputs": payloads,
+        **price_overrides,
     }
 
 
