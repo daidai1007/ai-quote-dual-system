@@ -141,7 +141,7 @@ spin_until(
 )
 collected = dialog.collect_attachments()
 manual_row = next(a for a in collected if a["attachment_price_id"] == missing_id)
-assert "底座高度" not in manual_row["manual_inputs"]
+assert manual_row["manual_inputs"].get("底座高度") == 100
 assert dialog.table.item(rows[missing_id], 10).text() == "无需填写"
 for collected_row in collected:
     if collected_row.get("unit_price_override") is not None:
@@ -151,7 +151,7 @@ assert any(a.get("auxiliary_list") for a in collected)
 dialog.table.item(rows[missing_id], dialog.COL_QUANTITY).setText("2")
 spin_until(lambda: dialog._v2_ready, "quantity change did not recalculate")
 manual_row = next(a for a in dialog.collect_attachments() if a["attachment_price_id"] == missing_id)
-assert manual_row["quantity"] == 2 and "底座高度" not in manual_row["manual_inputs"]
+assert manual_row["quantity"] == 2 and manual_row["manual_inputs"].get("底座高度") == 100
 assert not manual_row.get("error"), "stale error survived a successful calculation"
 for identifier, row in rows.items():
     expected = next(a["price"] for a in catalog["items"] if a["attachment_price_id"] == identifier)

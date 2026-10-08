@@ -302,7 +302,11 @@ def merge_cost(source, cost, automatic_base_height=None):
     merged = {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
     if automatic_base_height is not None:
         manual = copy.deepcopy(merged.get("manual_inputs") or {})
-        manual.pop("底座高度", None)
+        # Keep the automatically derived base height in the immutable quote
+        # row.  The editor still hides this field from manual input, but the
+        # confirmation API must receive the same selection parameters that
+        # were frozen in the attachment snapshot.
+        manual["底座高度"] = automatic_base_height
         merged["manual_inputs"] = manual
     return merged
 
