@@ -2212,6 +2212,43 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
     areas: list[float] = []
     payloads = []
     quote_prefix = "TMP" + datetime.now().strftime("%Y%m%d%H%M%S%f")[-12:]
+    active_settings = getattr(window, "_scheme2_active_settings", None)
+    price_settings = active_settings or getattr(window, "scheme2_defaults", None)
+
+    def single_cabinet_price_overrides(material_code, coating_type):
+        if not isinstance(price_settings, dict):
+            return {}
+        carbon_price = float(price_settings.get("carbon_price", 0) or 0)
+        material = str(material_code or "").strip().upper()
+        if material in {"SUS304", "SUS316"}:
+            material_price = (
+                float(price_settings.get("stainless_price", 0) or 0)
+                if active_settings is not None
+                else {"SUS304": 16.0, "SUS316": 32.4}[material]
+            )
+        else:
+            material_price = carbon_price
+        coating = str(coating_type or "").strip()
+        surface_price = (
+            float(price_settings.get("surface_price", 0) or 0)
+            if active_settings is not None
+            else next(
+                (
+                    price for name, price in (("橘纹", 26.0), ("平光", 30.0), ("无", 0.0))
+                    if coating == name or name in coating
+                ),
+                26.0,
+            )
+        )
+        return {
+            "galvanized_sheet_unit_price_override": float(
+                price_settings.get("galvanized_price", 0) or 0
+            ),
+            "carbon_steel_unit_price_override": carbon_price,
+            "material_unit_price_override": material_price,
+            "surface_treatment_unit_price_override": surface_price,
+        }
+
     for index, (row, local) in enumerate(zip(rows, metrics)):
         single = int(row.get("single_door_count", 1))
         double = int(row.get("double_door_count", 0))
@@ -2223,6 +2260,8 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
         # applied here; it is applied later at quote-list/export line level.
         weights.append(local[0])
         areas.append(local[1])
+        material_code = material_combo.currentData() if material_combo is not None else None
+        coating_type = coating_combo.currentData() if coating_combo is not None else None
         payloads.append({
             "quote_id": f"{quote_prefix}-{index + 1}",
             "product_code": code,
@@ -2230,13 +2269,13 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
             # the combined customer-facing specification.  The original
             # combined text is restored on the saved/exported quote item.
             "model_code": subcabinet_specification(row),
-            "material_code": material_combo.currentData() if material_combo is not None else None,
+            "material_code": material_code,
             "width_mm": float(row["width_mm"]),
             "height_mm": float(row["height_mm"]),
             "depth_mm": float(row["depth_mm"]),
             "base_material_weight_kg": local[0],
             "product_area_m2": local[1],
-            "coating_type": coating_combo.currentData() if coating_combo is not None else None,
+            "coating_type": coating_type,
             "variant_code": variant,
             "single_door_count": single,
             "double_door_count": double,
@@ -2251,6 +2290,7 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
             # them in every child request would duplicate the three manual
             # quantity exceptions.
             "attachments": [],
+            **single_cabinet_price_overrides(material_code, coating_type),
         })
     return (
         payloads,
