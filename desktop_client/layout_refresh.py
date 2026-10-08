@@ -7,14 +7,12 @@ database catalogue presentation and API interactions approved for V3.
 
 from __future__ import annotations
 
-import base64
 import http.client
 import json
 import logging
 import math
 import re
 import time
-import unicodedata
 import urllib.error
 import urllib.request
 from copy import deepcopy
@@ -3577,7 +3575,7 @@ def _attachment_summary_edited(window, cell: QTableWidgetItem) -> None:
     if (
         not isinstance(table, QTableWidget)
         or getattr(window, "_attachment_summary_rendering", False)
-        or edited_column not in (4, 5)
+        or edited_column not in (3, 4)
     ):
         return
     row = edited_row
@@ -3586,7 +3584,7 @@ def _attachment_summary_edited(window, cell: QTableWidgetItem) -> None:
         return
     text = edited_text.strip().replace(",", "").replace("元", "").strip()
     value = _safe_float(text)
-    minimum_ok = value is not None and (value > 0 if edited_column == 4 else True)
+    minimum_ok = value is not None and (value > 0 if edited_column == 3 else True)
     if not minimum_ok:
         risk = getattr(window, "risk_label", None)
         if isinstance(risk, QLabel):
@@ -3600,7 +3598,7 @@ def _attachment_summary_edited(window, cell: QTableWidgetItem) -> None:
         sign = -1 if int(item.get("attachment_price_sign", 1)) == -1 else 1
     except (TypeError, ValueError):
         sign = 1
-    if edited_column == 4:
+    if edited_column == 3:
         item["quantity"] = value
         formula_unit_cost = _safe_float(item.get("formula_unit_cost"))
         if formula_unit_cost is not None:
@@ -3614,7 +3612,7 @@ def _attachment_summary_edited(window, cell: QTableWidgetItem) -> None:
         item["quick_amount"] = round(value, 2)
 
     _invalidate_quote_after_attachment_change(window, before)
-    if edited_column == 4:
+    if edited_column == 3:
         timer = getattr(window, "_v2_environment_timer", None)
         if timer is not None and any(
             isinstance(row_item, dict) and row_item.get("catalog_version")
@@ -3629,84 +3627,10 @@ def _attachment_summary_edited(window, cell: QTableWidgetItem) -> None:
                 if item.get("quick_amount_override") is not None
                 else "附件数量已更新，正在校验公式成本；请重新计算双报价。"
             )
-            if edited_column == 4
+            if edited_column == 3
             else "附件快速金额已人工调整，将计入快速报价；公式金额不变。请重新计算双报价。"
         )
     QTimer.singleShot(0, lambda: _render_attachment_summary_table(window))
-
-
-def _attachment_image_key(value) -> str:
-    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or ""))).casefold()
-
-
-def _attachment_images(window, item: dict) -> list[dict]:
-    direct = item.get("attachment_images")
-    if isinstance(direct, list) and direct:
-        return [image for image in direct if isinstance(image, dict) and image.get("data_base64")]
-    wanted = _attachment_image_key(item.get("item_name"))
-    if not wanted:
-        return []
-    for entry in getattr(window, "_attachment_image_catalog", []):
-        if not isinstance(entry, dict):
-            continue
-        candidate = _attachment_image_key(entry.get("item_name"))
-        mode = "PREFIX" if entry.get("match_mode") == "PREFIX" else "EXACT"
-        if candidate and ((mode == "PREFIX" and wanted.startswith(candidate)) or wanted == candidate):
-            return [
-                image for image in entry.get("images", [])
-                if isinstance(image, dict) and image.get("data_base64")
-            ]
-    return []
-
-
-def _attachment_image_widget(table: QTableWidget, window, item: dict) -> QWidget | None:
-    from PySide6.QtGui import QPixmap
-
-    images = _attachment_images(window, item)
-    if not images:
-        return None
-    container = QWidget(table)
-    container.setObjectName("attachmentImageCell")
-    layout = QHBoxLayout(container)
-    layout.setContentsMargins(3, 3, 3, 3)
-    layout.setSpacing(2)
-    cache = getattr(window, "_attachment_pixmap_cache", None)
-    if not isinstance(cache, dict):
-        cache = {}
-        window._attachment_pixmap_cache = cache
-    available_width = 82
-    label_width = max(34, available_width // min(len(images), 2) - 2)
-    rendered = 0
-    for image in images[:2]:
-        encoded = str(image.get("data_base64") or "")
-        cache_key = str(image.get("image_sha256") or encoded[:80])
-        pixmap = cache.get(cache_key)
-        if pixmap is None:
-            try:
-                raw = base64.b64decode(encoded, validate=False)
-            except (ValueError, TypeError):
-                raw = b""
-            pixmap = QPixmap()
-            if raw:
-                pixmap.loadFromData(raw)
-            cache[cache_key] = pixmap
-        if pixmap.isNull():
-            continue
-        label = QLabel(container)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setFixedSize(label_width, 58)
-        label.setPixmap(pixmap.scaled(
-            label.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        ))
-        layout.addWidget(label)
-        rendered += 1
-    if not rendered:
-        return None
-    container.setToolTip(f"附件图片来自数据库，共 {len(images)} 张")
-    container.setAccessibleName(f"{item.get('item_name') or '附件'}图片")
-    return container
 
 
 def _ensure_attachment_summary_table(window) -> QTableWidget | None:
@@ -3724,24 +3648,21 @@ def _ensure_attachment_summary_table(window) -> QTableWidget | None:
     if source is None or parent is None or layout is None:
         return None
 
-    table = QTableWidget(0, 7, parent)
+    table = QTableWidget(0, 6, parent)
     table.setObjectName("attachmentSummaryTable")
     table.setAccessibleName("已选附件报价明细")
     table.setHorizontalHeaderLabels((
-        "图片", "一级分类", "名称", "尺寸 / 规格", "数量", "快速金额", "公式金额",
+        "一级分类", "名称", "尺寸 / 规格", "数量", "快速金额", "公式金额",
     ))
-    table.horizontalHeaderItem(0).setToolTip("图片从线上数据库附件图片表读取；缺图时留空")
-    table.horizontalHeaderItem(4).setToolTip("每台柜体或每套并柜的附件选择数量；双击修改")
-    table.horizontalHeaderItem(5).setToolTip("附件快速报价行金额；双击人工调整")
+    table.horizontalHeaderItem(3).setToolTip("每台柜体或每套并柜的附件选择数量；双击修改")
+    table.horizontalHeaderItem(4).setToolTip("附件快速报价行金额；双击人工调整")
     table.verticalHeader().setVisible(False)
     table.verticalHeader().setDefaultSectionSize(66)
     table.horizontalHeader().setMinimumHeight(30)
-    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-    table.setColumnWidth(0, 90)
-    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-    table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-    for column in range(4, 7):
+    for column in range(3, 6):
         table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
     table.setEditTriggers(
         QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed
@@ -3777,9 +3698,7 @@ def _render_attachment_summary_table(window) -> None:
     try:
         table.setRowCount(len(attachments))
         for row, item in enumerate(attachments):
-            table.removeCellWidget(row, 0)
             values = (
-                "",
                 str(item.get("category_level1") or item.get("attachment_category") or "未分类").strip(),
                 " ".join(str(item.get("item_name") or "未命名附件").split()),
                 _attachment_specification(item),
@@ -3788,25 +3707,22 @@ def _render_attachment_summary_table(window) -> None:
                 _attachment_money(item.get("formula_amount")),
             )
             for column, value in enumerate(values):
-                cell = QTableWidgetItem("" if column == 0 else (value or "—"))
+                cell = QTableWidgetItem(value or "—")
                 flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-                if column in (4, 5):
+                if column in (3, 4):
                     flags |= Qt.ItemFlag.ItemIsEditable
                     cell.setBackground(QColor(BLUEPRINT_PALE))
-                    cell.setToolTip("双击修改数量" if column == 4 else "双击调整快速金额；修改值计入快速报价且不改变公式金额")
+                    cell.setToolTip("双击修改数量" if column == 3 else "双击调整快速金额；修改值计入快速报价且不改变公式金额")
                 cell.setFlags(flags)
-                if column == 4:
+                if column == 3:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                elif column >= 5:
+                elif column >= 4:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 else:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 table.setItem(row, column, cell)
-            image_widget = _attachment_image_widget(table, window, item)
-            if image_widget is not None:
-                table.setCellWidget(row, 0, image_widget)
-            table.item(row, 2).setToolTip(str(item.get("display_name") or item.get("item_name") or ""))
-            formula_cell = table.item(row, 6)
+            table.item(row, 1).setToolTip(str(item.get("display_name") or item.get("item_name") or ""))
+            formula_cell = table.item(row, 5)
             if formula_cell is not None and item.get("auxiliary_list"):
                 formula_cell.setToolTip("辅材清单：\n" + str(item.get("auxiliary_list")))
             table.setRowHeight(row, 66)

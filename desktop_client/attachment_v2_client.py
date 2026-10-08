@@ -73,20 +73,6 @@ def _visible_quote_dimensions(window):
         return None
 
 
-def attachment_images_for_name(image_catalog, item_name):
-    wanted = attachment_image_match_key(item_name)
-    if not wanted:
-        return []
-    for entry in image_catalog if isinstance(image_catalog, list) else []:
-        if not isinstance(entry, dict):
-            continue
-        candidate = attachment_image_match_key(entry.get("item_name"))
-        mode = "PREFIX" if entry.get("match_mode") == "PREFIX" else "EXACT"
-        if candidate and ((mode == "PREFIX" and wanted.startswith(candidate)) or wanted == candidate):
-            return [dict(image) for image in entry.get("images", []) if isinstance(image, dict)]
-    return []
-
-
 def missing_manual_dimensions(row):
     manual = row.get("manual_inputs") if isinstance(row, dict) else None
     manual = manual if isinstance(manual, dict) else {}
@@ -561,16 +547,11 @@ def install_attachment_v2(namespace):
         def loaded(body):
             if not isValid(dialog) or dialog._v2_catalog_generation != generation:
                 return
-            image_catalog = [dict(entry) for entry in body.get("attachment_images", []) if isinstance(entry, dict)]
-            dialog._attachment_image_catalog = image_catalog
-            if parent is not None:
-                parent._attachment_image_catalog = image_catalog
             dialog.catalog = [
                 dict(
                     x,
                     catalog_version=body["data_version"],
                     display_name=dialog.display_name(x),
-                    attachment_images=attachment_images_for_name(image_catalog, x.get("item_name")),
                 )
                 for x in body.get("items", [])
             ]
@@ -787,7 +768,6 @@ def install_attachment_v2(namespace):
                 return
             catalog = [dict(item) for item in body.get("items", []) if isinstance(item, dict)]
             version = body.get("data_version")
-            image_catalog = [dict(item) for item in body.get("attachment_images", []) if isinstance(item, dict)]
             resolved = []
             missing = []
             for source in rows:
@@ -806,13 +786,11 @@ def install_attachment_v2(namespace):
                     **source,
                     "attachment_price_id": match.get("attachment_price_id"),
                     "catalog_version": version,
-                    "attachment_images": attachment_images_for_name(image_catalog, match.get("item_name")),
                 })
             if missing:
                 failed("价格库中未找到唯一匹配项：" + "、".join(missing))
                 return
             window.attachments = resolved
-            window._attachment_image_catalog = image_catalog
             window._attachment_v2_line_id = None
             window.current_result = None
             window.update_attachment_view()

@@ -65,6 +65,10 @@ from PySide6.QtWidgets import (
 from pypdf import PdfReader, PdfWriter
 
 from attachment_category_browser import door_transformation_default_names
+try:
+    from cost_adjustments import rescale_material_weight
+except ModuleNotFoundError:  # Package import used by focused tests.
+    from .cost_adjustments import rescale_material_weight
 
 
 OPTION_ROUTE = 1
@@ -1984,16 +1988,10 @@ def _apply_cost_control(window, key, value):
         base = _number(item.setdefault("scheme2_cost_bases", {}).setdefault("material_cost", formula.get("material_cost")))
         original = _number(item.setdefault("scheme2_cost_bases", {}).setdefault("waste_factor", item.get("waste_factor", old)), 1.2)
         item["waste_factor"] = value
-        ratio = value / max(original, .01)
-        groups = formula.get("material_details") or []
-        for group in groups:
-            base_weight = _number(group.setdefault("_scheme2_base_billable_weight", group.get("billable_weight_kg")))
-            group["billable_weight_kg"] = base_weight * ratio
-        for detail in formula.get("cabinet_material_part_details") or []:
-            base_weight = _number(detail.setdefault("_scheme2_base_billable_weight", detail.get("billable_weight_kg")))
-            detail["billable_weight_kg"] = base_weight * ratio
+        ratio = rescale_material_weight(formula, value, original)
         if not _reprice_material_details(item, state):
             _replace_component(item, "material_cost", base * ratio)
+        item.pop("cost_detail_rows", None)
     elif key == "labor_discount":
         base = _number(item.get("formula_base", formula).get("labor_cost", formula.get("labor_cost")))
         item["labor_multiplier"] = value

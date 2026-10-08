@@ -375,13 +375,6 @@ class DrawingWorkflowTests(unittest.TestCase):
         self.assertLess(category_label.geometry().bottom(), name_label.geometry().top())
 
         self.w.quantity_spin.setValue(2)
-        self.w._attachment_image_catalog = [{
-            'item_name': '照明灯/行程开关', 'match_mode': 'EXACT',
-            'images': [{
-                'image_order': 1, 'mime_type': 'image/png', 'image_sha256': 'a' * 64,
-                'data_base64': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-            }],
-        }]
         self.w.attachments = [{
             'category_level1': '灯开关', 'item_name': '照明灯/行程开关',
             'model_code': '通用', 'quantity': 1, 'matched_price': 50,
@@ -389,35 +382,33 @@ class DrawingWorkflowTests(unittest.TestCase):
         }]
         self.w.update_attachment_view()
         summary = self.w.attachment_summary_table
-        self.assertEqual(summary.horizontalHeaderItem(0).text(), '图片')
-        self.assertEqual(summary.horizontalHeaderItem(1).text(), '一级分类')
-        self.assertEqual(summary.horizontalHeaderItem(2).text(), '名称')
+        self.assertEqual(summary.horizontalHeaderItem(0).text(), '一级分类')
+        self.assertEqual(summary.horizontalHeaderItem(1).text(), '名称')
         self.assertEqual(summary.rowCount(), 1)
-        self.assertIsNotNone(summary.cellWidget(0, 0))
-        self.assertEqual(summary.item(0, 1).text(), '灯开关')
-        self.assertEqual(summary.item(0, 2).text(), '照明灯/行程开关')
-        self.assertEqual(summary.horizontalHeaderItem(4).text(), '数量')
-        self.assertEqual(summary.horizontalHeaderItem(5).text(), '快速金额')
-        self.assertEqual(summary.item(0, 4).text(), '1')
-        self.assertEqual(summary.item(0, 5).text(), '50.00')
-        self.assertEqual(summary.item(0, 6).text(), '27.56')
+        self.assertEqual(summary.item(0, 0).text(), '灯开关')
+        self.assertEqual(summary.item(0, 1).text(), '照明灯/行程开关')
+        self.assertEqual(summary.horizontalHeaderItem(3).text(), '数量')
+        self.assertEqual(summary.horizontalHeaderItem(4).text(), '快速金额')
+        self.assertEqual(summary.item(0, 3).text(), '1')
+        self.assertEqual(summary.item(0, 4).text(), '50.00')
+        self.assertEqual(summary.item(0, 5).text(), '27.56')
+        self.assertEqual(summary.item(0, 3).background().color().name(), '#eaf3fa')
         self.assertEqual(summary.item(0, 4).background().color().name(), '#eaf3fa')
-        self.assertEqual(summary.item(0, 5).background().color().name(), '#eaf3fa')
-        summary.item(0, 4).setText('2')
+        summary.item(0, 3).setText('2')
         app.processEvents()
         self.assertEqual(self.w.attachments[0]['quantity'], 2)
         self.assertEqual(self.w.attachments[0]['quick_amount'], 100.0)
         self.assertEqual(self.w.attachments[0]['formula_amount'], 55.12)
-        self.assertEqual(summary.item(0, 5).text(), '100.00')
-        self.assertEqual(summary.item(0, 6).text(), '55.12')
-        summary.item(0, 5).setText('65.50')
+        self.assertEqual(summary.item(0, 4).text(), '100.00')
+        self.assertEqual(summary.item(0, 5).text(), '55.12')
+        summary.item(0, 4).setText('65.50')
         app.processEvents()
         self.assertEqual(self.w.attachments[0]['quick_amount_override'], 65.5)
         self.assertEqual(self.w.attachments[0]['quick_amount'], 65.5)
         self.assertEqual(self.w.attachments[0]['formula_amount'], 55.12)
-        self.assertEqual(summary.item(0, 5).text(), '65.50')
-        self.assertEqual(summary.item(0, 6).text(), '55.12')
-        summary.item(0, 4).setText('3')
+        self.assertEqual(summary.item(0, 4).text(), '65.50')
+        self.assertEqual(summary.item(0, 5).text(), '55.12')
+        summary.item(0, 3).setText('3')
         app.processEvents()
         self.assertEqual(self.w.attachments[0]['quantity'], 3)
         self.assertEqual(self.w.attachments[0]['quick_amount'], 65.5)
