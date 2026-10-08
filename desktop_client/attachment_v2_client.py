@@ -300,12 +300,12 @@ def match_quote_attachment(window, selection, catalog):
 
 def merge_cost(source, cost, automatic_base_height=None):
     merged = {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
-    if automatic_base_height is not None:
+    if automatic_base_height is not None and uses_base_height(merged):
         manual = copy.deepcopy(merged.get("manual_inputs") or {})
         # Keep the automatically derived base height in the immutable quote
-        # row.  The editor still hides this field from manual input, but the
-        # confirmation API must receive the same selection parameters that
-        # were frozen in the attachment snapshot.
+        # row only for attachments whose formula actually uses it.  Adding
+        # this parameter to unrelated rows (lamps, fans, etc.) would differ
+        # from their server snapshots and block confirmation.
         manual["底座高度"] = automatic_base_height
         merged["manual_inputs"] = manual
     return merged
@@ -388,6 +388,48 @@ def selected_input(item, automatic_base_height=None):
     if ganged_index is not None:
         selected["ganged_cabinet_index"] = int(ganged_index)
     return selected
+
+
+def confirmation_inputs(rows):
+    """Freeze exactly the fields compared by the server snapshot guard."""
+
+    frozen = []
+    for row in rows or []:
+        if not isinstance(row, dict) or row.get("custom"):
+            continue
+        selected = selected_input(row)
+        selected.pop("unit_price_override", None)
+        frozen.append(copy.deepcopy(selected))
+    return frozen
+
+
+def restore_confirmation_inputs(rows, frozen):
+    """Restore server-compared fields after the legacy saver copies a row."""
+
+    snapshots = [copy.deepcopy(row) for row in frozen or [] if isinstance(row, dict)]
+    output = []
+    cursor = 0
+    for source in rows or []:
+        row = copy.deepcopy(source) if isinstance(source, dict) else source
+        if not isinstance(row, dict) or row.get("custom"):
+            output.append(row)
+            continue
+        if cursor >= len(snapshots):
+            output.append(row)
+            continue
+        snapshot = snapshots[cursor]
+        cursor += 1
+        row["attachment_price_id"] = snapshot.get("attachment_price_id")
+        row["quantity"] = snapshot.get("quantity", 1)
+        row["attachment_price_sign"] = snapshot.get("attachment_price_sign", 1)
+        row["manual_inputs"] = copy.deepcopy(snapshot.get("manual_inputs") or {})
+        if "ganged_cabinet_index" in snapshot:
+            row["ganged_cabinet_index"] = int(snapshot["ganged_cabinet_index"])
+        else:
+            row.pop("ganged_cabinet_index", None)
+            row.pop("ganged_fixed_base_index", None)
+        output.append(row)
+    return output
 
 def install_attachment_v2(namespace):
     window_class, dialog_class, worker_class = (namespace.get(n) for n in ("MainWindow", "AttachmentDialog", "ApiWorker"))
@@ -922,6 +964,7 @@ def install_attachment_v2(namespace):
             window.attachments = [merge_cost(priced_rows[i] if i < len(priced_rows) else {}, row, automatic_base) for i, row in enumerate(result.get("attachments", []))]
             window.attachments.extend(copy.deepcopy(getattr(window, "_v2_custom_attachments", [])))
             window._attachment_v2_line_id = result.get("quote_line_id")
+            window._v2_confirmation_inputs = confirmation_inputs(result.get("attachments", []))
             window.update_attachment_view()
             window.refresh_discounted_totals()
         elif result.get("attachment_contract") == 2:
@@ -973,10 +1016,15 @@ def install_attachment_v2(namespace):
     def add_to_summary(window, *args, **kwargs):
         before = len(window.draft_items)
         line_id = getattr(window, "_attachment_v2_line_id", None)
+        frozen_inputs = copy.deepcopy(getattr(window, "_v2_confirmation_inputs", []))
         quote_date = window.quote_date.date().toString("yyyy-MM-dd")
         result = add(window, *args, **kwargs)
         if line_id and len(window.draft_items) == before + 1:
-            window.draft_items[-1].update(attachment_contract=2, quote_line_id=line_id, quote_date=quote_date)
+            item = window.draft_items[-1]
+            item["attachments"] = restore_confirmation_inputs(
+                item.get("attachments", []), frozen_inputs
+            )
+            item.update(attachment_contract=2, quote_line_id=line_id, quote_date=quote_date)
         return result
     window_class.add_current_to_summary = add_to_summary
     load_item, reset, update = window_class.load_draft_item, window_class.reset_current_cabinet, window_class.update_attachment_view
@@ -987,11 +1035,13 @@ def install_attachment_v2(namespace):
                 window.quote_date.setDate(QDate.fromString(item["quote_date"], "yyyy-MM-dd"))
             result = load_item(window, item)
             window._attachment_v2_line_id = item.get("quote_line_id")
+            window._v2_confirmation_inputs = confirmation_inputs(item.get("attachments", []))
             return result
         finally:
             window._attachment_v2_restoring = False
     def reset_v2(window, *args, **kwargs):
         window._attachment_v2_line_id = None
+        window._v2_confirmation_inputs = []
         return reset(window, *args, **kwargs)
     def update_v2(window):
         result = update(window)

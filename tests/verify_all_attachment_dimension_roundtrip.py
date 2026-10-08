@@ -9,7 +9,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
-from attachment_v2_client import merge_cost, selected_input  # noqa: E402
+from attachment_v2_client import (  # noqa: E402
+    confirmation_inputs,
+    merge_cost,
+    restore_confirmation_inputs,
+    selected_input,
+)
 
 
 fixture = json.loads(
@@ -85,7 +90,9 @@ for item, rule, names in parameterized:
         }
         if ganged_index is not None:
             source["ganged_cabinet_index"] = ganged_index
-        automatic_base = 100.0 if "底座高度" in names else None
+        # The visible cabinet has a base, so the caller supplies this value to
+        # every merge.  Only rules that actually use 底座高度 may retain it.
+        automatic_base = 100.0
         request = selected_input(source, automatic_base)
         cost = {
             **copy.deepcopy(source),
@@ -101,7 +108,42 @@ for item, rule, names in parameterized:
             names,
             ganged_index,
         )
+        # The recovered core is allowed to decorate/copy attachment rows, but
+        # even an accidental mutation of a compared field must be repaired
+        # from the successful server result before confirmation/export.
+        mutated = {
+            **copy.deepcopy(saved),
+            "quantity": 99,
+            "attachment_price_sign": -1,
+            "manual_inputs": {},
+        }
+        restored = restore_confirmation_inputs(
+            [mutated], confirmation_inputs([request])
+        )[0]
+        assert confirmation_input(restored) == confirmation_input(request)
         verified += 1
 
 assert verified == 226
-print("all 113 parameterized attachment rules passed ordinary/ganged roundtrip")
+
+# Also cover all catalogue rows without manual dimensions: a cabinet base
+# must never leak into unrelated attachment inputs such as lamps and fans.
+for item in fixture["catalog"]["items"]:
+    source = {
+        **copy.deepcopy(item),
+        "manual_inputs": {},
+        "quantity": 1,
+        "attachment_price_sign": 1,
+    }
+    request = selected_input(source, 100.0)
+    cost = {
+        **copy.deepcopy(source),
+        "manual_inputs": copy.deepcopy(request["manual_inputs"]),
+        "status": "QUICK_ONLY",
+    }
+    saved = merge_cost(source, cost, 100.0)
+    assert confirmation_input(saved) == confirmation_input(request), (
+        item.get("attachment_price_id"),
+        item.get("item_name"),
+    )
+
+print("all 226 catalog attachments and 113 dimension rules passed snapshot roundtrip")
