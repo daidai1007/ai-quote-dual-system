@@ -1342,15 +1342,53 @@ def _build_quote_page(window):
 
 def _detail_rows(item):
     existing = item.get("cost_detail_rows")
-    if isinstance(existing, list) and existing and all(row.get("_scheme2_version") == 2 for row in existing if isinstance(row, dict)):
+    if isinstance(existing, list) and existing and all(row.get("_scheme2_version") == 3 for row in existing if isinstance(row, dict)):
         return existing
     formula = _formula(item)
     rows = []
 
     def add_row(**values):
         values.setdefault("factor", 1.0)
-        values["_scheme2_version"] = 2
+        values["_scheme2_version"] = 3
         rows.append(values)
+
+    ganged_costs = [
+        child for child in formula.get("ganged_cabinet_costs", []) or []
+        if isinstance(child, dict) and isinstance(child.get("formula_cost"), dict)
+    ]
+    if ganged_costs:
+        for position, child in enumerate(ganged_costs, start=1):
+            cabinet_index = int(_number(child.get("cabinet_index"), position))
+            specification = str(child.get("model_code") or "").strip()
+            child_item = {"formula": deepcopy(child["formula_cost"])}
+            for child_row in _detail_rows(child_item):
+                # Attachments are priced once for the complete ganged cabinet,
+                # never once per split child cabinet.
+                if child_row.get("category") == "attachment_fee":
+                    continue
+                row = deepcopy(child_row)
+                row["type"] = f"柜体{cabinet_index}\n{row.get('type', '')}"
+                if specification:
+                    detail_spec = str(row.get("spec") or "").strip()
+                    row["spec"] = (
+                        f"{specification}\n{detail_spec}"
+                        if detail_spec else specification
+                    )
+                row["ganged_cabinet_index"] = cabinet_index
+                row["ganged_cabinet_specification"] = specification
+                row["_scheme2_version"] = 3
+                rows.append(row)
+
+        attachment = _number(formula.get("attachment_fee"))
+        if attachment:
+            add_row(
+                category="attachment_fee", type="并柜附件", name="整套并柜附件成本",
+                spec="整套并柜", formula="并柜附件报价快照汇总",
+                quantity=1, unit="项", unit_price=attachment,
+                base_amount=attachment, note="附件仅计入整套并柜一次",
+            )
+        item["cost_detail_rows"] = rows
+        return rows
 
     for detail in formula.get("cabinet_material_part_details", []) or []:
         if not isinstance(detail, dict):

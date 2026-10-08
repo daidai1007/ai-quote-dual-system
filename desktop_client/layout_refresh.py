@@ -670,6 +670,24 @@ class _GangedQuoteWorker(QThread):
                 formula_base_total + self.attachment_total
                 if formula_base_total is not None else None
             )
+            # ``show_result`` deliberately keeps only ``formula_cost`` and
+            # ``quick_quote``.  Preserve each independently calculated child
+            # formula inside the aggregate formula so the saved quote can
+            # render a real per-cabinet cost breakdown later.
+            formula["ganged_cabinet_costs"] = [
+                {
+                    "cabinet_index": index,
+                    "model_code": payload.get("model_code"),
+                    "product_code": payload.get("product_code"),
+                    "width_mm": payload.get("width_mm"),
+                    "depth_mm": payload.get("depth_mm"),
+                    "height_mm": payload.get("height_mm"),
+                    "formula_cost": deepcopy(result.get("formula_cost") or {}),
+                }
+                for index, (payload, result) in enumerate(
+                    zip(self.payloads, results), start=1
+                )
+            ]
 
             quick_base = self._sum(results, "quick_quote", "base_price")
             quick = {

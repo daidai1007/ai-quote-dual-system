@@ -115,5 +115,13 @@ assert aggregate["quick_quote"]["base_price"] == 2200
 assert aggregate["quick_quote"]["total_cost"] == 2200
 assert aggregate["formula_cost"]["material_cost"] == 250
 assert aggregate["formula_cost"]["total_cost"] == 500
+children = aggregate["formula_cost"]["ganged_cabinet_costs"]
+assert len(children) == 2
+assert children[0]["cabinet_index"] == 1
+assert children[0]["model_code"]
+assert (children[0]["width_mm"], children[0]["depth_mm"], children[0]["height_mm"]) == (800, 800, 1800)
+assert children[0]["formula_cost"]["total_cost"] == 200
+assert children[1]["cabinet_index"] == 2
+assert children[1]["formula_cost"]["total_cost"] == 300
 
 print("ganged single-cabinet aggregation passed")
