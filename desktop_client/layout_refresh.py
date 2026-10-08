@@ -276,6 +276,9 @@ FORMULA_TEMPLATE_DEBOUNCE_MS = 420
 FORMULA_TEMPLATE_BUSY_RECHECK_MS = 160
 QUOTE_REQUEST_TIMEOUT_SECONDS = 90
 QUOTE_PROGRESS_INTERVAL_MS = 1000
+CONFIRM_REQUEST_TIMEOUT_SECONDS = 75
+CONFIRM_REQUEST_MAX_ATTEMPTS = 3
+CONFIRM_REQUEST_RETRY_DELAYS_MS = (500, 1200)
 ATTACHMENT_CATEGORY_PRODUCT_FAMILIES = {
     "侧板": frozenset({"JP"}),
     "控制箱附件": frozenset({"JM", "JA", "JE", "JK"}),
@@ -284,6 +287,30 @@ ATTACHMENT_CATEGORY_PRODUCT_FAMILIES = {
 
 
 LOGGER = logging.getLogger("ai_quote.client")
+
+
+def _tls_handshake_timed_out(error: Exception) -> bool:
+    text = str(error or "").strip().lower()
+    return "handshake" in text and ("timed out" in text or "timeout" in text)
+
+
+def _confirmation_retryable(url: str, error: Exception) -> bool:
+    """Retry dry-run failures, but only pre-request TLS failures on commit."""
+
+    endpoint = str(url or "").rstrip("/")
+    if endpoint.endswith("/api/quotes/confirm"):
+        # A TLS handshake timeout happens before the POST body reaches the
+        # server, so retrying cannot duplicate a confirmed quotation.
+        return _tls_handshake_timed_out(error)
+    if endpoint.endswith("/api/quotes/confirm-check"):
+        return _formula_template_error_is_transient(error)
+    return False
+
+
+def _confirmation_failure_text(error: Exception) -> str:
+    if _tls_handshake_timed_out(error):
+        return "网络安全连接超时，系统已自动重试仍未成功，请检查网络后再次确认报价。"
+    return _formula_template_error_text(error)
 
 
 def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
@@ -302,7 +329,59 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
 
     def run_with_quote_diagnostics(self):
         url = str(getattr(self, "url", "") or "")
-        if not url.rstrip("/").endswith("/api/quotes/calculate-dual"):
+        endpoint = url.rstrip("/")
+        is_confirmation = endpoint.endswith((
+            "/api/quotes/confirm-check",
+            "/api/quotes/confirm",
+        ))
+        if is_confirmation:
+            payload = getattr(self, "payload", {})
+            payload = payload if isinstance(payload, dict) else {}
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers = (
+                headers_factory(True)
+                if callable(headers_factory)
+                else {"Content-Type": "application/json; charset=utf-8"}
+            )
+            for attempt in range(1, CONFIRM_REQUEST_MAX_ATTEMPTS + 1):
+                self.attempt_count = attempt
+                try:
+                    request = urllib.request.Request(
+                        url,
+                        data=body,
+                        headers=headers,
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(
+                        request, timeout=CONFIRM_REQUEST_TIMEOUT_SECONDS
+                    ) as response:
+                        result = json.loads(response.read().decode("utf-8"))
+                    if not isinstance(result, dict):
+                        raise RuntimeError("报价确认接口返回了无效数据")
+                    self.succeeded.emit(result)
+                    return
+                except Exception as error:
+                    if (
+                        attempt < CONFIRM_REQUEST_MAX_ATTEMPTS
+                        and _confirmation_retryable(url, error)
+                    ):
+                        delay_index = min(
+                            attempt - 1,
+                            len(CONFIRM_REQUEST_RETRY_DELAYS_MS) - 1,
+                        )
+                        LOGGER.warning(
+                            "quote confirmation retry endpoint=%s attempt=%s/%s error=%s",
+                            endpoint,
+                            attempt + 1,
+                            CONFIRM_REQUEST_MAX_ATTEMPTS,
+                            str(error),
+                        )
+                        self.msleep(CONFIRM_REQUEST_RETRY_DELAYS_MS[delay_index])
+                        continue
+                    self.failed.emit(_confirmation_failure_text(error))
+                    return
+
+        if not endpoint.endswith("/api/quotes/calculate-dual"):
             return original_run(self)
 
         started = time.monotonic()
@@ -1289,6 +1368,40 @@ def _parse_specification_dimensions(text: str, parser=None) -> tuple[float, floa
 def _ganged_rows(window) -> list[dict]:
     rows = getattr(window, "ganged_cabinets", [])
     return [dict(row) for row in rows if isinstance(row, dict)]
+
+
+def _add_with_ganged_specification(window, original_add, rows, specification):
+    """Let the recovered single-cabinet saver validate a ganged quote safely."""
+
+    if len(rows) <= 1 or not str(specification or "").strip():
+        return original_add(window)
+    function_globals = getattr(original_add, "__globals__", None)
+    if not isinstance(function_globals, dict):
+        return original_add(window)
+    original_parser = function_globals.get("parse_review_specification")
+    if not callable(original_parser):
+        return original_add(window)
+    first = rows[0]
+    try:
+        canonical = "{:g}*{:g}*{:g}".format(
+            float(first["width_mm"]),
+            float(first["depth_mm"]),
+            float(first["height_mm"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return original_add(window)
+
+    def parse_for_add(value):
+        if parse_ganged_specification(str(value or "")) is not None:
+            return original_parser(canonical)
+        return original_parser(value)
+
+    function_globals["parse_review_specification"] = parse_for_add
+    try:
+        return original_add(window)
+    finally:
+        if function_globals.get("parse_review_specification") is parse_for_add:
+            function_globals["parse_review_specification"] = original_parser
 
 
 def _ganged_count(window) -> int:
@@ -4686,7 +4799,12 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             waste_widget = getattr(self, "waste_factor_spin", None)
             waste_factor = _safe_float(getattr(waste_widget, "value", lambda: 1.2)()) or 1.2
             before = len(getattr(self, "draft_items", []))
-            result = original_add(self)
+            result = _add_with_ganged_specification(
+                self,
+                original_add,
+                ganged_rows,
+                ganged_specification,
+            )
             items = getattr(self, "draft_items", [])
             if len(items) == before + 1:
                 item = items[-1]
