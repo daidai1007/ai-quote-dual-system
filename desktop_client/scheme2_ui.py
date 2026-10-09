@@ -4931,6 +4931,7 @@ def _monitor_formula_calculation(window):
         if (
             getattr(window, "_pending_formula_calculation", False)
             or running(getattr(window, "template_worker", None))
+            or running(getattr(window, "ganged_template_worker", None))
             or (isinstance(debounce, QTimer) and debounce.isActive())
         ):
             return

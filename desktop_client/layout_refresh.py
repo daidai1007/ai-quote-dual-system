@@ -654,6 +654,17 @@ class _GangedQuoteWorker(QThread):
             formula = {
                 key: self._sum(results, "formula_cost", key) for key in formula_keys
             }
+            # The cost table reads the billable self-made weight from the
+            # aggregate formula, just like an ordinary cabinet.  Keep both
+            # weight totals in that same contract instead of leaving the
+            # ganged total only in a top-level helper field that show_result
+            # intentionally discards.
+            formula["net_material_weight_kg"] = self._sum(
+                results, "formula_cost", "net_material_weight_kg"
+            )
+            formula["corrected_material_weight_kg"] = self._sum(
+                results, "formula_cost", "corrected_material_weight_kg"
+            )
             formula_base_total = self._sum(results, "formula_cost", "total_cost")
             formula_existing_attachment = self._sum(
                 results, "formula_cost", "attachment_fee"
@@ -719,7 +730,7 @@ class _GangedQuoteWorker(QThread):
                 "quick_quote": quick,
                 "risk_flags": risks,
                 "ganged_cabinet_results": results,
-                "ganged_weight_kg": self.weight_total,
+                "ganged_weight_kg": formula.get("corrected_material_weight_kg"),
                 "ganged_area_m2": formula.get("product_area_m2"),
             }
             if self.attachment_payload:

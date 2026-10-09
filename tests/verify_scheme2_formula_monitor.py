@@ -41,4 +41,23 @@ QTest.qWait(250)
 app.processEvents()
 assert not errors and window._scheme2_formula_monitor.isActive()
 window._scheme2_formula_monitor.stop()
+
+# Ganged cabinets hydrate one formula template per child product.  That worker
+# is distinct from the ordinary single-cabinet template worker and must keep
+# the add-to-quote monitor in its waiting state.
+class RunningWorker:
+    def isRunning(self):
+        return True
+
+
+window._scheme2_add_after_calculate = True
+window._pending_formula_calculation = False
+window.ganged_template_worker = RunningWorker()
+window.risk_label.setText("已按正式规格使用当前 W、D、H，可正常计算报价。")
+errors.clear()
+scheme2_ui._monitor_formula_calculation(window)
+QTest.qWait(250)
+app.processEvents()
+assert not errors and window._scheme2_formula_monitor.isActive()
+window._scheme2_formula_monitor.stop()
 print("scheme2 formula monitor contract passed")

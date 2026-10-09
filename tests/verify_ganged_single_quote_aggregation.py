@@ -71,6 +71,7 @@ child_results = [
             "material_cost": 100, "auxiliary_cost": 20, "labor_cost": 30,
             "spray_cost": 40, "management_fee": 10, "attachment_fee": 0,
             "total_cost": 200, "product_area_m2": 7.1,
+            "net_material_weight_kg": 35, "corrected_material_weight_kg": 40,
         },
         "quick_quote": {"base_price": 1000, "attachment_fee": 0, "total_cost": 1000, "dimension_distance": 0},
     },
@@ -79,6 +80,7 @@ child_results = [
             "material_cost": 150, "auxiliary_cost": 30, "labor_cost": 45,
             "spray_cost": 60, "management_fee": 15, "attachment_fee": 0,
             "total_cost": 300, "product_area_m2": 7.1,
+            "net_material_weight_kg": 50, "corrected_material_weight_kg": 60,
         },
         "quick_quote": {"base_price": 1200, "attachment_fee": 0, "total_cost": 1200, "dimension_distance": 0},
     },
@@ -115,6 +117,9 @@ assert aggregate["quick_quote"]["base_price"] == 2200
 assert aggregate["quick_quote"]["total_cost"] == 2200
 assert aggregate["formula_cost"]["material_cost"] == 250
 assert aggregate["formula_cost"]["total_cost"] == 500
+assert aggregate["formula_cost"]["net_material_weight_kg"] == 85
+assert aggregate["formula_cost"]["corrected_material_weight_kg"] == 100
+assert aggregate["ganged_weight_kg"] == 100
 children = aggregate["formula_cost"]["ganged_cabinet_costs"]
 assert len(children) == 2
 assert children[0]["cabinet_index"] == 1
