@@ -21,6 +21,27 @@ def test_discounted_unit_price_edit_updates_discount_and_total():
     assert scheme2_ui._row_values(item)[16] == 1500
 
 
+def test_quote_name_edit_updates_the_saved_item_and_rejects_blank_names():
+    item = {"name": "未命名", "quantity": 1, "quick": {"total_cost": 100}, "formula": {"total_cost": 60}}
+    table = QTableWidget(0, 8)
+    window = SimpleNamespace(
+        _scheme2_refreshing_quote=False, draft_items=[item], scheme2_quote_preview=table,
+        scheme2_company=SimpleNamespace(currentText=lambda: ""),
+        scheme2_order_number=QLineEdit(), refresh_summary=lambda: None,
+    )
+    scheme2_ui._refresh_quote_page(window)
+    assert table.item(10, 1).flags() & scheme2_ui.Qt.ItemFlag.ItemIsEditable
+    assert not table.item(10, 2).flags() & scheme2_ui.Qt.ItemFlag.ItemIsEditable
+
+    table.item(10, 1).setText("人工名称")
+    scheme2_ui._quote_name_changed(window, 10, 1)
+    assert item["name"] == "人工名称"
+
+    table.item(10, 1).setText("   ")
+    scheme2_ui._quote_name_changed(window, 10, 1)
+    assert item["name"] == "人工名称"
+
+
 def test_print_format_uses_order_date_buyer_seller_and_required_columns():
     item = {
         "name": "未命名", "specification": "1250*400*2000", "quantity": 1,

@@ -497,6 +497,46 @@ def restore_confirmation_inputs(rows, frozen):
         output.append(row)
     return output
 
+
+def confirmation_attachments_for_item(item):
+    """Return the immutable catalogue selections used by quote confirmation.
+
+    Priced attachment rows are later decorated for display (for example with
+    final cabinet quantities and compatibility fields).  Those presentation
+    rows must never be used as the confirmation contract because the service
+    compares them with the exact inputs frozen when the quote line was priced.
+    Quote-local custom rows are intentionally appended from the live item: they
+    are not part of the catalogue snapshot and are validated separately.
+    """
+
+    rows = item.get("attachments") if isinstance(item, dict) else None
+    rows = rows if isinstance(rows, list) else []
+    frozen = item.get("attachment_confirmation_inputs") if isinstance(item, dict) else None
+    if not isinstance(frozen, list):
+        return copy.deepcopy(rows)
+    catalog = [
+        copy.deepcopy(row) for row in frozen
+        if isinstance(row, dict) and not row.get("custom")
+    ]
+    custom = [
+        copy.deepcopy(row) for row in rows
+        if isinstance(row, dict) and row.get("custom") is True
+    ]
+    return catalog + custom
+
+
+def confirmation_payload(payload):
+    """Freeze V2 attachment inputs without mutating the visible draft."""
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        return payload
+    output = copy.deepcopy(payload)
+    for item in output["items"]:
+        if not isinstance(item, dict) or item.get("attachment_contract") != 2:
+            continue
+        item["attachments"] = confirmation_attachments_for_item(item)
+    return output
+
 def install_attachment_v2(namespace):
     window_class, dialog_class, worker_class = (namespace.get(n) for n in ("MainWindow", "AttachmentDialog", "ApiWorker"))
     if not window_class or not dialog_class or not worker_class or getattr(window_class, "_attachment_v2_installed", False):
@@ -993,6 +1033,9 @@ def install_attachment_v2(namespace):
     # child-cabinet flow and commits one aggregate V2 attachment snapshot.
     worker_init = worker_class.__init__
     def init_worker(worker, url, payload, parent=None, *args, **kwargs):
+        endpoint = str(url)
+        if endpoint.endswith(("/api/quotes/confirm", "/api/quotes/confirm-check")):
+            payload = confirmation_payload(payload)
         all_attachments = list(payload.get("attachments", []))
         request_attachments = [row for row in all_attachments if not row.get("custom")]
         if parent is not None:
@@ -1093,6 +1136,7 @@ def install_attachment_v2(namespace):
             item["attachments"] = restore_confirmation_inputs(
                 item.get("attachments", []), frozen_inputs
             )
+            item["attachment_confirmation_inputs"] = copy.deepcopy(frozen_inputs)
             item.update(attachment_contract=2, quote_line_id=line_id, quote_date=quote_date)
         return result
     window_class.add_current_to_summary = add_to_summary

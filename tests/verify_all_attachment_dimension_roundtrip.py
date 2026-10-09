@@ -10,7 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
 from attachment_v2_client import (  # noqa: E402
+    confirmation_attachments_for_item,
     confirmation_inputs,
+    confirmation_payload,
     merge_cost,
     restore_confirmation_inputs,
     selected_input,
@@ -124,6 +126,40 @@ for item, rule, names in parameterized:
         verified += 1
 
 assert verified == 226
+
+# Quote-screen/display logic may decorate or even accidentally overwrite the
+# visible attachment fields after pricing.  Confirmation must still submit the
+# immutable selection that produced the server quote-line snapshot, while
+# retaining quote-local custom rows.
+frozen = [{
+    "attachment_price_id": 34,
+    "quantity": 1,
+    "attachment_price_sign": 1,
+    "manual_inputs": {},
+}]
+display_row = {
+    **frozen[0],
+    "quantity": 2,
+    "item_name": "接地线-编织带",
+    "final_quantity": 2,
+}
+custom_row = {
+    "custom": True,
+    "item_name": "人工附件",
+    "quantity": 3,
+    "unit_price_override": 5,
+}
+quote_item = {
+    "attachment_contract": 2,
+    "attachments": [display_row, custom_row],
+    "attachment_confirmation_inputs": frozen,
+}
+confirmed = confirmation_attachments_for_item(quote_item)
+assert confirmed == [frozen[0], custom_row]
+payload = {"items": [quote_item], "company_name": "测试公司"}
+adapted = confirmation_payload(payload)
+assert adapted["items"][0]["attachments"] == [frozen[0], custom_row]
+assert payload["items"][0]["attachments"][0]["quantity"] == 2
 
 # Also cover all catalogue rows without manual dimensions: a cabinet base
 # must never leak into unrelated attachment inputs such as lamps and fans.

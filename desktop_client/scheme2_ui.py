@@ -345,7 +345,7 @@ def _quick(item):
 def _attachment_amount(row):
     price = row.get("unit_price_override", row.get("matched_price", 0))
     sign = -1 if int(_number(row.get("attachment_price_sign", 1), 1)) == -1 else 1
-    return int(_number(row.get("quantity", 1), 1)) * abs(_number(price)) * sign
+    return _number(row.get("quantity", 1), 1) * abs(_number(price)) * sign
 
 
 def _attachment_total(item):
@@ -479,6 +479,48 @@ def _reprice_material_details(item, state):
     if len(groups) == 1:
         formula["material_unit_price"] = groups[0]["material_unit_price"]
     _replace_component(item, "material_cost", total)
+    return True
+
+
+def _repair_missing_material_prices(item, defaults=None):
+    """Repair legacy/portable snapshots whose priced material rows became zero."""
+    formula = _formula(item)
+    details = [
+        row for row in formula.get("cabinet_material_part_details", []) or []
+        if isinstance(row, dict)
+    ]
+    if not any(
+        _number(row.get("billable_weight_kg")) > 0
+        and _number(row.get("material_unit_price")) <= 0
+        for row in details
+    ):
+        return False
+
+    material_code = str(item.get("material_code") or "").strip().upper()
+    fallback = {
+        "galvanized_price": 4.55,
+        "carbon_price": 4.20,
+        "stainless_price": STAINLESS_DEFAULT_PRICES.get(
+            material_code, STAINLESS_DEFAULT_PRICES["SUS304"]
+        ),
+        "material_difference": DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE,
+        "waste_factor": 1.20,
+        "labor_discount": 1.0,
+        "surface_price": 26.0,
+    }
+    if isinstance(defaults, dict):
+        fallback.update(defaults)
+    existing = item.get("scheme2_cost_settings")
+    if not isinstance(existing, dict):
+        existing = {}
+    state = {**fallback, **existing}
+    for key in ("galvanized_price", "carbon_price", "stainless_price"):
+        if _number(state.get(key)) <= 0:
+            state[key] = fallback[key]
+    item["scheme2_cost_settings"] = state
+    if not _reprice_material_details(item, state):
+        return False
+    item.pop("cost_detail_rows", None)
     return True
 
 
@@ -687,6 +729,9 @@ class AttachmentEditor(QDialog):
         super().__init__(window)
         self.window = window
         self.item = item
+        # Draft attachments and quote amounts remain per cabinet (or per
+        # complete ganged set). Only the editor projects them to order totals.
+        self.cabinet_quantity = max(1, int(_number(item.get("quantity", 1), 1)))
         self.setWindowTitle("已选附件")
         self.setObjectName("scheme2AttachmentEditorDialog")
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
@@ -810,10 +855,17 @@ class AttachmentEditor(QDialog):
             self.table.setItem(row, self.COL_SPECIFICATION, specification_item)
         quantity = QSpinBox()
         quantity.setObjectName("scheme2AttachmentEditorQuantity")
-        quantity.setRange(-9999, 9999)
+        quantity.setRange(-9999 * self.cabinet_quantity, 9999 * self.cabinet_quantity)
+        quantity.setSingleStep(self.cabinet_quantity)
         quantity.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         quantity.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        quantity.setValue(max(-9999, min(9999, int(_number(source.get("quantity", 1), 1)))))
+        total_quantity = round(_number(source.get("quantity", 1), 1) * self.cabinet_quantity)
+        quantity.setValue(total_quantity)
+        quantity.setProperty("previousQuantity", quantity.value())
+        quantity.setToolTip(
+            f"整批数量 = 单柜数量 {_number(source.get('quantity', 1), 1):g}"
+            f" × 柜体数量 {self.cabinet_quantity}；修改后按柜体数量折算保存"
+        )
         self.table.setCellWidget(row, self.COL_QUANTITY, quantity)
         self.table.item(row, self.COL_NAME).setData(ROLE_ROW, dict(source))
         self._render_amounts(row, source)
@@ -849,6 +901,8 @@ class AttachmentEditor(QDialog):
         custom = bool(source.get("custom"))
         quick_fallback = formula_amount * 1.2 if custom else _attachment_amount(source)
         quick_amount = 0.0 if pending else _number(source.get("quick_amount"), quick_fallback)
+        formula_amount *= self.cabinet_quantity
+        quick_amount *= self.cabinet_quantity
         if custom:
             cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
             if not isinstance(cost_editor, QDoubleSpinBox):
@@ -864,7 +918,7 @@ class AttachmentEditor(QDialog):
             with QSignalBlocker(cost_editor):
                 cost_editor.setValue(formula_amount)
             cost_editor.setProperty("schemeEdited", bool(source.get("custom_cost_edited")))
-            cost_editor.setToolTip("人工填写成本；未手工改金额时，金额=成本×1.2")
+            cost_editor.setToolTip("整批附件成本；未手工改金额时，金额=成本×1.2")
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if not isinstance(amount_editor, QDoubleSpinBox):
             amount_editor = QDoubleSpinBox()
@@ -880,7 +934,7 @@ class AttachmentEditor(QDialog):
             amount_editor.setValue(quick_amount)
         amount_editor.setProperty("schemeEdited", False)
         amount_editor.setProperty("pending", pending)
-        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "金额支持人工修改")
+        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "整批附件金额，支持人工修改")
         amount_editor.style().unpolish(amount_editor)
         amount_editor.style().polish(amount_editor)
 
@@ -920,14 +974,26 @@ class AttachmentEditor(QDialog):
 
     def _quantity_changed(self, row, value):
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
+        quantity_editor = self.table.cellWidget(row, self.COL_QUANTITY)
+        previous_quantity = _number(quantity_editor.property("previousQuantity"), 1)
+        quantity_editor.setProperty("previousQuantity", value)
         source_item = self.table.item(row, self.COL_NAME)
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         source["cost_quantity_manual"] = True
         if source_item is not None:
             source_item.setData(ROLE_ROW, source)
-        if not isinstance(amount_editor, QDoubleSpinBox) or amount_editor.property("schemeEdited"):
+        if not isinstance(amount_editor, QDoubleSpinBox):
             return
-        previous_quantity = int(_number(source.get("quantity", 1), 1))
+        # Scale from the preceding displayed quantity, including manual money
+        # edits, so repeated changes never compound against the original row.
+        amount = amount_editor.value()
+        if previous_quantity:
+            unit_amount = amount / previous_quantity
+        else:
+            selected = _number(source.get("quantity", 1), 1)
+            unit_amount = _number(source.get("quick_amount"), _attachment_amount(source)) / selected if selected else 0
+        with QSignalBlocker(amount_editor):
+            amount_editor.setValue(unit_amount * value)
         if source.get("custom"):
             cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
             if isinstance(cost_editor, QDoubleSpinBox):
@@ -935,20 +1001,12 @@ class AttachmentEditor(QDialog):
                 unit_cost = previous_cost / previous_quantity if previous_quantity else previous_cost
                 with QSignalBlocker(cost_editor):
                     cost_editor.setValue(unit_cost * value)
-                if not amount_editor.property("schemeEdited"):
-                    with QSignalBlocker(amount_editor):
-                        amount_editor.setValue(unit_cost * value * 1.2)
             return
-        unit_amount = (
-            _number(source.get("quick_amount"), _attachment_amount(source)) / previous_quantity
-            if previous_quantity else 0
-        )
-        with QSignalBlocker(amount_editor):
-            amount_editor.setValue(unit_amount * value)
+        selected_quantity = _number(source.get("quantity", 1), 1)
         previous_formula = _number(source.get("formula_amount"), 0)
         formula = self.table.item(row, self.COL_FORMULA_AMOUNT)
         if formula is not None:
-            formula.setText(_money((previous_formula / previous_quantity if previous_quantity else 0) * value))
+            formula.setText(_money((previous_formula / selected_quantity if selected_quantity else 0) * value))
 
     def edit_missing_dimensions(self, row, column):
         if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
@@ -1027,7 +1085,7 @@ class AttachmentEditor(QDialog):
         for row in range(self.table.rowCount()):
             data = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
             data = dict(data)
-            previous_quantity = int(_number(data.get("quantity", 1), 1))
+            previous_quantity = _number(data.get("quantity", 1), 1)
             previous_formula_amount = _number(data.get("formula_amount"), 0)
             data["item_name"] = self.table.item(row, self.COL_NAME).text().strip() or "自定义附件"
             specification_editor = self.table.cellWidget(row, self.COL_SPECIFICATION)
@@ -1046,14 +1104,15 @@ class AttachmentEditor(QDialog):
                 data.pop("model_code", None)
             elif data.get("item_name") == "三排安装梁" and specification:
                 data["model_code"] = specification
-            data["quantity"] = self.table.cellWidget(row, self.COL_QUANTITY).value()
+            quantity = self.table.cellWidget(row, self.COL_QUANTITY).value() / self.cabinet_quantity
+            data["quantity"] = int(quantity) if quantity.is_integer() else quantity
             amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
-            amount = _number(amount_editor.value())
+            amount = _number(amount_editor.value()) / self.cabinet_quantity
             custom = bool(data.get("custom"))
             cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
             if custom and isinstance(cost_editor, QDoubleSpinBox):
-                data["formula_amount"] = round(cost_editor.value(), 2)
-                data["custom_cost"] = round(cost_editor.value(), 2)
+                data["formula_amount"] = round(cost_editor.value() / self.cabinet_quantity, 2)
+                data["custom_cost"] = data["formula_amount"]
                 data["custom_cost_edited"] = bool(cost_editor.property("schemeEdited"))
             data["quick_amount_override"] = round(amount, 2)
             data["quick_amount"] = round(amount, 2)
@@ -1069,7 +1128,8 @@ class AttachmentEditor(QDialog):
                     else previous_formula_amount / previous_quantity if previous_quantity else 0
                 )
                 data["formula_amount"] = round(formula_unit_amount * data["quantity"], 2)
-            data.setdefault("selection_source", "QUOTE_LOCAL")
+            if not data.get("attachment_price_id") and not data.get("selection_source"):
+                data["selection_source"] = "QUOTE_LOCAL"
             rows.append(data)
         self.item["attachments"] = rows
         new_quick_total = sum(_number(row.get("quick_amount"), _attachment_amount(row)) for row in rows)
@@ -1258,6 +1318,30 @@ def _quote_unit_price_changed(window, row, column):
     window.refresh_summary()
 
 
+def _quote_name_changed(window, row, column):
+    if getattr(window, "_scheme2_refreshing_quote", False) or column != 1 or row < 10:
+        return
+    items = getattr(window, "draft_items", [])
+    index = row - 10
+    if not 0 <= index < len(items):
+        return
+    cell = window.scheme2_quote_preview.item(row, column)
+    name = cell.text().strip() if cell is not None else ""
+    if not name:
+        _refresh_quote_page(window)
+        return
+    items[index]["name"] = name
+    window.refresh_summary()
+    _schedule_order_workspace_save(window)
+
+
+def _quote_cell_changed(window, row, column):
+    if column == 1:
+        _quote_name_changed(window, row, column)
+    elif column == 5:
+        _quote_unit_price_changed(window, row, column)
+
+
 def _refresh_quote_page(window):
     preview = getattr(window, "scheme2_quote_preview", None)
     if isinstance(preview, QTableWidget):
@@ -1296,6 +1380,7 @@ def _refresh_quote_page(window):
                 data = (index + 1, values[1], values[3], values[11], "台", _money(values[15]), _money(amount), remark)
                 for column, value in enumerate(data):
                     preview.item(row, column).setText(str(value))
+                preview.item(row, 1).setFlags(preview.item(row, 1).flags() | Qt.ItemFlag.ItemIsEditable)
                 preview.item(row, 5).setFlags(preview.item(row, 5).flags() | Qt.ItemFlag.ItemIsEditable)
             total_row = 10 + len(items)
             preview.item(total_row, 1).setText("合计")
@@ -1349,7 +1434,7 @@ def _build_quote_page(window):
     layout.addWidget(preview, 1)
     print_button.clicked.connect(lambda: _print_quote(window))
     export_button.clicked.connect(lambda: window.confirm_and_export())
-    preview.cellChanged.connect(lambda row, column: _quote_unit_price_changed(window, row, column))
+    preview.cellChanged.connect(lambda row, column: _quote_cell_changed(window, row, column))
     window.scheme2_company.currentTextChanged.connect(lambda _text: _refresh_quote_page(window))
     window.scheme2_quote_page = page
     window.scheme2_quote_preview = preview
@@ -1579,6 +1664,7 @@ def _build_detail_page(window):
 def _show_detail(window, item):
     window._scheme2_detail_item = item
     table = window.scheme2_detail_table
+    _repair_missing_material_prices(item, getattr(window, "scheme2_defaults", None))
     rows = _detail_rows(item)
     summary_index = len(rows)
     table.setRowCount(len(rows) + 1)
@@ -2455,6 +2541,7 @@ def _refresh_cost_table(window):
         )
         table.setRowCount(len(items) + 1)
         for row, item in enumerate(items):
+            _repair_missing_material_prices(item, getattr(window, "scheme2_defaults", None))
             canonical = list(_row_values(item))
             canonical[0] = row + 1
             values = [canonical[index] for index in COST_DISPLAY_ORDER]

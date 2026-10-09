@@ -201,6 +201,17 @@ assert sent["attachment_contract"] == 2
 window.add_current_to_summary()
 item = window.draft_items[-1]
 assert item["attachment_contract"] == 2 and item["quote_line_id"] == fixture["result"]["quote_line_id"]
+assert item["attachment_confirmation_inputs"] == [selected_input(fixture["result"]["attachments"][0])]
+original_attachment_quantity = item["attachments"][0]["quantity"]
+item["attachments"][0]["quantity"] = 99  # presentation/runtime mutation
+confirm_worker = Worker(
+    "http://127.0.0.1:1/api/quotes/confirm-check",
+    {"items": [item]},
+    window,
+)
+assert confirm_worker.test_payload["items"][0]["attachments"][0]["quantity"] == original_attachment_quantity
+assert item["attachments"][0]["quantity"] == 99
+item["attachments"][0]["quantity"] = original_attachment_quantity
 window.load_draft_item(item)
 assert window._attachment_v2_line_id == item["quote_line_id"]
 assert window.attachments[0]["attachment_selection_id"] == fixture["result"]["attachments"][0]["attachment_selection_id"]

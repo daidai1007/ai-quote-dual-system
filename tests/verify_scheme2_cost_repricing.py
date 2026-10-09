@@ -58,4 +58,30 @@ scheme2_ui._apply_cost_control(window, "surface_price", 0.0)
 assert formula["spray_cost"] == 0.0
 assert formula["total_cost"] == 350.44
 assert scheme2_ui._current_material_unit_price(item) == 20.0
+
+# A workspace moved from another computer may contain an incomplete legacy
+# settings object.  Positive-weight SECC rows must never silently become free.
+legacy_formula = {
+    "material_cost": 4.55,
+    "total_cost": 104.55,
+    "material_details": [
+        {"material_code": "SGCC", "billable_weight_kg": 1.0, "material_unit_price": 4.55},
+        {"material_code": "SECC", "billable_weight_kg": 2.0, "material_unit_price": 0.0},
+    ],
+    "cabinet_material_part_details": [
+        {"material_code": "SGCC", "billable_weight_kg": 1.0, "material_unit_price": 4.55, "material_cost": 4.55},
+        {"material_code": "SECC", "billable_weight_kg": 2.0, "material_unit_price": 0.0, "material_cost": 0.0},
+    ],
+}
+legacy_item = {
+    "material_code": "SECC",
+    "formula": legacy_formula,
+    "scheme2_cost_settings": {"galvanized_price": 4.55},
+}
+assert scheme2_ui._repair_missing_material_prices(legacy_item, window.scheme2_defaults)
+assert [row["material_unit_price"] for row in legacy_formula["cabinet_material_part_details"]] == [4.55, 4.2]
+assert [row["material_cost"] for row in legacy_formula["cabinet_material_part_details"]] == [4.55, 8.4]
+assert legacy_formula["material_cost"] == 12.95
+assert legacy_formula["total_cost"] == 112.95
+assert legacy_item["scheme2_cost_settings"]["carbon_price"] == 4.2
 print("scheme2 cost repricing contract passed")
