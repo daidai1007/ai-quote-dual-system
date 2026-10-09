@@ -1386,28 +1386,81 @@ def _ganged_rows(window) -> list[dict]:
     return [dict(row) for row in rows if isinstance(row, dict)]
 
 
-def _partition_ganged_fixed_base_selections(items: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Keep explicit manual bases and discard stale automatic base rows.
+def _replace_ganged_fixed_base_selections(
+    items: list[dict], candidates: list[dict], enabled: bool
+) -> tuple[list[dict], int]:
+    """Replace every fixed-base row with one exact row per child cabinet.
 
-    OCR-recognized fixed bases are system suggestions, not operator overrides.
-    They must be replaced by one independently size-matched row per child
-    cabinet when a ganged specification is active.
+    In ganged mode selecting ``固定底座`` means that every split cabinet owns
+    a base.  A manually selected catalogue row is therefore a category choice,
+    not a single shared base that may suppress the remaining child cabinets.
     """
 
-    manual_bases = []
-    retained = []
-    for item in items:
-        if default_rule_for_item(item) != DEFAULT_FIXED_BASE:
-            retained.append(item)
-            continue
-        if bool(item.get(GANGED_FIXED_BASE_MATCH_KEY)):
-            continue
-        automatic = bool(item.get("recognized")) or is_automatic_attachment_selection(item)
-        if automatic:
-            continue
-        manual_bases.append(item)
-        retained.append(item)
-    return manual_bases, retained
+    existing_by_index = {
+        int(item.get(GANGED_FIXED_BASE_INDEX_KEY)): item
+        for item in items
+        if default_rule_for_item(item) == DEFAULT_FIXED_BASE
+        and bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
+        and str(item.get(GANGED_FIXED_BASE_INDEX_KEY, "")).isdigit()
+    }
+    retained = [
+        item for item in items
+        if default_rule_for_item(item) != DEFAULT_FIXED_BASE
+    ]
+    added = 0
+    if not enabled:
+        return retained, added
+    for candidate in candidates:
+        index = int(candidate[GANGED_FIXED_BASE_INDEX_KEY])
+        existing = existing_by_index.get(index)
+        expected_target = tuple(
+            candidate.get(key) for key in (
+                "size_match_target_width_mm",
+                "size_match_target_height_mm",
+                "size_match_target_depth_mm",
+            )
+        )
+        existing_target = tuple(
+            (existing or {}).get(key) for key in (
+                "size_match_target_width_mm",
+                "size_match_target_height_mm",
+                "size_match_target_depth_mm",
+            )
+        )
+        chosen = (
+            existing
+            if existing is not None and existing_target == expected_target
+            else with_attachment_selection_source(
+                candidate, AUTOMATIC_SELECTION_SOURCE
+            )
+        )
+        retained.append(chosen)
+        if existing is None or existing_target != expected_target:
+            added += 1
+    return retained, added
+
+
+def _expand_collected_ganged_fixed_bases(dialog, selected: list[dict]) -> list[dict]:
+    """Fan one manually checked fixed base out to all split cabinets."""
+
+    parent = dialog.parentWidget()
+    if len(_ganged_rows(parent)) <= 1 or not any(
+        default_rule_for_item(item) == DEFAULT_FIXED_BASE for item in selected
+    ):
+        return selected
+    candidates = [
+        item for item in getattr(dialog, "default_ganged_fixed_base_matches", ())
+        if isinstance(item, dict)
+    ]
+    if not candidates:
+        return selected
+    expanded, _added = _replace_ganged_fixed_base_selections(
+        selected, candidates, True
+    )
+    getattr(dialog, "default_selection_opt_outs", set()).discard(
+        DEFAULT_FIXED_BASE
+    )
+    return expanded
 
 
 def _add_with_ganged_specification(window, original_add, rows, specification):
@@ -5778,44 +5831,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if isinstance(candidate, dict)
         ]
         if ganged_base_matches:
-            manual_bases, retained = _partition_ganged_fixed_base_selections(
-                selected_items
+            retained, base_added = _replace_ganged_fixed_base_selections(
+                selected_items,
+                ganged_base_matches,
+                DEFAULT_FIXED_BASE not in opt_outs,
             )
-            existing_by_index = {
-                int(item.get(GANGED_FIXED_BASE_INDEX_KEY)): item
-                for item in selected_items
-                if default_rule_for_item(item) == DEFAULT_FIXED_BASE
-                and bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
-                and str(item.get(GANGED_FIXED_BASE_INDEX_KEY, "")).isdigit()
-            }
-            if DEFAULT_FIXED_BASE not in opt_outs and not manual_bases:
-                for candidate in ganged_base_matches:
-                    index = int(candidate[GANGED_FIXED_BASE_INDEX_KEY])
-                    existing = existing_by_index.get(index)
-                    expected_target = tuple(
-                        candidate.get(key) for key in (
-                            "size_match_target_width_mm",
-                            "size_match_target_height_mm",
-                            "size_match_target_depth_mm",
-                        )
-                    )
-                    existing_target = tuple(
-                        (existing or {}).get(key) for key in (
-                            "size_match_target_width_mm",
-                            "size_match_target_height_mm",
-                            "size_match_target_depth_mm",
-                        )
-                    )
-                    chosen = (
-                        existing
-                        if existing is not None and existing_target == expected_target
-                        else with_attachment_selection_source(
-                            candidate, AUTOMATIC_SELECTION_SOURCE
-                        )
-                    )
-                    retained.append(chosen)
-                    if existing is None:
-                        added += 1
+            added += base_added
             self.attachments = retained
             selected_items = retained
         else:
@@ -7239,7 +7260,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                             output[price_key] = abs(float(output[price_key]))
                         except (TypeError, ValueError):
                             pass
-        return selected
+        return _expand_collected_ganged_fixed_bases(self, selected)
 
     def accept_selection_with_defaults(self):
         original_accept_selection(self)

@@ -921,9 +921,12 @@ class AttachmentEditor(QDialog):
     def _quantity_changed(self, row, value):
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         source_item = self.table.item(row, self.COL_NAME)
+        source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
+        source["cost_quantity_manual"] = True
+        if source_item is not None:
+            source_item.setData(ROLE_ROW, source)
         if not isinstance(amount_editor, QDoubleSpinBox) or amount_editor.property("schemeEdited"):
             return
-        source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         previous_quantity = int(_number(source.get("quantity", 1), 1))
         if source.get("custom"):
             cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)

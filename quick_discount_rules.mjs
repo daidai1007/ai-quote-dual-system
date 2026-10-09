@@ -93,16 +93,29 @@ export function attachmentUsesCabinetQuantity(item = {}) {
   return !ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES.some((category) => combined.includes(category));
 }
 
+function manuallyQuantifiedAttachment(item = {}) {
+  const source = String(item.selection_source || "").trim().toLowerCase();
+  return Boolean(
+    item.cost_quantity_manual || item.custom
+    || source === "manual" || source === "quote_local"
+  );
+}
+
 export function effectiveAttachmentQuantity(
   item = {}, cabinetQuantity = 1, gangedCabinetCount = 1,
 ) {
   const selected = asFiniteNumber(item.quantity, 1);
   const cabinets = asFiniteNumber(cabinetQuantity, 1);
   const splitCount = asFiniteNumber(gangedCabinetCount, 1);
-  // In a ganged quote the stored quantity already describes one complete
-  // ganged set. Automatic limiter/reinforcement rows contain the sum required
-  // by all child cabinets, and fixed bases already exist as one row per child.
-  if (splitCount > 1) return selected * cabinets;
+  // A manually entered cost-page quantity is per child cabinet. Automatic
+  // rows already contain a complete-set quantity; fixed bases are already
+  // expanded to one row per child cabinet.
+  if (manuallyQuantifiedAttachment(item) && !item[GANGED_FIXED_BASE_MATCH_KEY]) {
+    return selected * cabinets * Math.max(1, splitCount);
+  }
+  if (splitCount > 1) {
+    return selected * cabinets;
+  }
   if (!attachmentUsesCabinetQuantity(item)) return selected;
   return selected * cabinets;
 }

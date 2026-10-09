@@ -226,6 +226,25 @@ test("ganged attachments use selected quantity times complete-set quantity only"
   }, 3, 4), 3);
 });
 
+test("manually selected ganged attachments multiply by child cabinet count", () => {
+  assert.equal(effectiveAttachmentQuantity({
+    item_name: "风机", quantity: 2, selection_source: "manual",
+  }, 3), 6);
+  assert.equal(effectiveAttachmentQuantity({
+    item_name: "铜排", quantity: 2, selection_source: "manual",
+  }, 3, 4), 24);
+  assert.equal(effectiveAttachmentQuantity({
+    item_name: "人工附件", quantity: 2, selection_source: "QUOTE_LOCAL",
+  }, 3, 4), 24);
+  assert.equal(effectiveAttachmentQuantity({
+    item_name: "自动附件", quantity: 8, selection_source: "automatic",
+  }, 3, 4), 24);
+  assert.equal(effectiveAttachmentQuantity({
+    item_name: "固定底座", quantity: 2, selection_source: "manual",
+    ganged_fixed_base_match: true, ganged_fixed_base_index: 0,
+  }, 3, 4), 6);
+});
+
 test("quick order line applies quantity exceptions and scales negative boards once", () => {
   const attachments = [
     { item_name: "安装板", category_level1: "安装板", quantity: 1, unit_price: 100, attachment_price_sign: -1 },

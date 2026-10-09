@@ -433,6 +433,17 @@ def attachment_uses_cabinet_quantity(item: dict) -> bool:
     return not any(category in combined for category in ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES)
 
 
+def manually_quantified_attachment(item: dict) -> bool:
+    """Whether the cost-page quantity represents one child cabinet."""
+
+    source = str(item.get(ATTACHMENT_SELECTION_SOURCE_KEY) or "").strip().lower()
+    return bool(
+        item.get("cost_quantity_manual")
+        or item.get("custom")
+        or source in {MANUAL_SELECTION_SOURCE, "quote_local"}
+    )
+
+
 def final_attachment_quantity(
     item: dict,
     cabinet_quantity,
@@ -446,11 +457,11 @@ def final_attachment_quantity(
     cabinets = 1.0 if cabinets is None else cabinets
     split_count = _number(ganged_cabinet_count)
     split_count = 1.0 if split_count is None else split_count
-    # In a ganged quote the selected quantity already describes one complete
-    # ganged set.  System-matched door limiters/reinforcements persist the sum
-    # of the child-cabinet door matrix in that selected quantity, and fixed
-    # bases already have one separate row per child.  Do not multiply any row
-    # by the split count a second time.
+    # A quantity entered manually on the cost page is a per-child-cabinet
+    # quantity.  Per-child fixed bases are already expanded to separate rows,
+    # and automatic rows already contain the whole ganged-set requirement.
+    if manually_quantified_attachment(item) and not item.get(GANGED_FIXED_BASE_MATCH_KEY):
+        return quantity * cabinets * max(1.0, split_count)
     if split_count > 1:
         return quantity * cabinets
     if not attachment_uses_cabinet_quantity(item):

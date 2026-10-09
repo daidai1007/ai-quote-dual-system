@@ -140,6 +140,15 @@ def attachment_uses_cabinet_quantity(item: Mapping[str, Any] | None) -> bool:
     return not any(category in combined for category in ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES)
 
 
+def _manually_quantified_attachment(item: Mapping[str, Any]) -> bool:
+    source = str(item.get("selection_source") or "").strip().lower()
+    return bool(
+        item.get("cost_quantity_manual")
+        or item.get("custom")
+        or source in {"manual", "quote_local"}
+    )
+
+
 def effective_attachment_quantity(
     item: Mapping[str, Any] | None,
     cabinet_quantity: Any,
@@ -149,9 +158,11 @@ def effective_attachment_quantity(
     selected = _number(item.get("quantity"), 1.0)
     cabinets = _number(cabinet_quantity, 1.0)
     split_count = _number(ganged_cabinet_count, 1.0)
-    # A selected quantity in a ganged quote is the quantity for one complete
-    # ganged set.  Automatic limiter/reinforcement rows already contain the
-    # sum required by all child cabinets, while fixed bases are separate rows.
+    # A manually entered cost-page quantity is per child cabinet. Automatic
+    # rows already hold the complete set quantity; fixed bases are one row per
+    # child and therefore must not be multiplied by the split count again.
+    if _manually_quantified_attachment(item) and not item.get(GANGED_FIXED_BASE_MATCH_KEY):
+        return selected * cabinets * max(1.0, split_count)
     if split_count > 1:
         return selected * cabinets
     if not attachment_uses_cabinet_quantity(item):
