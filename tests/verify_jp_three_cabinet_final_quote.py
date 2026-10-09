@@ -116,6 +116,8 @@ requests = []
 
 def urlopen(request, timeout=0):
     del timeout
+    if request.full_url.endswith("/api/quotes/calculate-ganged"):
+        raise layout_refresh.urllib.error.HTTPError(request.full_url, 404, "old API", {}, None)
     requests.append(json.loads(request.data.decode()))
     return Response(child_results[len(requests) - 1])
 

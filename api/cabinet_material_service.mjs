@@ -130,7 +130,7 @@ export function createCabinetMaterialService({runPsql}){
     try { data=await query(`SELECT jsonb_build_object(
       'data_version',v.data_version,'default_waste_factor',v.default_waste_factor,
       'rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no,r.source_column),'[]') FROM calc.cabinet_material_rule r WHERE r.data_version=v.data_version AND r.family=${valueSql(family)}),
-      'fixed_rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no),'[]') FROM calc.cabinet_material_fixed_rule r WHERE r.data_version=v.data_version AND r.product_code=${valueSql(product)}),
+      'fixed_rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no),'[]') FROM calc.cabinet_material_fixed_rule r WHERE r.data_version=v.data_version AND r.product_code=${valueSql(usesFormula?family:product)}),
       'materials',(SELECT coalesce(jsonb_agg(jsonb_build_object('material_code',m.material_code,'density_g_cm3',m.density_g_cm3)),'[]')
         FROM calc.material m WHERE m.material_code IN (${valueSql(input.material_code)},'SECC','Q235','SGCC','DX51D','GI')))
       FROM calc.cabinet_material_catalog_version v WHERE v.status='ACTIVE';`); }

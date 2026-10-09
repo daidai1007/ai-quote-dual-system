@@ -3,6 +3,9 @@
 !package-lock.json
 !api/
 !api/server.mjs
+!api/formula_template_query.mjs
+!api/ganged_quote_service.mjs
+!api/quote_telemetry.mjs
 !api/attachment_service.mjs
 !api/attachment_cost.mjs
 !api/attachment_formula.mjs

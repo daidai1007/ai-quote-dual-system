@@ -31,7 +31,7 @@ def open_after_partial_read(_request, timeout=0):
 try:
     layout_refresh.urllib.request.urlopen = open_after_partial_read
     layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS = (0, 0)
-    worker = layout_refresh._FormulaTemplateWorker("https://example.test/api/quotes/formula-template", "JP", lambda _json: {})
+    worker = layout_refresh._FormulaTemplateWorker("https://example.test/api/quotes/formula-template", "JP_SINGLE", lambda _json: {})
     worker.succeeded.connect(payloads.append)
     worker.run()
 finally:

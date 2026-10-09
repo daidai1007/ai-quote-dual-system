@@ -15,6 +15,9 @@ import { applyCabinetSpray, createCabinetSprayService } from './cabinet_spray_se
 import { applyCabinetLabor, createCabinetLaborService } from './cabinet_labor_service.mjs';
 import { applyCabinetAuxiliary, createCabinetAuxiliaryService } from './cabinet_auxiliary_service.mjs';
 import { normalizeDrawingContext } from './drawing_context.mjs';
+import { formulaTemplateSql } from './formula_template_query.mjs';
+import { createBatchReadExecutor, validateGangedBatch, calculateGangedBatch } from './ganged_quote_service.mjs';
+import { withQuoteRequest, withQuoteChild, timedQuotePhase, emitQuoteProgress, startQuoteStream, recordQuoteEvent, sqlTimingFields } from './quote_telemetry.mjs';
 
 const RUNTIME_CONFIG = resolveRuntimeConfig();
 const PORT = RUNTIME_CONFIG.port;
@@ -307,7 +310,7 @@ LEFT JOIN LATERAL (
 ) q ON TRUE;`;
 };
 
-const runPsql = (sql, clientEncoding = 'UTF8') => new Promise((resolve, reject) => {
+const runPsql = (sql, clientEncoding = 'UTF8') => timedQuotePhase('database', () => new Promise((resolve, reject) => {
   const child = spawn(PSQL_PATH, buildPsqlArgs(RUNTIME_CONFIG), {
     env: { ...process.env, PGCLIENTENCODING: clientEncoding },
     windowsHide: true,
@@ -345,25 +348,96 @@ const runPsql = (sql, clientEncoding = 'UTF8') => new Promise((resolve, reject) 
   // passing that SQL with `-c` eventually exceeds CreateProcess' command-line
   // limit and makes spawn fail with ENAMETOOLONG.
   child.stdin.end(`${sql}\n`, 'utf8');
-});
+}), sqlTimingFields(sql));
 
-const cabinetMaterialService = createCabinetMaterialService({runPsql});
-const cabinetSprayService = createCabinetSprayService({runPsql});
-const cabinetLaborService = createCabinetLaborService({runPsql});
-const cabinetAuxiliaryService = createCabinetAuxiliaryService({runPsql});
-const calculateBaseQuote = async input => {
-  const [material,spray,auxiliary] = await Promise.all([
-    cabinetMaterialService.calculate(input),cabinetSprayService.calculate(input),cabinetAuxiliaryService.calculate(input),
-  ]);
-  const labor=await cabinetLaborService.calculate(input,material);
-  const databaseInput = material
-    ? {...input, base_material_weight_kg: material.corrected_material_weight_kg}
-    : input;
-  const output=await runPsql(`BEGIN;\n${buildSql(databaseInput)}\nROLLBACK;`);
-  const result = JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).at(-1));
-  return applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(applyCabinetMaterial(result,material),spray),auxiliary),labor);
+const createQuoteServices = (readExecutor = runPsql) => {
+  const cabinetMaterialService = createCabinetMaterialService({runPsql: readExecutor});
+  const cabinetSprayService = createCabinetSprayService({runPsql: readExecutor});
+  const cabinetLaborService = createCabinetLaborService({runPsql: readExecutor});
+  const cabinetAuxiliaryService = createCabinetAuxiliaryService({runPsql: readExecutor});
+  const calculateBaseQuote = async input => {
+    const [material,spray,auxiliary] = await Promise.all([
+      cabinetMaterialService.calculate(input),cabinetSprayService.calculate(input),cabinetAuxiliaryService.calculate(input),
+    ]);
+    const labor=await cabinetLaborService.calculate(input,material);
+    const databaseInput = material
+      ? {...input, base_material_weight_kg: material.corrected_material_weight_kg}
+      : input;
+    const output=await runPsql(`BEGIN;\n${buildSql(databaseInput)}\nROLLBACK;`);
+    const result = JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).at(-1));
+    return applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(applyCabinetMaterial(result,material),spray),auxiliary),labor);
+  };
+  for (const [name, service] of Object.entries({material: cabinetMaterialService, spray: cabinetSprayService,
+    labor: cabinetLaborService, auxiliary: cabinetAuxiliaryService})) {
+    for (const method of ['calculate', 'persist']) {
+      const original = service[method];
+      service[method] = (...args) => timedQuotePhase(`${name}_${method}`, () => original(...args));
+    }
+  }
+  const attachmentService = createAttachmentService({runPsql: readExecutor,
+    calculateBase: calculateBaseQuote, onProgress: emitQuoteProgress});
+  return {cabinetMaterialService, cabinetSprayService, cabinetLaborService, cabinetAuxiliaryService,
+    attachmentService, calculateBaseQuote};
 };
-const attachmentService = createAttachmentService({runPsql, calculateBase: calculateBaseQuote});
+const quoteServices = createQuoteServices();
+const {attachmentService} = quoteServices;
+
+// Single and batch requests use the same cost services. Batch child writes
+// are rolled back and only the final aggregate attachment snapshot persists.
+const calculateDualQuote = async (input, services = quoteServices) => {
+  const {cabinetMaterialService, cabinetSprayService, cabinetLaborService, cabinetAuxiliaryService, attachmentService} = services;
+  if(input.attachment_contract===2) {
+    input.quote_date=dateValue(input.quote_date);input.coating_type ||= DEFAULT_COATING_TYPE;
+    const attachmentResult=await attachmentService.calculate(input);
+    if(input.drawing_context) attachmentResult.drawing_context=input.drawing_context;
+    return attachmentResult;
+  }
+  if((input.attachments||[]).length && (await attachmentService.hasActive()
+    ||input.attachments.some(a=>a.catalog_version||a.data_version||a.status))) {
+    const error = new Error('当前附件需要V2计算接口，请升级客户端');
+    error.status = 426;
+    throw error;
+  }
+  const quoteInput={...input,quote_date:dateValue(input.quote_date)};
+  emitQuoteProgress('cabinet', {completed: 0, total: 1});
+  const [cabinetMaterial,cabinetSpray,cabinetAuxiliary]=await Promise.all([
+    cabinetMaterialService.calculate(quoteInput),cabinetSprayService.calculate(quoteInput),cabinetAuxiliaryService.calculate(quoteInput),
+  ]);
+  const cabinetLabor=await cabinetLaborService.calculate(quoteInput,cabinetMaterial);
+  const legacySql=buildSql(cabinetMaterial
+    ? {...input, base_material_weight_kg: cabinetMaterial.corrected_material_weight_kg}
+    : input);
+  const output = await runPsql(legacySql);
+  if (!output) throw new Error('database returned no quote result');
+  const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
+  const result = applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(
+    applyCabinetMaterial(JSON.parse(jsonLine),cabinetMaterial),cabinetSpray),cabinetAuxiliary),cabinetLabor);
+  result.cost_details={
+    version:1,
+    material_parts:cabinetMaterial?.part_details||[],
+    material_groups:cabinetMaterial?.material_details||[],
+    auxiliary_parts:cabinetAuxiliary?.lines||[],
+    spray_parts:cabinetSpray?.part_details||[],
+    labor: cabinetLabor?{
+      labor_cost:cabinetLabor.labor_cost,management_fee:cabinetLabor.management_fee,
+      management_fee_rate:cabinetLabor.management_fee_rate,method:cabinetLabor.match_method,
+      billable_weight_kg:cabinetLabor.labor_billable_weight_kg,matched_rule:cabinetLabor.matched_rule,
+    }:null,
+    quote_local_overrides:{
+      galvanized_sheet_unit_price:quoteInput.galvanized_sheet_unit_price_override??null,
+      carbon_steel_unit_price:quoteInput.carbon_steel_unit_price_override??null,
+      surface_treatment_unit_price:quoteInput.surface_treatment_unit_price_override??null,
+      waste_factor:quoteInput.waste_factor??null,
+    },
+  };
+  if(input.drawing_context) result.drawing_context=input.drawing_context;
+  emitQuoteProgress('snapshot');
+  await cabinetMaterialService.persist(input.quote_id, result, cabinetMaterial);
+  await cabinetSprayService.persist(input.quote_id, result, cabinetSpray);
+  await cabinetAuxiliaryService.persist(input.quote_id,result,cabinetAuxiliary);
+  await cabinetLaborService.persist(input.quote_id,result,cabinetLabor);
+  return result;
+};
 
 const addAttachmentCatalogSql = (input) => {
   const item = normalizeCatalogAttachment(input);
@@ -515,34 +589,6 @@ LIMIT 1;`,
 // the persisted template metadata and part formulas once, then evaluates the
 // same rules locally for responsive dimension editing; no workbook is read at
 // runtime.
-const formulaTemplateSql = (productCode) => `
-SELECT COALESCE(jsonb_agg(to_jsonb(x)), '[]'::jsonb)::text
-FROM (
-  SELECT m.template_code,
-         m.source_sheet,
-         m.width_cell,
-         m.height_cell,
-         m.depth_cell,
-         m.option_cells,
-         m.weight_output_cell,
-         m.area_output_cell,
-         m.weight_method,
-         m.area_unit,
-         t.weight_formula AS template_weight_formula,
-         t.area_formula AS template_area_formula,
-         jsonb_agg(to_jsonb(r) ORDER BY r.source_row_no) AS rules
-  FROM calc.template_formula_mapping m
-  JOIN calc.cabinet_template t ON t.template_code = m.template_code
-  JOIN calc.cabinet_part_rule r ON r.template_id = t.template_id
-  WHERE m.template_code = ${sqlText(productCode)}
-    AND m.is_active = TRUE
-    AND t.is_active = TRUE
-  GROUP BY m.template_code, m.source_sheet, m.width_cell, m.height_cell,
-           m.depth_cell, m.option_cells, m.weight_output_cell,
-           m.area_output_cell, m.weight_method, m.area_unit,
-           t.weight_formula, t.area_formula
-) x;`;
-
 // Product choices are database-driven; the client does not maintain a
 // hard-coded list. Formula templates and experience products are returned
 // together for the selector.
@@ -950,7 +996,7 @@ const getDatabaseReadiness = async () => {
   return line ? JSON.parse(line) : {};
 };
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => withQuoteRequest(req, res, async () => {
   if (req.method === 'GET' && req.url === '/health') {
     // Keep the public liveness check database-free. Render calls it frequently;
     // querying Neon here would prevent a free test database from scaling down.
@@ -962,6 +1008,8 @@ const server = http.createServer(async (req, res) => {
       database_checked: false,
       attachment_contract: 2,
       attachment_ganged_ready: true,
+      ganged_batch_ready: true,
+      formula_template_version_ready: true,
     });
   }
   if (API_KEY && req.url?.startsWith('/api/') && String(req.headers['x-ai-quote-key'] || '') !== API_KEY) {
@@ -1125,12 +1173,12 @@ const server = http.createServer(async (req, res) => {
       const input = await readBody(req);
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
       const productCode = productCodeValue(input.product_code);
-      const output = await runPsql(formulaTemplateSql(productCode));
-      const rows = output ? JSON.parse(output) : [];
-      if (!rows.length) {
+      const knownVersion = typeof input.known_version === 'string' ? input.known_version.slice(0, 128) : '';
+      const output = await runPsql(formulaTemplateSql(productCode, knownVersion));
+      if (!output?.trim()) {
         return json(res, 404, { error: 'formula_template_not_found', message: `no formula template for ${productCode}` });
       }
-      return json(res, 200, { template: rows[0], source: 'postgresql' });
+      return json(res, 200, JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).at(-1)));
     } catch (error) {
       return json(res, clientErrorStatus(error), { error: 'formula_template_failed', message: error.message });
     }
@@ -1157,72 +1205,54 @@ const server = http.createServer(async (req, res) => {
       return json(res, clientErrorStatus(error), { error: 'quote_export_failed', message: error.message });
     }
   }
+  if (req.method === 'POST' && req.url === '/api/quotes/calculate-ganged') {
+    let stream;
+    try {
+      const body = await readBody(req);
+      const input = validateGangedBatch(body, child => {
+        const normalized = normalizeProductVariant(validateRequest(child));
+        return {...normalized, quote_date: dateValue(normalized.quote_date),
+          coating_type: normalized.coating_type || DEFAULT_COATING_TYPE};
+      });
+      if (input.attachment) {
+        input.attachment = normalizeProductVariant(validateRequest(input.attachment));
+        input.attachment.quote_date = dateValue(input.attachment.quote_date);
+        input.attachment.coating_type ||= DEFAULT_COATING_TYPE;
+      }
+      stream = startQuoteStream(req, res);
+      const services = createQuoteServices(createBatchReadExecutor(runPsql,
+        () => recordQuoteEvent('batch_read_reused', {cache_hit: true})));
+      const result = await calculateGangedBatch(input, {
+        calculateChild: child => withQuoteChild(input.cabinets.indexOf(child) + 1,
+          () => timedQuotePhase('child_calculation', () => services.calculateBaseQuote(child))),
+        snapshotGanged: snapshot => timedQuotePhase('attachment_snapshot', () => services.attachmentService.snapshotGanged(snapshot)),
+        onProgress: emitQuoteProgress,
+      });
+      if (stream) return stream.result(result);
+      return json(res, 200, result);
+    } catch (error) {
+      if (stream) return stream.error(error);
+      return json(res, error.status || clientErrorStatus(error), {error: 'ganged_quote_failed', message: error.message});
+    }
+  }
   if (req.method !== 'POST' || req.url !== '/api/quotes/calculate-dual') {
     return json(res, 404, { error: 'not_found' });
   }
+  let stream;
   try {
     const input = normalizeProductVariant(validateRequest(await readBody(req)));
-    if(input.attachment_contract===2) {
-      input.quote_date=dateValue(input.quote_date);input.coating_type ||= DEFAULT_COATING_TYPE;
-      const attachmentResult=await attachmentService.calculate(input);
-      if(input.drawing_context) attachmentResult.drawing_context=input.drawing_context;
-      return json(res,200,attachmentResult);
-    }
-    if((input.attachments||[]).length && (await attachmentService.hasActive()
-      ||input.attachments.some(a=>a.catalog_version||a.data_version||a.status))) {
-      return json(res,426,{error:'client_upgrade_required',message:'当前附件需要V2计算接口，请升级客户端'});
-    }
-    const quoteInput={...input,quote_date:dateValue(input.quote_date)};
-    const [cabinetMaterial,cabinetSpray,cabinetAuxiliary]=await Promise.all([
-      cabinetMaterialService.calculate(quoteInput),cabinetSprayService.calculate(quoteInput),cabinetAuxiliaryService.calculate(quoteInput),
-    ]);
-    const cabinetLabor=await cabinetLaborService.calculate(quoteInput,cabinetMaterial);
-    const legacySql=buildSql(cabinetMaterial
-      ? {...input, base_material_weight_kg: cabinetMaterial.corrected_material_weight_kg}
-      : input);
-    const output = await runPsql(legacySql);
-    if (!output) throw new Error('database returned no quote result');
-    // Attachment selection adds one INSERT result before the final JSON row.
-    // Parse the final non-empty line so both empty-attachment and selected-
-    // attachment requests use the same response path.
-    const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
-    const result = applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(
-      applyCabinetMaterial(JSON.parse(jsonLine),cabinetMaterial),cabinetSpray),cabinetAuxiliary),cabinetLabor);
-    // A normalized, additive detail contract for the cost-detail UI.  The
-    // existing formula_cost/quick_quote structures remain unchanged for old
-    // clients and exports; these rows are also captured by the existing quote
-    // document JSON snapshot, so no schema migration is required.
-    result.cost_details={
-      version:1,
-      material_parts:cabinetMaterial?.part_details||[],
-      material_groups:cabinetMaterial?.material_details||[],
-      auxiliary_parts:cabinetAuxiliary?.lines||[],
-      spray_parts:cabinetSpray?.part_details||[],
-      labor: cabinetLabor?{
-        labor_cost:cabinetLabor.labor_cost,management_fee:cabinetLabor.management_fee,
-        management_fee_rate:cabinetLabor.management_fee_rate,method:cabinetLabor.match_method,
-        billable_weight_kg:cabinetLabor.labor_billable_weight_kg,matched_rule:cabinetLabor.matched_rule,
-      }:null,
-      quote_local_overrides:{
-        galvanized_sheet_unit_price:quoteInput.galvanized_sheet_unit_price_override??null,
-        carbon_steel_unit_price:quoteInput.carbon_steel_unit_price_override??null,
-        surface_treatment_unit_price:quoteInput.surface_treatment_unit_price_override??null,
-        waste_factor:quoteInput.waste_factor??null,
-      },
-    };
-    if(input.drawing_context) result.drawing_context=input.drawing_context;
-    await cabinetMaterialService.persist(input.quote_id, result, cabinetMaterial);
-    await cabinetSprayService.persist(input.quote_id, result, cabinetSpray);
-    await cabinetAuxiliaryService.persist(input.quote_id,result,cabinetAuxiliary);
-    await cabinetLaborService.persist(input.quote_id,result,cabinetLabor);
+    stream = startQuoteStream(req, res);
+    const result = await calculateDualQuote(input);
+    if (stream) return stream.result(result);
     json(res, 200, result);
   } catch (error) {
-    json(res, clientErrorStatus(error), {
+    if (stream) return stream.error(error);
+    json(res, error.status || clientErrorStatus(error), {
       error: 'dual_quote_failed',
       message: error.message,
     });
   }
-});
+}));
 
 server.listen(PORT, HOST, () => {
   console.log(`AI quote dual API listening on http://${HOST}:${PORT}`);

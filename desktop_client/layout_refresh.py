@@ -8,14 +8,18 @@ database catalogue presentation and API interactions approved for V3.
 from __future__ import annotations
 
 import http.client
+import hashlib
 import json
 import logging
 import math
 import re
 import time
+import threading
 import urllib.error
 import urllib.request
+import uuid
 from copy import deepcopy
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
@@ -265,6 +269,8 @@ ATTACHMENT_DIALOG_MIN_WIDTH = 900
 ATTACHMENT_DIALOG_MIN_HEIGHT = 680
 ATTACHMENT_DIALOG_SCREEN_MARGIN = 32
 FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS = 75
+FORMULA_TEMPLATE_CACHE_MAX_AGE_SECONDS = 30
+FORMULA_TEMPLATE_CACHE_MAX_ENTRIES = 64
 DOOR_DEFAULT_WIDTH_THRESHOLD_MM = 800.0
 AUTOMATIC_DOOR_SELECTION = "automatic"
 MANUAL_DOOR_SELECTION = "manual"
@@ -324,6 +330,18 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
     if worker_class is None or getattr(worker_class, "_quote_diagnostics_installed", False):
         return
     original_run = worker_class.run
+
+    class ProgressApiWorker(worker_class):
+        progress = Signal(dict)
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            owner = self.parent()
+            if owner is not None:
+                self.progress.connect(lambda event: _update_calculation_progress(owner, event))
+
+    worker_class = ProgressApiWorker
+    namespace["ApiWorker"] = worker_class
 
     def run_with_quote_diagnostics(self):
         url = str(getattr(self, "url", "") or "")
@@ -405,6 +423,8 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
                 if callable(headers_factory)
                 else {"Content-Type": "application/json; charset=utf-8"}
             )
+            headers = _quote_request_headers(headers)
+            LOGGER.info("quote request correlation request_id=%s", headers["X-Quote-Request-Id"])
             request = urllib.request.Request(
                 url,
                 data=body,
@@ -414,7 +434,7 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
             with urllib.request.urlopen(
                 request, timeout=QUOTE_REQUEST_TIMEOUT_SECONDS
             ) as response:
-                result = json.loads(response.read().decode("utf-8"))
+                result = _read_quote_response(response, self.progress.emit)
             if not isinstance(result, dict):
                 raise RuntimeError("报价服务返回了无效数据")
             if not isinstance(result.get("formula_cost"), dict):
@@ -486,6 +506,170 @@ def _formula_template_error_is_transient(error: Exception) -> bool:
     )
 
 
+_FORMULA_TEMPLATE_CACHE = OrderedDict()
+_FORMULA_TEMPLATE_CACHE_LOCK = threading.RLock()
+
+
+def _quote_request_headers(headers):
+    return {**headers, "Accept": "application/x-ndjson", "X-Quote-Request-Id": uuid.uuid4().hex}
+
+
+def _read_quote_response(response, on_progress):
+    """Read actual server phase events; old servers may still return JSON."""
+    headers = getattr(response, "headers", {})
+    if "application/x-ndjson" not in str(headers.get("Content-Type", "")):
+        return json.loads(response.read().decode("utf-8"))
+    max_line_bytes = 32 * 1024 * 1024
+    while True:
+        raw = response.readline(max_line_bytes + 1)
+        if not raw:
+            raise RuntimeError("报价进度连接已断开，未收到最终结果，请重新计算")
+        if len(raw) > max_line_bytes:
+            raise RuntimeError("报价服务返回结果过大")
+        if not raw.strip():
+            continue
+        event = json.loads(raw.decode("utf-8"))
+        if not isinstance(event, dict):
+            raise RuntimeError("报价进度返回了无效数据")
+        if event.get("type") == "progress":
+            LOGGER.info("quote progress request_id=%s stage=%s completed=%s total=%s child=%s",
+                event.get("request_id"), event.get("stage"), event.get("completed"),
+                event.get("total"), event.get("child_index"))
+            on_progress(event)
+        elif event.get("type") == "result" and isinstance(event.get("result"), dict):
+            return event["result"]
+        elif event.get("type") == "error":
+            raise RuntimeError(str(event.get("message") or "服务端计算失败"))
+        else:
+            raise RuntimeError("报价进度返回了未知事件")
+
+
+def _update_calculation_progress(window, event):
+    stage = str(event.get("stage") or "")
+    labels = {"template": (3, "读取公式模板"), "cabinet": (3, "计算柜体成本"),
+              "attachments": (4, "计算附件价格与成本"), "snapshot": (5, "保存报价快照")}
+    if stage not in labels:
+        return
+    step, label = labels[stage]
+    total = max(0, min(20, int(event.get("total") or 0)))
+    completed = max(0, min(total, int(event.get("completed") or 0)))
+    if total:
+        label = f"{'模板' if stage == 'template' else '子柜'}已完成 {completed}/{total}"
+    if stage == "template" and event.get("attempt", 1) > 1:
+        label += f"（重试 {event['attempt']}）"
+    window._quote_progress_state = dict(event)
+    window._quote_progress_request_id = str(event.get("request_id") or getattr(window, "_quote_progress_request_id", ""))
+    if getattr(window, "_scheme2_add_after_calculate", False):
+        from scheme2_ui import _set_add_progress
+        _set_add_progress(window, step, label, phase_key=stage)
+    _set_ganged_calculation_state(window, label, "loading")
+
+
+def _template_headers(headers_factory):
+    return dict(headers_factory(True) if callable(headers_factory)
+                else {"Content-Type": "application/json; charset=utf-8"})
+
+
+def _template_cache_key(url, product_code, headers):
+    # Do not reuse templates across servers or authentication scopes, and do
+    # not retain API keys in a plain-text cache key or write them to disk.
+    scope = hashlib.sha256(json.dumps(sorted(
+        (str(key).lower(), str(value)) for key, value in headers.items()
+    )).encode("utf-8")).hexdigest()
+    return str(url), str(product_code), scope
+
+
+def _fresh_formula_template(url, product_code, headers_factory):
+    key = _template_cache_key(url, product_code, _template_headers(headers_factory))
+    with _FORMULA_TEMPLATE_CACHE_LOCK:
+        entry = _FORMULA_TEMPLATE_CACHE.get(key)
+        if (entry and entry.get("version") and entry.get("payload")
+                and time.monotonic() - entry["checked_at"] < FORMULA_TEMPLATE_CACHE_MAX_AGE_SECONDS):
+            return deepcopy(entry["payload"])
+    return None
+
+
+def _fetch_formula_template(url, product_code, headers_factory):
+    headers = _template_headers(headers_factory)
+    key = _template_cache_key(url, product_code, headers)
+    with _FORMULA_TEMPLATE_CACHE_LOCK:
+        entry = _FORMULA_TEMPLATE_CACHE.setdefault(key, {
+            "lock": threading.Lock(), "users": 0, "checked_at": float("-inf"),
+            "version": "", "payload": None,
+        })
+        entry["users"] += 1
+        _FORMULA_TEMPLATE_CACHE.move_to_end(key)
+    try:
+        # A single-cabinet refresh and a ganged preparation can ask for the
+        # same product simultaneously. Only one downloads/validates it.
+        with entry["lock"]:
+            cached = _fresh_formula_template(url, product_code, headers_factory)
+            if cached is not None:
+                LOGGER.info("formula template cache hit product=%s", product_code)
+                return cached
+            body = {"product_code": product_code}
+            if entry["version"]:
+                body["known_version"] = entry["version"]
+            request_headers = {**headers, "X-Quote-Request-Id": uuid.uuid4().hex}
+            started = time.monotonic()
+            request = urllib.request.Request(url,
+                data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                headers=request_headers, method="POST")
+            with urllib.request.urlopen(request, timeout=FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise RuntimeError("公式模板接口返回了无效数据")
+            if payload.get("not_modified"):
+                if not entry["payload"] or payload.get("template_version") != entry["version"]:
+                    raise RuntimeError("公式模板版本校验无效，请重新读取")
+                payload = deepcopy(entry["payload"])
+            template = payload.get("template")
+            if not isinstance(template, dict) or template.get("template_code") != product_code:
+                raise RuntimeError(f"公式模板不匹配：需要 {product_code}")
+            with _FORMULA_TEMPLATE_CACHE_LOCK:
+                entry["payload"] = deepcopy(payload)
+                entry["version"] = str(payload.get("template_version") or "")
+                entry["checked_at"] = time.monotonic()
+            LOGGER.info("formula template fetched product=%s request_id=%s elapsed=%.3fs reused=%s version=%s",
+                product_code, request_headers["X-Quote-Request-Id"], time.monotonic() - started,
+                bool(body.get("known_version") == payload.get("template_version")), entry["version"])
+            return deepcopy(payload)
+    except Exception:
+        # No stale-template fallback after a failed validation. Prices and
+        # final quote snapshots remain owned by the API, not by this cache.
+        with _FORMULA_TEMPLATE_CACHE_LOCK:
+            entry["checked_at"] = float("-inf")
+        raise
+    finally:
+        with _FORMULA_TEMPLATE_CACHE_LOCK:
+            entry["users"] -= 1
+            for old_key, old_entry in list(_FORMULA_TEMPLATE_CACHE.items()):
+                if len(_FORMULA_TEMPLATE_CACHE) <= FORMULA_TEMPLATE_CACHE_MAX_ENTRIES:
+                    break
+                if old_entry["users"] == 0:
+                    del _FORMULA_TEMPLATE_CACHE[old_key]
+
+
+def _record_window_template(window, code, payload, headers_factory):
+    if not payload.get("template_version"):
+        return  # Older APIs remain compatible, but are not cacheable.
+    url = window.base_url().rstrip("/") + "/api/quotes/formula-template"
+    stamps = getattr(window, "_formula_template_stamps", {})
+    stamps[code] = (_template_cache_key(url, code, _template_headers(headers_factory)), payload["template_version"])
+    window._formula_template_stamps = stamps
+
+
+def _window_formula_template_stale(window, code):
+    stamp = getattr(window, "_formula_template_stamps", {}).get(code)
+    if stamp is None:
+        return False
+    url = window.base_url().rstrip("/") + "/api/quotes/formula-template"
+    factory = getattr(window, "_formula_template_headers_factory", None)
+    key = _template_cache_key(url, code, _template_headers(factory))
+    cached = _fresh_formula_template(url, code, factory)
+    return key != stamp[0] or cached is None or cached.get("template_version") != stamp[1]
+
+
 def _formula_template_input_signature(window) -> tuple:
     code_getter = getattr(window, "selected_product_code", None)
     door_getter = getattr(window, "door_counts", None)
@@ -510,6 +694,7 @@ class _FormulaTemplateWorker(QThread):
     succeeded = Signal(dict)
     failed = Signal(str)
     retrying = Signal(int, int, str)
+    progress = Signal(dict)
 
     def __init__(self, url: str, product_code: str, headers_factory, parent=None):
         super().__init__(parent)
@@ -522,32 +707,14 @@ class _FormulaTemplateWorker(QThread):
         for attempt in range(1, FORMULA_TEMPLATE_MAX_ATTEMPTS + 1):
             self.attempt_count = attempt
             try:
+                self.progress.emit({"stage": "template", "attempt": attempt})
                 LOGGER.info(
                     "formula template request started product=%s attempt=%s/%s",
                     self.product_code,
                     attempt,
                     FORMULA_TEMPLATE_MAX_ATTEMPTS,
                 )
-                body = json.dumps(
-                    {"product_code": self.product_code}, ensure_ascii=False
-                ).encode("utf-8")
-                headers = (
-                    self.headers_factory(True)
-                    if callable(self.headers_factory)
-                    else {"Content-Type": "application/json; charset=utf-8"}
-                )
-                request = urllib.request.Request(
-                    self.url,
-                    data=body,
-                    headers=headers,
-                    method="POST",
-                )
-                with urllib.request.urlopen(
-                    request, timeout=FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS
-                ) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-                if not isinstance(payload, dict):
-                    raise RuntimeError("公式模板接口返回了无效数据")
+                payload = _fetch_formula_template(self.url, self.product_code, self.headers_factory)
                 LOGGER.info(
                     "formula template request succeeded product=%s attempt=%s",
                     self.product_code,
@@ -581,10 +748,11 @@ class _FormulaTemplateWorker(QThread):
 
 
 class _GangedQuoteWorker(QThread):
-    """Call the existing single-cabinet endpoint once per split cabinet."""
+    """Submit all children once; fall back only for an API without the route."""
 
     succeeded = Signal(dict)
     failed = Signal(str)
+    progress = Signal(dict)
 
     def __init__(
         self,
@@ -620,9 +788,36 @@ class _GangedQuoteWorker(QThread):
         return sum(values)
 
     def run(self) -> None:
+        started = time.monotonic()
         try:
+            batch_url = self.url.split("/api/", 1)[0].rstrip("/") + "/api/quotes/calculate-ganged"
+            batch_payload = {"cabinets": self.payloads, "attachment_total": self.attachment_total,
+                "area_total": self.area_total, "attachment_payload": self.attachment_payload}
+            headers = _quote_request_headers(_template_headers(self.headers_factory))
+            LOGGER.info("ganged batch started request_id=%s children=%s", headers["X-Quote-Request-Id"], len(self.payloads))
+            self.progress.emit({"stage": "cabinet", "completed": 0, "total": len(self.payloads),
+                "request_id": headers["X-Quote-Request-Id"]})
+            request = urllib.request.Request(batch_url,
+                data=json.dumps(batch_payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(request, timeout=QUOTE_REQUEST_TIMEOUT_SECONDS) as response:
+                    aggregate = _read_quote_response(response, self.progress.emit)
+                if (not isinstance(aggregate, dict) or aggregate.get("ganged_batch_contract") != 1
+                        or not isinstance(aggregate.get("formula_cost"), dict)
+                        or not isinstance(aggregate.get("quick_quote"), dict)
+                        or len(aggregate.get("ganged_cabinet_results") or []) != len(self.payloads)
+                        or (self.attachment_payload and aggregate.get("attachment_contract") != 2)):
+                    raise RuntimeError("并柜批量报价返回了无效数据")
+                self.succeeded.emit(aggregate)
+                return
+            except urllib.error.HTTPError as error:
+                if error.code not in (404, 405):
+                    raise
+                LOGGER.warning("ganged batch endpoint unavailable; using legacy single requests")
             results = []
             for payload in self.payloads:
+                self.progress.emit({"stage": "cabinet", "completed": len(results), "total": len(self.payloads)})
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 headers = (
                     self.headers_factory(True)
@@ -646,6 +841,7 @@ class _GangedQuoteWorker(QThread):
                 if not isinstance(result.get("quick_quote"), dict):
                     raise RuntimeError(f"第 {len(results) + 1} 个子柜缺少快速报价结果")
                 results.append(result)
+                self.progress.emit({"stage": "cabinet", "completed": len(results), "total": len(self.payloads)})
 
             formula_keys = (
                 "material_cost", "auxiliary_cost", "labor_cost", "spray_cost",
@@ -734,6 +930,7 @@ class _GangedQuoteWorker(QThread):
                 "ganged_area_m2": formula.get("product_area_m2"),
             }
             if self.attachment_payload:
+                self.progress.emit({"stage": "attachments"})
                 snapshot_payload = {**self.attachment_payload, "base_result": aggregate}
                 body = json.dumps(snapshot_payload, ensure_ascii=False).encode("utf-8")
                 headers = (
@@ -756,6 +953,8 @@ class _GangedQuoteWorker(QThread):
             self.failed.emit(detail or f"HTTP {exc.code}")
         except Exception as exc:
             self.failed.emit(str(exc))
+        finally:
+            LOGGER.info("ganged request finished children=%s elapsed=%.3fs", len(self.payloads), time.monotonic() - started)
 
 
 class _GangedFormulaTemplateWorker(QThread):
@@ -764,6 +963,7 @@ class _GangedFormulaTemplateWorker(QThread):
     succeeded = Signal(list)
     failed = Signal(str)
     retrying = Signal(str, int, int, str)
+    progress = Signal(dict)
 
     def __init__(self, base_url: str, product_codes: list[str], headers_factory, parent=None):
         super().__init__(parent)
@@ -774,29 +974,14 @@ class _GangedFormulaTemplateWorker(QThread):
     def run(self) -> None:
         try:
             templates = []
-            for product_code in self.product_codes:
+            for index, product_code in enumerate(self.product_codes):
                 payload = None
                 for attempt in range(1, FORMULA_TEMPLATE_MAX_ATTEMPTS + 1):
                     try:
-                        body = json.dumps(
-                            {"product_code": product_code}, ensure_ascii=False
-                        ).encode("utf-8")
-                        headers = (
-                            self.headers_factory(True)
-                            if callable(self.headers_factory)
-                            else {"Content-Type": "application/json; charset=utf-8"}
-                        )
-                        request = urllib.request.Request(
-                            self.base_url + "/api/quotes/formula-template",
-                            data=body,
-                            headers=headers,
-                            method="POST",
-                        )
-                        with urllib.request.urlopen(
-                            request,
-                            timeout=FORMULA_TEMPLATE_REQUEST_TIMEOUT_SECONDS,
-                        ) as response:
-                            payload = json.loads(response.read().decode("utf-8"))
+                        self.progress.emit({"stage": "template", "completed": index,
+                            "total": len(self.product_codes), "attempt": attempt})
+                        payload = _fetch_formula_template(
+                            self.base_url + "/api/quotes/formula-template", product_code, self.headers_factory)
                         break
                     except Exception as error:
                         if (
@@ -1652,7 +1837,8 @@ def _missing_ganged_formula_product_codes(window) -> list[str]:
     sheets = getattr(calculator, "sheets", None)
     if not isinstance(sheets, dict):
         return []
-    return [code for code in _ganged_formula_product_codes(window) if not sheets.get(code)]
+    return [code for code in _ganged_formula_product_codes(window)
+            if not sheets.get(code) or _window_formula_template_stale(window, code)]
 
 
 def _ganged_formula_metrics(window) -> list[tuple[float, float]]:
@@ -2774,6 +2960,7 @@ def _start_ganged_formula_template_preparation(
                     raise RuntimeError("并柜公式计算器尚未就绪")
                 for payload in templates:
                     calculator.load_template(payload)
+                    _record_window_template(window, payload["template"]["template_code"], payload, headers_factory)
             except Exception as exc:
                 error = str(exc)
         worker.deleteLater()
@@ -2821,6 +3008,7 @@ def _start_ganged_formula_template_preparation(
     worker.succeeded.connect(templates_loaded)
     worker.failed.connect(templates_failed)
     worker.retrying.connect(templates_retrying)
+    worker.progress.connect(lambda event: _update_calculation_progress(window, event))
     worker.finished.connect(preparation_finished)
     worker.start()
     return True
@@ -2963,6 +3151,7 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         worker.deleteLater()
 
     worker.succeeded.connect(show_ganged_result)
+    worker.progress.connect(lambda event: _update_calculation_progress(window, event))
     worker.failed.connect(show_ganged_error)
     worker.finished.connect(finish_ganged_calculation)
     worker.start()
@@ -8022,6 +8211,7 @@ def install_layout_refresh(namespace: dict) -> None:
         main_window.door_counts_changed = door_counts_changed_with_product_rules
     if callable(original_refresh_formula_inputs):
         def refresh_formula_inputs_with_retry(self):
+            self._formula_template_headers_factory = namespace.get("api_headers")
             timer = getattr(self, "_formula_template_debounce_timer", None)
             if isinstance(timer, QTimer):
                 timer.stop()
@@ -8036,6 +8226,20 @@ def install_layout_refresh(namespace: dict) -> None:
                 self.area_edit.clear()
                 self._pending_formula_calculation = False
                 return None
+
+            cached = _fresh_formula_template(
+                self.base_url().rstrip("/") + "/api/quotes/formula-template",
+                code, namespace.get("api_headers"))
+            if cached is not None:
+                self.formula_template_loaded(cached, self.template_serial, code)
+                if self.weight_edit.text().strip() and self.area_edit.text().strip():
+                    pending = bool(getattr(self, "_pending_formula_calculation", False))
+                    self._pending_formula_calculation = False
+                    if pending:
+                        QTimer.singleShot(0, lambda: self.calculate())
+                    else:
+                        self.update_quote_readiness()
+                    return None
 
             self.weight_edit.clear()
             self.area_edit.clear()
@@ -8080,7 +8284,7 @@ def install_layout_refresh(namespace: dict) -> None:
             serial = self.template_serial
             request_signature = _formula_template_input_signature(self)
             worker = _FormulaTemplateWorker(
-                self.base_url() + "/api/quotes/formula-template",
+                self.base_url().rstrip("/") + "/api/quotes/formula-template",
                 code,
                 namespace.get("api_headers"),
                 self,
@@ -8200,6 +8404,8 @@ def install_layout_refresh(namespace: dict) -> None:
             worker.succeeded.connect(template_loaded)
             worker.failed.connect(template_failed)
             worker.retrying.connect(template_retrying)
+            worker.progress.connect(lambda event: _update_calculation_progress(self, event)
+                if serial == self.template_serial else None)
             worker.finished.connect(template_finished)
             worker.start()
             return None
@@ -8208,6 +8414,7 @@ def install_layout_refresh(namespace: dict) -> None:
         main_window._start_formula_template_request = start_formula_template_request
     if callable(original_calculate):
         def calculate_with_ganged_cabinets(self):
+            self._formula_template_headers_factory = namespace.get("api_headers")
             if getattr(self, "quote_calculation_in_progress", False):
                 LOGGER.info("duplicate quote action ignored while request is running")
                 _set_ganged_calculation_state(
@@ -8228,6 +8435,9 @@ def install_layout_refresh(namespace: dict) -> None:
                 return None
             code = self.selected_product_code()
             entry = self.product_catalog.get(self.product_combo.currentData() or "", {})
+            if code and entry.get("method") == "formula" and _window_formula_template_stale(self, code):
+                self.weight_edit.clear()
+                self.area_edit.clear()
             if (
                 code
                 and entry.get("method") == "formula"
@@ -8455,6 +8665,9 @@ def install_layout_refresh(namespace: dict) -> None:
     if callable(original_formula_template_loaded):
         def formula_template_loaded_with_perimeter_rule(self, *args, **kwargs):
             loaded = original_formula_template_loaded(self, *args, **kwargs)
+            if (args and isinstance(args[0], dict) and args[0].get("template")
+                    and (len(args) < 2 or args[1] == self.template_serial)):
+                _record_window_template(self, args[0]["template"]["template_code"], args[0], namespace.get("api_headers"))
             try:
                 _apply_nonstandard_formula_ratio(self)
                 _round_formula_workbook_fields(self)

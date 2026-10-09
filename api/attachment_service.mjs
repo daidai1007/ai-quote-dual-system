@@ -87,7 +87,7 @@ export function applyAttachmentTotals(base,rows) {
     risk_flags:[...(base.risk_flags||[]),...totals.errors.map(r=>({code:'attachment_error',severity:'blocker',message:`${r.item_name}：${r.error}`}))]};
 }
 
-export function createAttachmentService({runPsql,calculateBase,env=process.env}) {
+export function createAttachmentService({runPsql,calculateBase,env=process.env,onProgress=()=>{}}) {
   const query=async sql=>{const text=await runPsql(sql);return JSON.parse(text.trim().split(/\r?\n/).filter(Boolean).at(-1)||'null');};
   async function catalog() {
     const version=env.AI_QUOTE_ATTACHMENT_V2_VERSION||'';
@@ -110,6 +110,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
     return {items,data_version:v.data_version,status:v.status,attachment_contract:2,catalog_write_supported:true};
   }
   async function preview(input) {
+    onProgress('attachments');
     if(!Array.isArray(input.attachments)||input.attachments.length>100) throw new Error('attachments必须为不超过100项的数组');
     const gangedCount=Number(input.ganged_cabinet_count||1);
     const gangedCabinets=Array.isArray(input.ganged_cabinets)?input.ganged_cabinets:[];
@@ -145,6 +146,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
     return {attachments,environment,attachment_contract:2,catalog_version:data.data_version,...attachmentTotals(attachments)};
   }
   async function persistCalculated(input,previewed,base) {
+    onProgress('snapshot');
     const lineId=previewed.environment.quote_line_id;
     const result={...applyAttachmentTotals(base,previewed.attachments),quote_id:input.quote_id,quote_line_id:lineId};
     const environment={...previewed.environment,model_code:input.model_code||'',quote_result:{...result,attachments:undefined}};
@@ -165,9 +167,10 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env})
     result.attachments=saved.attachments;return result;
   }
   async function calculate(input) {
-    const previewed=await preview(input),lineId=previewed.environment.quote_line_id;
     // Each base calculation has a fresh private quote id and NO attachment inserts.
-    const base=await calculateBase({...input,quote_id:`AV2_${lineId}`,attachments:[]});
+    onProgress('cabinet');
+    const base=await calculateBase({...input,quote_id:`AV2_${randomUUID()}`,attachments:[]});
+    const previewed=await preview(input);
     return persistCalculated(input,previewed,base);
   }
   async function snapshotGanged(input) {

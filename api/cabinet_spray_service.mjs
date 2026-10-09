@@ -91,7 +91,7 @@ export function createCabinetSprayService({runPsql}){
       'rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no,r.source_column),'[]')
         FROM calc.cabinet_spray_rule r WHERE r.data_version=v.data_version AND r.family=${valueSql(family)}),
       'fixed_rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no),'[]')
-        FROM calc.cabinet_spray_fixed_rule r WHERE r.data_version=v.data_version AND r.product_code=${valueSql(product)}),
+        FROM calc.cabinet_spray_fixed_rule r WHERE r.data_version=v.data_version AND r.product_code=${valueSql(usesFormula?family:product)}),
       'spray_unit_price',CASE WHEN ${valueSql(input.coating_type)}='不喷塑' THEN 0
         ELSE calc.get_spray_unit_price(${valueSql(input.quote_date)}::date,${valueSql(input.coating_type)}) END
       ) FROM calc.cabinet_spray_catalog_version v WHERE v.status='ACTIVE';`);}

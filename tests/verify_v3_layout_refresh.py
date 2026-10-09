@@ -1709,6 +1709,8 @@ original_urlopen = layout_refresh.urllib.request.urlopen
 
 def successful_urlopen(request, timeout=0):
     del timeout
+    if request.full_url.endswith("/api/quotes/calculate-ganged"):
+        raise layout_refresh.urllib.error.HTTPError(request.full_url, 404, "old API", {}, None)
     if request.full_url.endswith("/api/quotes/formula-template"):
         template_request = json.loads(request.data.decode("utf-8"))
         template_requests.append(template_request)
@@ -1893,6 +1895,8 @@ ganged_attachment_requests = []
 
 def successful_ganged_attachment_urlopen(request, timeout=0):
     del timeout
+    if request.full_url.endswith("/api/quotes/calculate-ganged"):
+        raise layout_refresh.urllib.error.HTTPError(request.full_url, 404, "old API", {}, None)
     payload = json.loads(request.data.decode("utf-8"))
     ganged_attachment_requests.append((request.full_url, payload))
     if request.full_url.endswith("/api/attachments/snapshot-ganged"):

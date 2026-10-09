@@ -12,6 +12,7 @@ from datetime import date
 import hashlib
 import html
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,12 @@ import tempfile
 import time
 from types import MethodType
 import zipfile
+
+LOGGER = logging.getLogger("ai_quote.client")
+ADD_PROGRESS_COMPACT_THRESHOLD = 650
+ADD_PROGRESS_MIN_WIDTH = 110
+ADD_PROGRESS_MAX_WIDTH = 460
+ADD_PROGRESS_TEXT_PADDING = 30
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, QStandardPaths, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut, QTextDocument
@@ -5038,6 +5045,8 @@ def _calculate_and_add(window):
     if getattr(window, "quote_calculation_in_progress", False):
         return
     window._scheme2_add_started_at = time.monotonic()
+    window._scheme2_add_phase_key = None
+    window._quote_progress_request_id = ""
     elapsed_timer = getattr(window, "_scheme2_add_elapsed_timer", None)
     if isinstance(elapsed_timer, QTimer):
         elapsed_timer.start()
@@ -5057,7 +5066,7 @@ def _calculate_and_add(window):
     _set_add_progress(window, 1, "校验输入")
 
     def calculate_quote():
-        _set_add_progress(window, 3, "读取公式模板并计算")
+        _set_add_progress(window, 3, "准备公式与报价请求")
         window.calculate()
         _monitor_formula_calculation(window)
 
@@ -5090,26 +5099,66 @@ def _refresh_add_progress_display(window):
     label = str(progress.property("stepLabel") or "")
     started = getattr(window, "_scheme2_add_started_at", None)
     elapsed = max(0.0, time.monotonic() - started) if started is not None else 0.0
+    phase_started = getattr(window, "_scheme2_add_phase_started_at", started)
+    phase_elapsed = max(0.0, time.monotonic() - phase_started) if phase_started is not None else 0.0
     footer = progress.parentWidget()
-    compact = footer is not None and footer.width() < 650
-    display = f"{step}/5 · {elapsed:.1f}秒" if compact else f"{step}/5 {label} · {elapsed:.1f}秒"
-    progress.setFormat(display)
-    text_width = QFontMetrics(progress.font()).horizontalAdvance(display)
-    progress.setFixedWidth(max(110, text_width + 30))
+    progress.ensurePolished()
+    metrics = QFontMetrics(progress.font())
+    available = ADD_PROGRESS_MAX_WIDTH
+    layout = footer.layout() if footer is not None else None
+    if layout is not None:
+        margins = layout.contentsMargins()
+        peers = [layout.itemAt(index).widget() for index in range(layout.count())]
+        peers = [peer for peer in peers if peer is not None and peer is not progress and not peer.isHidden()]
+        available = max(ADD_PROGRESS_MIN_WIDTH, footer.width() - margins.left() - margins.right()
+            - sum(peer.minimumSizeHint().width() for peer in peers) - layout.spacing() * len(peers))
+    compact = footer is not None and footer.width() < ADD_PROGRESS_COMPACT_THRESHOLD
+    short_label = label.replace("子柜已完成", "子柜").replace("模板已完成", "模板")
+    short_label = short_label.replace("计算附件价格与成本", "计算附件").replace("保存报价快照", "保存快照")
+    display = (f"{step}/5 {short_label} · {phase_elapsed:.1f}秒" if compact else
+               f"{step}/5 {label} · {phase_elapsed:.1f}秒（累计{elapsed:.1f}秒）")
+    if metrics.horizontalAdvance(display) + ADD_PROGRESS_TEXT_PADDING > available:
+        display = f"{step}/5 {short_label} · {phase_elapsed:.1f}秒"
+    if progress.property("failed"):
+        display = f"{step}/5 失败 · {elapsed:.1f}秒"
+    text_width = metrics.horizontalAdvance(display)
+    width = min(available, ADD_PROGRESS_MAX_WIDTH, max(ADD_PROGRESS_MIN_WIDTH, text_width + ADD_PROGRESS_TEXT_PADDING))
+    progress.setFixedWidth(width)
+    progress.setFormat(metrics.elidedText(display, Qt.TextElideMode.ElideRight, width - ADD_PROGRESS_TEXT_PADDING))
+    if layout is not None:
+        layout.invalidate()
+        layout.activate()
+    progress.setAccessibleName(f"{step}/5 {label}")
+    if not progress.property("failed"):
+        request_id = getattr(window, "_quote_progress_request_id", "")
+        progress.setToolTip(f"{label}\n本阶段：{phase_elapsed:.1f}秒\n累计：{elapsed:.1f}秒"
+                            + (f"\n请求编号：{request_id}" if request_id else ""))
 
 
-def _set_add_progress(window, step, label, failed=False):
+def _set_add_progress(window, step, label, failed=False, phase_key=None):
     progress = getattr(window, "scheme2_add_progress", None)
     if progress is None:
         return
+    phase = phase_key or (int(step), str(label))
+    previous = getattr(window, "_scheme2_add_phase_key", None)
+    if previous != phase:
+        previous_started = getattr(window, "_scheme2_add_phase_started_at", None)
+        if previous_started is not None:
+            LOGGER.info("quote UI phase finished phase=%s elapsed=%.3fs request_id=%s", previous,
+                time.monotonic() - previous_started, getattr(window, "_quote_progress_request_id", ""))
+        window._scheme2_add_phase_key = phase
+        window._scheme2_add_phase_started_at = time.monotonic()
+        LOGGER.info("quote UI phase started phase=%s step=%s request_id=%s", phase, step,
+            getattr(window, "_quote_progress_request_id", ""))
     progress.show()
     progress.setValue(step)
     progress.setProperty("step", int(step))
     progress.setProperty("stepLabel", str(label))
-    _refresh_add_progress_display(window)
     progress.setProperty("failed", failed)
+    _refresh_add_progress_display(window)
     progress.setProperty("failureReason", str(label).removeprefix("失败：").strip() if failed else "")
-    progress.setToolTip("点击查看完整失败原因" if failed else "")
+    if failed:
+        progress.setToolTip("点击查看完整失败原因")
     progress.setCursor(Qt.CursorShape.PointingHandCursor if failed else Qt.CursorShape.ArrowCursor)
     progress.setFocusPolicy(Qt.FocusPolicy.StrongFocus if failed else Qt.FocusPolicy.NoFocus)
     progress.style().unpolish(progress)
@@ -5978,7 +6027,7 @@ def install_scheme2_ui(namespace):
         if hasattr(window, "quote_right_stack"):
             window.quote_right_stack.setCurrentIndex(0)
         if window._scheme2_add_after_calculate and isinstance(getattr(window, "current_result", None), dict):
-            _set_add_progress(window, 4, "双报价计算完成")
+            _set_add_progress(window, 5, "报价完成，正在生成清单行")
             window._scheme2_add_after_calculate = False
             window.scheme2_add_button.setEnabled(True)
             window.scheme2_add_button.setText("加入报价清单")
@@ -5990,7 +6039,9 @@ def install_scheme2_ui(namespace):
         if hasattr(window, "scheme2_add_button"):
             window.scheme2_add_button.setEnabled(True)
             window.scheme2_add_button.setText("重试")
-            _set_add_progress(window, 3, f"失败：{message}", failed=True)
+            progress = getattr(window, "scheme2_add_progress", None)
+            step = int(progress.property("step") or 3) if progress is not None else 3
+            _set_add_progress(window, step, f"失败：{message}", failed=True)
         return original_show_error(window, message)
 
     def refresh(window):
