@@ -1440,6 +1440,104 @@ def _replace_ganged_fixed_base_selections(
     return retained, added
 
 
+def _match_ganged_fixed_bases(
+    rows: list[dict], catalog: list[dict], selected: list[dict]
+) -> list[dict]:
+    """Return one current-catalogue fixed-base row for every child cabinet."""
+
+    if len(rows) <= 1 or not catalog:
+        return []
+    fallback = next(
+        (
+            item for item in selected
+            if isinstance(item, dict)
+            and default_rule_for_item(item) == DEFAULT_FIXED_BASE
+        ),
+        next(
+            (
+                item for item in catalog
+                if default_rule_for_item(item) == DEFAULT_FIXED_BASE
+            ),
+            None,
+        ),
+    )
+    matches: list[dict] = []
+    for index, row in enumerate(rows):
+        try:
+            width = float(row["width_mm"])
+            depth = float(row["depth_mm"])
+            base_height = float(row["base_height_mm"])
+        except (KeyError, TypeError, ValueError):
+            return []
+        exact = match_fixed_base(catalog, width, depth, base_height)
+        source = exact or fallback
+        matched = (
+            match_attachment_size(catalog, source, (width, base_height, depth))
+            if source is not None else None
+        )
+        if matched is None:
+            return []
+        matched[GANGED_FIXED_BASE_MATCH_KEY] = True
+        matched[GANGED_FIXED_BASE_INDEX_KEY] = index
+        matched["ganged_fixed_base_split_count"] = len(rows)
+        matched["ganged_fixed_base_specification"] = subcabinet_specification(row)
+        matched["quantity"] = 1
+        matches.append(matched)
+    return matches
+
+
+def _live_ganged_fixed_base_matches(dialog, selected: list[dict]) -> list[dict]:
+    """Match every child again after the asynchronous catalogue has loaded."""
+
+    parent = dialog.parentWidget()
+    rows = _ganged_rows(parent) if parent is not None else []
+    catalog = [
+        item for item in getattr(dialog, "catalog", [])
+        if isinstance(item, dict)
+    ]
+    return _match_ganged_fixed_bases(rows, catalog, selected)
+
+
+def _ensure_window_ganged_fixed_bases(window) -> bool:
+    """Enforce per-child bases again at the ganged-calculation boundary."""
+
+    rows = _ganged_rows(window)
+    selected = [
+        item for item in getattr(window, "attachments", [])
+        if isinstance(item, dict)
+    ]
+    if len(rows) <= 1 or not any(
+        default_rule_for_item(item) == DEFAULT_FIXED_BASE for item in selected
+    ):
+        return False
+    catalog = [
+        item for item in getattr(window, "_attachment_catalog_cache", [])
+        if isinstance(item, dict)
+    ]
+    candidates = _match_ganged_fixed_bases(rows, catalog, selected)
+    if len(candidates) != len(rows):
+        return False
+    expanded, _added = _replace_ganged_fixed_base_selections(
+        selected, candidates, True
+    )
+    before = [
+        (
+            item.get("attachment_price_id"),
+            item.get(GANGED_FIXED_BASE_INDEX_KEY),
+        )
+        for item in selected
+    ]
+    after = [
+        (
+            item.get("attachment_price_id"),
+            item.get(GANGED_FIXED_BASE_INDEX_KEY),
+        )
+        for item in expanded
+    ]
+    window.attachments = expanded
+    return before != after
+
+
 def _expand_collected_ganged_fixed_bases(dialog, selected: list[dict]) -> list[dict]:
     """Fan one manually checked fixed base out to all split cabinets."""
 
@@ -1448,12 +1546,13 @@ def _expand_collected_ganged_fixed_bases(dialog, selected: list[dict]) -> list[d
         default_rule_for_item(item) == DEFAULT_FIXED_BASE for item in selected
     ):
         return selected
-    candidates = [
+    candidates = _live_ganged_fixed_base_matches(dialog, selected) or [
         item for item in getattr(dialog, "default_ganged_fixed_base_matches", ())
         if isinstance(item, dict)
     ]
     if not candidates:
         return selected
+    dialog.default_ganged_fixed_base_matches = tuple(candidates)
     expanded, _added = _replace_ganged_fixed_base_selections(
         selected, candidates, True
     )
@@ -2506,6 +2605,7 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
 
 
 def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | None:
+    _ensure_window_ganged_fixed_bases(window)
     window._v2_custom_attachments = [
         deepcopy(item) for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and item.get("custom")
@@ -2748,6 +2848,11 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
     if not payloads:
         return False
     try:
+        bases_changed = _ensure_window_ganged_fixed_bases(window)
+        if bases_changed:
+            refresh_attachments = getattr(window, "update_attachment_view", None)
+            if callable(refresh_attachments):
+                refresh_attachments()
         attachment_total = sum(
             quick_attachment_line_amount(item)
             for item in getattr(window, "attachments", [])

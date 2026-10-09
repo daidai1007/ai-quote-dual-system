@@ -313,6 +313,86 @@ def ganged(window):
     except (ImportError, AttributeError, TypeError):
         return bool(control and control.value() > 1)
 
+
+def _is_fixed_base_selection(item):
+    """Return whether a scheme attachment represents the fixed-base choice."""
+    category = str(
+        item.get("category_level1") or item.get("attachment_category") or ""
+    ).strip()
+    identity = " ".join(
+        str(item.get(key) or "")
+        for key in ("category_level2", "category_level3", "item_name", "name")
+    )
+    return category == "底座" and "固定底座" in identity
+
+
+def expand_ganged_fixed_bases_for_quote(window, rows, catalog, version=None):
+    """Replace the logical fixed-base choice with one priced row per child.
+
+    The scheme picker records only whether a base is selected.  Its concrete
+    price row must therefore be resolved here, where the complete live
+    catalogue and every ganged child dimension are both available.
+    """
+    cabinets = [
+        dict(row) for row in getattr(window, "ganged_cabinets", [])
+        if isinstance(row, dict)
+    ]
+    sources = [dict(item) for item in rows if isinstance(item, dict)]
+    fixed_sources = [item for item in sources if _is_fixed_base_selection(item)]
+    if len(cabinets) <= 1 or not fixed_sources:
+        return sources, []
+
+    try:
+        from ganged_cabinet_rules import subcabinet_specification
+    except ImportError:
+        subcabinet_specification = lambda row: ""
+
+    source = fixed_sources[0]
+    product_getter = getattr(window, "selected_product_code", None)
+    product_code = product_getter() if callable(product_getter) else ""
+    expanded = []
+    missing = []
+    inserted = False
+    for item in sources:
+        if not _is_fixed_base_selection(item):
+            expanded.append(item)
+            continue
+        if inserted:
+            continue
+        inserted = True
+        for index, cabinet in enumerate(cabinets):
+            try:
+                width = float(cabinet["width_mm"])
+                height = float(cabinet["height_mm"])
+                depth = float(cabinet["depth_mm"])
+                base = float(cabinet["base_height_mm"])
+            except (KeyError, TypeError, ValueError):
+                missing.append(f"柜体{index + 1}固定底座尺寸")
+                continue
+            matched = match_catalog_attachment(
+                source,
+                catalog,
+                target_dimensions=(width, height, depth),
+                product_code=product_code,
+                base_height_mm=base,
+            )
+            if matched is None:
+                missing.append(f"柜体{index + 1}固定底座")
+                continue
+            resolved = {**source, **copy.deepcopy(matched)}
+            resolved.update({
+                "attachment_price_id": matched.get("attachment_price_id"),
+                "catalog_version": version,
+                "quantity": 1,
+                "ganged_fixed_base_match": True,
+                "ganged_fixed_base_index": index,
+                "ganged_cabinet_index": index,
+                "ganged_fixed_base_split_count": len(cabinets),
+                "ganged_fixed_base_specification": subcabinet_specification(cabinet),
+            })
+            expanded.append(resolved)
+    return expanded, missing
+
 def base_height(window):
     """Return the base height already entered in the visible cabinet specification."""
     rows = [dict(row) for row in getattr(window, "ganged_cabinets", []) if isinstance(row, dict)]
@@ -555,6 +635,10 @@ def install_attachment_v2(namespace):
                 )
                 for x in body.get("items", [])
             ]
+            if parent is not None:
+                parent._attachment_catalog_cache = [
+                    copy.deepcopy(item) for item in dialog.catalog
+                ]
             add_button = getattr(dialog, "add_attachment_catalog_button", None)
             if add_button is not None:
                 write_supported = body.get("catalog_write_supported") is True
@@ -751,7 +835,10 @@ def install_attachment_v2(namespace):
     def resolve_attachments_for_quote(window, succeeded, failed):
         rows = [dict(item) for item in getattr(window, "attachments", []) if isinstance(item, dict)]
         pending = [item for item in rows if not item.get("custom") and item.get("attachment_price_id") is None]
-        if not pending:
+        needs_ganged_base_catalog = (
+            ganged(window) and any(_is_fixed_base_selection(item) for item in rows)
+        )
+        if not pending and not needs_ganged_base_catalog:
             succeeded()
             return
         active = getattr(window, "_scheme2_attachment_catalog_worker", None)
@@ -768,9 +855,13 @@ def install_attachment_v2(namespace):
                 return
             catalog = [dict(item) for item in body.get("items", []) if isinstance(item, dict)]
             version = body.get("data_version")
+            window._attachment_catalog_cache = [copy.deepcopy(item) for item in catalog]
+            source_rows, fixed_base_missing = expand_ganged_fixed_bases_for_quote(
+                window, rows, catalog, version
+            )
             resolved = []
-            missing = []
-            for source in rows:
+            missing = list(fixed_base_missing)
+            for source in source_rows:
                 if source.get("custom"):
                     resolved.append(source)
                     continue

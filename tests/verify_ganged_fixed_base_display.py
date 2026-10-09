@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 import layout_refresh  # noqa: E402
 import scheme2_ui  # noqa: E402
+import attachment_v2_client  # noqa: E402
 
 
 recognized = {
@@ -76,6 +77,58 @@ expanded_bases = [row for row in expanded if row.get("ganged_fixed_base_match")]
 assert len(expanded_bases) == 2
 assert [row["attachment_price_id"] for row in expanded_bases] == [1000, 800]
 assert layout_refresh.DEFAULT_FIXED_BASE not in dialog.default_selection_opt_outs
+
+# The V2 catalogue is loaded asynchronously. Even if the initialization cache
+# contains only the first child, confirmation must rematch every child from the
+# current catalogue instead of persisting that stale partial cache.
+stale_dialog = SimpleNamespace(
+    parentWidget=lambda: parent_window,
+    catalog=(
+        {**candidates[0], "width_mm": 1000, "height_mm": 100, "depth_mm": 600},
+        {**candidates[1], "width_mm": 800, "height_mm": 100, "depth_mm": 600},
+    ),
+    default_ganged_fixed_base_matches=(candidates[0],),
+    default_selection_opt_outs={layout_refresh.DEFAULT_FIXED_BASE},
+)
+rematched = layout_refresh._expand_collected_ganged_fixed_bases(
+    stale_dialog, [manual, other]
+)
+rematched_bases = [row for row in rematched if row.get("ganged_fixed_base_match")]
+assert [row["attachment_price_id"] for row in rematched_bases] == [1000, 800]
+assert [row["ganged_fixed_base_index"] for row in rematched_bases] == [0, 1]
+
+# Even if a legacy/async dialog path persisted just the first base, the final
+# ganged calculation boundary must repair the main-window attachment list.
+calculation_window = SimpleNamespace(
+    ganged_cabinets=parent_window.ganged_cabinets,
+    attachments=[manual, {"item_name": "木托", "custom": True}],
+    _attachment_catalog_cache=list(stale_dialog.catalog),
+)
+assert layout_refresh._ensure_window_ganged_fixed_bases(calculation_window)
+calculation_bases = [
+    row for row in calculation_window.attachments
+    if row.get("ganged_fixed_base_match")
+]
+assert [row["attachment_price_id"] for row in calculation_bases] == [1000, 800]
+assert calculation_window.attachments[0]["item_name"] == "木托"
+
+# The live scheme2 picker stores one logical fixed-base row.  Quote resolution
+# must expand that row again even when it already carries the first child's ID.
+scheme2_window = SimpleNamespace(
+    ganged_cabinets=parent_window.ganged_cabinets,
+    selected_product_code=lambda: "JP",
+)
+scheme2_rows, scheme2_missing = attachment_v2_client.expand_ganged_fixed_bases_for_quote(
+    scheme2_window,
+    [{**manual, "attachment_price_id": 1000}, {"item_name": "木托", "custom": True}],
+    list(stale_dialog.catalog),
+    "test-catalog",
+)
+assert scheme2_missing == []
+scheme2_bases = [row for row in scheme2_rows if row.get("ganged_fixed_base_match")]
+assert [row["attachment_price_id"] for row in scheme2_bases] == [1000, 800]
+assert [row["ganged_fixed_base_index"] for row in scheme2_bases] == [0, 1]
+assert scheme2_rows[-1]["item_name"] == "木托"
 
 rows = [
     {
