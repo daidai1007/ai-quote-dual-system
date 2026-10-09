@@ -1386,6 +1386,30 @@ def _ganged_rows(window) -> list[dict]:
     return [dict(row) for row in rows if isinstance(row, dict)]
 
 
+def _partition_ganged_fixed_base_selections(items: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Keep explicit manual bases and discard stale automatic base rows.
+
+    OCR-recognized fixed bases are system suggestions, not operator overrides.
+    They must be replaced by one independently size-matched row per child
+    cabinet when a ganged specification is active.
+    """
+
+    manual_bases = []
+    retained = []
+    for item in items:
+        if default_rule_for_item(item) != DEFAULT_FIXED_BASE:
+            retained.append(item)
+            continue
+        if bool(item.get(GANGED_FIXED_BASE_MATCH_KEY)):
+            continue
+        automatic = bool(item.get("recognized")) or is_automatic_attachment_selection(item)
+        if automatic:
+            continue
+        manual_bases.append(item)
+        retained.append(item)
+    return manual_bases, retained
+
+
 def _add_with_ganged_specification(window, original_add, rows, specification):
     """Let the recovered single-cabinet saver validate a ganged quote safely."""
 
@@ -5502,7 +5526,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             candidate = matches.get(rule) if rule is not None else None
             is_system_default = bool(
                 candidate is not None and same_choice(self, item, candidate)
-            ) or bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
+            ) or bool(item.get(GANGED_FIXED_BASE_MATCH_KEY)) or bool(
+                item.get("recognized")
+                and default_rule_for_item(item) == DEFAULT_FIXED_BASE
+            )
             normalized.append(
                 with_attachment_selection_source(
                     item,
@@ -5751,11 +5778,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if isinstance(candidate, dict)
         ]
         if ganged_base_matches:
-            manual_bases = [
-                item for item in selected_items
-                if default_rule_for_item(item) == DEFAULT_FIXED_BASE
-                and not bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
-            ]
+            manual_bases, retained = _partition_ganged_fixed_base_selections(
+                selected_items
+            )
             existing_by_index = {
                 int(item.get(GANGED_FIXED_BASE_INDEX_KEY)): item
                 for item in selected_items
@@ -5763,13 +5788,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 and bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
                 and str(item.get(GANGED_FIXED_BASE_INDEX_KEY, "")).isdigit()
             }
-            retained = [
-                item for item in selected_items
-                if not (
-                    default_rule_for_item(item) == DEFAULT_FIXED_BASE
-                    and bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
-                )
-            ]
             if DEFAULT_FIXED_BASE not in opt_outs and not manual_bases:
                 for candidate in ganged_base_matches:
                     index = int(candidate[GANGED_FIXED_BASE_INDEX_KEY])

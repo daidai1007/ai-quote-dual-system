@@ -661,6 +661,21 @@ def _attachment_dimension_or_model(source):
     return str(source.get("model_code") or "").strip()
 
 
+def _ganged_fixed_base_number(source):
+    category = str(source.get("category_level1") or source.get("attachment_category") or "").strip()
+    subcategory = str(source.get("category_level2") or source.get("item_name") or "").strip()
+    is_fixed_base = bool(source.get("ganged_fixed_base_match")) or (
+        category == "底座" and "固定底座" in subcategory
+    )
+    if not is_fixed_base:
+        return None
+    raw = source.get("ganged_cabinet_index", source.get("ganged_fixed_base_index"))
+    try:
+        return int(raw) + 1 if raw is not None and int(raw) >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 class AttachmentEditor(QDialog):
     COL_NAME = 0
     COL_SPECIFICATION = 1
@@ -757,6 +772,9 @@ class AttachmentEditor(QDialog):
         self.table.insertRow(row)
         self.table.setRowHeight(row, 42)
         name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
+        cabinet_number = _ganged_fixed_base_number(source)
+        if cabinet_number is not None:
+            name = f"柜体{cabinet_number}｜{name}"
         is_light_switch = (
             str(source.get("category_level1") or "").strip() == "照明灯/行程开关"
             or name == "照明灯/行程开关"
@@ -4364,6 +4382,9 @@ def _open_attachment_overlay(window, _dialog_class, anchor):
 def _attachment_chip_text(item):
     name = str(item.get("item_name") or item.get("name") or "附件").strip()
     category = str(item.get("category_level1") or item.get("attachment_category") or "").strip()
+    cabinet_number = _ganged_fixed_base_number(item)
+    if cabinet_number is not None:
+        return f"柜体{cabinet_number}：{category or '底座'}：{name}"
     if item.get("custom"):
         quantity = max(1, int(_number(item.get("quantity"), 1)))
         return f"临时：{name} ×{quantity}"
