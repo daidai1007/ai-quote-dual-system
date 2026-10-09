@@ -485,7 +485,8 @@ for width, height in ((1680, 980), (1366, 820), (1100, 720), (1024, 700)):
     app.processEvents()
     window.grab().save(str(output / f"cost-{width}x{height}.png"))
     assert window.scheme2_nav.isVisible() == (width >= 1100)
-    assert window.scheme2_compact_coefficients.isVisible() == (width < 1100)
+    assert not window.scheme2_compact_coefficients.isVisible()
+    assert window.scheme2_cost_sidebar.isVisible()
 
 window.close()
 print(f"scheme2 UI contract passed; screenshots: {output}")

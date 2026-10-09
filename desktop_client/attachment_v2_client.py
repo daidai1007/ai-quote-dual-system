@@ -12,6 +12,7 @@ from uuid import uuid4
 from PySide6.QtCore import Qt, QTimer, QDate
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QInputDialog, QWidget
 from shiboken6 import isValid
+from material_prices import material_unit_price
 
 from attachment_category_browser import (
     match_attachment_size,
@@ -994,7 +995,7 @@ def install_attachment_v2(namespace):
             "cabinet_body_thickness_mm": quote_item.get("cabinet_body_thickness_mm"),
             "waste_factor": settings.get("waste_factor", quote_item.get("waste_factor")),
             "galvanized_sheet_unit_price_override": settings.get("galvanized_price"),
-            "material_unit_price_override": settings.get("carbon_price"),
+            "material_unit_price_override": material_unit_price(settings, quote_item.get("material_code")),
             "carbon_steel_unit_price_override": settings.get("carbon_price"),
             "surface_treatment_unit_price_override": settings.get("surface_price"),
             "attachments": [selected_input(attachment)],

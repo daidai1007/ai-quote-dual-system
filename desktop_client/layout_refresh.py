@@ -22,6 +22,7 @@ from copy import deepcopy
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
+from material_prices import material_unit_price
 
 from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor
@@ -2723,11 +2724,7 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
         carbon_price = float(price_settings.get("carbon_price", 0) or 0)
         material = str(material_code or "").strip().upper()
         if material in {"SUS304", "SUS316"}:
-            material_price = (
-                float(price_settings.get("stainless_price", 0) or 0)
-                if active_settings is not None
-                else {"SUS304": 16.0, "SUS316": 32.4}[material]
-            )
+            material_price = material_unit_price(price_settings, material)
         else:
             material_price = carbon_price
         coating = str(coating_type or "").strip()

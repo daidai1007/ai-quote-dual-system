@@ -72,6 +72,7 @@ from PySide6.QtWidgets import (
 from pypdf import PdfReader, PdfWriter
 
 from attachment_category_browser import door_transformation_default_names
+from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
 try:
     from cost_adjustments import rescale_material_weight
 except ModuleNotFoundError:  # Package import used by focused tests.
@@ -88,8 +89,17 @@ COMPANY_COMBO_HEIGHT = 56
 QUOTE_COMPANY_FIELD_WIDTH = 420
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
-STAINLESS_DEFAULT_PRICES = {"SUS304": 16.0, "SUS316": 32.4}
 DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE = 25.0
+COEFFICIENT_FIELDS = (
+    ("galvanized_price", "镀锌板价格", 4.55, 2),
+    ("carbon_price", "碳钢价格", 4.20, 1),
+    ("stainless_304_price", "不锈钢304价格", STAINLESS_DEFAULT_PRICES["SUS304"], 2),
+    ("stainless_316_price", "不锈钢316价格", STAINLESS_DEFAULT_PRICES["SUS316"], 2),
+    ("material_difference", "材料差价价格", DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE, 0),
+    ("waste_factor", "废料系数", 1.20, 1),
+    ("labor_discount", "人工折扣", 1.00, 2),
+    ("surface_price", "表面处理价格", 26.00, 0),
+)
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
 WORKBENCH_WINDOW_TITLE = ""
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
@@ -446,18 +456,29 @@ def _material_price_caption(material_code):
 
 def _reprice_material_details(item, state):
     formula = _formula(item)
+    children = formula.get("ganged_cabinet_costs") or []
+    repriced_children = []
+    if children:
+        for child in children:
+            if isinstance(child, dict) and isinstance(child.get("formula_cost"), dict):
+                repriced_children.append(_reprice_material_details(
+                    {"formula": child["formula_cost"], "material_code": item.get("material_code")}, state))
     groups = formula.get("material_details")
     if not isinstance(groups, list) or not groups:
+        if repriced_children and all(repriced_children):
+            _replace_component(item, "material_cost", sum(
+                _number(child["formula_cost"].get("material_cost")) for child in children
+                if isinstance(child, dict) and isinstance(child.get("formula_cost"), dict)))
+            return True
         return False
     selected_code = str(item.get("material_code") or "").strip().upper()
-    current_price = _number(
-        state.get("stainless_price") if selected_code in {"SUS304", "SUS316"}
-        else state.get("carbon_price")
-    )
+    current_price = material_unit_price(state, selected_code)
     galvanized_price = _number(state.get("galvanized_price"))
 
     def price_for(code):
         normalized = str(code or "").strip().upper()
+        if normalized in MATERIAL_PRICE_KEYS:
+            return material_unit_price(state, normalized)
         if normalized in GALVANIZED_MATERIAL_CODES or (normalized == "SECC" and selected_code != "SECC"):
             return galvanized_price
         if normalized == selected_code:
@@ -517,11 +538,13 @@ def _repair_missing_material_prices(item, defaults=None):
     }
     if isinstance(defaults, dict):
         fallback.update(defaults)
+    for code, key in MATERIAL_PRICE_KEYS.items():
+        fallback.setdefault(key, STAINLESS_DEFAULT_PRICES[code])
     existing = item.get("scheme2_cost_settings")
     if not isinstance(existing, dict):
         existing = {}
-    state = {**fallback, **existing}
-    for key in ("galvanized_price", "carbon_price", "stainless_price"):
+    state = migrate_material_prices(existing, material_code, fallback)
+    for key in ("galvanized_price", "carbon_price", *MATERIAL_PRICE_KEYS.values()):
         if _number(state.get(key)) <= 0:
             state[key] = fallback[key]
     item["scheme2_cost_settings"] = state
@@ -2092,34 +2115,42 @@ def _cost_sidebar(window):
     company.setToolTip(company.currentText())
     company.currentTextChanged.connect(company.setToolTip)
     window.scheme2_company = company
-    controls = {
-        "galvanized_price": ("镀锌板价格", _sidebar_price_spin(4.55, 2)),
-        "carbon_price": ("碳钢价格", _sidebar_price_spin(4.20, 1)),
-        "stainless_price": ("不锈钢价格", _sidebar_price_spin(STAINLESS_DEFAULT_PRICES["SUS304"], 2)),
-        "material_difference": ("材料差价", _sidebar_price_spin(DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE, 0)),
-        "waste_factor": ("废料系数", _sidebar_price_spin(1.20, 1, 4)),
-        "labor_discount": ("人工折扣", _sidebar_price_spin(1.00, 2, 4)),
-        "surface_price": ("表面处理价格", _sidebar_price_spin(26.00, 0)),
-    }
+    scroll = QScrollArea()
+    scroll.setObjectName("scheme2CoefficientScroll")
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    fields = QWidget()
+    fields_layout = QVBoxLayout(fields)
+    fields_layout.setContentsMargins(0, 0, 0, 0)
+    fields_layout.setSpacing(layout.spacing())
+    scroll.setWidget(fields)
+    layout.addWidget(scroll, 1)
     window.scheme2_cost_controls = {}
-    for key, (label, control) in controls.items():
+    window.scheme2_cost_fields = {}
+    for key, label, default, decimals in COEFFICIENT_FIELDS:
+        control = _sidebar_price_spin(default, decimals)
         if key in ("waste_factor", "labor_discount"):
             control.setRange(.01, 10)
             control.setDecimals(4)
         window.scheme2_cost_controls[key] = control
         field = _field(label, control)
+        # A scroll area's viewport is narrower than its outer frame. Ignore
+        # spinbox width hints so the right border and pencil remain inside it.
+        control.setMinimumWidth(0)
+        control.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        field.findChild(QLabel, "scheme2FieldLabel").setWordWrap(True)
+        window.scheme2_cost_fields[key] = field
+        control.setAccessibleName(label)
         if key == "carbon_price":
             window.scheme2_material_price_label = field.findChild(QLabel, "scheme2FieldLabel")
-        if key == "stainless_price":
-            window.scheme2_stainless_price_field = field
-            window.scheme2_stainless_price_label = field.findChild(QLabel, "scheme2FieldLabel")
-            field.hide()
         if key == "material_difference":
             window.scheme2_material_difference_field = field
-            field.hide()
-        layout.addWidget(field)
+            control.setToolTip("沿用原有规则：仅 SUS316 报价按计价材料重量计算材料差价")
+        fields_layout.addWidget(field)
         control.editingFinished.connect(lambda k=key, c=control: _apply_cost_control(window, k, c.value()))
-    layout.addStretch(1)
+    fields_layout.addStretch(1)
     return bar
 
 
@@ -2132,7 +2163,10 @@ def _apply_cost_control(window, key, value):
         if isinstance(control, QDoubleSpinBox):
             control.setValue(value)
         return
-    state = item.setdefault("scheme2_cost_settings", {})
+    state = migrate_material_prices(item.get("scheme2_cost_settings"), item.get("material_code"), window.scheme2_defaults)
+    item["scheme2_cost_settings"] = state
+    if key == "stainless_price":  # Compatibility with old saved editing commands.
+        key = MATERIAL_PRICE_KEYS.get(str(item.get("material_code") or "").upper(), key)
     old = _number(state.get(key), window.scheme2_defaults.get(key, value))
     state[key] = value
     formula = _formula(item)
@@ -2150,12 +2184,15 @@ def _apply_cost_control(window, key, value):
         _replace_component(item, "labor_cost", base * value)
         management_rate = _number(formula.get("management_fee_rate"), .13)
         _replace_component(item, "management_fee", base * value * management_rate)
-    elif key in ("carbon_price", "galvanized_price", "stainless_price"):
+    elif key in ("carbon_price", "galvanized_price", *MATERIAL_PRICE_KEYS.values()):
         if not _reprice_material_details(item, state):
-            base_state = item.setdefault("scheme2_cost_bases", {})
-            base = _number(base_state.setdefault("material_cost", formula.get("material_cost")))
-            original_price = _number(base_state.setdefault(key, old), old)
-            _replace_component(item, "material_cost", base * value / max(original_price, .01))
+            selected_key = MATERIAL_PRICE_KEYS.get(str(item.get("material_code") or "").upper(), "carbon_price")
+            if key in (selected_key, "galvanized_price"):
+                base_state = item.setdefault("scheme2_cost_bases", {})
+                base = _number(base_state.setdefault("material_cost", formula.get("material_cost")))
+                original_price = _number(base_state.setdefault(key, old), old)
+                _replace_component(item, "material_cost", base * value / max(original_price, .01))
+        item.pop("cost_detail_rows", None)
     elif key == "surface_price":
         base_state = item.setdefault("scheme2_cost_bases", {})
         base = _number(base_state.setdefault("spray_cost", formula.get("spray_cost")))
@@ -2188,12 +2225,7 @@ def _build_cost_page(window):
     compact_row.addWidget(QLabel("修改系数"))
     compact_key = QComboBox()
     compact_value = _price_spin(1.0)
-    for key, label in (
-        ("galvanized_price", "镀锌板价格"), ("carbon_price", "当前材质价格"),
-        ("stainless_price", "不锈钢价格"), ("material_difference", "材料差价"),
-        ("waste_factor", "废料系数"), ("labor_discount", "人工折扣"),
-        ("surface_price", "表面处理价格"),
-    ):
+    for key, label, _default, _decimals in COEFFICIENT_FIELDS:
         compact_key.addItem(label, key)
     compact_row.addWidget(compact_key, 1)
     compact_row.addWidget(compact_value)
@@ -2457,50 +2489,23 @@ def _sync_sidebar(window):
     if not hasattr(window, "scheme2_defaults") or not hasattr(window, "scheme2_cost_controls"):
         return
     item = _selected_item(window)
-    state = item.get("scheme2_cost_settings", {}) if isinstance(item, dict) else window.scheme2_defaults
-    material_code = str(item.get("material_code") or "").strip().upper() if isinstance(item, dict) else ""
-    stainless = material_code in {"SUS304", "SUS316"}
-    if stainless and "stainless_price" not in state:
-        state["stainless_price"] = _current_material_unit_price(item) or window.scheme2_defaults["stainless_price"]
-    if material_code == "SUS316" and "material_difference" not in state:
-        state["material_difference"] = window.scheme2_defaults["material_difference"]
+    if isinstance(item, dict):
+        existing = dict(item.get("scheme2_cost_settings") or {})
+        code = str(item.get("material_code") or "").strip().upper()
+        if code in MATERIAL_PRICE_KEYS and MATERIAL_PRICE_KEYS[code] not in existing and "stainless_price" not in existing:
+            existing[MATERIAL_PRICE_KEYS[code]] = _current_material_unit_price(item) or STAINLESS_DEFAULT_PRICES[code]
+        state = migrate_material_prices(existing, code, window.scheme2_defaults)
+        item["scheme2_cost_settings"] = state
+    else:
+        state = window.scheme2_defaults
     for key, control in window.scheme2_cost_controls.items():
         with QSignalBlocker(control):
             control.setValue(_number(state.get(key), window.scheme2_defaults[key]))
-    caption = "碳钢价格"
-    if hasattr(window, "scheme2_material_price_label"):
-        window.scheme2_material_price_label.setText(caption)
-    stainless_field = getattr(window, "scheme2_stainless_price_field", None)
-    if stainless_field is not None:
-        stainless_field.setVisible(stainless)
-    stainless_label = getattr(window, "scheme2_stainless_price_label", None)
-    if isinstance(stainless_label, QLabel):
-        stainless_label.setText(f"{material_code}价格" if stainless else "不锈钢价格")
-    difference_field = getattr(window, "scheme2_material_difference_field", None)
-    if difference_field is not None:
-        difference_field.setVisible(material_code == "SUS316")
+    for field in getattr(window, "scheme2_cost_fields", {}).values():
+        field.show()
     surface_control = getattr(window, "scheme2_cost_controls", {}).get("surface_price")
     if isinstance(surface_control, QDoubleSpinBox):
         surface_control.setPrefix("")
-    if hasattr(window, "scheme2_compact_key"):
-        material_index = window.scheme2_compact_key.findData("carbon_price")
-        if material_index >= 0:
-            window.scheme2_compact_key.setItemText(material_index, caption)
-        stainless_index = window.scheme2_compact_key.findData("stainless_price")
-        if stainless_index >= 0:
-            window.scheme2_compact_key.setItemText(
-                stainless_index, f"{material_code}价格" if stainless else "不锈钢价格"
-            )
-        difference_index = window.scheme2_compact_key.findData("material_difference")
-        if difference_index >= 0:
-            window.scheme2_compact_key.view().setRowHidden(
-                difference_index, material_code != "SUS316"
-            )
-            if material_code != "SUS316" and window.scheme2_compact_key.currentData() == "material_difference":
-                fallback_key = "stainless_price" if stainless else "carbon_price"
-                fallback_index = window.scheme2_compact_key.findData(fallback_key)
-                if fallback_index >= 0:
-                    window.scheme2_compact_key.setCurrentIndex(fallback_index)
     if hasattr(window, "scheme2_compact_key"):
         _sync_compact_control(window)
 
@@ -5271,10 +5276,8 @@ def _finish_add(window):
         item["source_page_count"] = int(page["page_count"])
     item.setdefault("quick_discount", 1.0)
     active_settings = getattr(window, "_scheme2_active_settings", None)
-    item["scheme2_cost_settings"] = dict(active_settings or window.scheme2_defaults)
     material_code = str(item.get("material_code") or "").strip().upper()
-    if active_settings is None and material_code in STAINLESS_DEFAULT_PRICES:
-        item["scheme2_cost_settings"]["stainless_price"] = STAINLESS_DEFAULT_PRICES[material_code]
+    item["scheme2_cost_settings"] = migrate_material_prices(active_settings or window.scheme2_defaults, material_code)
     if active_settings is None:
         item["scheme2_cost_settings"]["surface_price"] = _surface_default_price(
             item["scheme2_selected_surface"]
@@ -5497,11 +5500,9 @@ def _apply_responsive(window):
     sidebar = getattr(window, "scheme2_cost_sidebar", None)
     compact_coefficients = getattr(window, "scheme2_compact_coefficients", None)
     if sidebar is not None and compact_coefficients is not None:
-        use_compact_coefficients = width < 1100
-        sidebar.setVisible(not use_compact_coefficients)
-        compact_coefficients.setVisible(use_compact_coefficients)
-        if use_compact_coefficients:
-            _sync_compact_control(window)
+        # Keep all eight fields available; constrained height uses scrolling.
+        sidebar.show()
+        compact_coefficients.hide()
         _layout_cost_actions(window, width < 900)
     detail_table = getattr(window, "scheme2_detail_table", None)
     if detail_table is not None:
@@ -5694,6 +5695,7 @@ QFrame#navPanel QPushButton:checked { color:#FFFFFF; background:#2563EB; }
 QPushButton#scheme2CollapseButton { color:#5A7AAB; background:transparent; border:0; padding:0; text-align:center; font-size:13px; }
 QPushButton#scheme2CollapseButton:hover { background:#E6F1FB; }
 QFrame#scheme2CostSidebar { background:#DCE8F7; border-right:1px solid #BBD0EA; }
+QScrollArea#scheme2CoefficientScroll, QScrollArea#scheme2CoefficientScroll > QWidget > QWidget { background:transparent; }
 QFrame#scheme2CostSidebar QDoubleSpinBox { background:#FFFFFF; color:#2A3541; border:1px solid #BBD0EA; border-radius:7px; padding:1px 22px 1px 7px; min-height:28px; font-size:13px; font-weight:400; }
 QFrame#scheme2CostSidebar QDoubleSpinBox:focus { border-color:#2563EB; }
 QFrame#scheme2CompactCoefficients { background:#DCE8F7; border:1px solid #BBD0EA; border-radius:7px; }
@@ -5816,11 +5818,7 @@ def install_scheme2_ui(namespace):
                     ),
                 }
                 if material_code in STAINLESS_DEFAULT_PRICES:
-                    active = getattr(owner, "_scheme2_active_settings", None)
-                    updates["material_unit_price_override"] = (
-                        values["stainless_price"] if active is not None
-                        else STAINLESS_DEFAULT_PRICES[material_code]
-                    )
+                    updates["material_unit_price_override"] = material_unit_price(values, material_code)
                 else:
                     updates["material_unit_price_override"] = values["carbon_price"]
                 pages = getattr(owner, "_scheme2_drawing_pages", [])
@@ -5866,7 +5864,8 @@ def install_scheme2_ui(namespace):
         window._scheme2_accept_paths = namespace["ImportDropZone"].accepted_paths
         window.scheme2_defaults = {
             "galvanized_price": 4.55, "carbon_price": 4.20, "waste_factor": 1.20,
-            "stainless_price": STAINLESS_DEFAULT_PRICES["SUS304"],
+            "stainless_304_price": STAINLESS_DEFAULT_PRICES["SUS304"],
+            "stainless_316_price": STAINLESS_DEFAULT_PRICES["SUS316"],
             "material_difference": DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE,
             "labor_discount": 1.0, "surface_price": 26.0,
         }
