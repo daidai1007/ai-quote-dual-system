@@ -462,7 +462,7 @@ def confirmation_inputs(rows):
 
     frozen = []
     for row in rows or []:
-        if not isinstance(row, dict) or row.get("custom"):
+        if not isinstance(row, dict) or row.get("custom") is True:
             continue
         selected = selected_input(row)
         selected.pop("unit_price_override", None)
@@ -478,7 +478,7 @@ def restore_confirmation_inputs(rows, frozen):
     cursor = 0
     for source in rows or []:
         row = copy.deepcopy(source) if isinstance(source, dict) else source
-        if not isinstance(row, dict) or row.get("custom"):
+        if not isinstance(row, dict) or row.get("custom") is True:
             output.append(row)
             continue
         if cursor >= len(snapshots):
@@ -517,7 +517,7 @@ def confirmation_attachments_for_item(item):
         return copy.deepcopy(rows)
     catalog = [
         copy.deepcopy(row) for row in frozen
-        if isinstance(row, dict) and not row.get("custom")
+        if isinstance(row, dict) and row.get("custom") is not True
     ]
     custom = [
         copy.deepcopy(row) for row in rows
@@ -526,15 +526,72 @@ def confirmation_attachments_for_item(item):
     return catalog + custom
 
 
-def confirmation_payload(payload):
+def _catalogue_id(value):
+    """Match the API's positive JavaScript safe-integer catalogue IDs."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        value = int(value)
+    text = str(value)
+    if not re.fullmatch(r"[1-9][0-9]*", text):
+        return None
+    number = int(text)
+    return number if number <= 9007199254740991 else None
+
+
+def validate_confirmation_attachments(item, line_number):
+    """Fail locally with a row name; never manufacture an ID or custom flag."""
+
+    rows = item.get("attachments") or []
+    if not isinstance(rows, list):
+        raise ValueError(f"第{line_number}行报价的附件数据无效，请重新计算并加入报价单。")
+    named_rows = [(index, row) for index, row in enumerate(rows, 1)
+                  if not isinstance(row, dict) or row.get("custom") is not True]
+    frozen = item.get("attachment_confirmation_inputs")
+
+    def fail(index, row, reason):
+        name = (row.get("item_name") or row.get("name") or row.get("model_code")) if isinstance(row, dict) else None
+        label = name or f"附件{index}"
+        cabinet = item.get("name") or item.get("model_code") or item.get("product_code") or "未命名"
+        raise ValueError(f"第{line_number}行报价（{cabinet}）的“{label}”：{reason}。请重新计算该柜并重新加入报价单。")
+
+    if isinstance(frozen, list):
+        catalog = [row for row in frozen if not isinstance(row, dict) or row.get("custom") is not True]
+        if len(named_rows) != len(catalog):
+            index, row = next(((i, r) for i, r in named_rows
+                               if not isinstance(r, dict) or _catalogue_id(r.get("attachment_price_id")) is None),
+                              named_rows[-1] if named_rows else (1, {}))
+            fail(index, row, "附件清单与计算快照不一致，或临时附件标记已丢失")
+        for (index, row), snapshot in zip(named_rows, catalog):
+            if not isinstance(snapshot, dict) or _catalogue_id(snapshot.get("attachment_price_id")) is None:
+                fail(index, row, "计算快照缺少有效的附件价格库 ID")
+            if not isinstance(row, dict):
+                fail(index, row, "附件数据无效")
+            # A legacy presentation row may have lost its ID; a valid frozen
+            # server input can restore it. A different real ID is a new choice.
+            visible_id = _catalogue_id(row.get("attachment_price_id"))
+            if row.get("attachment_price_id") is not None and visible_id != _catalogue_id(snapshot.get("attachment_price_id")):
+                fail(index, row, "所选附件与计算快照不一致")
+    else:
+        for index, row in named_rows:
+            if not isinstance(row, dict) or _catalogue_id(row.get("attachment_price_id")) is None:
+                fail(index, row, "缺少有效的附件价格库 ID（attachment_price_id），且没有可恢复的计算快照")
+
+
+def confirmation_payload(payload, *, validate=False):
     """Freeze V2 attachment inputs without mutating the visible draft."""
 
     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
         return payload
     output = copy.deepcopy(payload)
-    for item in output["items"]:
+    for line_number, item in enumerate(output["items"], 1):
         if not isinstance(item, dict) or item.get("attachment_contract") != 2:
             continue
+        if validate:
+            validate_confirmation_attachments(item, line_number)
         item["attachments"] = confirmation_attachments_for_item(item)
     return output
 
@@ -543,6 +600,12 @@ def install_attachment_v2(namespace):
     if not window_class or not dialog_class or not worker_class or getattr(window_class, "_attachment_v2_installed", False):
         return
     window_class._attachment_v2_installed = True
+    export = window_class.export_workbook
+    def export_v2(window, output_path, payload):
+        # The Excel endpoint hydrates the same server snapshot as confirmation.
+        # Validate inside the export worker so existing error dialogs handle it.
+        return export(window, output_path, confirmation_payload(payload, validate=True))
+    window_class.export_workbook = export_v2
     originals = {name: getattr(dialog_class, name) for name in ("__init__", "load_catalog", "rebuild_table", "collect_attachments", "accept_selection")}
     same_choice = dialog_class._same_catalog_choice
     @classmethod
@@ -942,7 +1005,12 @@ def install_attachment_v2(namespace):
     window_class.resolve_attachments_for_quote = resolve_attachments_for_quote
 
     def recalculate_draft_attachment(window, quote_item, attachment, succeeded, failed):
-        if attachment.get("attachment_price_id") is None and attachment.get("model_code"):
+        # Temporary attachments use only this quotation's manual amounts.
+        # Never resolve them into catalogue records or send them to preview.
+        if attachment.get("custom") is True:
+            succeeded(copy.deepcopy(attachment))
+            return
+        if _catalogue_id(attachment.get("attachment_price_id")) is None:
             base_url = str(window.base_url() or "")
             url = base_url.split("/api/", 1)[0].rstrip("/") + "/api/attachments/catalog?v=2"
             worker = worker_class(url, {}, window, method="GET")
@@ -961,7 +1029,12 @@ def install_attachment_v2(namespace):
                     product_code=str(quote_item.get("product_code") or ""),
                 )
                 if match is None:
-                    failed(f"价格库中未找到型号：{attachment.get('model_code')}")
+                    label = attachment.get("model_code") or attachment.get("item_name") or attachment.get("name") or "未命名附件"
+                    failed(f"价格库中未找到唯一匹配项：{label}")
+                    return
+                if _catalogue_id(match.get("attachment_price_id")) is None:
+                    label = attachment.get("item_name") or attachment.get("name") or attachment.get("model_code") or "未命名附件"
+                    failed(f"附件“{label}”的价格库 ID 无效，请更新附件目录后重试。")
                     return
                 resolved = {
                     **copy.deepcopy(match),
@@ -1130,12 +1203,13 @@ def install_attachment_v2(namespace):
         before = len(window.draft_items)
         line_id = getattr(window, "_attachment_v2_line_id", None)
         frozen_inputs = copy.deepcopy(getattr(window, "_v2_confirmation_inputs", []))
+        source_attachments = copy.deepcopy(window.attachments)
         quote_date = window.quote_date.date().toString("yyyy-MM-dd")
         result = add(window, *args, **kwargs)
         if line_id and len(window.draft_items) == before + 1:
             item = window.draft_items[-1]
             item["attachments"] = restore_confirmation_inputs(
-                item.get("attachments", []), frozen_inputs
+                source_attachments, frozen_inputs
             )
             item["attachment_confirmation_inputs"] = copy.deepcopy(frozen_inputs)
             item.update(attachment_contract=2, quote_line_id=line_id, quote_date=quote_date)
@@ -1149,7 +1223,8 @@ def install_attachment_v2(namespace):
                 window.quote_date.setDate(QDate.fromString(item["quote_date"], "yyyy-MM-dd"))
             result = load_item(window, item)
             window._attachment_v2_line_id = item.get("quote_line_id")
-            window._v2_confirmation_inputs = confirmation_inputs(item.get("attachments", []))
+            frozen = item.get("attachment_confirmation_inputs")
+            window._v2_confirmation_inputs = copy.deepcopy(frozen) if isinstance(frozen, list) else confirmation_inputs(item.get("attachments", []))
             return result
         finally:
             window._attachment_v2_restoring = False

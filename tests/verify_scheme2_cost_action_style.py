@@ -30,8 +30,8 @@ window.show()
 app.processEvents()
 
 import_button = window._scheme2_import_button
-cost_buttons = tuple(window.scheme2_cost_action_buttons[:5])
-assert [button.text() for button in cost_buttons] == ["× 删除", "↑ 上移", "↓ 下移", "编辑", "返回"]
+cost_buttons = tuple(window.scheme2_cost_action_buttons[:-1])
+assert [button.text() for button in cost_buttons] == ["× 删除", "↑ 上移", "↓ 下移", "复制", "编辑", "返回"]
 assert import_button.objectName() == "scheme2PrimaryGhost"
 assert all(button.objectName() == import_button.objectName() for button in cost_buttons)
 assert len({(button.width(), button.height()) for button in cost_buttons}) == 1
@@ -62,7 +62,7 @@ for width, height in ((1024, 700), (1280, 720), (1536, 864)):
             (width, height), button.text(), text_rect.size(), button.size()
         )
 
-delete, up, down, edit, back = cost_buttons
+delete, up, down, duplicate, edit, back = cost_buttons
 
 # Preserve the original move rules, including no-op behavior at both edges.
 window.refresh_summary = lambda: None
