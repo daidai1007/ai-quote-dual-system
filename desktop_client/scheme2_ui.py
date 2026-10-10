@@ -736,7 +736,8 @@ def _attachment_dimension_or_model(source):
 def _ganged_attachment_number(source):
     category = str(source.get("category_level1") or source.get("attachment_category") or "").strip()
     subcategory = str(source.get("category_level2") or source.get("item_name") or "").strip()
-    is_child_attachment = bool(source.get("ganged_fixed_base_match") or source.get("ganged_inner_door_match")) or (
+    is_child_attachment = bool(source.get("ganged_fixed_base_match") or source.get("ganged_inner_door_match")
+                               or source.get("ganged_glass_door_match")) or (
         category == "底座" and "固定底座" in subcategory
     )
     if not is_child_attachment:
@@ -1129,8 +1130,8 @@ class AttachmentEditor(QDialog):
             previous_quantity = _number(data.get("quantity", 1), 1)
             previous_formula_amount = _number(data.get("formula_amount"), 0)
             data["item_name"] = self.table.item(row, self.COL_NAME).text().strip() or "自定义附件"
-            if data.get("ganged_inner_door_match"):
-                data["item_name"] = "内门"
+            if data.get("ganged_inner_door_match") or data.get("ganged_glass_door_match"):
+                data["item_name"] = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", data["item_name"])
             specification_editor = self.table.cellWidget(row, self.COL_SPECIFICATION)
             specification_item = self.table.item(row, self.COL_SPECIFICATION)
             specification = (
@@ -5353,10 +5354,10 @@ def _calculate_and_add(window):
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and not item.get("custom") and item.get("attachment_price_id") is None
     ]
-    from attachment_v2_client import needs_ganged_inner_door_resolution
-    pending_inner_doors = needs_ganged_inner_door_resolution(window)
+    from attachment_v2_client import needs_ganged_door_resolution
+    pending_doors = needs_ganged_door_resolution(window)
     current = getattr(window, "current_result", None)
-    valid = not pending_attachments and not pending_inner_doors and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
+    valid = not pending_attachments and not pending_doors and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
     if valid:
         _set_add_progress(window, 5, "保存快照并生成行")
         _finish_add(window)
@@ -5371,7 +5372,7 @@ def _calculate_and_add(window):
         window.calculate()
         _monitor_formula_calculation(window)
 
-    if pending_attachments or pending_inner_doors:
+    if pending_attachments or pending_doors:
         resolver = getattr(window, "resolve_attachments_for_quote", None)
         if not callable(resolver):
             window.show_error("附件价格库解析功能不可用")

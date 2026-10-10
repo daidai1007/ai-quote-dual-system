@@ -395,57 +395,76 @@ def expand_ganged_fixed_bases_for_quote(window, rows, catalog, version=None):
     return expanded, missing
 
 
-def _is_inner_door_selection(item):
+def _is_door_selection(item, door_name):
     if item.get("custom"):
         return False
     category = str(item.get("category_level1") or item.get("attachment_category") or "").strip()
     name = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", str(item.get("item_name") or item.get("name") or "")).strip()
     return category in {"控制箱附件", "控制柜附件"} and (
-        name == "内门" or str(item.get("category_level2") or "").strip() == "内门"
+        name == door_name or str(item.get("category_level2") or "").strip() == door_name
     )
 
 
-def needs_ganged_inner_door_resolution(window):
+def _ganged_door_keys(door_name):
+    kind = {"内门": "inner_door", "玻璃门": "glass_door"}[door_name]
+    return f"ganged_{kind}_match", f"ganged_{kind}_specification"
+
+
+def _needs_ganged_door_resolution(window, door_name):
     """An existing first-child ID is not a complete ganged door selection."""
     cabinets = getattr(window, "ganged_cabinets", [])
     if len(cabinets) <= 1:
         return False
     doors = [item for item in getattr(window, "attachments", [])
-             if isinstance(item, dict) and _is_inner_door_selection(item)]
+             if isinstance(item, dict) and _is_door_selection(item, door_name)]
     if not doors:
         return False
     if len(doors) != len(cabinets):
         return True
     from ganged_cabinet_rules import subcabinet_specification
+    match_key, specification_key = _ganged_door_keys(door_name)
     try:
         for index, cabinet in enumerate(cabinets):
             matches = [row for row in doors if row.get("ganged_cabinet_index") == index]
             if len(matches) != 1:
                 return True
             row = matches[0]
-            if (not row.get("ganged_inner_door_match")
+            if (not row.get(match_key)
                     or _catalogue_id(row.get("attachment_price_id")) is None
-                    or row.get("ganged_inner_door_specification") != subcabinet_specification(cabinet)):
+                    or row.get(specification_key) != subcabinet_specification(cabinet)):
                 return True
     except (KeyError, TypeError, ValueError):
         return True
     return False
 
 
-def expand_ganged_inner_doors_for_quote(window, rows, catalog, version=None):
-    """Resolve one inner door per child using the retained W/H size rule."""
+def needs_ganged_inner_door_resolution(window):
+    return _needs_ganged_door_resolution(window, "内门")
+
+
+def needs_ganged_glass_door_resolution(window):
+    return _needs_ganged_door_resolution(window, "玻璃门")
+
+
+def needs_ganged_door_resolution(window):
+    return needs_ganged_inner_door_resolution(window) or needs_ganged_glass_door_resolution(window)
+
+
+def _expand_ganged_doors_for_quote(window, rows, catalog, version, door_name):
+    """Resolve one door per child without changing its existing size rule."""
     cabinets = [row for row in getattr(window, "ganged_cabinets", []) if isinstance(row, dict)]
     sources = [copy.deepcopy(row) for row in rows if isinstance(row, dict)]
-    doors = [row for row in sources if _is_inner_door_selection(row)]
+    doors = [row for row in sources if _is_door_selection(row, door_name)]
     if len(cabinets) <= 1 or not doors:
         return sources, []
     from ganged_cabinet_rules import subcabinet_specification
+    match_key, specification_key = _ganged_door_keys(door_name)
     # Treat the picker choice as logical selection, not a pinned catalogue model.
-    choice = {**doors[0], "item_name": "内门", "model_code": "", "specification": ""}
+    choice = {**doors[0], "item_name": door_name, "model_code": "", "specification": ""}
     expanded, missing = [], []
     inserted = False
     for source in sources:
-        if not _is_inner_door_selection(source):
+        if not _is_door_selection(source, door_name):
             expanded.append(source)
             continue
         if inserted:
@@ -458,16 +477,16 @@ def expand_ganged_inner_doors_for_quote(window, rows, catalog, version=None):
                     raise ValueError("invalid child dimensions")
                 specification = subcabinet_specification(cabinet)
             except (KeyError, TypeError, ValueError):
-                missing.append(f"柜体{index + 1}内门尺寸")
+                missing.append(f"柜体{index + 1}{door_name}尺寸")
                 continue
             matched = match_catalog_attachment(choice, catalog, target_dimensions=dimensions)
             if matched is None or _catalogue_id(matched.get("attachment_price_id")) is None:
-                missing.append(f"柜体{index + 1}内门")
+                missing.append(f"柜体{index + 1}{door_name}")
                 continue
             previous = next((row for row in doors if row.get("ganged_cabinet_index") == index), None)
             unchanged = previous is not None and (
                 previous.get("attachment_price_id") == matched.get("attachment_price_id")
-                and previous.get("ganged_inner_door_specification") == specification
+                and previous.get(specification_key) == specification
             )
             resolved = {**choice, **copy.deepcopy(matched)}
             # Preserve local edits only when this child's matched size is unchanged.
@@ -480,13 +499,21 @@ def expand_ganged_inner_doors_for_quote(window, rows, catalog, version=None):
                 if "unit_price_override" in matched:
                     resolved["unit_price_override"] = matched["unit_price_override"]
             resolved.update({
-                "item_name": "内门", "catalog_version": version,
+                "item_name": door_name, "catalog_version": version,
                 "quantity": previous.get("quantity", 1) if previous else 1,
-                "ganged_inner_door_match": True, "ganged_cabinet_index": index,
-                "ganged_inner_door_specification": specification,
+                match_key: True, "ganged_cabinet_index": index,
+                specification_key: specification,
             })
             expanded.append(resolved)
     return expanded, missing
+
+
+def expand_ganged_inner_doors_for_quote(window, rows, catalog, version=None):
+    return _expand_ganged_doors_for_quote(window, rows, catalog, version, "内门")
+
+
+def expand_ganged_glass_doors_for_quote(window, rows, catalog, version=None):
+    return _expand_ganged_doors_for_quote(window, rows, catalog, version, "玻璃门")
 
 
 def base_height(window):
@@ -1037,7 +1064,7 @@ def install_attachment_v2(namespace):
         needs_ganged_base_catalog = (
             ganged(window) and any(_is_fixed_base_selection(item) for item in rows)
         )
-        if not pending and not needs_ganged_base_catalog and not needs_ganged_inner_door_resolution(window):
+        if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window):
             succeeded()
             return
         active = getattr(window, "_scheme2_attachment_catalog_worker", None)
@@ -1061,8 +1088,11 @@ def install_attachment_v2(namespace):
             source_rows, inner_door_missing = expand_ganged_inner_doors_for_quote(
                 window, source_rows, catalog, version
             )
+            source_rows, glass_door_missing = expand_ganged_glass_doors_for_quote(
+                window, source_rows, catalog, version
+            )
             resolved = []
-            missing = list(fixed_base_missing) + inner_door_missing
+            missing = list(fixed_base_missing) + inner_door_missing + glass_door_missing
             for source in source_rows:
                 if source.get("custom"):
                     resolved.append(source)

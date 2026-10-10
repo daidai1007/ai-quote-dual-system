@@ -159,10 +159,11 @@ def effective_attachment_quantity(
     cabinets = _number(cabinet_quantity, 1.0)
     split_count = _number(ganged_cabinet_count, 1.0)
     # A manually entered cost-page quantity is per child cabinet. Automatic
-    # rows already hold the complete set quantity; bases/inner doors are one row per
+    # rows already hold the complete set quantity; bases/doors are one row per
     # child and therefore must not be multiplied by the split count again.
     if _manually_quantified_attachment(item) and not (
         item.get(GANGED_FIXED_BASE_MATCH_KEY) or item.get("ganged_inner_door_match")
+        or item.get("ganged_glass_door_match")
     ):
         return selected * cabinets * max(1.0, split_count)
     if split_count > 1:
