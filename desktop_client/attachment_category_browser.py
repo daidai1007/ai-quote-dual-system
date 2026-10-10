@@ -458,9 +458,11 @@ def final_attachment_quantity(
     split_count = _number(ganged_cabinet_count)
     split_count = 1.0 if split_count is None else split_count
     # A quantity entered manually on the cost page is a per-child-cabinet
-    # quantity.  Per-child fixed bases are already expanded to separate rows,
+    # quantity. Per-child bases/inner doors are already expanded to separate rows,
     # and automatic rows already contain the whole ganged-set requirement.
-    if manually_quantified_attachment(item) and not item.get(GANGED_FIXED_BASE_MATCH_KEY):
+    if manually_quantified_attachment(item) and not (
+        item.get(GANGED_FIXED_BASE_MATCH_KEY) or item.get("ganged_inner_door_match")
+    ):
         return quantity * cabinets * max(1.0, split_count)
     if split_count > 1:
         return quantity * cabinets

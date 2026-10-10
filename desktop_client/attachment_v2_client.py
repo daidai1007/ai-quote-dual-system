@@ -394,6 +394,101 @@ def expand_ganged_fixed_bases_for_quote(window, rows, catalog, version=None):
             expanded.append(resolved)
     return expanded, missing
 
+
+def _is_inner_door_selection(item):
+    if item.get("custom"):
+        return False
+    category = str(item.get("category_level1") or item.get("attachment_category") or "").strip()
+    name = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", str(item.get("item_name") or item.get("name") or "")).strip()
+    return category in {"控制箱附件", "控制柜附件"} and (
+        name == "内门" or str(item.get("category_level2") or "").strip() == "内门"
+    )
+
+
+def needs_ganged_inner_door_resolution(window):
+    """An existing first-child ID is not a complete ganged door selection."""
+    cabinets = getattr(window, "ganged_cabinets", [])
+    if len(cabinets) <= 1:
+        return False
+    doors = [item for item in getattr(window, "attachments", [])
+             if isinstance(item, dict) and _is_inner_door_selection(item)]
+    if not doors:
+        return False
+    if len(doors) != len(cabinets):
+        return True
+    from ganged_cabinet_rules import subcabinet_specification
+    try:
+        for index, cabinet in enumerate(cabinets):
+            matches = [row for row in doors if row.get("ganged_cabinet_index") == index]
+            if len(matches) != 1:
+                return True
+            row = matches[0]
+            if (not row.get("ganged_inner_door_match")
+                    or _catalogue_id(row.get("attachment_price_id")) is None
+                    or row.get("ganged_inner_door_specification") != subcabinet_specification(cabinet)):
+                return True
+    except (KeyError, TypeError, ValueError):
+        return True
+    return False
+
+
+def expand_ganged_inner_doors_for_quote(window, rows, catalog, version=None):
+    """Resolve one inner door per child using the retained W/H size rule."""
+    cabinets = [row for row in getattr(window, "ganged_cabinets", []) if isinstance(row, dict)]
+    sources = [copy.deepcopy(row) for row in rows if isinstance(row, dict)]
+    doors = [row for row in sources if _is_inner_door_selection(row)]
+    if len(cabinets) <= 1 or not doors:
+        return sources, []
+    from ganged_cabinet_rules import subcabinet_specification
+    # Treat the picker choice as logical selection, not a pinned catalogue model.
+    choice = {**doors[0], "item_name": "内门", "model_code": "", "specification": ""}
+    expanded, missing = [], []
+    inserted = False
+    for source in sources:
+        if not _is_inner_door_selection(source):
+            expanded.append(source)
+            continue
+        if inserted:
+            continue
+        inserted = True
+        for index, cabinet in enumerate(cabinets):
+            try:
+                dimensions = tuple(float(cabinet[key]) for key in ("width_mm", "height_mm", "depth_mm"))
+                if not all(value > 0 for value in dimensions):
+                    raise ValueError("invalid child dimensions")
+                specification = subcabinet_specification(cabinet)
+            except (KeyError, TypeError, ValueError):
+                missing.append(f"柜体{index + 1}内门尺寸")
+                continue
+            matched = match_catalog_attachment(choice, catalog, target_dimensions=dimensions)
+            if matched is None or _catalogue_id(matched.get("attachment_price_id")) is None:
+                missing.append(f"柜体{index + 1}内门")
+                continue
+            previous = next((row for row in doors if row.get("ganged_cabinet_index") == index), None)
+            unchanged = previous is not None and (
+                previous.get("attachment_price_id") == matched.get("attachment_price_id")
+                and previous.get("ganged_inner_door_specification") == specification
+            )
+            resolved = {**choice, **copy.deepcopy(matched)}
+            # Preserve local edits only when this child's matched size is unchanged.
+            if unchanged:
+                resolved.update(previous)
+            else:
+                for key in ("unit_price_override", "custom_amount_edited", "quick_amount",
+                            "formula_amount", "formula_unit_cost", *COST_KEYS):
+                    resolved.pop(key, None)
+                if "unit_price_override" in matched:
+                    resolved["unit_price_override"] = matched["unit_price_override"]
+            resolved.update({
+                "item_name": "内门", "catalog_version": version,
+                "quantity": previous.get("quantity", 1) if previous else 1,
+                "ganged_inner_door_match": True, "ganged_cabinet_index": index,
+                "ganged_inner_door_specification": specification,
+            })
+            expanded.append(resolved)
+    return expanded, missing
+
+
 def base_height(window):
     """Return the base height already entered in the visible cabinet specification."""
     rows = [dict(row) for row in getattr(window, "ganged_cabinets", []) if isinstance(row, dict)]
@@ -942,7 +1037,7 @@ def install_attachment_v2(namespace):
         needs_ganged_base_catalog = (
             ganged(window) and any(_is_fixed_base_selection(item) for item in rows)
         )
-        if not pending and not needs_ganged_base_catalog:
+        if not pending and not needs_ganged_base_catalog and not needs_ganged_inner_door_resolution(window):
             succeeded()
             return
         active = getattr(window, "_scheme2_attachment_catalog_worker", None)
@@ -963,8 +1058,11 @@ def install_attachment_v2(namespace):
             source_rows, fixed_base_missing = expand_ganged_fixed_bases_for_quote(
                 window, rows, catalog, version
             )
+            source_rows, inner_door_missing = expand_ganged_inner_doors_for_quote(
+                window, source_rows, catalog, version
+            )
             resolved = []
-            missing = list(fixed_base_missing)
+            missing = list(fixed_base_missing) + inner_door_missing
             for source in source_rows:
                 if source.get("custom"):
                     resolved.append(source)

@@ -733,13 +733,13 @@ def _attachment_dimension_or_model(source):
     return str(source.get("model_code") or "").strip()
 
 
-def _ganged_fixed_base_number(source):
+def _ganged_attachment_number(source):
     category = str(source.get("category_level1") or source.get("attachment_category") or "").strip()
     subcategory = str(source.get("category_level2") or source.get("item_name") or "").strip()
-    is_fixed_base = bool(source.get("ganged_fixed_base_match")) or (
+    is_child_attachment = bool(source.get("ganged_fixed_base_match") or source.get("ganged_inner_door_match")) or (
         category == "底座" and "固定底座" in subcategory
     )
-    if not is_fixed_base:
+    if not is_child_attachment:
         return None
     raw = source.get("ganged_cabinet_index", source.get("ganged_fixed_base_index"))
     try:
@@ -851,8 +851,9 @@ class AttachmentEditor(QDialog):
         self.table.insertRow(row)
         self.table.setRowHeight(row, 42)
         name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
-        cabinet_number = _ganged_fixed_base_number(source)
+        cabinet_number = _ganged_attachment_number(source)
         if cabinet_number is not None:
+            name = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", name)
             name = f"柜体{cabinet_number}｜{name}"
         is_light_switch = (
             str(source.get("category_level1") or "").strip() == "照明灯/行程开关"
@@ -1128,6 +1129,8 @@ class AttachmentEditor(QDialog):
             previous_quantity = _number(data.get("quantity", 1), 1)
             previous_formula_amount = _number(data.get("formula_amount"), 0)
             data["item_name"] = self.table.item(row, self.COL_NAME).text().strip() or "自定义附件"
+            if data.get("ganged_inner_door_match"):
+                data["item_name"] = "内门"
             specification_editor = self.table.cellWidget(row, self.COL_SPECIFICATION)
             specification_item = self.table.item(row, self.COL_SPECIFICATION)
             specification = (
@@ -1250,12 +1253,44 @@ def _all_attachment_rows(items):
     return rows
 
 
+def _attachment_summary_product_values(item, sequence):
+    """Audit the same per-cabinet/set quotation shown on the cost page."""
+    values = _row_values(item)
+    fixed_base = wood = listed = 0.0
+    for source in item.get("attachments", []):
+        if not isinstance(source, dict):
+            continue
+        amount = AttachmentEditor._display_amounts(source)[1]
+        listed += amount
+        identity = " ".join(str(source.get(key) or "") for key in
+                            ("item_name", "name", "category_level1", "category_level2"))
+        if source.get("ganged_fixed_base_match") or "固定底座" in identity:
+            fixed_base += amount
+        elif "木托" in identity:
+            wood += amount
+    quick = _quick(item)
+    fee = _number(quick.get("attachment_fee"), listed)
+    discount = values[14]
+    cabinet = (_number(quick.get("total_cost")) - fee) * discount
+    other = (fee - fixed_base - wood) * discount + values[22]
+    return (sequence, values[1], values[3], values[11], "台", values[15], values[16],
+            values[13], values[15], cabinet, fixed_base * discount, wood * discount,
+            other, values[10] * discount, discount)
+
+
 class AttachmentSummaryDialog(AttachmentEditor):
-    UNIT_PRICE_COLUMN_WIDTH = 88
-    DEFAULT_SIZE = QSize(AttachmentEditor.DEFAULT_SIZE.width() + UNIT_PRICE_COLUMN_WIDTH,
-                         AttachmentEditor.DEFAULT_SIZE.height())
-    MINIMUM_SIZE = QSize(AttachmentEditor.MINIMUM_SIZE.width() + UNIT_PRICE_COLUMN_WIDTH,
-                         AttachmentEditor.MINIMUM_SIZE.height())
+    DEFAULT_SIZE = QSize(1560, 720)
+    MINIMUM_SIZE = QSize(760, 460)
+    PRODUCT_HEADERS = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价",
+                       "原价单价", "折后单价", "柜体", "固定底座", "木托", "其他附件/差额", "运费", "折扣")
+    PRODUCT_COLUMN_WIDTHS = (50, 100, 170, 60, 50, 95, 95, 95, 95, 100, 90, 70, 110, 80, 60)
+    DETAIL_COLUMN_WIDTHS = (160, 210, 90, 110, 110, 100)
+    CELL_HORIZONTAL_PADDING = 8
+    PRODUCT_ROW_HEIGHT = 48
+    HEADER_HEIGHT = 42
+    SECTION_TITLE_HEIGHT = 28
+    SPLITTER_HANDLE_WIDTH = 8
+    PANEL_MIN_HEIGHT = 140
 
     def __init__(self, window):
         # Reuse the shell; only sale-price edits propagate to matching rows.
@@ -1263,10 +1298,66 @@ class AttachmentSummaryDialog(AttachmentEditor):
         self.setWindowTitle("附件汇总")
         self.findChild(QLabel, "scheme2AttachmentEditorTitle").setText("附件汇总")
         self.findChild(QToolButton, "scheme2AttachmentEditorClose").setToolTip("关闭（单价修改已自动保存）")
+        # Reference layout: product quotation and its fee audit above detail.
+        # Retain the shared shell, resize grip and attachment price controls.
+        self.setStyleSheet(self.styleSheet() + """
+            QTableWidget#scheme2AttachmentSummaryProducts, QTableWidget#scheme2AttachmentEditorTable {
+                background:#FFFFFF; color:#2A3541; border:0; gridline-color:#D7DCE3; outline:0; font-size:12px;
+            }
+            QTableWidget#scheme2AttachmentSummaryProducts::item, QTableWidget#scheme2AttachmentEditorTable::item {
+                padding:6px 8px; border:0;
+            }
+            QTableWidget#scheme2AttachmentSummaryProducts QHeaderView::section,
+            QTableWidget#scheme2AttachmentEditorTable QHeaderView::section {
+                background:#E6F1FB; color:#1F3A6A; border:1px solid #D7DCE3; padding:7px 8px; font-size:12px; font-weight:600;
+            }
+            QLabel#scheme2AttachmentSummaryProductsTitle, QLabel#scheme2AttachmentSummaryDetailsTitle {
+                color:#1F3A6A; background:#F6F7F9; padding:4px 8px; font-weight:600;
+            }
+        """)
+        shell_layout = self.findChild(QFrame, "scheme2AttachmentEditorShell").layout()
+        shell_layout.removeWidget(self.table)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(self.SPLITTER_HANDLE_WIDTH)
+        self.product_table = QTableWidget(0, len(self.PRODUCT_HEADERS))
+        self.product_table.setObjectName("scheme2AttachmentSummaryProducts")
+        self.product_table.setHorizontalHeaderLabels(self.PRODUCT_HEADERS)
+        self.product_table.verticalHeader().hide()
+        self.product_table.setShowGrid(True)
+        self.product_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.product_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.product_table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.product_table.horizontalHeader().setFixedHeight(self.HEADER_HEIGHT)
+        self.product_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for column, width in enumerate(self.PRODUCT_COLUMN_WIDTHS):
+            self.product_table.setColumnWidth(column, width)
+        self.product_table.setToolTip("费用拆分按单台（并柜为整套）计，与成本计算界面报价一致；折后总价=折后单价×数量。")
+        for title, object_name, table in (
+            ("产品报价", "scheme2AttachmentSummaryProductsTitle", self.product_table),
+            ("附件明细", "scheme2AttachmentSummaryDetailsTitle", self.table),
+        ):
+            panel = QWidget()
+            panel.setMinimumHeight(self.PANEL_MIN_HEIGHT)
+            panel_layout = QVBoxLayout(panel)
+            panel_layout.setContentsMargins(0, 0, 0, 0)
+            panel_layout.setSpacing(0)
+            label = QLabel(title)
+            label.setObjectName(object_name)
+            label.setFixedHeight(self.SECTION_TITLE_HEIGHT)
+            panel_layout.addWidget(label)
+            panel_layout.addWidget(table, 1)
+            splitter.addWidget(panel)
+        shell_layout.addWidget(splitter, 1)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        self.table.setShowGrid(True)
+        self.table.horizontalHeader().setFixedHeight(self.HEADER_HEIGHT)
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(("名称", "尺寸 / 规格", "数量", "成本", "金额", "单价"))
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, self.UNIT_PRICE_COLUMN_WIDTH)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for column, width in enumerate(self.DETAIL_COLUMN_WIDTHS):
+            self.table.setColumnWidth(column, width)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.table.cellClicked.disconnect(self.edit_missing_dimensions)
@@ -1280,6 +1371,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
                       "")
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
+                cell.setToolTip(value)
                 cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if column >= 2:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -1297,6 +1389,53 @@ class AttachmentSummaryDialog(AttachmentEditor):
             price.setToolTip("请先补充附件尺寸" if row["pending"] else "修改后自动同步当前清单中相同附件、规格的全部订单")
             self.table.setCellWidget(index, 5, price)
             price.valueChanged.connect(lambda value, target=index: self._unit_price_changed(target, value))
+        self.product_table.ensurePolished()
+        self._refresh_product_table()
+        self.product_table.horizontalHeader().sectionResized.connect(
+            lambda column, _old, _new: self._refresh_product_table() if column == 2 else None)
+        available = self.screen().availableGeometry()
+        self.resize(max(self.MINIMUM_SIZE.width(), min(self.DEFAULT_SIZE.width(), available.width() - 32)),
+                    max(self.MINIMUM_SIZE.height(), min(self.DEFAULT_SIZE.height(), available.height() - 32)))
+
+    def _refresh_product_table(self):
+        items = self.window.draft_items
+        with QSignalBlocker(self.product_table):
+            self.product_table.setRowCount(len(items) + 1)
+            total_quantity = total_amount = 0.0
+            for index, item in enumerate(items):
+                values = _attachment_summary_product_values(item, index + 1)
+                total_quantity += values[3]
+                total_amount += values[6]
+                self.product_table.setRowHeight(index, self.PRODUCT_ROW_HEIGHT)
+                for column, value in enumerate(values):
+                    text = _money(value) if 5 <= column <= 13 else (
+                        f"{value:.2f}" if column == 14 else f"{value:g}" if column == 3 else str(value))
+                    tooltip = text
+                    if column == 2 and self.product_table.fontMetrics().horizontalAdvance(text) > (
+                        self.product_table.columnWidth(column) - self.CELL_HORIZONTAL_PADDING * 2
+                    ):
+                        parts = re.split(r"([*×xX])", text)
+                        if len(parts) == 5:
+                            text = "".join(parts[:4]) + "\n" + parts[4]
+                    cell = QTableWidgetItem(text)
+                    cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    cell.setToolTip(tooltip)
+                    cell.setTextAlignment((Qt.AlignmentFlag.AlignLeft if column in (1, 2)
+                                           else Qt.AlignmentFlag.AlignRight if column >= 5
+                                           else Qt.AlignmentFlag.AlignCenter) | Qt.AlignmentFlag.AlignVCenter)
+                    self.product_table.setItem(index, column, cell)
+            footer = len(items)
+            self.product_table.setRowHeight(footer, self.PRODUCT_ROW_HEIGHT)
+            for column in range(len(self.PRODUCT_HEADERS)):
+                text = "合计" if column == 1 else f"{total_quantity:g}" if column == 3 else (
+                    _money(total_amount) if column == 6 else "")
+                cell = QTableWidgetItem(text)
+                cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                font = cell.font()
+                font.setBold(True)
+                cell.setFont(font)
+                self.product_table.setItem(footer, column, cell)
 
     def _unit_price_changed(self, index, value):
         changed = self._summary_rows[index]
@@ -1312,6 +1451,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
             with QSignalBlocker(self.table.cellWidget(row_index, 5)):
                 self.table.cellWidget(row_index, 5).setValue(value)
         self.window.refresh_summary()
+        self._refresh_product_table()
 
     def accept(self):
         QDialog.accept(self)
@@ -4638,7 +4778,7 @@ def _open_attachment_overlay(window, _dialog_class, anchor):
 def _attachment_chip_text(item):
     name = str(item.get("item_name") or item.get("name") or "附件").strip()
     category = str(item.get("category_level1") or item.get("attachment_category") or "").strip()
-    cabinet_number = _ganged_fixed_base_number(item)
+    cabinet_number = _ganged_attachment_number(item)
     if cabinet_number is not None:
         return f"柜体{cabinet_number}：{category or '底座'}：{name}"
     if item.get("custom"):
@@ -5213,8 +5353,10 @@ def _calculate_and_add(window):
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and not item.get("custom") and item.get("attachment_price_id") is None
     ]
+    from attachment_v2_client import needs_ganged_inner_door_resolution
+    pending_inner_doors = needs_ganged_inner_door_resolution(window)
     current = getattr(window, "current_result", None)
-    valid = not pending_attachments and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
+    valid = not pending_attachments and not pending_inner_doors and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
     if valid:
         _set_add_progress(window, 5, "保存快照并生成行")
         _finish_add(window)
@@ -5229,7 +5371,7 @@ def _calculate_and_add(window):
         window.calculate()
         _monitor_formula_calculation(window)
 
-    if pending_attachments:
+    if pending_attachments or pending_inner_doors:
         resolver = getattr(window, "resolve_attachments_for_quote", None)
         if not callable(resolver):
             window.show_error("附件价格库解析功能不可用")

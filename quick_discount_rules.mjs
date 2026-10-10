@@ -108,9 +108,10 @@ export function effectiveAttachmentQuantity(
   const cabinets = asFiniteNumber(cabinetQuantity, 1);
   const splitCount = asFiniteNumber(gangedCabinetCount, 1);
   // A manually entered cost-page quantity is per child cabinet. Automatic
-  // rows already contain a complete-set quantity; fixed bases are already
+  // rows already contain a complete-set quantity; bases/inner doors are already
   // expanded to one row per child cabinet.
-  if (manuallyQuantifiedAttachment(item) && !item[GANGED_FIXED_BASE_MATCH_KEY]) {
+  if (manuallyQuantifiedAttachment(item)
+      && !item[GANGED_FIXED_BASE_MATCH_KEY] && !item.ganged_inner_door_match) {
     return selected * cabinets * Math.max(1, splitCount);
   }
   if (splitCount > 1) {
