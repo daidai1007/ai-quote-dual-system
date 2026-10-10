@@ -39,7 +39,7 @@ for item in window.draft_items:
 window.refresh_summary()
 unchanged = copy.deepcopy(window.draft_items)
 entry = window.summary_table.item(len(window.draft_items), 5)
-assert entry.text() == '3 项 ›', entry.text()
+assert entry.text() == '4 项 ›', entry.text()
 assert entry.font().underline()
 window.resize(1500, 900)
 window.show_section(3)

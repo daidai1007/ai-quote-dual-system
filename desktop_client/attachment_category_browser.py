@@ -725,8 +725,9 @@ def match_installation_board_size(
         perimeter = 2.0 * (width + height)
         price_id = _number(item.get("attachment_price_id"))
         return (
-            squared_distance,
+            0 if abs(width - target_width) <= 0.0001 and abs(height - target_height) <= 0.0001 else 1,
             abs(perimeter - target_perimeter),
+            squared_distance,
             width,
             height,
             _natural_text_key(item.get("model_code")),

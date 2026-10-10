@@ -47,7 +47,7 @@ assert hasattr(dialog, 'product_table'), 'reference requires a product quote tab
 products = dialog.product_table
 assert [products.horizontalHeaderItem(c).text() for c in range(products.columnCount())] == [
     '序号', '名称', '规格型号(W*D*H)', '数量', '单位', '折后单价', '折后总价',
-    '原价单价', '折后单价', '柜体', '固定底座', '木托', '其他附件/差额', '运费', '折扣']
+    '原价单价', '折后单价', '柜体', '固定底座', '木托', '接地线-编织带', '运费', '折扣']
 assert products.rowCount() == 3
 assert [products.item(0, c).text().replace('\n', '') for c in range(7)] == [
     '1', 'JP', '(1000+800)*600*(1800+100)', '3', '台', '255.00', '765.00']
@@ -76,7 +76,7 @@ assert window.draft_items[0]['formula'] == before[0]['formula']
 # The fee audit must always reconcile to the current cost-table quote.
 for row, item in enumerate(window.draft_items):
     values = ui._attachment_summary_product_values(item, row + 1)
-    assert abs(sum(values[9:14]) - values[5]) < .000001
+    assert abs(sum(values[9:-1]) - values[5]) < .000001
     assert values[5] == ui._row_values(item)[15]
     assert values[6] == ui._row_values(item)[16]
 sus = copy.deepcopy(window.draft_items[1])
@@ -84,7 +84,7 @@ sus.update(material_code='SUS316', scheme2_cost_settings={'material_difference':
 sus['formula']['corrected_material_weight_kg'] = 10
 values = ui._attachment_summary_product_values(sus, 1)
 assert values[12] == 25 and abs(values[5] - 188.2) < .000001
-assert abs(sum(values[9:14]) - values[5]) < .000001
+assert abs(sum(values[9:-1]) - values[5]) < .000001
 dialog.resize(1560, 720)
 dialog.show()
 app.processEvents()

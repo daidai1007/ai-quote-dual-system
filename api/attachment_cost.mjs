@@ -36,6 +36,49 @@ const number = (v, label, positive = false) => {
   if (v === null || v === undefined || v === '' || typeof v === 'boolean' || !Number.isFinite(Number(v)) || (positive ? Number(v) <= 0 : Number(v) < 0)) throw new Error(`${label}必须是${positive ? '正' : '非负'}数`);
   return Number(v);
 };
+
+// Mirror the approved client size matcher, while deriving prices only from
+// authoritative catalogue dimensions and the actual quotation inputs.
+const SIZE_MATCH_NAMES = ['固定底座','活动底座','通风顶罩','玻璃门','防雨顶',
+  '三排安装梁','固定立柱','分段板','JK安装板','内门','侧板','安装板'];
+function sizeMatchedQuickPrice(catalog, selection, environment, facePrice) {
+  const identity = [catalog.category_level1,catalog.category_level2,catalog.category_level3,
+    catalog.item_name,catalog.model_code].join(' ').replace(/\s+/g,'');
+  if (identity.includes('安装板单发')) return null;
+  const name = SIZE_MATCH_NAMES.find(value=>identity.includes(value));
+  if (!name) return null;
+  const board = name.includes('安装板');
+  const target = [environment.width_mm,environment.height_mm,environment.depth_mm].map(Number);
+  if (name==='固定底座'||name==='活动底座') {
+    target[1] = Number(selection.manual_inputs?.底座高度);
+  } else if (name==='通风顶罩'&&selection.manual_inputs?.通风顶罩高度!=null) {
+    target[1] = Number(selection.manual_inputs.通风顶罩高度);
+  }
+  const keys = ['width_mm','height_mm','depth_mm'];
+  const stored = keys.map(key=>catalog[key]);
+  if (name==='三排安装梁') {
+    const model = String(catalog.model_code||'').trim().toUpperCase().match(/^JP7602(40|50|60|80|10)$/);
+    if (model) stored[2] = {40:400,50:500,60:600,80:800,10:1000}[model[1]];
+  }
+  const count = board ? 2 : 3;
+  if (!target.slice(0,count).every(value=>Number.isFinite(value)&&value>0)) return null;
+  if (board&&!stored.slice(0,2).every(value=>value!=null&&value!==''&&Number(value)>0)) return null;
+  const matched = stored.map((value,index)=>value==null||value===''?target[index]:Number(value));
+  if (!matched.slice(0,count).every(value=>Number.isFinite(value)&&value>=0)) return null;
+  const factor = board ? 2 : 1;
+  const targetPerimeter = target.slice(0,count).reduce((sum,value)=>sum+value,0)*factor;
+  const perimeter = matched.slice(0,count).reduce((sum,value)=>sum+value,0)*factor;
+  if (perimeter<=0) return null;
+  const exact = matched.slice(0,count).every((value,index)=>Math.abs(value-target[index])<=0.0001);
+  const ratio = exact ? 1 : targetPerimeter/perimeter;
+  return {width_mm:catalog.width_mm,height_mm:catalog.height_mm,depth_mm:catalog.depth_mm,
+    size_match_target_width_mm:target[0],size_match_target_height_mm:target[1],size_match_target_depth_mm:target[2],
+    size_match_width_mm:matched[0],size_match_height_mm:matched[1],size_match_depth_mm:matched[2],
+    size_match_target_perimeter:targetPerimeter,size_match_perimeter:perimeter,
+    size_match_ratio:ratio,size_match_exact:exact,size_match_original_price:facePrice,
+    ...(exact?{}:{unit_price_override:round(facePrice*ratio,6)})};
+}
+
 export function calculateAttachment(selection, catalog, rules, environment) {
   const result = {
     attachment_price_id: catalog.attachment_price_id, catalog_version: catalog.data_version,
@@ -56,6 +99,11 @@ export function calculateAttachment(selection, catalog, rules, environment) {
     if (sign === -1 && (!identity.includes('安装板') || identity.includes('安装板单发'))) throw new Error('只有安装板允许扣减');
     const facePrice = number(catalog.price, '面价');
     Object.assign(result, { quantity, attachment_price_sign: sign, face_price: facePrice, matched_price: facePrice, quick_amount: round(quantity * facePrice * sign) });
+    const sizedPrice = sizeMatchedQuickPrice(catalog,selection,environment,facePrice);
+    if (sizedPrice) {
+      Object.assign(result,sizedPrice,{catalogue_quick_amount:result.quick_amount});
+      result.quick_amount = round(quantity*(result.unit_price_override??facePrice)*sign);
+    }
     const rule = selectRule(rules, environment.product_code, environment.material_code);
     if (!rule) { result.status = 'QUICK_ONLY'; result.status_text = '仅快速报价'; return result; }
     Object.assign(result, { rule_id: rule.rule_id, rule_version: rule.data_version, rule_materials: rule.materials || [], auxiliary_list: rule.auxiliary_list ?? '', rule_source_row: rule.source_row_no, calculation_notes: rule.notes || '', formulas: rule.formulas });

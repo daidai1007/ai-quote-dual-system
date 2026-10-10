@@ -8,6 +8,7 @@ import copy
 import json
 import re
 import unicodedata
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import uuid4
 from PySide6.QtCore import Qt, QTimer, QDate
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QInputDialog, QWidget
@@ -205,7 +206,7 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         if attachment_image_match_key(item.get("category_level1")) == wanted_category
     ]
     wanted_model = str(selection.get("model_code") or selection.get("specification") or "").strip().upper()
-    if wanted_model:
+    if wanted_model and not (target_dimensions is not None and installation_board(selection)):
         exact_models = [
             item for item in (category_matches or candidates)
             if str(item.get("model_code") or "").strip().upper() == wanted_model
@@ -286,7 +287,31 @@ def match_quote_attachment(window, selection, catalog):
     )
 
 def merge_cost(source, cost, automatic_base_height=None):
+    # Old popups froze a pending dimension placeholder as a price override.
+    # Do not let that automatic zero hide a successful database repricing.
+    if (source.get("pending_manual_dimensions") and source.get("quick_amount_override") == 0
+            and not source.get("custom_amount_edited")):
+        source = {key: value for key, value in source.items() if key != "quick_amount_override"}
     merged = {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
+    # Older V2 APIs return the catalogue amount for sized attachments. Apply
+    # the selected size price to all approved families; newer APIs derive it.
+    sized = not source.get("custom") and (size_match_attachment_name(source) or size_match_attachment_name(cost))
+    if sized and cost.get("status") != "PENDING_MANUAL" and (source.get("size_match_ratio") is not None or cost.get("size_match_ratio") is not None):
+        source_price = source.get("unit_price_override")
+        automatic_price = None
+        if source.get("size_match_original_price") is not None and source.get("size_match_ratio") is not None:
+            automatic_price = round(float(source["size_match_original_price"]) * float(source["size_match_ratio"]), 6)
+        manual_price = source_price is not None and automatic_price is not None and abs(float(source_price) - automatic_price) > 0.000001
+        if source.get("quick_amount_override") is not None:
+            merged["quick_amount"] = source["quick_amount_override"]
+            if source.get("unit_price_override") is not None:
+                merged["unit_price_override"] = source["unit_price_override"]
+        elif source_price is not None and (manual_price or cost.get("size_match_ratio") is None):
+            merged["unit_price_override"] = source_price
+            amount = Decimal(str(source["unit_price_override"])) * Decimal(str(merged.get("quantity", 1))) * price_sign(merged)
+            merged["quick_amount"] = float(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+        elif cost.get("size_match_exact") is True:
+            merged.pop("unit_price_override", None)
     if automatic_base_height is not None and uses_base_height(merged):
         manual = copy.deepcopy(merged.get("manual_inputs") or {})
         # Keep the automatically derived base height in the immutable quote
@@ -303,6 +328,35 @@ def price_sign(source):
 def installation_board(source):
     identity = " ".join(str(source.get(key) or "") for key in ("category_level1", "category_level2", "category_level3", "item_name", "model_code"))
     return "安装板" in identity and "安装板单发" not in identity
+
+def needs_installation_board_resolution(window):
+    dimensions = _visible_quote_dimensions(window)
+    if not dimensions:
+        return False
+    return any(
+        not row.get("custom") and installation_board(row)
+        and any(row.get("size_match_target_" + key + "_mm") != dimensions[index]
+                for index, key in enumerate(("width", "height")))
+        for row in getattr(window, "attachments", []) if isinstance(row, dict)
+    )
+
+def resolve_installation_board(source, matched, version):
+    # Catalogue identity/dimensions and generated prices must be refreshed,
+    # not overwritten by an old selected model or a previous size ratio.
+    resolved = {**{key: value for key, value in source.items() if key not in COST_KEYS},
+                **copy.deepcopy(matched), "catalog_version": version}
+    for key in ("quantity", "attachment_price_sign", "manual_inputs"):
+        if key in source:
+            resolved[key] = copy.deepcopy(source[key])
+    for key in ("quick_amount", "quick_amount_override", "unit_price_override"):
+        resolved.pop(key, None)
+    if source.get("quick_amount_override") is not None:
+        for key in ("quick_amount", "quick_amount_override", "unit_price_override"):
+            if key in source:
+                resolved[key] = source[key]
+    elif matched.get("unit_price_override") is not None:
+        resolved["unit_price_override"] = matched["unit_price_override"]
+    return resolved
 
 def ganged(window):
     control = getattr(window, "ganged_count_spin", None)
@@ -921,7 +975,7 @@ def install_attachment_v2(namespace):
                     source = merge_cost(source, cost, automatic_base)
                     cell.setData(Qt.ItemDataRole.UserRole, source)
                     manual = [p["name"] for p in cost.get("required_parameters", []) if p["source"] == "MANUAL" and not (p["name"] == "底座高度" and automatic_base is not None)]
-                    values = [cost.get("quick_amount"), cost.get("status_text"), cost.get("formula_unit_cost"), cost.get("formula_amount"), "、".join(manual) or "无需填写"]
+                    values = [source.get("quick_amount"), cost.get("status_text"), cost.get("formula_unit_cost"), cost.get("formula_amount"), "、".join(manual) or "无需填写"]
                     for i, value in enumerate(values):
                         item = dialog.table.item(row, dialog.COL_QUANTITY + 1 + i)
                         if item:
@@ -1064,7 +1118,7 @@ def install_attachment_v2(namespace):
         needs_ganged_base_catalog = (
             ganged(window) and any(_is_fixed_base_selection(item) for item in rows)
         )
-        if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window):
+        if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window) and not needs_installation_board_resolution(window):
             succeeded()
             return
         active = getattr(window, "_scheme2_attachment_catalog_worker", None)
@@ -1097,12 +1151,15 @@ def install_attachment_v2(namespace):
                 if source.get("custom"):
                     resolved.append(source)
                     continue
-                if source.get("attachment_price_id") is not None:
+                if source.get("attachment_price_id") is not None and not installation_board(source):
                     resolved.append(source)
                     continue
                 match = match_quote_attachment(window, source, catalog)
                 if match is None:
                     missing.append(str(source.get("item_name") or source.get("name") or "未命名附件"))
+                    continue
+                if installation_board(source):
+                    resolved.append(resolve_installation_board(source, match, version))
                     continue
                 resolved.append({
                     **copy.deepcopy(match),
@@ -1170,6 +1227,8 @@ def install_attachment_v2(namespace):
                     "attachment_price_id": match.get("attachment_price_id"),
                     "catalog_version": body.get("data_version"),
                 }
+                if installation_board(attachment):
+                    resolved = resolve_installation_board(attachment, match, body.get("data_version"))
                 recalculate_draft_attachment(window, quote_item, resolved, succeeded, failed)
 
             worker.succeeded.connect(catalog_loaded)
@@ -1202,6 +1261,18 @@ def install_attachment_v2(namespace):
             "attachments": [selected_input(attachment)],
             "attachment_contract": 2,
         }
+        # Reprice against this saved order, never the currently visible product.
+        # A per-child selection cannot be previewed without its child context.
+        child_index = attachment.get("ganged_cabinet_index", attachment.get("ganged_fixed_base_index"))
+        if child_index is not None:
+            environment = attachment.get("environment") or {}
+            children = copy.deepcopy(quote_item.get("ganged_cabinets") or environment.get("ganged_cabinets") or [])
+            child_inputs = copy.deepcopy(quote_item.get("ganged_cabinet_inputs") or children)
+            if not 0 <= int(child_index) < len(children) or int(child_index) >= len(child_inputs):
+                failed(f"第 {int(child_index) + 1} 个子柜尺寸缺失，请重新计算该产品。")
+                return
+            payload.update(ganged_cabinet_count=len(children), ganged_cabinets=children,
+                           ganged_cabinet_inputs=child_inputs)
         url = str(window.base_url() or "").split("/api/", 1)[0].rstrip("/") + "/api/attachments/preview"
         worker = worker_class(url, payload, window)
         active = getattr(window, "_scheme2_attachment_reprice_workers", set())
@@ -1267,6 +1338,21 @@ def install_attachment_v2(namespace):
                 return
         previous = getattr(window, "current_result", None)
         original_rows = getattr(window, "attachments", [])
+        if result.get("attachment_contract") == 2:
+            priced_rows = [row for row in original_rows if not row.get("custom")]
+            server_rows = result.get("attachments", [])
+            merged_rows = [merge_cost(priced_rows[i] if i < len(priced_rows) else {}, row, base_height(window))
+                           for i, row in enumerate(server_rows)]
+            delta = sum(float(row.get("quick_amount") or 0) - float(server.get("quick_amount") or 0)
+                        for row, server in zip(merged_rows, server_rows))
+            if delta:
+                result = copy.deepcopy(result)
+                quick = result.get("quick_quote", result.get("quick"))
+                if isinstance(quick, dict):
+                    for key in ("attachment_fee", "total_cost"):
+                        if quick.get(key) is not None:
+                            quick[key] = round(float(quick[key]) + delta, 2)
+                result["attachments"] = merged_rows
         window._v2_render_rows = result.get("attachments") if result.get("attachment_contract") == 2 else None
         try:
             rendered = show(window, result, *args, **kwargs)

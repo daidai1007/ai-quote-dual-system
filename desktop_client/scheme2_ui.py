@@ -719,6 +719,11 @@ class _SchemeDimensionEditor(QDialog):
 
 def _attachment_dimension_or_model(source):
     """Show only attachment catalogue dimensions, never cabinet target size."""
+    manual = source.get("manual_inputs") or {}
+    if "玻璃门" in str(source.get("item_name") or ""):
+        width, height = (_number(manual.get(key)) for key in ("玻璃门宽度", "玻璃门高度"))
+        if width > 0 and height > 0:
+            return f"宽 {width:g} × 高 {height:g} mm"
     dimensions = []
     for axis, label in (("width", "宽"), ("depth", "深"), ("height", "高")):
         number = _number(source.get(f"{axis}_mm"))
@@ -999,6 +1004,15 @@ class AttachmentEditor(QDialog):
                 cell = self.table.item(row, column)
                 if cell is not None:
                     cell.setBackground(QColor("#FAEEDA"))
+        elif not pending:
+            if specification is not None:
+                specification.setText(_attachment_dimension_or_model(source))
+                specification.setData(ROLE_DERIVED_SPEC, specification.text())
+                specification.setData(Qt.ItemDataRole.ForegroundRole, None)
+            for column in (self.COL_NAME, self.COL_SPECIFICATION, self.COL_QUANTITY):
+                cell = self.table.item(row, column)
+                if cell is not None:
+                    cell.setData(Qt.ItemDataRole.BackgroundRole, None)
 
     def _amount_changed(self, row, value):
         editor = self.table.cellWidget(row, self.COL_AMOUNT)
@@ -1159,7 +1173,11 @@ class AttachmentEditor(QDialog):
                 data["custom_cost"] = data["formula_amount"]
                 data["custom_cost_edited"] = bool(cost_editor.property("schemeEdited"))
                 data["custom_amount_edited"] = bool(amount_editor.property("schemeEdited"))
-            data["quick_amount_override"] = round(amount, 2)
+            data["custom_amount_edited"] = bool(amount_editor.property("schemeEdited"))
+            if self._pending_dimensions(data) and not data["custom_amount_edited"]:
+                data.pop("quick_amount_override", None)
+            else:
+                data["quick_amount_override"] = round(amount, 2)
             data["quick_amount"] = round(amount, 2)
             if custom:
                 unit_price = amount / data["quantity"] if data["quantity"] else amount
@@ -1216,8 +1234,7 @@ def _apply_attachment_summary_price(items, identity, unit_price):
             amount = unit_price * _number(source.get("quantity", 1), 1)
             source["unit_price_override"] = abs(unit_price)
             source["quick_amount_override"] = source["quick_amount"] = amount
-            if source.get("custom") is True:
-                source["custom_amount_edited"] = True
+            source["custom_amount_edited"] = True
             delta += amount - old_amount
         quote = _quick(item)
         quote["attachment_fee"] = old_fee + delta
@@ -1233,7 +1250,7 @@ def _all_attachment_rows(items):
         for source in item.get("attachments", []):
             if not isinstance(source, dict):
                 continue
-            name = str(source.get("item_name") or source.get("name") or "附件")
+            name = _attachment_summary_name(source)
             spec = _attachment_dimension_or_model(source)
             selected = _number(source.get("quantity", 1), 1)
             pending = bool(AttachmentEditor._pending_dimensions(source))
@@ -1254,37 +1271,60 @@ def _all_attachment_rows(items):
     return rows
 
 
-def _attachment_summary_product_values(item, sequence):
+def _attachment_summary_name(source):
+    name = str(source.get("item_name") or source.get("name") or "附件").strip()
+    return re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", name)
+
+
+def _attachment_summary_named_amounts(item):
+    amounts = {}
+    for source in item.get("attachments", []):
+        if isinstance(source, dict):
+            name = _attachment_summary_name(source)
+            amounts[name] = amounts.get(name, 0.0) + AttachmentEditor._display_amounts(source)[1]
+    return amounts
+
+
+def _attachment_summary_columns(items):
+    names = dict.fromkeys(("固定底座", "木托"))
+    material_difference = attachment_difference = False
+    for item in items:
+        amounts = _attachment_summary_named_amounts(item)
+        names.update(dict.fromkeys(amounts))
+        listed = sum(amounts.values())
+        fee = _number(_quick(item).get("attachment_fee"), listed)
+        attachment_difference |= abs(fee - listed) > .000001
+        material_difference |= str(item.get("material_code") or "").strip().upper() == "SUS316"
+    return tuple(names), material_difference, attachment_difference
+
+
+def _attachment_summary_product_values(item, sequence, columns=None):
     """Audit the same per-cabinet/set quotation shown on the cost page."""
     values = _row_values(item)
-    fixed_base = wood = listed = 0.0
-    for source in item.get("attachments", []):
-        if not isinstance(source, dict):
-            continue
-        amount = AttachmentEditor._display_amounts(source)[1]
-        listed += amount
-        identity = " ".join(str(source.get(key) or "") for key in
-                            ("item_name", "name", "category_level1", "category_level2"))
-        if source.get("ganged_fixed_base_match") or "固定底座" in identity:
-            fixed_base += amount
-        elif "木托" in identity:
-            wood += amount
+    names, show_material, show_difference = columns or _attachment_summary_columns([item])
+    amounts = _attachment_summary_named_amounts(item)
+    listed = sum(amounts.values())
     quick = _quick(item)
     fee = _number(quick.get("attachment_fee"), listed)
     discount = values[14]
     cabinet = (_number(quick.get("total_cost")) - fee) * discount
-    other = (fee - fixed_base - wood) * discount + values[22]
+    attachments = tuple(amounts.get(name, 0.0) * discount for name in names)
+    extra = ((values[22],) if show_material else ()) + (
+        ((fee - listed) * discount,) if show_difference else ())
     return (sequence, values[1], values[3], values[11], "台", values[15], values[16],
-            values[13], values[15], cabinet, fixed_base * discount, wood * discount,
-            other, values[10] * discount, discount)
+            values[13], values[15], cabinet, *attachments, *extra, values[10] * discount, discount)
 
 
 class AttachmentSummaryDialog(AttachmentEditor):
     DEFAULT_SIZE = QSize(1560, 720)
     MINIMUM_SIZE = QSize(760, 460)
-    PRODUCT_HEADERS = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价",
-                       "原价单价", "折后单价", "柜体", "固定底座", "木托", "其他附件/差额", "运费", "折扣")
-    PRODUCT_COLUMN_WIDTHS = (50, 100, 170, 60, 50, 95, 95, 95, 95, 100, 90, 70, 110, 80, 60)
+    PRODUCT_BASE_HEADERS = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价",
+                           "原价单价", "折后单价", "柜体")
+    PRODUCT_BASE_COLUMN_WIDTHS = (50, 100, 170, 60, 50, 95, 95, 95, 95, 100)
+    PRODUCT_TAIL_HEADERS = ("运费", "折扣")
+    PRODUCT_TAIL_COLUMN_WIDTHS = (80, 60)
+    ATTACHMENT_COLUMN_MIN_WIDTH = 90
+    ATTACHMENT_COLUMN_MAX_WIDTH = 240
     DETAIL_COLUMN_WIDTHS = (160, 210, 90, 110, 110, 100)
     CELL_HORIZONTAL_PADDING = 8
     PRODUCT_ROW_HEIGHT = 48
@@ -1321,9 +1361,13 @@ class AttachmentSummaryDialog(AttachmentEditor):
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(self.SPLITTER_HANDLE_WIDTH)
-        self.product_table = QTableWidget(0, len(self.PRODUCT_HEADERS))
+        self._product_columns = _attachment_summary_columns(window.draft_items)
+        names, show_material, show_difference = self._product_columns
+        extra_headers = (("材料差价",) if show_material else ()) + (("附件差额",) if show_difference else ())
+        self.product_headers = self.PRODUCT_BASE_HEADERS + names + extra_headers + self.PRODUCT_TAIL_HEADERS
+        self.product_table = QTableWidget(0, len(self.product_headers))
         self.product_table.setObjectName("scheme2AttachmentSummaryProducts")
-        self.product_table.setHorizontalHeaderLabels(self.PRODUCT_HEADERS)
+        self.product_table.setHorizontalHeaderLabels(self.product_headers)
         self.product_table.verticalHeader().hide()
         self.product_table.setShowGrid(True)
         self.product_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1331,7 +1375,14 @@ class AttachmentSummaryDialog(AttachmentEditor):
         self.product_table.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.product_table.horizontalHeader().setFixedHeight(self.HEADER_HEIGHT)
         self.product_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        for column, width in enumerate(self.PRODUCT_COLUMN_WIDTHS):
+        self.product_table.ensurePolished()
+        metrics = self.product_table.fontMetrics()
+        attachment_widths = tuple(min(self.ATTACHMENT_COLUMN_MAX_WIDTH,
+                                      max(self.ATTACHMENT_COLUMN_MIN_WIDTH,
+                                          metrics.horizontalAdvance(name) + self.CELL_HORIZONTAL_PADDING * 4))
+                                  for name in names + extra_headers)
+        widths = self.PRODUCT_BASE_COLUMN_WIDTHS + attachment_widths + self.PRODUCT_TAIL_COLUMN_WIDTHS
+        for column, width in enumerate(widths):
             self.product_table.setColumnWidth(column, width)
         self.product_table.setToolTip("费用拆分按单台（并柜为整套）计，与成本计算界面报价一致；折后总价=折后单价×数量。")
         for title, object_name, table in (
@@ -1404,13 +1455,13 @@ class AttachmentSummaryDialog(AttachmentEditor):
             self.product_table.setRowCount(len(items) + 1)
             total_quantity = total_amount = 0.0
             for index, item in enumerate(items):
-                values = _attachment_summary_product_values(item, index + 1)
+                values = _attachment_summary_product_values(item, index + 1, self._product_columns)
                 total_quantity += values[3]
                 total_amount += values[6]
                 self.product_table.setRowHeight(index, self.PRODUCT_ROW_HEIGHT)
                 for column, value in enumerate(values):
-                    text = _money(value) if 5 <= column <= 13 else (
-                        f"{value:.2f}" if column == 14 else f"{value:g}" if column == 3 else str(value))
+                    text = _money(value) if 5 <= column < len(values) - 1 else (
+                        f"{value:.2f}" if column == len(values) - 1 else f"{value:g}" if column == 3 else str(value))
                     tooltip = text
                     if column == 2 and self.product_table.fontMetrics().horizontalAdvance(text) > (
                         self.product_table.columnWidth(column) - self.CELL_HORIZONTAL_PADDING * 2
@@ -1427,7 +1478,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
                     self.product_table.setItem(index, column, cell)
             footer = len(items)
             self.product_table.setRowHeight(footer, self.PRODUCT_ROW_HEIGHT)
-            for column in range(len(self.PRODUCT_HEADERS)):
+            for column in range(len(self.product_headers)):
                 text = "合计" if column == 1 else f"{total_quantity:g}" if column == 3 else (
                     _money(total_amount) if column == 6 else "")
                 cell = QTableWidgetItem(text)
@@ -2880,7 +2931,9 @@ def _refresh_cost_table(window):
             elif column == 4:
                 text = str(quantity_total)
             elif column == 5:
-                text = f"{len(_all_attachment_rows(items))} 项 ›"
+                attachment_count = sum(sum(isinstance(source, dict) for source in item.get("attachments", []))
+                                       for item in items)
+                text = f"{attachment_count} 项 ›"
             elif column == 10:
                 text = _money(quote_total)
             elif column == 19:
@@ -2898,7 +2951,7 @@ def _refresh_cost_table(window):
             if column == 5:
                 font.setUnderline(True)
                 cell.setForeground(QColor("#185FA5"))
-                cell.setToolTip("点击查看当前报价清单的全部附件汇总")
+                cell.setToolTip("累计所有产品行（含复制行）的附件项数；点击查看汇总，同名同规格合并并累计数量、成本和金额")
             cell.setFont(font)
             cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
             if column == 20:
@@ -5354,8 +5407,8 @@ def _calculate_and_add(window):
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and not item.get("custom") and item.get("attachment_price_id") is None
     ]
-    from attachment_v2_client import needs_ganged_door_resolution
-    pending_doors = needs_ganged_door_resolution(window)
+    from attachment_v2_client import needs_ganged_door_resolution, needs_installation_board_resolution
+    pending_doors = needs_ganged_door_resolution(window) or needs_installation_board_resolution(window)
     current = getattr(window, "current_result", None)
     valid = not pending_attachments and not pending_doors and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
     if valid:

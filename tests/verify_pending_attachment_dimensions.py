@@ -41,12 +41,12 @@ window = QWidget()
 window.refresh_summary = lambda: None
 item = {"attachments": [row], "formula": result["formula_cost"], "quick": result["quick_quote"]}
 editor = scheme2_ui.AttachmentEditor(window, item)
-assert editor.table.columnCount() == 6
-assert editor.table.horizontalHeaderItem(0).text() == "图片"
-assert editor.table.item(0, 2).text().startswith("点击补充")
-assert editor.table.cellWidget(0, 4).value() == 0
-assert editor.table.item(0, 5).text() == "0.00"
-assert editor.table.item(0, 5).data(Qt.ItemDataRole.ForegroundRole) is not None
+assert editor.table.columnCount() == editor.COL_AMOUNT + 1
+assert editor.table.horizontalHeaderItem(editor.COL_NAME).text() == "名称"
+assert editor.table.item(0, editor.COL_SPECIFICATION).text().startswith("点击补充")
+assert editor.table.cellWidget(0, editor.COL_AMOUNT).value() == 0
+assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "0.00"
+assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).data(Qt.ItemDataRole.ForegroundRole) is not None
 dimension_dialog = scheme2_ui._SchemeDimensionEditor(editor, "固定底座 · 补充尺寸", ["底座高度"], {})
 assert dimension_dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
 assert not dimension_dialog.confirm_button.isEnabled()

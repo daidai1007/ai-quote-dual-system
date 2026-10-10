@@ -16,7 +16,7 @@ def fingerprint(value):
 
 root = Path(__file__).resolve().parents[1]
 archive = ZlibArchiveReader(sys.argv[1])
-for module in ('scheme2_ui', 'attachment_v2_client'):
+for module in ('scheme2_ui', 'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules'):
     path = root / 'desktop_client' / (module + '.py')
     source = compile(path.read_text(encoding='utf-8'), str(path), 'exec', dont_inherit=True, optimize=0)
     assert fingerprint(archive.extract(module)) == fingerprint(source), module + ' differs from current source'

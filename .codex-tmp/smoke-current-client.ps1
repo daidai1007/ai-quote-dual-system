@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Entry, [Parameter(Mandatory=$true)][string]$Version)
 $ErrorActionPreference = 'Stop'
-$taskProfile = Join-Path (Split-Path -Parent $PSScriptRoot) "outputs\startup-smoke-$Version"
+$taskRunId = [Guid]::NewGuid().ToString('N')
+$taskProfile = Join-Path (Split-Path -Parent $PSScriptRoot) "outputs\startup-smoke-$Version-$taskRunId"
 New-Item -ItemType Directory -Path $taskProfile -Force | Out-Null
 $taskPreviousProfile = $env:LOCALAPPDATA
 $taskPreviousQt = $env:QT_QPA_PLATFORM

@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Version)
+param([Parameter(Mandatory=$true)][string]$Version, [switch]$ResumeVerifiedBackup)
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d{4}\.\d{2}\.\d{2}\.\d+$') { throw 'Invalid version.' }
 $taskRepo = Split-Path -Parent $PSScriptRoot
@@ -28,12 +28,15 @@ $taskOutputs = @(Get-ChildItem -LiteralPath (Join-Path $taskLive 'output') -Recu
     catch [IO.IOException] { }
     [pscustomobject]@{ Path=$_.FullName; Hash=$taskHash; Length=$_.Length; Written=$_.LastWriteTimeUtc }
 })
-if (Test-Path -LiteralPath $taskBackup) { throw "Backup already exists; inspect before reusing: $taskBackup" }
-New-Item -ItemType Directory -Path $taskBackup | Out-Null
-Copy-Item -LiteralPath (Join-Path $taskLive '_internal') -Destination $taskBackup -Recurse
-foreach ($taskName in @('AIQuoteDualSystem_layout_v0.exe','client_config.json','release-manifest.json')) {
-    $taskExisting = Join-Path $taskLive $taskName
-    if (Test-Path -LiteralPath $taskExisting) { Copy-Item -LiteralPath $taskExisting -Destination $taskBackup }
+if (Test-Path -LiteralPath $taskBackup) {
+    if (-not $ResumeVerifiedBackup) { throw "Backup already exists; inspect before reusing: $taskBackup" }
+} else {
+    New-Item -ItemType Directory -Path $taskBackup | Out-Null
+    Copy-Item -LiteralPath (Join-Path $taskLive '_internal') -Destination $taskBackup -Recurse
+    foreach ($taskName in @('AIQuoteDualSystem_layout_v0.exe','client_config.json','release-manifest.json')) {
+        $taskExisting = Join-Path $taskLive $taskName
+        if (Test-Path -LiteralPath $taskExisting) { Copy-Item -LiteralPath $taskExisting -Destination $taskBackup }
+    }
 }
 foreach ($taskName in @('AIQuoteDualSystem_layout_v0.exe','client_config.json','_internal\v3_core\main.raw')) {
     if ((Get-FileHash -LiteralPath (Join-Path $taskBackup $taskName)).Hash -ne
