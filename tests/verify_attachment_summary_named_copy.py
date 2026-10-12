@@ -58,6 +58,7 @@ class NamedCopySummary(unittest.TestCase):
         table = dialog.product_table
         headers = [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())]
         self.assertNotIn("其他附件/差额", headers)
+        self.assertNotIn("木托", headers)
         self.assertIn("安装板", headers)
         self.assertIn("风机KA1238HA2/B(国产)", headers)
         self.assertEqual(table.item(0, headers.index("安装板")).text(), "30.00")
@@ -97,6 +98,39 @@ class NamedCopySummary(unittest.TestCase):
         path = ROOT / "outputs" / "attachment-summary-named-copy.png"
         path.parent.mkdir(exist_ok=True)
         self.assertTrue(dialog.grab().save(str(path)))
+
+    def test_no_attachments_omits_unused_base_and_wood_columns(self):
+        item = self.window.draft_items[0]
+        item["attachments"] = []
+        item["quick"]["attachment_fee"] = 0
+        before = copy.deepcopy(self.window.draft_items)
+        dialog = self.dialog()
+        headers = [dialog.product_table.horizontalHeaderItem(c).text()
+                   for c in range(dialog.product_table.columnCount())]
+        self.assertNotIn("固定底座", headers)
+        self.assertNotIn("木托", headers)
+        self.assertNotIn("安装板", headers)
+        self.assertEqual(dialog.table.rowCount(), 0)
+        self.assertEqual(self.window.draft_items, before)
+
+    def test_selected_zero_price_attachment_is_kept_for_all_products(self):
+        item = self.window.draft_items[0]
+        item["attachments"] = [dict(custom=True, item_name="丝印", quantity=1,
+                                    formula_amount=0, quick_amount=0)]
+        item["quick"]["attachment_fee"] = 0
+        other = copy.deepcopy(item)
+        other["attachments"] = []
+        self.window.draft_items.append(other)
+        dialog = self.dialog()
+        headers = [dialog.product_table.horizontalHeaderItem(c).text()
+                   for c in range(dialog.product_table.columnCount())]
+        self.assertNotIn("固定底座", headers)
+        self.assertNotIn("木托", headers)
+        self.assertIn("丝印", headers)
+        self.assertEqual(dialog.product_table.item(0, headers.index("丝印")).text(), "0.00")
+        self.assertEqual(dialog.product_table.item(1, headers.index("丝印")).text(), "0.00")
+        self.assertEqual(dialog.table.rowCount(), 1)
+        self.assertEqual(dialog.table.item(0, 0).text(), "丝印")
 
     def test_named_custom_material_surcharge_and_quote_fee_difference(self):
         item = self.window.draft_items[0]

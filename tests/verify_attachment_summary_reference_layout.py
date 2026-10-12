@@ -88,7 +88,8 @@ sus = copy.deepcopy(window.draft_items[1])
 sus.update(material_code='SUS316', scheme2_cost_settings={'material_difference': 2.5})
 sus['formula']['corrected_material_weight_kg'] = 10
 values = ui._attachment_summary_product_values(sus, 1)
-assert values[12] == 25 and abs(values[5] - 188.2) < .000001
+material_column = len(ui.AttachmentSummaryDialog.PRODUCT_BASE_HEADERS) + len(ui._attachment_summary_columns([sus])[0])
+assert values[material_column] == 25 and abs(values[5] - 188.2) < .000001
 assert abs(sum(values[9:-1]) - values[5]) < .000001
 dialog.resize(1560, 720)
 dialog.show()

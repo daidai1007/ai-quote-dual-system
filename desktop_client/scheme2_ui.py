@@ -1293,15 +1293,17 @@ def _attachment_summary_named_amounts(item):
 
 def _attachment_summary_columns(items):
     names = dict.fromkeys(("固定底座", "木托"))
+    selected_names = set()
     material_difference = attachment_difference = False
     for item in items:
         amounts = _attachment_summary_named_amounts(item)
+        selected_names.update(amounts)
         names.update(dict.fromkeys(amounts))
         listed = sum(amounts.values())
         fee = _number(_quick(item).get("attachment_fee"), listed)
         attachment_difference |= abs(fee - listed) > .000001
         material_difference |= str(item.get("material_code") or "").strip().upper() == "SUS316"
-    return tuple(names), material_difference, attachment_difference
+    return tuple(name for name in names if name in selected_names), material_difference, attachment_difference
 
 
 def _attachment_summary_product_values(item, sequence, columns=None):
