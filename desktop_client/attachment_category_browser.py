@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import math
 import re
 
 from ganged_cabinet_rules import parse_ganged_specification
@@ -139,8 +140,8 @@ def parse_base_specification(text: str) -> tuple[float, float, float, float] | N
             float(first["base_height_mm"]),
         )
     match = re.fullmatch(
-        r"\s*(\d+(?:\.\d+)?)\s*[xX×＊*]\s*"
-        r"(\d+(?:\.\d+)?)\s*[xX×＊*]\s*"
+        r"\s*(\d+(?:\.\d+)?)\s*[xX×＊*/]\s*"
+        r"(\d+(?:\.\d+)?)\s*[xX×＊*/]\s*"
         r"[（(]\s*(\d+(?:\.\d+)?)\s*[+＋]\s*"
         r"(\d+(?:\.\d+)?)\s*[）)]\s*",
         value,
@@ -836,7 +837,7 @@ def match_attachment_size(
         # no height-equal row exists, all candidates share rank 1 and the
         # normal nearest-perimeter ordering applies unchanged.
         height_rank = 0
-        if size_match_attachment_name(source) == "固定底座":
+        if size_match_attachment_name(source) in {"固定底座", "活动底座"}:
             height_rank = 0 if abs(completed[1] - target[1]) <= 0.0001 else 1
         return (
             height_rank,
@@ -889,7 +890,14 @@ def match_attachment_size(
 def match_computer_tray_depth(items, target_dimensions, model_code=""):
     """Resolve the approved tray models by depth, or honor an explicit model."""
     model = str(model_code or "").strip().upper()
-    target = target_dimension_tuple(target_dimensions)
+    if model == "未选择":
+        model = ""
+    # This accessory depends on cabinet depth alone. Ganged width/height
+    # controls can be blank while the shared depth is already known.
+    depth = (_number(target_dimensions[2]) if isinstance(target_dimensions, (tuple, list))
+             and len(target_dimensions) >= 3 else None)
+    if depth is not None and (not math.isfinite(depth) or depth <= 0):
+        depth = None
     candidates = [dict(item) for item in items if isinstance(item, dict)
                   and category_value(item, 0) == "控制柜附件"
                   and category_value(item, 1) == "电脑托盘"
@@ -901,18 +909,18 @@ def match_computer_tray_depth(items, target_dimensions, model_code=""):
             return None
         matched = matches[0]
     else:
-        if target is None or not candidates:
+        if depth is None or not candidates:
             return None
         # An equal-distance tie chooses the shallower approved model.
         matched = min(candidates, key=lambda item: (
-            abs(COMPUTER_TRAY_MODEL_DEPTHS[str(item["model_code"]).strip().upper()] - target[2]),
+            abs(COMPUTER_TRAY_MODEL_DEPTHS[str(item["model_code"]).strip().upper()] - depth),
             COMPUTER_TRAY_MODEL_DEPTHS[str(item["model_code"]).strip().upper()],
             _number(item.get("attachment_price_id")) or 0))
         matches = [item for item in candidates if item["model_code"] == matched["model_code"]]
         if len(matches) != 1:
             return None
     return {**matched, "computer_tray_auto_match": not bool(model),
-            "computer_tray_target_depth_mm": target[2] if target else None}
+            "computer_tray_target_depth_mm": depth}
 
 
 def match_named_quick_attachment_size(

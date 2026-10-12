@@ -856,10 +856,10 @@ class AttachmentEditor(QDialog):
 
     def add_row(self, attachment=None):
         source = attachment if isinstance(attachment, dict) else {}
-        from attachment_v2_client import is_base_attachment, attachment_base_height, pending_base_attachment, discard_automatic_amount_override
+        from attachment_v2_client import is_base_attachment, default_base_attachment, discard_automatic_amount_override, quote_item_base_height
         source = discard_automatic_amount_override(source)
-        if is_base_attachment(source) and attachment_base_height(source) is None:
-            source = pending_base_attachment(source)
+        if is_base_attachment(source):
+            source = default_base_attachment(source, quote_item_base_height(self.item, source))
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setRowHeight(row, 42)
@@ -1169,7 +1169,7 @@ class AttachmentEditor(QDialog):
             specification_editor = self.table.cellWidget(row, self.COL_SPECIFICATION)
             specification_item = self.table.item(row, self.COL_SPECIFICATION)
             specification = (
-                str(specification_editor.currentData() or specification_editor.currentText()).strip()
+                str(specification_editor.currentData() or "").strip()
                 if isinstance(specification_editor, QComboBox)
                 else specification_item.text().strip()
             )
@@ -1182,6 +1182,10 @@ class AttachmentEditor(QDialog):
                 data.pop("model_code", None)
             elif data.get("item_name") in {"三排安装梁", "电脑托盘"} and specification and not data.get("custom"):
                 data["model_code"] = specification
+            elif data.get("item_name") == "电脑托盘" and not data.get("custom") and not specification:
+                data.pop("model_code", None)
+                data.pop("specification", None)
+                data["computer_tray_auto_match"] = True
             quantity = self.table.cellWidget(row, self.COL_QUANTITY).value() / self.cabinet_quantity
             data["quantity"] = int(quantity) if quantity.is_integer() else quantity
             amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)

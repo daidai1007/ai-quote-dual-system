@@ -1,4 +1,4 @@
-"""Offline regression: missing base height must be entered before matching."""
+"""Offline regression: a manually selected base defaults to 100 mm."""
 import copy
 import os
 from pathlib import Path
@@ -79,11 +79,15 @@ class MissingBaseHeight(unittest.TestCase):
         requests.clear()
         self.addCleanup(self.window.close)
 
-    def test_missing_height_cannot_match_even_single_catalogue_row_or_model(self):
+    def test_missing_height_defaults_but_explicit_invalid_height_is_rejected(self):
         for row in catalog:
-            for value in (None, 0, -1, float("nan"), float("inf")):
+            for value in (0, -1, float("nan"), float("inf")):
                 selection = {**row, "model_code": "explicit", "manual_inputs": {"底座高度": value}}
                 self.assertIsNone(v2.match_catalog_attachment(selection, [row], (400,400,300)))
+            for value in (None, ""):
+                selection = {**row, "manual_inputs":{"底座高度":value}}
+                result = v2.match_catalog_attachment(selection,catalog,(400,400,300))
+                self.assertEqual(result["size_match_target_height_mm"],100)
         self.assertIsNone(v2.base_height(self.window))
 
     def test_manual_and_specification_heights_match_real_dimensions(self):
@@ -95,33 +99,26 @@ class MissingBaseHeight(unittest.TestCase):
                 self.assertEqual((result["width_mm"], result["depth_mm"], result["height_mm"]), (400,300,100))
         self.window.quote_spec_edit.setText("400*300*(400+100)")
         self.window.attachments = [catalog[0]]
-        self.assertFalse(v2.needs_base_height_resolution(self.window))
+        self.assertTrue(v2.needs_base_height_resolution(self.window))
         successes = []
         with patch.object(ui.AttachmentEditor, "exec", side_effect=AssertionError("height already specified")):
             self.window.resolve_attachments_for_quote(lambda:successes.append(True), self.fail)
+        wait_for(lambda:successes)
         self.assertEqual(successes, [True])
         self.assertEqual(self.window.attachments[0]["manual_inputs"], {"底座高度":100})
 
-    def test_legacy_wrong_match_is_pending_and_does_not_preview(self):
+    def test_legacy_wrong_match_is_rematched_without_manual_dimension_popup(self):
         source = {**catalog[0], "quantity": 1, "quick_amount": 199.66, "formula_amount": 20}
         item = dict(attachments=[source], width_mm=400, height_mm=400, depth_mm=300, quantity=1,
                     quick={"attachment_fee": 199.66, "total_cost": 500}, formula={"attachment_fee":20,"total_cost":200})
         editor = ui.AttachmentEditor(self.window, item)
         self.addCleanup(editor.close)
         pending = editor.table.item(0, editor.COL_NAME).data(ui.ROLE_ROW)
-        self.assertIsNone(pending.get("attachment_price_id"))
-        self.assertIn("底座高度", editor.table.item(0, editor.COL_SPECIFICATION).text())
-        self.assertEqual(editor.table.cellWidget(0, editor.COL_AMOUNT).value(), 0)
-        self.assertFalse(editor.table.cellWidget(0, editor.COL_AMOUNT).isEnabled())
+        self.assertEqual(pending["manual_inputs"]["底座高度"],100)
+        self.assertTrue(editor.table.cellWidget(0, editor.COL_AMOUNT).isEnabled())
         errors = []
-        self.window.recalculate_draft_attachment(item, pending, self.fail, errors.append)
-        self.assertIn("底座高度", errors[0])
-        self.assertEqual(requests, [])
-        def enter(dlg):
-            dlg.fields["底座高度"].setText("100")
-            return QDialog.DialogCode.Accepted
-        with patch.object(ui._SchemeDimensionEditor, "exec", enter):
-            editor.edit_missing_dimensions(0, editor.COL_SPECIFICATION)
+        with patch.object(ui._SchemeDimensionEditor,"exec",side_effect=AssertionError("must not prompt")):
+            editor._reprice_row(0,pending)
         wait_for(lambda: editor.table.cellWidget(0, editor.COL_AMOUNT).isEnabled())
         calculated = editor.table.item(0, editor.COL_NAME).data(ui.ROLE_ROW)
         self.assertEqual(calculated["attachment_price_id"], catalog[1]["attachment_price_id"])
@@ -130,34 +127,28 @@ class MissingBaseHeight(unittest.TestCase):
         editor.accept()
         self.assertEqual(item["quick"]["total_cost"], 400.34)
 
-    def test_add_flow_requires_popup_height_even_for_previously_matched_id(self):
+    def test_add_flow_defaults_and_rematches_without_popup(self):
         for source in (dict(category_level1="底座", item_name="固定底座", quantity=1), catalog[0]):
             self.window.attachments = [copy.deepcopy(source)]
             self.assertTrue(v2.needs_base_height_resolution(self.window))
             successes, failures = [], []
-            def complete(editor):
-                pending = editor.table.item(0, editor.COL_NAME).data(ui.ROLE_ROW)
-                self.assertEqual(requests, [])
-                self.assertIsNone(pending.get("attachment_price_id"))
-                pending["manual_inputs"] = {"底座高度":100}
-                editor._reprice_row(0, pending)
-                wait_for(lambda: editor.table.cellWidget(0, editor.COL_AMOUNT).isEnabled())
-                editor.accept()
-                return QDialog.DialogCode.Accepted
-            with patch.object(ui.AttachmentEditor, "exec", complete):
+            with patch.object(ui.AttachmentEditor, "exec", side_effect=AssertionError("must not prompt")):
                 self.window.resolve_attachments_for_quote(lambda:successes.append(True), failures.append)
+                wait_for(lambda:successes or failures)
             self.assertEqual(failures, [])
             self.assertEqual(successes, [True])
             self.assertEqual(self.window.attachments[0]["attachment_price_id"], catalog[1]["attachment_price_id"])
             requests.clear()
 
-    def test_close_without_height_blocks_calculation(self):
-        self.window.attachments = [copy.deepcopy(catalog[0])]
-        failures = []
-        with patch.object(ui.AttachmentEditor, "exec", return_value=QDialog.DialogCode.Accepted):
-            self.window.resolve_attachments_for_quote(self.fail, failures.append)
-        self.assertIn("底座高度", failures[0])
-        self.assertEqual(requests, [])
+    def test_default_input_and_explicit_height_priority(self):
+        source = dict(category_level1="底座",item_name="固定底座")
+        self.assertEqual(v2.selected_input(source)["manual_inputs"]["底座高度"],100)
+        source["manual_inputs"] = {"底座高度":150}
+        self.assertEqual(v2.selected_input(source)["manual_inputs"]["底座高度"],150)
+        self.assertEqual(v2.selected_input(source,200)["manual_inputs"]["底座高度"],200)
+        source["ganged_cabinet_index"] = 1
+        self.assertEqual(v2.selected_input(source,200)["manual_inputs"]["底座高度"],150)
+        self.assertFalse(v2.is_base_attachment({"item_name":"固定底座","custom":True}))
 
     def test_ganged_missing_height_never_borrows_cabinet_height(self):
         from types import SimpleNamespace
@@ -166,8 +157,8 @@ class MissingBaseHeight(unittest.TestCase):
         window = SimpleNamespace(ganged_cabinets=children, selected_product_code=lambda:"JP")
         choice = dict(category_level1="底座", item_name="固定底座")
         rows, missing = v2.expand_ganged_fixed_bases_for_quote(window, [choice], catalog)
-        self.assertEqual(rows, [])
-        self.assertEqual(len(missing), 2)
+        self.assertEqual(missing, [])
+        self.assertEqual([row["manual_inputs"]["底座高度"] for row in rows],[100,100])
         rows, missing = v2.expand_ganged_fixed_bases_for_quote(window,
                     [{**choice, "manual_inputs":{"底座高度":100}}], catalog)
         self.assertEqual(missing, [])

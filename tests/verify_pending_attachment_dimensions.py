@@ -17,6 +17,9 @@ import scheme2_ui
 
 fixture = json.loads((ROOT / "test-output/attachment-cost-v2/api-client-fixtures.json").read_text(encoding="utf-8"))
 missing = copy.deepcopy(fixture["missing"]["attachments"][0])
+missing.update(item_name="分段板", category_level1="安装附件", category_level2="分段板",
+               required_parameters=[{"name":"分段板高度","source":"MANUAL"}],
+               error="人工尺寸 分段板高度必须为正数", manual_inputs={})
 result = provisionalize_manual_dimension_result({
     "attachment_contract": 2,
     "attachments": [missing],
@@ -25,12 +28,12 @@ result = provisionalize_manual_dimension_result({
         "spray_cost": 10, "management_fee": 5, "attachment_fee": None, "total_cost": None,
     },
     "quick_quote": {"base_price": 300, "attachment_fee": missing["quick_amount"], "total_cost": 499.66},
-    "risk_flags": [{"code": "attachment_error", "severity": "blocker", "message": "固定底座：" + missing["error"]}],
+    "risk_flags": [{"code": "attachment_error", "severity": "blocker", "message": "分段板：" + missing["error"]}],
 })
 row = result["attachments"][0]
 assert row["status"] == "PENDING_MANUAL"
 assert row["quick_amount"] == 0 and row["formula_amount"] == 0
-assert row["pending_manual_dimensions"] == ["底座高度"]
+assert row["pending_manual_dimensions"] == ["分段板高度"]
 assert result["quick_quote"]["attachment_fee"] == 0
 assert result["formula_cost"]["attachment_fee"] == 0
 assert result["formula_cost"]["total_cost"] == 165
@@ -47,12 +50,12 @@ assert editor.table.item(0, editor.COL_SPECIFICATION).text().startswith("点击�
 assert editor.table.cellWidget(0, editor.COL_AMOUNT).value() == 0
 assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "0.00"
 assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).data(Qt.ItemDataRole.ForegroundRole) is not None
-dimension_dialog = scheme2_ui._SchemeDimensionEditor(editor, "固定底座 · 补充尺寸", ["底座高度"], {})
+dimension_dialog = scheme2_ui._SchemeDimensionEditor(editor, "分段板 · 补充尺寸", ["分段板高度"], {})
 assert dimension_dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
 assert not dimension_dialog.confirm_button.isEnabled()
-dimension_dialog.fields["底座高度"].setText("100")
+dimension_dialog.fields["分段板高度"].setText("100")
 assert dimension_dialog.confirm_button.isEnabled()
-assert dimension_dialog.values() == {"底座高度": 100.0}
+assert dimension_dialog.values() == {"分段板高度": 100.0}
 dimension_dialog.close()
 editor.close()
 window.close()

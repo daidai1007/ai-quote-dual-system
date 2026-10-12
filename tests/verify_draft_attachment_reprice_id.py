@@ -211,6 +211,32 @@ class DraftAttachmentRepriceId(unittest.TestCase):
         self.assertIsNone(v2.match_catalog_attachment(choice, trays, (1000,2100,0)))
         self.assertEqual(trays, before)
 
+    def test_unselected_tray_is_saved_as_auto_not_a_fake_model(self):
+        self.item["attachments"] = [dict(category_level1="控制柜附件",item_name="电脑托盘",quantity=1)]
+        editor = ui.AttachmentEditor(self.window,self.item)
+        editor.accept()
+        self.addCleanup(editor.close)
+        source = self.item["attachments"][0]
+        self.assertNotIn("model_code",source)
+        self.assertTrue(source["computer_tray_auto_match"])
+        self.assertEqual(v2.match_catalog_attachment(source,trays,(0,0,600))["model_code"],"JP930060")
+        old = {**source,"computer_tray_auto_match":False,"model_code":"未选择","specification":"未选择"}
+        self.assertEqual(v2.match_catalog_attachment(old,trays,(None,None,800))["model_code"],"JP930080")
+
+    def test_visible_ganged_and_slash_specs_match_trays_without_hidden_dimensions(self):
+        class Empty:
+            def value(self):return 0
+        from types import SimpleNamespace
+        for text,depth,model in (("800/600/1800",600,"JP930060"),
+                                ("800/500/(1800+100)",500,"JP930050"),
+                                ("(800+600)/800/1800",800,"JP930080"),
+                                ("(800+600)/1000/(1800+100)",1000,"JP930010")):
+            window = SimpleNamespace(quote_spec_edit=SimpleNamespace(text=lambda:text),
+                    width_spin=Empty(),height_spin=Empty(),depth_spin=Empty(),selected_product_code=lambda:"JP")
+            choice = dict(category_level1="控制柜附件",item_name="电脑托盘")
+            self.assertEqual(v2._visible_quote_dimensions(window)[2],depth)
+            self.assertEqual(v2.match_quote_attachment(window,choice,trays)["model_code"],model)
+
     def test_computer_tray_popup_switches_every_model_and_refreshes_prices(self):
         self.item["attachments"] = [{**trays[-1], "quantity":2, "formula_amount":0,
             "quick_amount":0, "quick_amount_override":0, "computer_tray_auto_match":True}]
