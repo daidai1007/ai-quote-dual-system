@@ -784,6 +784,7 @@ class AttachmentEditor(QDialog):
             QFrame#scheme2AttachmentEditorHeader { background:#F6F7F9; border:0; border-bottom:1px solid #D7DCE3; min-height:40px; max-height:40px; }
             QLabel#scheme2AttachmentEditorTitle { color:#1F3A6A; font-size:13px; font-weight:600; border:0; }
             QToolButton#scheme2AttachmentEditorClose { color:#8A8A86; background:transparent; border:0; font-size:18px; }
+            QToolButton#scheme2AttachmentEditorClose:hover { color:#C62828; }
             QTableWidget#scheme2AttachmentEditorTable { background:#FFFFFF; border:0; gridline-color:transparent; outline:0; font-size:12px; color:#2A3541; }
             QTableWidget#scheme2AttachmentEditorTable::item { padding:6px 8px; border:0; border-bottom:1px solid #D7DCE3; }
             QTableWidget#scheme2AttachmentEditorTable QHeaderView::section { background:#2563EB; color:#FFFFFF; border:0; padding:7px 8px; font-size:12px; font-weight:600; }
@@ -808,6 +809,7 @@ class AttachmentEditor(QDialog):
         title.setObjectName("scheme2AttachmentEditorTitle")
         close_button = QToolButton()
         close_button.setObjectName("scheme2AttachmentEditorClose")
+        close_button.setCursor(Qt.CursorShape.ArrowCursor)
         close_button.setText("×")
         close_button.setToolTip("保存并关闭")
         close_button.setFixedSize(28, 28)
@@ -6069,7 +6071,7 @@ QFrame#scheme2AttachmentEditorShell { background:#FFFFFF; border:1px solid #B8BE
 QFrame#scheme2AttachmentEditorHeader { background:#F6F7F9; border:0; border-bottom:1px solid #D7DCE3; min-height:40px; }
 QLabel#scheme2AttachmentEditorTitle { color:#1F3A6A; font-size:13px; font-weight:600; border:0; }
 QToolButton#scheme2AttachmentEditorClose { color:#8A8A86; background:transparent; border:0; font-size:18px; }
-QToolButton#scheme2AttachmentEditorClose:hover { color:#1C1C1E; }
+QToolButton#scheme2AttachmentEditorClose:hover { color:#C62828; }
 QTableWidget#scheme2AttachmentEditorTable { background:#FFFFFF; alternate-background-color:#FFFFFF; border:0; gridline-color:transparent; outline:0; }
 QTableWidget#scheme2AttachmentEditorTable::item { padding:6px 8px; border:0; border-bottom:1px solid #D7DCE3; }
 QTableWidget#scheme2AttachmentEditorTable::item:selected { color:#1C1C1E; background:#E6F1FB; }

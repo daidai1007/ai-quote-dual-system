@@ -8,9 +8,9 @@ from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'desktop_client'))
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QSizeGrip, QWidget
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QEnterEvent, QFontDatabase
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QSizeGrip, QToolButton, QWidget
 from PySide6.QtTest import QTest
 import scheme2_ui as ui
 import v3_launcher
@@ -59,6 +59,30 @@ with patch.object(ui.AttachmentEditor, 'exec', return_value=0) as single:
 dialog = ui.AttachmentSummaryDialog(window)
 dialog.show()
 app.processEvents()
+close = dialog.findChild(QToolButton, 'scheme2AttachmentEditorClose')
+assert close.cursor().shape() == Qt.CursorShape.ArrowCursor
+QTest.mouseMove(dialog, QPoint(20, 70))
+app.processEvents()
+
+def red_pixels(button):
+    image = button.grab().toImage()
+    return sum(image.pixelColor(x, y).red() > image.pixelColor(x, y).green() + 60
+               and image.pixelColor(x, y).red() > image.pixelColor(x, y).blue() + 60
+               for x in range(image.width()) for y in range(image.height()))
+
+before_hover = red_pixels(close)
+# The offscreen platform does not dispatch native hover from mouseMove.
+# Deliver the same widget enter/leave events to verify the rendered glyph.
+center = close.rect().center()
+QApplication.sendEvent(close, QEnterEvent(QPointF(center), QPointF(close.mapTo(dialog, center)),
+                                       QPointF(close.mapToGlobal(center))))
+QTest.qWait(20)
+assert red_pixels(close) > before_hover, 'Close glyph must turn red on hover'
+assert close.cursor().shape() == Qt.CursorShape.ArrowCursor
+QApplication.sendEvent(close, QEvent(QEvent.Type.Leave))
+QTest.qWait(20)
+assert red_pixels(close) == before_hover, 'Leaving close must restore its idle color'
+
 table = dialog.table
 assert [table.horizontalHeaderItem(c).text() for c in range(6)] == [
     '名称', '尺寸 / 规格', '数量', '成本', '金额', '单价']
