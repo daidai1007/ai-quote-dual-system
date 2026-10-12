@@ -71,7 +71,7 @@ from PySide6.QtWidgets import (
 )
 from pypdf import PdfReader, PdfWriter
 
-from attachment_category_browser import door_transformation_default_names
+from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, door_transformation_default_names
 from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
 try:
     from cost_adjustments import rescale_material_weight
@@ -132,6 +132,7 @@ _FONT_SIZE_RULE = re.compile(r"font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)", re.IG
 _STYLE_LENGTH_RULE = re.compile(r"(?<![\w.-])(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
 GALVANIZED_MATERIAL_CODES = frozenset(("SGCC", "DX51D", "GI"))
 THREE_ROW_BEAM_MODELS = ("JP760240", "JP760250", "JP760260", "JP760280", "JP760210")
+COMPUTER_TRAY_MODELS = tuple(COMPUTER_TRAY_MODEL_DEPTHS)
 LIGHT_SWITCH_OPTIONS = (
     "行程开关", "照明灯220V长款", "照明灯220V短款",
     "照明灯24V-0.28m", "照明灯24V-0.6m",
@@ -872,6 +873,7 @@ class AttachmentEditor(QDialog):
         self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
         model_options = LIGHT_SWITCH_OPTIONS if is_light_switch else {
             "三排安装梁": THREE_ROW_BEAM_MODELS,
+            "电脑托盘": None if source.get("custom") else COMPUTER_TRAY_MODELS,
         }.get(name)
         if model_options:
             model = str(
@@ -927,6 +929,10 @@ class AttachmentEditor(QDialog):
             source.pop("matched_specification", None)
         else:
             source.update({"model_code": model.upper(), "specification": model.upper(), "matched_specification": model.upper()})
+            if source.get("item_name") == "电脑托盘":
+                source["computer_tray_auto_match"] = False
+                source.pop("quick_amount_override", None)
+                source["custom_amount_edited"] = False
         for key in ("attachment_price_id", "unit_price_override", "matched_price", "quick_amount", "formula_amount"):
             source.pop(key, None)
         source_item.setData(ROLE_ROW, source)
@@ -1160,7 +1166,7 @@ class AttachmentEditor(QDialog):
             if data.get("category_level1") == "照明灯/行程开关" and specification:
                 data["item_name"] = specification
                 data.pop("model_code", None)
-            elif data.get("item_name") == "三排安装梁" and specification:
+            elif data.get("item_name") in {"三排安装梁", "电脑托盘"} and specification and not data.get("custom"):
                 data["model_code"] = specification
             quantity = self.table.cellWidget(row, self.COL_QUANTITY).value() / self.cabinet_quantity
             data["quantity"] = int(quantity) if quantity.is_integer() else quantity
@@ -1312,14 +1318,14 @@ def _attachment_summary_product_values(item, sequence, columns=None):
     extra = ((values[22],) if show_material else ()) + (
         ((fee - listed) * discount,) if show_difference else ())
     return (sequence, values[1], values[3], values[11], "台", values[15], values[16],
-            values[13], values[15], cabinet, *attachments, *extra, values[10] * discount, discount)
+            values[13], values[13] * values[11], cabinet, *attachments, *extra, values[10] * discount, discount)
 
 
 class AttachmentSummaryDialog(AttachmentEditor):
     DEFAULT_SIZE = QSize(1560, 720)
     MINIMUM_SIZE = QSize(760, 460)
     PRODUCT_BASE_HEADERS = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价",
-                           "原价单价", "折后单价", "柜体")
+                           "原价单价", "原价总价", "柜体")
     PRODUCT_BASE_COLUMN_WIDTHS = (50, 100, 170, 60, 50, 95, 95, 95, 95, 100)
     PRODUCT_TAIL_HEADERS = ("运费", "折扣")
     PRODUCT_TAIL_COLUMN_WIDTHS = (80, 60)
@@ -1384,7 +1390,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
         widths = self.PRODUCT_BASE_COLUMN_WIDTHS + attachment_widths + self.PRODUCT_TAIL_COLUMN_WIDTHS
         for column, width in enumerate(widths):
             self.product_table.setColumnWidth(column, width)
-        self.product_table.setToolTip("费用拆分按单台（并柜为整套）计，与成本计算界面报价一致；折后总价=折后单价×数量。")
+        self.product_table.setToolTip("费用拆分按单台（并柜为整套）计，与成本计算界面报价一致；折后总价=折后单价×数量；原价总价=原价单价×数量。")
         for title, object_name, table in (
             ("产品报价", "scheme2AttachmentSummaryProductsTitle", self.product_table),
             ("附件明细", "scheme2AttachmentSummaryDetailsTitle", self.table),
@@ -1453,11 +1459,12 @@ class AttachmentSummaryDialog(AttachmentEditor):
         items = self.window.draft_items
         with QSignalBlocker(self.product_table):
             self.product_table.setRowCount(len(items) + 1)
-            total_quantity = total_amount = 0.0
+            total_quantity = total_amount = total_original_amount = 0.0
             for index, item in enumerate(items):
                 values = _attachment_summary_product_values(item, index + 1, self._product_columns)
                 total_quantity += values[3]
                 total_amount += values[6]
+                total_original_amount += values[8]
                 self.product_table.setRowHeight(index, self.PRODUCT_ROW_HEIGHT)
                 for column, value in enumerate(values):
                     text = _money(value) if 5 <= column < len(values) - 1 else (
@@ -1480,7 +1487,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
             self.product_table.setRowHeight(footer, self.PRODUCT_ROW_HEIGHT)
             for column in range(len(self.product_headers)):
                 text = "合计" if column == 1 else f"{total_quantity:g}" if column == 3 else (
-                    _money(total_amount) if column == 6 else "")
+                    _money(total_amount) if column == 6 else _money(total_original_amount) if column == 8 else "")
                 cell = QTableWidgetItem(text)
                 cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -5407,8 +5414,8 @@ def _calculate_and_add(window):
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and not item.get("custom") and item.get("attachment_price_id") is None
     ]
-    from attachment_v2_client import needs_ganged_door_resolution, needs_installation_board_resolution
-    pending_doors = needs_ganged_door_resolution(window) or needs_installation_board_resolution(window)
+    from attachment_v2_client import needs_computer_tray_resolution, needs_ganged_door_resolution, needs_installation_board_resolution
+    pending_doors = needs_ganged_door_resolution(window) or needs_installation_board_resolution(window) or needs_computer_tray_resolution(window)
     current = getattr(window, "current_result", None)
     valid = not pending_attachments and not pending_doors and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
     if valid:

@@ -16,6 +16,7 @@ from shiboken6 import isValid
 from material_prices import material_unit_price
 
 from attachment_category_browser import (
+    match_computer_tray_depth,
     match_attachment_size,
     match_installation_board_for_product,
     match_named_quick_attachment_size,
@@ -155,6 +156,10 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
     )
     category = str(selection.get("category_level1") or selection.get("attachment_category") or "").strip()
     name = str(selection.get("item_name") or selection.get("name") or "").strip()
+    if category == "控制柜附件" and name == "电脑托盘":
+        model = "" if selection.get("computer_tray_auto_match") else (
+            selection.get("model_code") or selection.get("specification") or "")
+        return match_computer_tray_depth(catalog, target_dimensions, model)
     if category in {"配置变形", "其他附件"}:
         name_matches = [
             item for item in catalog if isinstance(item, dict)
@@ -328,6 +333,32 @@ def price_sign(source):
 def installation_board(source):
     identity = " ".join(str(source.get(key) or "") for key in ("category_level1", "category_level2", "category_level3", "item_name", "model_code"))
     return "安装板" in identity and "安装板单发" not in identity
+
+def _is_computer_tray(source):
+    return (not source.get("custom")
+            and str(source.get("category_level1") or source.get("attachment_category") or "").strip() == "控制柜附件"
+            and str(source.get("item_name") or source.get("name") or "").strip() == "电脑托盘")
+
+
+def needs_computer_tray_resolution(window):
+    dimensions = _visible_quote_dimensions(window)
+    return bool(dimensions) and any(
+        _is_computer_tray(source) and source.get("computer_tray_auto_match")
+        and source.get("computer_tray_target_depth_mm") != dimensions[2]
+        for source in getattr(window, "attachments", []) if isinstance(source, dict))
+
+
+def resolve_computer_tray(source, matched, version):
+    resolved = {**copy.deepcopy(source), **copy.deepcopy(matched), "catalog_version": version}
+    for key in ("quantity", "selection_source", "cost_quantity_manual", "manual_inputs", "attachment_price_sign"):
+        if key in source:
+            resolved[key] = copy.deepcopy(source[key])
+    if source.get("model_code") != matched.get("model_code"):
+        for key in ("unit_price_override", "quick_amount_override", "quick_amount", "formula_amount",
+                    "formula_unit_cost", "custom_amount_edited", *COST_KEYS):
+            resolved.pop(key, None)
+    return resolved
+
 
 def needs_installation_board_resolution(window):
     dimensions = _visible_quote_dimensions(window)
@@ -1118,7 +1149,7 @@ def install_attachment_v2(namespace):
         needs_ganged_base_catalog = (
             ganged(window) and any(_is_fixed_base_selection(item) for item in rows)
         )
-        if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window) and not needs_installation_board_resolution(window):
+        if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window) and not needs_installation_board_resolution(window) and not needs_computer_tray_resolution(window):
             succeeded()
             return
         active = getattr(window, "_scheme2_attachment_catalog_worker", None)
@@ -1151,7 +1182,8 @@ def install_attachment_v2(namespace):
                 if source.get("custom"):
                     resolved.append(source)
                     continue
-                if source.get("attachment_price_id") is not None and not installation_board(source):
+                if source.get("attachment_price_id") is not None and not installation_board(source) and not (
+                        _is_computer_tray(source) and source.get("computer_tray_auto_match")):
                     resolved.append(source)
                     continue
                 match = match_quote_attachment(window, source, catalog)
@@ -1160,6 +1192,9 @@ def install_attachment_v2(namespace):
                     continue
                 if installation_board(source):
                     resolved.append(resolve_installation_board(source, match, version))
+                    continue
+                if _is_computer_tray(source):
+                    resolved.append(resolve_computer_tray(source, match, version))
                     continue
                 resolved.append({
                     **copy.deepcopy(match),
@@ -1229,6 +1264,8 @@ def install_attachment_v2(namespace):
                 }
                 if installation_board(attachment):
                     resolved = resolve_installation_board(attachment, match, body.get("data_version"))
+                elif _is_computer_tray(attachment):
+                    resolved = resolve_computer_tray(attachment, match, body.get("data_version"))
                 recalculate_draft_attachment(window, quote_item, resolved, succeeded, failed)
 
             worker.succeeded.connect(catalog_loaded)

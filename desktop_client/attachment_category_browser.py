@@ -38,6 +38,10 @@ DEFAULT_FIXED_BASE = "fixed_base"
 DEFAULT_INSTALLATION_BOARD = "installation_board"
 QUICK_FIXED_COLUMN = "fixed_column"
 QUICK_THREE_ROW_INSTALLATION_BEAM = "three_row_installation_beam"
+COMPUTER_TRAY_MODEL_DEPTHS = {
+    "JP930040": 400.0, "JP930050": 500.0, "JP930060": 600.0,
+    "JP930080": 800.0, "JP930010": 1000.0,
+}
 DEFAULT_LIGHT_SWITCH = "light_switch"
 DEFAULT_A3_FOLDER = "a3_folder"
 DEFAULT_A4_FOLDER = "a4_folder"
@@ -880,6 +884,35 @@ def match_attachment_size(
         selected.pop("unit_price_override", None)
     selected.pop("size_match_warning", None)
     return selected
+
+
+def match_computer_tray_depth(items, target_dimensions, model_code=""):
+    """Resolve the approved tray models by depth, or honor an explicit model."""
+    model = str(model_code or "").strip().upper()
+    target = target_dimension_tuple(target_dimensions)
+    candidates = [dict(item) for item in items if isinstance(item, dict)
+                  and category_value(item, 0) == "控制柜附件"
+                  and category_value(item, 1) == "电脑托盘"
+                  and str(item.get("item_name") or "").strip() == "电脑托盘"
+                  and str(item.get("model_code") or "").strip().upper() in COMPUTER_TRAY_MODEL_DEPTHS]
+    if model:
+        matches = [item for item in candidates if str(item.get("model_code") or "").strip().upper() == model]
+        if len(matches) != 1:
+            return None
+        matched = matches[0]
+    else:
+        if target is None or not candidates:
+            return None
+        # An equal-distance tie chooses the shallower approved model.
+        matched = min(candidates, key=lambda item: (
+            abs(COMPUTER_TRAY_MODEL_DEPTHS[str(item["model_code"]).strip().upper()] - target[2]),
+            COMPUTER_TRAY_MODEL_DEPTHS[str(item["model_code"]).strip().upper()],
+            _number(item.get("attachment_price_id")) or 0))
+        matches = [item for item in candidates if item["model_code"] == matched["model_code"]]
+        if len(matches) != 1:
+            return None
+    return {**matched, "computer_tray_auto_match": not bool(model),
+            "computer_tray_target_depth_mm": target[2] if target else None}
 
 
 def match_named_quick_attachment_size(
