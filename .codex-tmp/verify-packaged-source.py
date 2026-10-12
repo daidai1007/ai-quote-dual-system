@@ -34,7 +34,7 @@ except Exception:
     if temporary_archive is not None:
         Path(temporary_archive.name).unlink(missing_ok=True)
     raise
-for module in ('scheme2_ui', 'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules', 'quote_document_progress'):
+for module in ('scheme2_ui', 'layout_refresh', 'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules', 'quote_document_progress'):
     path = root / 'desktop_client' / (module + '.py')
     source = compile(path.read_text(encoding='utf-8'), str(path), 'exec', dont_inherit=True, optimize=0)
     assert fingerprint(archive.extract(module)) == fingerprint(source), module + ' differs from current source'

@@ -856,7 +856,8 @@ class AttachmentEditor(QDialog):
 
     def add_row(self, attachment=None):
         source = attachment if isinstance(attachment, dict) else {}
-        from attachment_v2_client import is_base_attachment, attachment_base_height, pending_base_attachment
+        from attachment_v2_client import is_base_attachment, attachment_base_height, pending_base_attachment, discard_automatic_amount_override
+        source = discard_automatic_amount_override(source)
         if is_base_attachment(source) and attachment_base_height(source) is None:
             source = pending_base_attachment(source)
         row = self.table.rowCount()
@@ -940,6 +941,8 @@ class AttachmentEditor(QDialog):
                 source["custom_amount_edited"] = False
         for key in ("attachment_price_id", "unit_price_override", "matched_price", "quick_amount", "formula_amount"):
             source.pop(key, None)
+        source.pop("quick_amount_override", None)
+        source["custom_amount_edited"] = False
         source_item.setData(ROLE_ROW, source)
         self._reprice_row(row, source)
 
@@ -949,10 +952,14 @@ class AttachmentEditor(QDialog):
 
     @staticmethod
     def _display_amounts(source):
+        from attachment_v2_client import discard_automatic_amount_override, manual_attachment_amount_edited
+        source = discard_automatic_amount_override(source)
         pending = bool(AttachmentEditor._pending_dimensions(source))
         cost = 0.0 if pending else _number(source.get("formula_amount"), 0)
         fallback = cost * 1.2 if source.get("custom") else _attachment_amount(source)
         amount = 0.0 if pending else _number(source.get("quick_amount"), fallback)
+        if not pending and manual_attachment_amount_edited(source):
+            amount = _number(source.get("quick_amount_override"), amount)
         return cost, amount
 
     def _render_amounts(self, row, source):
@@ -990,7 +997,8 @@ class AttachmentEditor(QDialog):
             amount_editor.valueChanged.connect(lambda value, target_row=row: self._amount_changed(target_row, value))
         with QSignalBlocker(amount_editor):
             amount_editor.setValue(quick_amount)
-        amount_editor.setProperty("schemeEdited", bool(source.get("custom_amount_edited")))
+        from attachment_v2_client import manual_attachment_amount_edited
+        amount_editor.setProperty("schemeEdited", manual_attachment_amount_edited(source))
         amount_editor.setProperty("pending", pending)
         amount_editor.setEnabled(not pending)
         amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "整批附件金额，支持人工修改")
@@ -1189,9 +1197,13 @@ class AttachmentEditor(QDialog):
             if self._pending_dimensions(data):
                 if not data["custom_amount_edited"]:
                     data.pop("quick_amount_override", None)
-            else:
+            elif data["custom_amount_edited"] or custom:
                 data["quick_amount_override"] = round(amount, 2)
+            else:
+                data.pop("quick_amount_override", None)
             data["quick_amount"] = round(amount, 2)
+            if data["custom_amount_edited"] and not custom and data["quantity"]:
+                data["unit_price_override"] = abs(amount / data["quantity"])
             if custom:
                 unit_price = amount / data["quantity"] if data["quantity"] else amount
                 data["unit_price_override"] = unit_price

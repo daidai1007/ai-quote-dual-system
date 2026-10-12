@@ -338,12 +338,31 @@ def match_quote_attachment(window, selection, catalog):
         base_height_mm=base_height(window),
     )
 
+def manual_attachment_amount_edited(row):
+    # Old saved quotations did not carry the edit flag. Keep their nonzero
+    # explicit overrides; zero without an edit flag is the old UI placeholder.
+    return row.get("custom_amount_edited") is True or (
+        "custom_amount_edited" not in row and row.get("quick_amount_override") not in (None, 0)
+    )
+
+
+def discard_automatic_amount_override(row):
+    if row.get("custom") or manual_attachment_amount_edited(row) or row.get("quick_amount_override") is None:
+        return row
+    cleaned = dict(row)
+    override = cleaned.pop("quick_amount_override")
+    if override == 0:
+        if cleaned.get("unit_price_override") == 0:
+            cleaned.pop("unit_price_override", None)
+        if cleaned.get("quick_amount") == 0:
+            cleaned.pop("quick_amount", None)
+        if cleaned.get("matched_price") in (None, 0) and cleaned.get("face_price") is not None:
+            cleaned["matched_price"] = cleaned["face_price"]
+    return cleaned
+
+
 def merge_cost(source, cost, automatic_base_height=None):
-    # Old popups froze a pending dimension placeholder as a price override.
-    # Do not let that automatic zero hide a successful database repricing.
-    if (source.get("pending_manual_dimensions") and source.get("quick_amount_override") == 0
-            and not source.get("custom_amount_edited")):
-        source = {key: value for key, value in source.items() if key != "quick_amount_override"}
+    source = discard_automatic_amount_override(source)
     merged = {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
     # Older V2 APIs return the catalogue amount for sized attachments. Apply
     # the selected size price to all approved families; newer APIs derive it.
@@ -364,6 +383,24 @@ def merge_cost(source, cost, automatic_base_height=None):
             merged["quick_amount"] = float(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
         elif cost.get("size_match_exact") is True:
             merged.pop("unit_price_override", None)
+    # Genuine quote-local edits apply to every attachment, not only sized
+    # ones. Refresh formula costs normally while preserving the manual sale.
+    if manual_attachment_amount_edited(source) and cost.get("status") != "PENDING_MANUAL":
+        quantity = Decimal(str(merged.get("quantity", 1)))
+        if source.get("quick_amount_override") is not None:
+            amount = Decimal(str(source["quick_amount_override"]))
+            old_quantity = Decimal(str(source.get("quantity", 1)))
+            if old_quantity and old_quantity != quantity:
+                amount = amount / old_quantity * quantity
+        elif source.get("unit_price_override") is not None:
+            amount = Decimal(str(source["unit_price_override"])) * quantity * price_sign(merged)
+        else:
+            amount = None
+        if amount is not None:
+            merged["quick_amount"] = merged["quick_amount_override"] = float(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+            merged["custom_amount_edited"] = True
+            if quantity:
+                merged["unit_price_override"] = float(abs(amount / quantity))
     if automatic_base_height is not None and uses_base_height(merged):
         manual = copy.deepcopy(merged.get("manual_inputs") or {})
         # Keep the automatically derived base height in the immutable quote
@@ -419,6 +456,7 @@ def needs_installation_board_resolution(window):
     )
 
 def resolve_installation_board(source, matched, version):
+    source = discard_automatic_amount_override(source)
     # Catalogue identity/dimensions and generated prices must be refreshed,
     # not overwritten by an old selected model or a previous size ratio.
     resolved = {**{key: value for key, value in source.items() if key not in COST_KEYS},
@@ -701,6 +739,7 @@ def uses_base_height(item):
     return any("底座高度" in json.dumps(value, ensure_ascii=False) for value in formulas if value)
 
 def selected_input(item, automatic_base_height=None):
+    item = discard_automatic_amount_override(item)
     manual_inputs = copy.deepcopy(item.get("manual_inputs") or {})
     # Compatibility for the currently deployed V2 API, where 底座高度 was
     # classified as MANUAL.  The value comes from the
