@@ -17,7 +17,7 @@ test('read-only snapshot checks identify exact product line, attachment and miss
   const service=createAttachmentService({env:{},runPsql:async sql=>{
     queries.push(sql);
     assert.ok(!/\b(INSERT|UPDATE|DELETE|BEGIN|COMMIT)\b/.test(sql),'preview checks must only read');
-    return JSON.stringify({environment,attachments:[attachment]});
+    return JSON.stringify({[lineId]:{environment,attachments:[attachment]}});
   }});
   await assert.rejects(service.hydrateDocument({items:[{...item,attachments:[]}]}),/人工参数已变化/);
   await assert.rejects(service.hydrateDocument({items:[{name:'正常柜',attachments:[]},item]}),error=>{
@@ -32,14 +32,14 @@ test('read-only snapshot checks identify exact product line, attachment and miss
 
 test('zero sale price is valid when the stored attachment cost has no error',async()=>{
   const valid={...attachment,status:'CALCULATED',error:null,formula_amount:20,formula_unit_cost:20};
-  const service=createAttachmentService({env:{},runPsql:async()=>JSON.stringify({environment,attachments:[valid]})});
+  const service=createAttachmentService({env:{},runPsql:async()=>JSON.stringify({[lineId]:{environment,attachments:[valid]}})});
   const result=await service.hydrateDocument({items:[{...item,attachments:[valid]}]});
   assert.equal(result.items[0].attachments[0].quick_amount,0);
   assert.equal(result.items[0].attachments[0].formula_amount,20);
 });
 
 test('local repricing cannot hide an error retained in the authoritative snapshot',async()=>{
-  const service=createAttachmentService({env:{},runPsql:async()=>JSON.stringify({environment,attachments:[attachment]})});
+  const service=createAttachmentService({env:{},runPsql:async()=>JSON.stringify({[lineId]:{environment,attachments:[attachment]}})});
   await assert.rejects(service.hydrateDocument({items:[{...item,
     attachments:[{...attachment,status:'CALCULATED',error:null,formula_amount:99}]}]}),error=>{
     assert.equal(error.issues[0].attachment_name,'固定底座');

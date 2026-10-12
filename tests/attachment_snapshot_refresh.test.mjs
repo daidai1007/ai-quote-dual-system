@@ -38,7 +38,9 @@ function harness(children=[],catalogItem=glass){
       return JSON.stringify(stored);
     }
     if(sql.includes('FROM calc.attachment_quote_line')){
-      return JSON.stringify(sql.includes(Buffer.from(oldId).toString('hex'))?old:stored);
+      const snapshot=sql.includes(Buffer.from(oldId).toString('hex'))?old:stored;
+      return JSON.stringify(sql.includes('jsonb_object_agg')
+        ?{[snapshot.environment.quote_line_id||oldId]:snapshot}:snapshot);
     }
     if(sql.includes('attachment_catalog_version'))return JSON.stringify([{data_version:'offline',status:'ACTIVE'}]);
     if(sql.includes('FROM (SELECT p.attachment_price_id'))return JSON.stringify([catalogItem]);

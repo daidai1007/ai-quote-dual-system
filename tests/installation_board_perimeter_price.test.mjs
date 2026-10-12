@@ -79,7 +79,8 @@ test('immutable catalogue audit price and scaled quote/export snapshots both sur
         snapshot={environment:env,attachments:[cost]};
         return JSON.stringify(snapshot);
       }
-      if(sql.includes('FROM calc.attachment_quote_line l')) return JSON.stringify(snapshot);
+      if(sql.includes('FROM calc.attachment_quote_line l')) return JSON.stringify(
+        sql.includes('jsonb_object_agg')?{[snapshot.environment.quote_line_id]:snapshot}:snapshot);
       throw new Error('Unexpected offline SQL');
     }});
   const input={...environment,material_unit_price_override:4.2,quote_id:'offline-quote',attachments:[{attachment_price_id:1,quantity:1}]};

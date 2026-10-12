@@ -14,7 +14,7 @@ const savedAttachment={attachment_price_id:99,quantity:1,attachment_price_sign:1
   attachment_selection_id:123,quote_line_id:lineId,status:'FIXED',catalog_version:'v2',item_name:'不锈钢门锁',
   category_level1:'其他附件',quick_amount:30,formula_amount:20};
 const service=createAttachmentService({
-  runPsql:async()=>JSON.stringify({environment,attachments:[savedAttachment]}),
+  runPsql:async()=>JSON.stringify({[lineId]:{environment,attachments:[savedAttachment]}}),
   calculateBase:async()=>{throw new Error('not used');},env:{},
 });
 const item={...environment,name:'JM柜',model_code:'JM',attachment_contract:2,quote_line_id:lineId,

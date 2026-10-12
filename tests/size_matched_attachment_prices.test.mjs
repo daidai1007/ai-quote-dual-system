@@ -70,7 +70,8 @@ test('real preview uses each child cabinet; snapshot and export keep effective p
         saved={environment:objects.find(value=>value.quote_result),attachments:objects.filter(value=>value.catalogue_quick_amount!==undefined)};
         return JSON.stringify(saved);
       }
-      if(sql.includes('FROM calc.attachment_quote_line l')) return JSON.stringify(saved);
+      if(sql.includes('FROM calc.attachment_quote_line l')) return JSON.stringify(
+        sql.includes('jsonb_object_agg')?{[saved.environment.quote_line_id]:saved}:saved);
       throw new Error('Unexpected offline SQL');
     }});
   const children=[{width_mm:800,height_mm:1800,depth_mm:700},{width_mm:600,height_mm:1800,depth_mm:500}];

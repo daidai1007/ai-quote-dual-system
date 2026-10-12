@@ -231,8 +231,26 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     'attachments',coalesce((SELECT jsonb_agg(s.cost_snapshot||jsonb_build_object('attachment_selection_id',s.attachment_selection_id,'quote_line_id',s.quote_line_id) ORDER BY s.attachment_selection_id)
       FROM calc.attachment_selection s WHERE s.quote_line_id=l.quote_line_id),'[]'))
     FROM calc.attachment_quote_line l WHERE quote_line_id=${sqlValue(uuid(lineId))}::uuid;`;}
+  function snapshotsSql(lineIds) {return `WITH selected_lines AS (
+      SELECT l.quote_line_id,l.environment_snapshot FROM calc.attachment_quote_line l
+      WHERE l.quote_line_id IN (${lineIds.map(lineId=>`${sqlValue(lineId)}::uuid`).join(',')})
+    ), selection_snapshots AS (
+      SELECT s.quote_line_id,jsonb_agg(s.cost_snapshot||jsonb_build_object(
+        'attachment_selection_id',s.attachment_selection_id,'quote_line_id',s.quote_line_id)
+        ORDER BY s.attachment_selection_id) AS attachments
+      FROM calc.attachment_selection s JOIN selected_lines l USING(quote_line_id)
+      GROUP BY s.quote_line_id
+    )
+    SELECT coalesce(jsonb_object_agg(l.quote_line_id::text,jsonb_build_object(
+      'environment',l.environment_snapshot,'attachments',coalesce(s.attachments,'[]'::jsonb))),'{}'::jsonb)
+    FROM selected_lines l LEFT JOIN selection_snapshots s USING(quote_line_id);`;}
   async function hydrateDocument(input) {
     if(!input || typeof input!=='object' || !Array.isArray(input.items)) throw new Error('items are required');
+    // Request-local batching only: copied rows share the read, not their
+    // validation or mutable results. Every later request reads fresh data.
+    const lineIds=[...new Set(input.items.filter(item=>item?.attachment_contract===2)
+      .map(item=>uuid(item.quote_line_id).toLowerCase()))];
+    const snapshots=lineIds.length?await query(snapshotsSql(lineIds)):{};
     const items=[];
     for(const [itemIndex,item] of (input.items||[]).entries()){
       if(item.attachment_contract!==2){
@@ -241,7 +259,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         if(ids.length && await query(`SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_price WHERE attachment_price_id IN (${ids.join(',')}) AND data_version IS NOT NULL));`)) throw new Error('附件V2报价缺少服务端报价行ID');
         items.push(item);continue;
       }
-      const saved=await query(snapshotSql(item.quote_line_id));
+      const saved=structuredClone(snapshots[item.quote_line_id.toLowerCase()]);
       if(!saved) throw new Error('附件报价行不存在，请重新计算');
       const providedAttachments=Array.isArray(item.attachments)?item.attachments:[];
       const customAttachments=providedAttachments.filter(row=>row?.custom===true).map(customAttachmentInput);

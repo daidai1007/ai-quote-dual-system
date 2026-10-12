@@ -124,7 +124,7 @@ COST_COLUMN_BACKGROUNDS = (
 )
 DETAIL_COLUMN_WIDTHS = (72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)
 MONEY_COLUMNS = frozenset((6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19))
-EDITABLE_COLUMNS = frozenset((4, 8, 18))
+EDITABLE_COLUMNS = frozenset((1, 4, 8, 18))
 MATERIAL_DIFFERENCE_COLUMN = 7
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
@@ -1720,6 +1720,16 @@ def _quote_unit_price_changed(window, row, column):
     window.refresh_summary()
 
 
+def _update_quote_item_name(window, item, text):
+    name = text.strip()
+    if not name:
+        return False
+    item["name"] = name
+    window.refresh_summary()
+    _schedule_order_workspace_save(window)
+    return True
+
+
 def _quote_name_changed(window, row, column):
     if getattr(window, "_scheme2_refreshing_quote", False) or column != 1 or row < 10:
         return
@@ -1728,13 +1738,8 @@ def _quote_name_changed(window, row, column):
     if not 0 <= index < len(items):
         return
     cell = window.scheme2_quote_preview.item(row, column)
-    name = cell.text().strip() if cell is not None else ""
-    if not name:
+    if not _update_quote_item_name(window, items[index], cell.text() if cell is not None else ""):
         _refresh_quote_page(window)
-        return
-    items[index]["name"] = name
-    window.refresh_summary()
-    _schedule_order_workspace_save(window)
 
 
 def _quote_cell_changed(window, row, column):
@@ -2827,6 +2832,10 @@ def _cost_cell_changed(window, row, column):
     cell = window.summary_table.item(row, column)
     if cell is None:
         return
+    if column == 1:
+        if not _update_quote_item_name(window, items[row], cell.text()):
+            window.refresh_summary()
+        return
     value = _number(cell.text(), -1)
     if value < 0:
         window.refresh_summary()
@@ -2942,6 +2951,8 @@ def _refresh_cost_table(window):
                 cell = QTableWidgetItem(text)
                 if column not in EDITABLE_COLUMNS:
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if column == 1:
+                    cell.setToolTip("双击修改名称，点击其他单元格确认；名称不能为空")
                 if column in (2, 5, 22):
                     cell.setForeground(QColor("#185FA5"))
                     font = cell.font()
