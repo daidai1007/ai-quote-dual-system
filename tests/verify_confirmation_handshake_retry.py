@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 from pathlib import Path
 import sys
 import urllib.error
@@ -28,6 +29,7 @@ class Worker:
         self.payload = payload or {"quote_id": "Q-RETRY"}
         self.succeeded = Recorder()
         self.failed = Recorder()
+        self.progress = Recorder()
         self.sleeps = []
 
     def run(self):
@@ -36,13 +38,18 @@ class Worker:
     def msleep(self, value):
         self.sleeps.append(value)
 
+    def parent(self):
+        return None
 
-layout_refresh._install_quote_api_worker_diagnostics({
+
+namespace = {
     "ApiWorker": Worker,
     "api_headers": lambda has_body=False: (
         {"Content-Type": "application/json"} if has_body else {}
     ),
-})
+}
+layout_refresh._install_quote_api_worker_diagnostics(namespace)
+Worker = namespace['ApiWorker']
 
 
 class Response:
@@ -128,5 +135,19 @@ assert worker.failed.values == [
 ordinary = Worker("https://quote.test/api/products/catalog")
 ordinary.run()
 assert Worker.original_calls == 1
+
+details={'message':'附件成本存在错误，不能确认或导出',
+         'issues':[{'line_number':2,'attachment_name':'固定底座','reason':'缺少底座高度'}]}
+def validation_error(request,timeout=0):
+    raise urllib.error.HTTPError(request.full_url,422,'Invalid quotation',{},
+        io.BytesIO(json.dumps(details,ensure_ascii=False).encode('utf-8')))
+layout_refresh.urllib.request.urlopen=validation_error
+try:
+    worker=Worker('https://quote.test/api/quotes/preview-check')
+    worker.run()
+finally:
+    layout_refresh.urllib.request.urlopen=original_urlopen
+assert worker.attempt_count==1 and worker.sleeps==[]
+assert json.loads(worker.failed.values[0])==details
 
 print("quote confirmation TLS retry passed")

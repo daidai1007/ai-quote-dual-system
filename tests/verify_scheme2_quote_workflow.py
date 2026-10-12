@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -17,6 +18,7 @@ if not core.is_dir():
     raise RuntimeError("AI_QUOTE_V3_CORE_ROOT must point to the verified V3 core")
 
 from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 from pypdf import PdfWriter  # noqa: E402
 
@@ -142,8 +144,12 @@ finally:
 assert window.attachments == [{"item_name": "照明灯/行程开关", "model_code": "220V"}]
 
 window.show_section(scheme2_ui.COST_ROUTE)
-window.scheme2_cost_generate.click()
-app.processEvents()
+def preview_checked(worker):
+    assert worker.url.endswith('/api/quotes/preview-check')
+    QTimer.singleShot(0,lambda:worker.succeeded.emit({'valid':True,'checked_items':1,'persisted':False}))
+with patch.object(namespace['ApiWorker'],'start',preview_checked):
+    window.scheme2_cost_generate.click()
+    wait_until(lambda:not window._scheme2_document_controller.busy)
 assert window.stack.currentIndex() == scheme2_ui.QUOTE_ROUTE
 quote_text = " ".join(
     window.scheme2_quote_preview.item(row, column).text()

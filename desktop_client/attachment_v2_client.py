@@ -6,6 +6,7 @@ Single-cabinet and ganged V2 selections share server previews and immutable quot
 from __future__ import annotations
 import copy
 import json
+import math
 import re
 import unicodedata
 from decimal import Decimal, ROUND_HALF_UP
@@ -93,6 +94,48 @@ def missing_manual_dimensions(row):
     return missing
 
 
+def is_base_attachment(row):
+    return not row.get("custom") and (
+        str(row.get("category_level1") or row.get("attachment_category") or "").strip() == "底座"
+        or str(row.get("item_name") or row.get("name") or "").strip() in {"固定底座", "活动底座"}
+    )
+
+
+def attachment_base_height(row, automatic=None):
+    """A cabinet or catalogue height is never an implicit base height."""
+    value = (row.get("manual_inputs") or {}).get("底座高度", automatic)
+    try:
+        value = float(value)
+        return value if math.isfinite(value) and value > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def pending_base_attachment(row):
+    """Discard a legacy match until the user supplies the missing base height."""
+    pending = copy.deepcopy(row)
+    for key in list(pending):
+        if key.startswith("size_match_") or key in COST_KEYS or key in {
+            "attachment_price_id", "catalog_version", "width_mm", "height_mm", "depth_mm",
+            "model_code", "specification", "matched_specification", "matched_price", "price", "face_price",
+        }:
+            pending.pop(key, None)
+    if not pending.get("custom_amount_edited"):
+        pending.pop("quick_amount_override", None)
+        pending.pop("unit_price_override", None)
+    pending.update(status="PENDING_MANUAL", status_text="待补充尺寸：底座高度",
+                   pending_manual_dimensions=["底座高度"], quick_amount=0.0,
+                   formula_amount=0.0, formula_unit_cost=0.0,
+                   required_parameters=[{"name": "底座高度", "source": "MANUAL"}])
+    return pending
+
+
+def needs_base_height_resolution(window):
+    automatic = base_height(window)
+    return any(is_base_attachment(row) and attachment_base_height(row, automatic) is None
+               for row in getattr(window, "attachments", []) if isinstance(row, dict))
+
+
 def provisionalize_manual_dimension_result(result):
     """Make only missing-manual-dimension rows addable at zero UI amount."""
     if not isinstance(result, dict) or result.get("attachment_contract") != 2:
@@ -150,6 +193,10 @@ def provisionalize_manual_dimension_result(result):
 
 def match_catalog_attachment(selection, catalog, target_dimensions=None, product_code="", base_height_mm=None):
     """Resolve a price-free scheme selection against the live V2 catalogue."""
+    if is_base_attachment(selection):
+        base_height_mm = attachment_base_height(selection, base_height_mm)
+        if base_height_mm is None:
+            return None
     wanted_name = attachment_image_match_key(selection.get("item_name") or selection.get("name"))
     wanted_category = attachment_image_match_key(
         selection.get("category_level1") or selection.get("attachment_category")
@@ -237,7 +284,7 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
     )
     if sized_candidates and target_dimensions is not None:
         target = tuple(target_dimensions)
-        if category == "底座" and base_height_mm is not None and len(target) >= 3:
+        if is_base_attachment(selection) and len(target) >= 3:
             target = (target[0], float(base_height_mm), target[2])
         matched = None
         if category == "侧板":
@@ -451,12 +498,17 @@ def expand_ganged_fixed_bases_for_quote(window, rows, catalog, version=None):
                 width = float(cabinet["width_mm"])
                 height = float(cabinet["height_mm"])
                 depth = float(cabinet["depth_mm"])
-                base = float(cabinet["base_height_mm"])
+                previous = next((row for row in fixed_sources if row.get("ganged_cabinet_index",
+                                     row.get("ganged_fixed_base_index")) == index), source)
+                base = attachment_base_height(previous, cabinet.get("base_height_mm"))
+                if base is None:
+                    missing.append(f"柜体{index + 1}固定底座高度未填写")
+                    continue
             except (KeyError, TypeError, ValueError):
                 missing.append(f"柜体{index + 1}固定底座尺寸")
                 continue
             matched = match_catalog_attachment(
-                source,
+                {**source, "manual_inputs": {**(source.get("manual_inputs") or {}), "底座高度": base}},
                 catalog,
                 target_dimensions=(width, height, depth),
                 product_code=product_code,
@@ -475,6 +527,7 @@ def expand_ganged_fixed_bases_for_quote(window, rows, catalog, version=None):
                 "ganged_cabinet_index": index,
                 "ganged_fixed_base_split_count": len(cabinets),
                 "ganged_fixed_base_specification": subcabinet_specification(cabinet),
+                "manual_inputs": {**(source.get("manual_inputs") or {}), "底座高度": base},
             })
             expanded.append(resolved)
     return expanded, missing
@@ -650,8 +703,8 @@ def uses_base_height(item):
 def selected_input(item, automatic_base_height=None):
     manual_inputs = copy.deepcopy(item.get("manual_inputs") or {})
     # Compatibility for the currently deployed V2 API, where 底座高度 was
-    # classified as MANUAL.  The value still comes exclusively from the
-    # visible cabinet specification; users never enter it in the attachment row.
+    # classified as MANUAL.  The value comes from the
+    # visible cabinet specification, or from the attachment popup when absent.
     if automatic_base_height is not None and uses_base_height(item):
         manual_inputs["底座高度"] = automatic_base_height
     selected = {"attachment_price_id": item.get("attachment_price_id"), "quantity": item.get("quantity", 1),
@@ -1144,7 +1197,33 @@ def install_attachment_v2(namespace):
     dialog_class.refresh_category_browser = refresh_browser_v2
 
     def resolve_attachments_for_quote(window, succeeded, failed):
+        epoch = getattr(window, "_scheme2_calculation_epoch", 0)
         rows = [dict(item) for item in getattr(window, "attachments", []) if isinstance(item, dict)]
+        automatic = base_height(window)
+        for index, row in enumerate(rows):
+            if not is_base_attachment(row):
+                continue
+            height = attachment_base_height(row, automatic)
+            if height is None:
+                rows[index] = pending_base_attachment(row)
+            else:
+                row["manual_inputs"] = {**(row.get("manual_inputs") or {}), "底座高度": height}
+        if any(is_base_attachment(row) and attachment_base_height(row) is None for row in rows):
+            from scheme2_ui import AttachmentEditor
+            editable = {**environment(window, []), "attachments": rows, "quantity": 1,
+                        "scheme2_cost_settings": copy.deepcopy(getattr(window, "scheme2_defaults", {})),
+                        "quick": {"attachment_fee": 0, "total_cost": 0},
+                        "formula": {"attachment_fee": 0, "total_cost": 0}}
+            dialog = AttachmentEditor(window, editable)
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            dialog.deleteLater()
+            if not accepted or any(is_base_attachment(row) and (
+                    attachment_base_height(row) is None or row.get("status") in {"ERROR", "PENDING_MANUAL"}
+                    ) for row in editable["attachments"]):
+                failed("底座高度未补充或尚未计算成功，请在已选附件弹窗中填写底座高度后再计算。")
+                return
+            rows = editable["attachments"]
+        window.attachments = rows
         pending = [item for item in rows if not item.get("custom") and item.get("attachment_price_id") is None]
         needs_ganged_base_catalog = (
             ganged(window) and any(_is_fixed_base_selection(item) for item in rows)
@@ -1162,7 +1241,7 @@ def install_attachment_v2(namespace):
         window._scheme2_attachment_catalog_worker = worker
 
         def loaded(body):
-            if not isValid(window):
+            if not isValid(window) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
                 return
             catalog = [dict(item) for item in body.get("items", []) if isinstance(item, dict)]
             version = body.get("data_version")
@@ -1230,6 +1309,9 @@ def install_attachment_v2(namespace):
         if attachment.get("custom") is True:
             succeeded(copy.deepcopy(attachment))
             return
+        if is_base_attachment(attachment) and attachment_base_height(attachment) is None:
+            failed("请先在附件弹窗中填写底座高度，再匹配并计算底座。")
+            return
         if _catalogue_id(attachment.get("attachment_price_id")) is None:
             base_url = str(window.base_url() or "")
             url = base_url.split("/api/", 1)[0].rstrip("/") + "/api/attachments/catalog?v=2"
@@ -1240,12 +1322,16 @@ def install_attachment_v2(namespace):
 
             def catalog_loaded(body):
                 catalog = [dict(item) for item in body.get("items", []) if isinstance(item, dict)]
+                target = (quote_item.get("width_mm"), quote_item.get("height_mm"), quote_item.get("depth_mm"))
+                child_index = attachment.get("ganged_cabinet_index", attachment.get("ganged_fixed_base_index"))
+                children = quote_item.get("ganged_cabinets") or []
+                if child_index is not None and 0 <= int(child_index) < len(children):
+                    child = children[int(child_index)]
+                    target = (child.get("width_mm"), child.get("height_mm"), child.get("depth_mm"))
                 match = match_catalog_attachment(
                     attachment,
                     catalog,
-                    target_dimensions=(
-                        quote_item.get("width_mm"), quote_item.get("height_mm"), quote_item.get("depth_mm")
-                    ),
+                    target_dimensions=target,
                     product_code=str(quote_item.get("product_code") or ""),
                 )
                 if match is None:

@@ -275,7 +275,7 @@ FORMULA_TEMPLATE_CACHE_MAX_ENTRIES = 64
 DOOR_DEFAULT_WIDTH_THRESHOLD_MM = 800.0
 AUTOMATIC_DOOR_SELECTION = "automatic"
 MANUAL_DOOR_SELECTION = "manual"
-FORMULA_TEMPLATE_MAX_ATTEMPTS = 3
+FORMULA_TEMPLATE_MAX_ATTEMPTS = 1
 FORMULA_TEMPLATE_RETRY_DELAYS_MS = (500, 1000)
 FORMULA_TEMPLATE_DEBOUNCE_MS = 420
 FORMULA_TEMPLATE_BUSY_RECHECK_MS = 160
@@ -294,6 +294,11 @@ ATTACHMENT_CATEGORY_PRODUCT_FAMILIES = {
 LOGGER = logging.getLogger("ai_quote.client")
 
 
+def _quote_worker_cancelled(worker):
+    return bool(getattr(worker, "_client_cancelled", False)
+                or getattr(worker, "isInterruptionRequested", lambda: False)())
+
+
 def _tls_handshake_timed_out(error: Exception) -> bool:
     text = str(error or "").strip().lower()
     return "handshake" in text and ("timed out" in text or "timeout" in text)
@@ -307,7 +312,7 @@ def _confirmation_retryable(url: str, error: Exception) -> bool:
         # A TLS handshake timeout happens before the POST body reaches the
         # server, so retrying cannot duplicate a confirmed quotation.
         return _tls_handshake_timed_out(error)
-    if endpoint.endswith("/api/quotes/confirm-check"):
+    if endpoint.endswith(("/api/quotes/confirm-check", "/api/quotes/preview-check")):
         return _formula_template_error_is_transient(error)
     return False
 
@@ -338,16 +343,22 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             owner = self.parent()
+            self._calculation_epoch = getattr(owner, "_scheme2_calculation_epoch", None)
             if owner is not None:
-                self.progress.connect(lambda event: _update_calculation_progress(owner, event))
+                self.progress.connect(lambda event: _update_calculation_progress(owner, event)
+                    if not _quote_worker_cancelled(self) and (self._calculation_epoch is None
+                        or self._calculation_epoch == getattr(owner, "_scheme2_calculation_epoch", 0)) else None)
 
     worker_class = ProgressApiWorker
     namespace["ApiWorker"] = worker_class
 
     def run_with_quote_diagnostics(self):
+        if _quote_worker_cancelled(self):
+            return
         url = str(getattr(self, "url", "") or "")
         endpoint = url.rstrip("/")
         is_confirmation = endpoint.endswith((
+            "/api/quotes/preview-check",
             "/api/quotes/confirm-check",
             "/api/quotes/confirm",
         ))
@@ -362,6 +373,8 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
             )
             for attempt in range(1, CONFIRM_REQUEST_MAX_ATTEMPTS + 1):
                 self.attempt_count = attempt
+                self.progress.emit({"stage":"document_request", "endpoint":endpoint.rsplit('/',1)[-1],
+                                    "attempt":attempt, "quote_id":payload.get("quote_id", "")})
                 try:
                     request = urllib.request.Request(
                         url,
@@ -395,6 +408,18 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
                         )
                         self.msleep(CONFIRM_REQUEST_RETRY_DELAYS_MS[delay_index])
                         continue
+                    if isinstance(error, urllib.error.HTTPError):
+                        try:
+                            detail = json.loads(error.read().decode("utf-8"))
+                        except (ValueError, UnicodeError):
+                            detail = {}
+                        if not isinstance(detail, dict):
+                            detail = {}
+                        if endpoint.endswith('/api/quotes/preview-check') and error.code in (404,405):
+                            detail = {"message":"报价预检接口尚未部署，请更新 API 后重试。"}
+                        if detail.get("message"):
+                            self.failed.emit(json.dumps(detail, ensure_ascii=False) if detail.get("issues") else detail["message"])
+                            return
                     self.failed.emit(_confirmation_failure_text(error))
                     return
 
@@ -442,6 +467,10 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
                 raise RuntimeError("报价服务返回结果缺少公式法报价")
             if not isinstance(result.get("quick_quote"), dict):
                 raise RuntimeError("报价服务返回结果缺少快速报价")
+            if _quote_worker_cancelled(self):
+                return
+            if getattr(self, "_calculation_epoch", None) is not None:
+                result["_client_calculation_epoch"] = self._calculation_epoch
             LOGGER.info(
                 "dual quote request succeeded product=%s quote_id=%s elapsed=%.3fs",
                 payload.get("product_code"),
@@ -450,6 +479,8 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
             )
             self.succeeded.emit(result)
         except urllib.error.HTTPError as error:
+            if _quote_worker_cancelled(self):
+                return
             try:
                 detail = error.read().decode("utf-8")
             except Exception:
@@ -465,6 +496,8 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
             )
             self.failed.emit(message)
         except Exception as error:
+            if _quote_worker_cancelled(self):
+                return
             message = str(error) or error.__class__.__name__
             LOGGER.warning(
                 "dual quote request failed product=%s quote_id=%s elapsed=%.3fs error=%s",
@@ -547,6 +580,11 @@ def _read_quote_response(response, on_progress):
 
 def _update_calculation_progress(window, event):
     stage = str(event.get("stage") or "")
+    if stage == "document_request":
+        callback = getattr(window, "_scheme2_document_request_progress", None)
+        if callable(callback):
+            callback(event)
+        return
     labels = {"template": (3, "读取公式模板"), "cabinet": (3, "计算柜体成本"),
               "attachments": (4, "计算附件价格与成本"), "snapshot": (5, "保存报价快照")}
     if stage not in labels:
@@ -690,7 +728,7 @@ def _formula_template_input_signature(window) -> tuple:
 
 
 class _FormulaTemplateWorker(QThread):
-    """Load one formula template with bounded retries for Render cold starts."""
+    """Load once; the operator decides whether to retry a failed request."""
 
     succeeded = Signal(dict)
     failed = Signal(str)
@@ -706,6 +744,8 @@ class _FormulaTemplateWorker(QThread):
 
     def run(self) -> None:
         for attempt in range(1, FORMULA_TEMPLATE_MAX_ATTEMPTS + 1):
+            if self.isInterruptionRequested():
+                return
             self.attempt_count = attempt
             try:
                 self.progress.emit({"stage": "template", "attempt": attempt})
@@ -716,6 +756,8 @@ class _FormulaTemplateWorker(QThread):
                     FORMULA_TEMPLATE_MAX_ATTEMPTS,
                 )
                 payload = _fetch_formula_template(self.url, self.product_code, self.headers_factory)
+                if self.isInterruptionRequested():
+                    return
                 LOGGER.info(
                     "formula template request succeeded product=%s attempt=%s",
                     self.product_code,
@@ -724,6 +766,8 @@ class _FormulaTemplateWorker(QThread):
                 self.succeeded.emit(payload)
                 return
             except Exception as error:
+                if self.isInterruptionRequested():
+                    return
                 message = _formula_template_error_text(error)
                 LOGGER.warning(
                     "formula template request failed product=%s attempt=%s/%s error=%s",
@@ -732,18 +776,6 @@ class _FormulaTemplateWorker(QThread):
                     FORMULA_TEMPLATE_MAX_ATTEMPTS,
                     message,
                 )
-                if (
-                    attempt < FORMULA_TEMPLATE_MAX_ATTEMPTS
-                    and _formula_template_error_is_transient(error)
-                ):
-                    self.retrying.emit(
-                        attempt + 1, FORMULA_TEMPLATE_MAX_ATTEMPTS, message
-                    )
-                    delay_index = min(
-                        attempt - 1, len(FORMULA_TEMPLATE_RETRY_DELAYS_MS) - 1
-                    )
-                    self.msleep(FORMULA_TEMPLATE_RETRY_DELAYS_MS[delay_index])
-                    continue
                 self.failed.emit(message)
                 return
 
@@ -774,6 +806,7 @@ class _GangedQuoteWorker(QThread):
         self.weight_total = weight_total
         self.area_total = area_total
         self.attachment_payload = dict(attachment_payload) if attachment_payload else None
+        self._calculation_epoch = getattr(parent, "_scheme2_calculation_epoch", None)
 
     @staticmethod
     def _sum(results: list[dict], section: str, key: str) -> float | None:
@@ -791,6 +824,8 @@ class _GangedQuoteWorker(QThread):
     def run(self) -> None:
         started = time.monotonic()
         try:
+            if _quote_worker_cancelled(self):
+                return
             batch_url = self.url.split("/api/", 1)[0].rstrip("/") + "/api/quotes/calculate-ganged"
             batch_payload = {"cabinets": self.payloads, "attachment_total": self.attachment_total,
                 "area_total": self.area_total, "attachment_payload": self.attachment_payload}
@@ -810,6 +845,10 @@ class _GangedQuoteWorker(QThread):
                         or len(aggregate.get("ganged_cabinet_results") or []) != len(self.payloads)
                         or (self.attachment_payload and aggregate.get("attachment_contract") != 2)):
                     raise RuntimeError("并柜批量报价返回了无效数据")
+                if _quote_worker_cancelled(self):
+                    return
+                if self._calculation_epoch is not None:
+                    aggregate["_client_calculation_epoch"] = self._calculation_epoch
                 self.succeeded.emit(aggregate)
                 return
             except urllib.error.HTTPError as error:
@@ -818,6 +857,8 @@ class _GangedQuoteWorker(QThread):
                 LOGGER.warning("ganged batch endpoint unavailable; using legacy single requests")
             results = []
             for payload in self.payloads:
+                if _quote_worker_cancelled(self):
+                    return
                 self.progress.emit({"stage": "cabinet", "completed": len(results), "total": len(self.payloads)})
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 headers = (
@@ -931,6 +972,8 @@ class _GangedQuoteWorker(QThread):
                 "ganged_area_m2": formula.get("product_area_m2"),
             }
             if self.attachment_payload:
+                if _quote_worker_cancelled(self):
+                    return
                 self.progress.emit({"stage": "attachments"})
                 snapshot_payload = {**self.attachment_payload, "base_result": aggregate}
                 body = json.dumps(snapshot_payload, ensure_ascii=False).encode("utf-8")
@@ -945,14 +988,22 @@ class _GangedQuoteWorker(QThread):
                     aggregate = json.loads(response.read().decode("utf-8"))
                 if not isinstance(aggregate, dict) or aggregate.get("attachment_contract") != 2:
                     raise RuntimeError("并柜附件V2快照返回了无效数据")
+            if _quote_worker_cancelled(self):
+                return
+            if self._calculation_epoch is not None:
+                aggregate["_client_calculation_epoch"] = self._calculation_epoch
             self.succeeded.emit(aggregate)
         except urllib.error.HTTPError as exc:
+            if _quote_worker_cancelled(self):
+                return
             try:
                 detail = exc.read().decode("utf-8")
             except Exception:
                 detail = str(exc)
             self.failed.emit(detail or f"HTTP {exc.code}")
         except Exception as exc:
+            if _quote_worker_cancelled(self):
+                return
             self.failed.emit(str(exc))
         finally:
             LOGGER.info("ganged request finished children=%s elapsed=%.3fs", len(self.payloads), time.monotonic() - started)
@@ -976,32 +1027,14 @@ class _GangedFormulaTemplateWorker(QThread):
         try:
             templates = []
             for index, product_code in enumerate(self.product_codes):
-                payload = None
-                for attempt in range(1, FORMULA_TEMPLATE_MAX_ATTEMPTS + 1):
-                    try:
-                        self.progress.emit({"stage": "template", "completed": index,
-                            "total": len(self.product_codes), "attempt": attempt})
-                        payload = _fetch_formula_template(
-                            self.base_url + "/api/quotes/formula-template", product_code, self.headers_factory)
-                        break
-                    except Exception as error:
-                        if (
-                            attempt < FORMULA_TEMPLATE_MAX_ATTEMPTS
-                            and _formula_template_error_is_transient(error)
-                        ):
-                            self.retrying.emit(
-                                product_code,
-                                attempt + 1,
-                                FORMULA_TEMPLATE_MAX_ATTEMPTS,
-                                _formula_template_error_text(error),
-                            )
-                            delay_index = min(
-                                attempt - 1,
-                                len(FORMULA_TEMPLATE_RETRY_DELAYS_MS) - 1,
-                            )
-                            self.msleep(FORMULA_TEMPLATE_RETRY_DELAYS_MS[delay_index])
-                            continue
-                        raise
+                if self.isInterruptionRequested():
+                    return
+                self.progress.emit({"stage": "template", "completed": index,
+                    "total": len(self.product_codes), "attempt": 1})
+                payload = _fetch_formula_template(
+                    self.base_url + "/api/quotes/formula-template", product_code, self.headers_factory)
+                if self.isInterruptionRequested():
+                    return
                 template = payload.get("template") if isinstance(payload, dict) else None
                 if not isinstance(template, dict):
                     raise RuntimeError(f"{product_code} 的公式模板返回无效数据")
@@ -1013,12 +1046,16 @@ class _GangedFormulaTemplateWorker(QThread):
                 templates.append(payload)
             self.succeeded.emit(templates)
         except urllib.error.HTTPError as exc:
+            if self.isInterruptionRequested():
+                return
             try:
                 detail = exc.read().decode("utf-8")
             except Exception:
                 detail = str(exc)
             self.failed.emit(detail or f"HTTP {exc.code}")
         except Exception as exc:
+            if self.isInterruptionRequested():
+                return
             self.failed.emit(str(exc))
 
 
@@ -2908,6 +2945,7 @@ def _start_ganged_formula_template_preparation(
         window,
     )
     window.ganged_template_worker = worker
+    epoch = getattr(window, "_scheme2_calculation_epoch", 0)
     signature_builder = getattr(window, "quote_input_signature", None)
     request_signature = signature_builder() if callable(signature_builder) else None
     calculate_button = getattr(window, "calculate_button", None)
@@ -2930,9 +2968,13 @@ def _start_ganged_formula_template_preparation(
     outcome = {"templates": None, "error": None}
 
     def templates_loaded(payloads):
+        if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+            return
         outcome["templates"] = list(payloads)
 
     def templates_failed(message):
+        if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+            return
         outcome["error"] = _ganged_error_text(message)
 
     def templates_retrying(product_code, attempt, total, message):
@@ -2944,6 +2986,8 @@ def _start_ganged_formula_template_preparation(
         )
 
     def preparation_finished():
+        if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+            return
         templates = outcome["templates"]
         error = outcome["error"]
         if templates is None and error is None:
@@ -3096,6 +3140,7 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         calculate_button.setText(f"正在计算 {len(payloads)} 个子柜…")
         calculate_button.setEnabled(False)
     window.worker = worker
+    epoch = getattr(window, "_scheme2_calculation_epoch", 0)
     outcome = {"settled": False}
     _set_ganged_calculation_state(
         window,
@@ -3104,6 +3149,8 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
     )
 
     def show_ganged_result(result):
+        if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+            return
         outcome["settled"] = True
         weight_blocked = window.weight_edit.blockSignals(True)
         if weight_total is None:
@@ -3127,6 +3174,8 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         )
 
     def show_ganged_error(message):
+        if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+            return
         outcome["settled"] = True
         detail = _ganged_error_text(message)
         rendered = f"并柜报价失败：{detail}"
@@ -3136,6 +3185,8 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         _set_ganged_calculation_state(window, rendered, "error")
 
     def finish_ganged_calculation():
+        if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+            return
         if isinstance(calculate_button, QPushButton):
             calculate_button.setText(
                 str(calculate_button.property("gangedIdleText") or "计算双报价")
@@ -8208,6 +8259,8 @@ def install_layout_refresh(namespace: dict) -> None:
         main_window.door_counts_changed = door_counts_changed_with_product_rules
     if callable(original_refresh_formula_inputs):
         def refresh_formula_inputs_with_retry(self):
+            if getattr(self, "_scheme2_calculation_paused", False):
+                return
             self._formula_template_headers_factory = namespace.get("api_headers")
             timer = getattr(self, "_formula_template_debounce_timer", None)
             if isinstance(timer, QTimer):
@@ -8262,6 +8315,8 @@ def install_layout_refresh(namespace: dict) -> None:
             return None
 
         def start_formula_template_request(self):
+            if getattr(self, "_scheme2_calculation_paused", False):
+                return
             code = self.selected_product_code()
             entry = self.product_catalog.get(self.product_combo.currentData() or "", {})
             if not code or entry.get("method") != "formula":
@@ -8411,6 +8466,8 @@ def install_layout_refresh(namespace: dict) -> None:
         main_window._start_formula_template_request = start_formula_template_request
     if callable(original_calculate):
         def calculate_with_ganged_cabinets(self):
+            if getattr(self, "_scheme2_calculation_paused", False):
+                return
             self._formula_template_headers_factory = namespace.get("api_headers")
             if getattr(self, "quote_calculation_in_progress", False):
                 LOGGER.info("duplicate quote action ignored while request is running")
@@ -8466,6 +8523,7 @@ def install_layout_refresh(namespace: dict) -> None:
             button = getattr(self, "calculate_button", None)
             previous_worker = getattr(self, "worker", None)
             previous_result = getattr(self, "current_result", None)
+            epoch = getattr(self, "_scheme2_calculation_epoch", 0)
             started = time.monotonic()
             idle_text = "计算双报价"
             if isinstance(button, QPushButton):
@@ -8561,6 +8619,8 @@ def install_layout_refresh(namespace: dict) -> None:
                 outcome["error"] = _ganged_error_text(message)
 
             def finalize_quote_request():
+                if _quote_worker_cancelled(worker) or epoch != getattr(self, "_scheme2_calculation_epoch", 0):
+                    return
                 if outcome["finalized"]:
                     return
                 outcome["finalized"] = True

@@ -135,12 +135,14 @@ rows = [
         "item_name": "固定底座", "category_level1": "底座",
         "category_level2": "固定底座", "quantity": 1,
         "width_mm": 600, "depth_mm": 500, "height_mm": 100,
+        "manual_inputs": {"底座高度": 100},
         "ganged_fixed_base_match": True, "ganged_fixed_base_index": 0,
     },
     {
         "item_name": "固定底座", "category_level1": "底座",
         "category_level2": "固定底座", "quantity": 1,
         "width_mm": 900, "depth_mm": 500, "height_mm": 100,
+        "manual_inputs": {"底座高度": 100},
         "ganged_cabinet_index": 1,
     },
 ]

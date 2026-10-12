@@ -856,6 +856,9 @@ class AttachmentEditor(QDialog):
 
     def add_row(self, attachment=None):
         source = attachment if isinstance(attachment, dict) else {}
+        from attachment_v2_client import is_base_attachment, attachment_base_height, pending_base_attachment
+        if is_base_attachment(source) and attachment_base_height(source) is None:
+            source = pending_base_attachment(source)
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setRowHeight(row, 42)
@@ -989,6 +992,7 @@ class AttachmentEditor(QDialog):
             amount_editor.setValue(quick_amount)
         amount_editor.setProperty("schemeEdited", bool(source.get("custom_amount_edited")))
         amount_editor.setProperty("pending", pending)
+        amount_editor.setEnabled(not pending)
         amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "整批附件金额，支持人工修改")
         amount_editor.style().unpolish(amount_editor)
         amount_editor.style().polish(amount_editor)
@@ -1182,8 +1186,9 @@ class AttachmentEditor(QDialog):
                 data["custom_cost_edited"] = bool(cost_editor.property("schemeEdited"))
                 data["custom_amount_edited"] = bool(amount_editor.property("schemeEdited"))
             data["custom_amount_edited"] = bool(amount_editor.property("schemeEdited"))
-            if self._pending_dimensions(data) and not data["custom_amount_edited"]:
-                data.pop("quick_amount_override", None)
+            if self._pending_dimensions(data):
+                if not data["custom_amount_edited"]:
+                    data.pop("quick_amount_override", None)
             else:
                 data["quick_amount_override"] = round(amount, 2)
             data["quick_amount"] = round(amount, 2)
@@ -1766,7 +1771,7 @@ def _refresh_quote_page(window):
                 preview.setRowHeight(row, max(72, preview.rowHeight(row)))
         finally:
             window._scheme2_refreshing_quote = False
-    enabled = bool(getattr(window, "draft_items", []))
+    enabled = bool(getattr(window, "draft_items", [])) and not getattr(window, "_scheme2_document_busy", False)
     for button in (
         getattr(window, "scheme2_quote_print", None),
         getattr(window, "scheme2_quote_export", None),
@@ -2637,7 +2642,7 @@ def _build_cost_page(window):
     duplicate.clicked.connect(lambda: _duplicate_selected(window))
     edit.clicked.connect(lambda: _edit_selected(window))
     back.clicked.connect(lambda: window.show_section(OPTION_ROUTE))
-    generate.clicked.connect(lambda: window.show_section(QUOTE_ROUTE))
+    generate.clicked.connect(lambda: window._scheme2_document_controller.generate())
     undo.clicked.connect(lambda: _undo_delete(window))
     compact_key.currentIndexChanged.connect(lambda: _sync_compact_control(window))
     compact_value.editingFinished.connect(lambda: _apply_compact_control(window))
@@ -5405,9 +5410,70 @@ def _monitor_formula_calculation(window):
     timer.start()
 
 
+def _retire_paused_quote_worker(window, worker):
+    getattr(window, "_scheme2_paused_quote_workers", set()).discard(worker)
+    worker.deleteLater()
+    if getattr(window, "_scheme2_close_after_quote_pause", False) and not getattr(window, "_scheme2_paused_quote_workers", set()):
+        QTimer.singleShot(0, window.close)
+
+
+def _pause_quote_calculation(window):
+    """Cancel this client flow without terminating a live Qt/network thread."""
+    window._scheme2_calculation_epoch = getattr(window, "_scheme2_calculation_epoch", 0) + 1
+    window._scheme2_calculation_paused = True
+    window._scheme2_add_paused_at = time.monotonic()
+    window._scheme2_add_after_calculate = False
+    window._pending_formula_calculation = False
+    window.quote_calculation_in_progress = False
+    window.template_serial = getattr(window, "template_serial", 0) + 1
+    window.current_result = None
+    window.pending_quote_signature = None
+    for name in ("_scheme2_formula_monitor", "_scheme2_add_elapsed_timer", "_quote_progress_timer", "_formula_template_debounce_timer"):
+        timer = getattr(window, name, None)
+        if isinstance(timer, QTimer):
+            timer.stop()
+    retired = getattr(window, "_scheme2_paused_quote_workers", set())
+    window._scheme2_paused_quote_workers = retired
+    for name in ("worker", "template_worker", "ganged_template_worker", "_scheme2_attachment_catalog_worker"):
+        worker = getattr(window, name, None)
+        setattr(window, name, None)
+        if worker is None or worker in retired:
+            continue
+        worker._client_cancelled = True
+        worker.requestInterruption()
+        # Stop legacy core callbacks as well as the overlay callbacks. The
+        # thread stays owned and alive until its current network call returns.
+        for signal_name in ("succeeded", "failed", "progress", "retrying", "finished"):
+            signal = getattr(worker, signal_name, None)
+            if signal is not None:
+                try:
+                    signal.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+        retired.add(worker)
+        worker.finished.connect(lambda stopped=worker: _retire_paused_quote_worker(window, stopped))
+        if not worker.isRunning():
+            _retire_paused_quote_worker(window, worker)
+    window.scheme2_add_button.setEnabled(True)
+    window.scheme2_add_button.setText("重试")
+    window.scheme2_add_button.setToolTip("手动重新发起计算；不会自动重试")
+    progress = window.scheme2_add_progress
+    _set_add_progress(window, int(progress.property("step") or 3), "已暂停，点击重试重新计算")
+    progress.setProperty("paused", True)
+    _refresh_add_progress_display(window)
+    window.risk_label.setText("计算已暂停；旧任务结果不会采用，点击“重试”可重新计算。")
+    LOGGER.info("quote calculation paused by operator epoch=%s request_id=%s", window._scheme2_calculation_epoch,
+                getattr(window, "_quote_progress_request_id", ""))
+
+
 def _calculate_and_add(window):
-    if getattr(window, "quote_calculation_in_progress", False):
+    if getattr(window, "_scheme2_add_after_calculate", False) or getattr(window, "quote_calculation_in_progress", False):
+        _pause_quote_calculation(window)
         return
+    window._scheme2_calculation_epoch = getattr(window, "_scheme2_calculation_epoch", 0) + 1
+    epoch = window._scheme2_calculation_epoch
+    window._scheme2_calculation_paused = False
+    window._scheme2_add_paused_at = None
     window._scheme2_add_started_at = time.monotonic()
     window._scheme2_add_phase_key = None
     window._quote_progress_request_id = ""
@@ -5418,8 +5484,9 @@ def _calculate_and_add(window):
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and not item.get("custom") and item.get("attachment_price_id") is None
     ]
-    from attachment_v2_client import needs_computer_tray_resolution, needs_ganged_door_resolution, needs_installation_board_resolution
-    pending_doors = needs_ganged_door_resolution(window) or needs_installation_board_resolution(window) or needs_computer_tray_resolution(window)
+    from attachment_v2_client import needs_base_height_resolution, needs_computer_tray_resolution, needs_ganged_door_resolution, needs_installation_board_resolution
+    pending_doors = (needs_ganged_door_resolution(window) or needs_installation_board_resolution(window)
+                     or needs_computer_tray_resolution(window) or needs_base_height_resolution(window))
     current = getattr(window, "current_result", None)
     valid = not pending_attachments and not pending_doors and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
     if valid:
@@ -5427,11 +5494,14 @@ def _calculate_and_add(window):
         _finish_add(window)
         return
     window._scheme2_add_after_calculate = True
-    window.scheme2_add_button.setEnabled(False)
-    window.scheme2_add_button.setText("正在计算…")
+    window.scheme2_add_button.setEnabled(True)
+    window.scheme2_add_button.setText("暂停")
+    window.scheme2_add_button.setToolTip("暂停当前计算，停止自动继续；之后可人工重试")
     _set_add_progress(window, 1, "校验输入")
 
     def calculate_quote():
+        if epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+            return
         _set_add_progress(window, 3, "准备公式与报价请求")
         window.calculate()
         _monitor_formula_calculation(window)
@@ -5442,7 +5512,8 @@ def _calculate_and_add(window):
             window.show_error("附件价格库解析功能不可用")
             return
         _set_add_progress(window, 2, "读取附件价格库并匹配")
-        resolver(calculate_quote, window.show_error)
+        resolver(calculate_quote, lambda message: window.show_error(message)
+                 if epoch == getattr(window, "_scheme2_calculation_epoch", 0) else None)
         return
     _set_add_progress(window, 2, "附件价格已就绪")
     calculate_quote()
@@ -5464,9 +5535,10 @@ def _refresh_add_progress_display(window):
     step = int(progress.property("step") or 0)
     label = str(progress.property("stepLabel") or "")
     started = getattr(window, "_scheme2_add_started_at", None)
-    elapsed = max(0.0, time.monotonic() - started) if started is not None else 0.0
+    clock_end = getattr(window, "_scheme2_add_paused_at", None) or time.monotonic()
+    elapsed = max(0.0, clock_end - started) if started is not None else 0.0
     phase_started = getattr(window, "_scheme2_add_phase_started_at", started)
-    phase_elapsed = max(0.0, time.monotonic() - phase_started) if phase_started is not None else 0.0
+    phase_elapsed = max(0.0, clock_end - phase_started) if phase_started is not None else 0.0
     footer = progress.parentWidget()
     progress.ensurePolished()
     metrics = QFontMetrics(progress.font())
@@ -5487,6 +5559,8 @@ def _refresh_add_progress_display(window):
         display = f"{step}/5 {short_label} · {phase_elapsed:.1f}秒"
     if progress.property("failed"):
         display = f"{step}/5 失败 · {elapsed:.1f}秒"
+    elif progress.property("paused"):
+        display = f"{step}/5 已暂停 · {elapsed:.1f}秒"
     text_width = metrics.horizontalAdvance(display)
     width = min(available, ADD_PROGRESS_MAX_WIDTH, max(ADD_PROGRESS_MIN_WIDTH, text_width + ADD_PROGRESS_TEXT_PADDING))
     progress.setFixedWidth(width)
@@ -5521,6 +5595,7 @@ def _set_add_progress(window, step, label, failed=False, phase_key=None):
     progress.setProperty("step", int(step))
     progress.setProperty("stepLabel", str(label))
     progress.setProperty("failed", failed)
+    progress.setProperty("paused", False)
     _refresh_add_progress_display(window)
     progress.setProperty("failureReason", str(label).removeprefix("失败：").strip() if failed else "")
     if failed:
@@ -5606,6 +5681,8 @@ def _synchronize_export_remark(item, remark):
 
 
 def _finish_add(window):
+    if getattr(window, "_scheme2_calculation_paused", False):
+        return
     source_route = window.stack.currentIndex()
     before = len(getattr(window, "draft_items", []))
     editing = getattr(window, "_scheme2_edit_item", None)
@@ -6322,6 +6399,8 @@ def install_scheme2_ui(namespace):
         window.show_section(OPTION_ROUTE)
         _set_dirty(window, False)
         _apply_responsive(window)
+        from quote_document_progress import QuoteDocumentProgress
+        window._scheme2_document_controller = QuoteDocumentProgress(window, namespace, sys.modules[__name__])
         startup_workspace = next((
             argument for argument in sys.argv[1:]
             if str(argument).lower().endswith(ORDER_WORKSPACE_SUFFIX)
@@ -6348,6 +6427,11 @@ def install_scheme2_ui(namespace):
                 del window.validate_export_environment
 
     def close(window, event):
+        if getattr(window, "_scheme2_paused_quote_workers", set()):
+            window._scheme2_close_after_quote_pause = True
+            window.risk_label.setText("正在等待已暂停的网络请求结束后安全关闭客户端…")
+            event.ignore()
+            return
         worker = getattr(window, "_scheme2_page_worker", None)
         if worker is not None and worker.isRunning():
             worker.requestInterruption()
@@ -6382,6 +6466,10 @@ def install_scheme2_ui(namespace):
         return result
 
     def show_result(window, payload, *args, **kwargs):
+        if getattr(window, "_scheme2_calculation_paused", False) or (isinstance(payload, dict)
+                and payload.get("_client_calculation_epoch", getattr(window, "_scheme2_calculation_epoch", 0))
+                != getattr(window, "_scheme2_calculation_epoch", 0)):
+            return
         result = original_show_result(window, payload, *args, **kwargs)
         _stamp_quote_result_signature(window)
         if hasattr(window, "quote_right_stack"):
@@ -6391,10 +6479,15 @@ def install_scheme2_ui(namespace):
             window._scheme2_add_after_calculate = False
             window.scheme2_add_button.setEnabled(True)
             window.scheme2_add_button.setText("加入报价清单")
-            QTimer.singleShot(0, lambda: _finish_add(window))
+            epoch = getattr(window, "_scheme2_calculation_epoch", 0)
+            QTimer.singleShot(0, lambda: _finish_add(window)
+                              if epoch == getattr(window, "_scheme2_calculation_epoch", 0) else None)
         return result
 
     def show_error(window, message):
+        sender = window.sender()
+        if getattr(window, "_scheme2_calculation_paused", False) or getattr(sender, "_client_cancelled", False):
+            return
         window._scheme2_add_after_calculate = False
         if hasattr(window, "scheme2_add_button"):
             window.scheme2_add_button.setEnabled(True)

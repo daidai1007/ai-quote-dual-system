@@ -14,6 +14,7 @@ assert layout_refresh._formula_template_error_is_transient(http.client.Incomplet
 
 attempts = []
 payloads = []
+errors = []
 original_open = layout_refresh.urllib.request.urlopen
 original_delays = layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS
 
@@ -33,11 +34,17 @@ try:
     layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS = (0, 0)
     worker = layout_refresh._FormulaTemplateWorker("https://example.test/api/quotes/formula-template", "JP_SINGLE", lambda _json: {})
     worker.succeeded.connect(payloads.append)
+    worker.failed.connect(errors.append)
     worker.run()
+    assert len(attempts) == 1 and not payloads and errors
+    # A second worker represents an explicit click on Retry, not a retry loop.
+    retry = layout_refresh._FormulaTemplateWorker("https://example.test/api/quotes/formula-template", "JP_SINGLE", lambda _json: {})
+    retry.succeeded.connect(payloads.append)
+    retry.run()
 finally:
     layout_refresh.urllib.request.urlopen = original_open
     layout_refresh.FORMULA_TEMPLATE_RETRY_DELAYS_MS = original_delays
 
 assert len(attempts) == 2
 assert payloads[0]["template"]["template_code"] == "JP_SINGLE"
-print("PASS: formula template retries after IncompleteRead")
+print("PASS: IncompleteRead fails once; only an explicit new request retries")

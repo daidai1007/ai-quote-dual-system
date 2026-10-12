@@ -192,7 +192,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
   async function hydrateDocument(input) {
     if(!input || typeof input!=='object' || !Array.isArray(input.items)) throw new Error('items are required');
     const items=[];
-    for(const item of input.items||[]){
+    for(const [itemIndex,item] of (input.items||[]).entries()){
       if(item.attachment_contract!==2){
         if((item.attachments||[]).some(a=>a.catalog_version||a.rule_id||a.status)) throw new Error('附件V2报价缺少服务端报价行ID');
         const ids=(item.attachments||[]).filter(a=>a.attachment_price_id!=null).map(a=>id(a.attachment_price_id));
@@ -209,7 +209,19 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       if(Number(item.ganged_cabinet_count||1)!==Number(saved.environment.ganged_cabinet_count||1)
         ||canonical(item.ganged_cabinets||[])!==canonical(saved.environment.ganged_cabinets||[])) throw new Error('并柜明细已变化，请重新计算附件');
       if(canonical(catalogAttachments.map(attachmentInput))!==canonical(saved.attachments.map(attachmentInput))) throw new Error('附件选择或人工参数已变化，请重新计算');
-      if(saved.attachments.some(a=>a.status==='ERROR')) throw new Error('附件成本存在错误，不能确认或导出');
+      const failedAttachments=saved.attachments.filter(a=>a.status==='ERROR');
+      if(failedAttachments.length){
+        const issues=failedAttachments.map(attachment=>({
+          line_number:itemIndex+1,product_name:item.name||item.model_code||item.product_code||'未命名',
+          product_code:item.product_code||'',attachment_price_id:attachment.attachment_price_id,
+          attachment_name:attachment.item_name||attachment.model_code||'未命名附件',
+          reason:attachment.error||'附件成本计算失败',
+        }));
+        const error=new Error('附件成本存在错误，不能确认或导出：\n'+issues.map(issue=>
+          `第${issue.line_number}行报价（${issue.product_name}）的“${issue.attachment_name}”：${issue.reason}`).join('\n'));
+        error.statusCode=422;error.issues=issues;
+        throw error;
+      }
       const result=saved.environment.quote_result;
       let formula={...result.formula_cost};
       // Preserve the existing PRODUCT labor adjustment (13% management), never

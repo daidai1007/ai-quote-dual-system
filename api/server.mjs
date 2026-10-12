@@ -104,6 +104,7 @@ const dateValue = (value) => {
 };
 
 const clientErrorStatus = (error) => {
+  if(Number.isInteger(error?.statusCode)&&error.statusCode>=400&&error.statusCode<500) return error.statusCode;
   const message = String(error?.message || '');
   return /required|requires|must be|cannot exceed|too large|too long|positive number|non-negative number|valid UTF-8 JSON|provided together|door combination|negative price sign only|drawing_context|报价日期无效|柜体料厚|废料系数|并柜|材料重量|副导航栏|界面材料单价|最新柜体材料表没有|缺少材质.+密度或有效材料单价|人工成本必须|没有适用人工|人工公式|辅材 BOM|辅材数量规则/i.test(message)
     ? 400 : 500;
@@ -1100,7 +1101,7 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
       const output = await runPsql(confirmQuoteSql(input));
       return json(res, 200, output ? JSON.parse(output) : { confirmed: false });
     } catch (error) {
-      return json(res, clientErrorStatus(error), { error: 'quote_confirm_failed', message: error.message });
+      return json(res, clientErrorStatus(error), { error: 'quote_confirm_failed', message: error.message, issues:error.issues||[] });
     }
   }
   if (req.method === 'POST' && req.url === '/api/quotes/confirm-check') {
@@ -1113,7 +1114,17 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
       const checked = output ? JSON.parse(output) : { confirmed: false };
       return json(res, 200, { ...checked, dry_run: true, persisted: false });
     } catch (error) {
-      return json(res, clientErrorStatus(error), { error: 'quote_confirm_check_failed', message: error.message });
+      return json(res, clientErrorStatus(error), { error: 'quote_confirm_check_failed', message: error.message, issues:error.issues||[] });
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/quotes/preview-check') {
+    try {
+      const input=await readBody(req);
+      if(!Array.isArray(input?.items)||!input.items.length) return json(res,400,{error:'quote_preview_check_failed',message:'报价清单不能为空'});
+      const checked=await attachmentService.hydrateDocument(input);
+      return json(res,200,{valid:true,checked_items:checked.items.length,persisted:false});
+    } catch(error) {
+      return json(res,clientErrorStatus(error),{error:'quote_preview_check_failed',message:error.message,issues:error.issues||[]});
     }
   }
   if (req.method === 'GET' && req.url === '/api/products/catalog') {
