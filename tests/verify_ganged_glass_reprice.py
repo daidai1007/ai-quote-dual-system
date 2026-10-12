@@ -83,6 +83,9 @@ class GlassReprice(unittest.TestCase):
             quick={"attachment_fee": 0, "total_cost": 500})
 
     def test_both_child_sizes_reprice_and_refresh_popup_totals(self):
+        self.item.update(attachment_contract=2,quote_line_id='11111111-1111-4111-8111-111111111111',
+                         attachment_confirmation_inputs=v2.confirmation_inputs(self.item['attachments']))
+        original_confirmation=copy.deepcopy(self.item['attachment_confirmation_inputs'])
         editor = ui.AttachmentEditor(self.window, self.item)
         self.addCleanup(editor.close)
         for index, (height, width) in enumerate(((500, 400), (600, 300))):
@@ -100,6 +103,8 @@ class GlassReprice(unittest.TestCase):
             self.assertFalse(editor.table.cellWidget(index, editor.COL_AMOUNT).property("pending"))
             self.assertEqual(self.requests[-1]["ganged_cabinets"], CHILDREN)
         editor.accept()
+        self.assertTrue(self.item['attachment_snapshot_dirty'])
+        self.assertEqual(self.item['attachment_confirmation_inputs'],original_confirmation)
         self.assertEqual(self.item["quick"]["attachment_fee"], 200)
         self.assertAlmostEqual(self.item["formula"]["attachment_fee"], 20.9)
         self.assertTrue(all(row["status"] == "CALCULATED" for row in self.item["attachments"]))

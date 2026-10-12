@@ -185,6 +185,48 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     const previewed=await preview(input);
     return persistCalculated(input,previewed,{...base,formula_cost:{...base.formula_cost},quick_quote:{...base.quick_quote}});
   }
+  async function recalculateLine(input) {
+    const saved=await query(snapshotSql(input.quote_line_id));
+    if(!saved?.environment?.quote_result) throw new Error('附件报价行不存在，请重新计算整柜');
+    const environment=saved.environment;
+    const supplied=input.environment||environment;
+    if(attachmentEnvironmentChange(supplied,environment)
+      ||canonical(supplied.ganged_cabinets||[])!==canonical(environment.ganged_cabinets||[]))
+      throw new Error('柜体参数已变化，请重新计算整柜');
+    // Reuse only the authoritative cabinet result. Never accept client totals
+    // or rewrite the old snapshot (which remains an immutable audit record).
+    const base=structuredClone(environment.quote_result);
+    if(!base.formula_cost||typeof base.formula_cost!=='object'
+      ||!base.quick_quote||typeof base.quick_quote!=='object')
+      throw new Error('柜体成本快照不完整，请重新计算整柜');
+    base.risk_flags=(base.risk_flags||[]).filter(risk=>risk.code!=='attachment_error');
+    const formula=base.formula_cost;
+    if(formula.total_cost==null){
+      const components=['material_cost','auxiliary_cost','labor_cost','spray_cost','management_fee'];
+      if(components.some(key=>formula[key]==null||!Number.isFinite(Number(formula[key]))))
+        throw new Error('柜体成本快照不完整，请重新计算整柜');
+      formula.total_cost=round(components.reduce((sum,key)=>sum+Number(formula[key]),0));
+      formula.attachment_fee=0;
+    }
+    const children=environment.ganged_cabinets||[];
+    const replay={...environment,quote_id:base.quote_id,
+      material_unit_price_override:environment.material_unit_price,
+      attachments:input.attachments,
+      ganged_cabinet_inputs:children.map((child,index)=>{
+        const previous=saved.attachments.find(row=>row.ganged_cabinet_index===index);
+        return {...child,product_code:previous?.environment?.product_code||child.product_code||environment.product_code};
+      })};
+    const previewed=await preview(replay);
+    const errors=previewed.attachments.filter(row=>row.status==='ERROR');
+    if(errors.length){
+      const error=new Error(errors.map(row=>`${row.item_name}：${row.error}`).join('；'));
+      error.statusCode=422;
+      error.issues=errors.map(row=>({attachment_price_id:row.attachment_price_id,
+        attachment_name:row.item_name,reason:row.error}));
+      throw error;
+    }
+    return persistCalculated(replay,previewed,base);
+  }
   function snapshotSql(lineId) {return `SELECT jsonb_build_object('environment',l.environment_snapshot,
     'attachments',coalesce((SELECT jsonb_agg(s.cost_snapshot||jsonb_build_object('attachment_selection_id',s.attachment_selection_id,'quote_line_id',s.quote_line_id) ORDER BY s.attachment_selection_id)
       FROM calc.attachment_selection s WHERE s.quote_line_id=l.quote_line_id),'[]'))
@@ -243,5 +285,5 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     }
     return {...input,items};
   }
-  return {catalog,preview,calculate,snapshotGanged,hydrateDocument,hasActive:async()=>query("SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_catalog_version WHERE status='ACTIVE'));")};
+  return {catalog,preview,calculate,snapshotGanged,recalculateLine,hydrateDocument,hasActive:async()=>query("SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_catalog_version WHERE status='ACTIVE'));")};
 }

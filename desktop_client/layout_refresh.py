@@ -1711,6 +1711,12 @@ def _match_ganged_fixed_bases(
         )
         if matched is None:
             return []
+        # Raw V2 catalogue rows use data_version; do not lose their identity
+        # when the calculation boundary rematches automatic child bases.
+        version = matched.get("catalog_version") or matched.get("data_version")
+        if version:
+            matched["catalog_version"] = version
+        matched["manual_inputs"] = {**(matched.get("manual_inputs") or {}), "底座高度": base_height}
         matched[GANGED_FIXED_BASE_MATCH_KEY] = True
         matched[GANGED_FIXED_BASE_INDEX_KEY] = index
         matched["ganged_fixed_base_split_count"] = len(rows)
@@ -2848,7 +2854,7 @@ def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | Non
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and not item.get("custom")
     ]
-    v2_rows = [item for item in rows if item.get("catalog_version")]
+    v2_rows = [item for item in rows if item.get("catalog_version") or item.get("data_version")]
     if not v2_rows:
         return None
     if len(v2_rows) != len(rows):

@@ -1148,6 +1148,11 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
       return json(res,200,await attachmentService.preview(input));
     } catch(error) { return json(res,400,{error:'attachment_preview_failed',message:error.message}); }
   }
+  if (req.method === 'POST' && req.url === '/api/attachments/recalculate-line') {
+    try { return json(res,200,await attachmentService.recalculateLine(await readBody(req))); }
+    catch(error) { return json(res,clientErrorStatus(error),{
+      error:'attachment_snapshot_recalculate_failed',message:error.message,issues:error.issues||[]}); }
+  }
   if (req.method === 'POST' && req.url === '/api/attachments/snapshot-ganged') {
     try {
       const input=normalizeProductVariant(validateRequest(await readBody(req)));

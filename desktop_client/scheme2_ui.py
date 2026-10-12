@@ -768,6 +768,8 @@ class AttachmentEditor(QDialog):
         super().__init__(window)
         self.window = window
         self.item = item
+        from attachment_v2_client import confirmation_inputs
+        self.original_snapshot_inputs = confirmation_inputs(item.get("attachments", []))
         # Draft attachments and quote amounts remain per cabinet (or per
         # complete ganged set). Only the editor projects them to order totals.
         self.cabinet_quantity = max(1, int(_number(item.get("quantity", 1), 1)))
@@ -1224,6 +1226,9 @@ class AttachmentEditor(QDialog):
                 data["selection_source"] = "QUOTE_LOCAL"
             rows.append(data)
         self.item["attachments"] = rows
+        from attachment_v2_client import confirmation_inputs
+        if self.item.get("attachment_contract") == 2 and confirmation_inputs(rows) != self.original_snapshot_inputs:
+            self.item["attachment_snapshot_dirty"] = True
         new_quick_total = sum(_number(row.get("quick_amount"), _attachment_amount(row)) for row in rows)
         new_formula_total = sum(_number(row.get("formula_amount"), 0) for row in rows)
         for quote, previous, current in (

@@ -804,6 +804,30 @@ def confirmation_inputs(rows):
     return frozen
 
 
+def attachment_snapshot_needs_refresh(item):
+    if item.get("attachment_contract") != 2 or not item.get("quote_line_id"):
+        return False
+    if item.get("attachment_snapshot_dirty"):
+        return True
+    frozen = item.get("attachment_confirmation_inputs")
+    if not isinstance(frozen, list):
+        return False
+    rows = [row for row in item.get("attachments", []) if not row.get("custom")]
+    if len(rows) != len(frozen):
+        return True
+    for row, snapshot in zip(rows, frozen):
+        actual = selected_input(row)
+        for key in ("attachment_price_id", "manual_inputs", "attachment_price_sign", "ganged_cabinet_index"):
+            if key == "attachment_price_id" and row.get(key) is None:
+                continue  # Legacy display rows can recover their ID from the frozen input.
+            default = {} if key == "manual_inputs" else 1 if key == "attachment_price_sign" else None
+            if actual.get(key, default) != snapshot.get(key, default):
+                return True
+        if row.get("cost_quantity_manual") and actual["quantity"] != snapshot.get("quantity", 1):
+            return True
+    return False
+
+
 def restore_confirmation_inputs(rows, frozen):
     """Restore server-compared fields after the legacy saver copies a row."""
 
@@ -1300,8 +1324,9 @@ def install_attachment_v2(namespace):
         def loaded(body):
             if not isValid(window) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
                 return
-            catalog = [dict(item) for item in body.get("items", []) if isinstance(item, dict)]
             version = body.get("data_version")
+            catalog = [{**item, **({"catalog_version": version} if version else {})}
+                       for item in body.get("items", []) if isinstance(item, dict)]
             window._attachment_catalog_cache = [copy.deepcopy(item) for item in catalog]
             source_rows, fixed_base_missing = expand_ganged_fixed_bases_for_quote(
                 window, rows, catalog, version
@@ -1492,6 +1517,72 @@ def install_attachment_v2(namespace):
         worker.start()
 
     window_class.recalculate_draft_attachment = recalculate_draft_attachment
+
+    def refresh_draft_attachment_snapshot(window, item, succeeded, failed):
+        sources = copy.deepcopy(item.get("attachments") or [])
+        rows = [row for row in sources if not row.get("custom")]
+        if any(_catalogue_id(row.get("attachment_price_id")) is None for row in rows):
+            failed("附件缺少有效价格库 ID，请重新选择后计算。")
+            return
+        inputs = [selected_input(row) for row in rows]
+        signature = json.dumps(inputs, sort_keys=True, ensure_ascii=False)
+        old_line = item.get("quote_line_id")
+        environment_keys = ("product_code", "material_code", "width_mm", "height_mm", "depth_mm",
+                            "coating_type", "quote_date", "cabinet_body_thickness_mm", "waste_factor", "ganged_cabinets")
+        environment = {key: item[key] for key in environment_keys if key in item}
+        url = str(window.base_url()).split("/api/", 1)[0].rstrip("/") + "/api/attachments/recalculate-line"
+        worker = worker_class(url, {"quote_line_id":old_line, "environment":environment,
+                                    "attachments":inputs}, window)
+        active = getattr(window, "_scheme2_snapshot_refresh_workers", set())
+        active.add(worker)
+        window._scheme2_snapshot_refresh_workers = active
+
+        def loaded(body):
+            current = [selected_input(row) for row in item.get("attachments", []) if not row.get("custom")]
+            if item.get("quote_line_id") != old_line or json.dumps(current, sort_keys=True, ensure_ascii=False) != signature:
+                failed("附件重算期间清单已变化，请重试。")
+                return
+            costs = body.get("attachments", [])
+            if (body.get("attachment_contract") != 2 or not body.get("quote_line_id")
+                    or body["quote_line_id"] == old_line or len(costs) != len(rows)):
+                failed("服务端未返回完整的附件计算快照。")
+                return
+            errors = [row for row in costs if row.get("status") in ("ERROR", "PENDING_MANUAL")]
+            if errors:
+                failed("；".join(f"{row.get('item_name')}：{row.get('error') or '尺寸未补齐'}" for row in errors))
+                return
+            merged = [merge_cost(source, cost) for source, cost in zip(rows, costs)]
+            iterator = iter(merged)
+            updated = [row if row.get("custom") else next(iterator) for row in sources]
+            quotes = {}
+            for key, amount_key in (("formula", "formula_amount"), ("quick", "quick_amount")):
+                quote = copy.deepcopy(item.get(key) or {})
+                old_fee = float(quote.get("attachment_fee") or 0)
+                new_fee = round(sum(float(row.get(amount_key) or 0) for row in updated), 2)
+                if quote.get("total_cost") is not None:
+                    quote["total_cost"] = round(float(quote["total_cost"]) - old_fee + new_fee, 2)
+                elif key == "formula":
+                    quote["total_cost"] = body.get("formula_cost", {}).get("total_cost")
+                quote["attachment_fee"] = new_fee
+                quotes[key] = quote
+            item.update(attachments=updated, quote_line_id=body["quote_line_id"],
+                        attachment_confirmation_inputs=confirmation_inputs(costs), **quotes)
+            item.pop("attachment_snapshot_dirty", None)
+            window.refresh_summary()
+            succeeded()
+
+        def received(body):
+            try:
+                loaded(body)
+            except Exception as error:
+                failed("附件快照处理失败：" + str(error))
+
+        worker.succeeded.connect(received)
+        worker.failed.connect(failed)
+        worker.finished.connect(lambda: (active.discard(worker), worker.deleteLater()))
+        worker.start()
+
+    window_class.refresh_draft_attachment_snapshot = refresh_draft_attachment_snapshot
 
     # ApiWorker handles ordinary requests. The existing ganged worker keeps its
     # child-cabinet flow and commits one aggregate V2 attachment snapshot.

@@ -48,7 +48,7 @@ assert payload["attachments"] == [{
     "attachment_price_id": 9001,
     "quantity": 1,
     "attachment_price_sign": 1,
-    "manual_inputs": {},
+    "manual_inputs": {"底座高度": 100.0},
 }]
 
 window.attachments.append({"item_name": "旧目录附件", "quantity": 1})

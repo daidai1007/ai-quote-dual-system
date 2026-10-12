@@ -17,6 +17,7 @@ from PySide6.QtGui import QFontDatabase
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 import scheme2_ui as ui
+import attachment_v2_client as v2
 import v3_launcher
 
 app=QApplication.instance() or QApplication([])
@@ -62,6 +63,14 @@ class DocumentProgress(unittest.TestCase):
                     worker.succeeded.emit({'confirmed':True,'dry_run':True,'persisted':False})
                 elif endpoint=='confirm':
                     worker.succeeded.emit({'confirmed':True,'history_items':1})
+                elif endpoint in ('recalculate-line','preview'):
+                    costs=[dict(selection, item_name='分段板' if '分段板高度' in selection['manual_inputs'] else '玻璃门', status='CALCULATED',
+                        formula_unit_cost=8.8,formula_amount=8.8*selection['quantity'],
+                        quick_amount=250.26*selection['quantity'])
+                        for selection in worker.test_payload['attachments']]
+                    worker.succeeded.emit(dict(attachments=costs,attachment_contract=2,
+                        quote_line_id='22222222-2222-4222-8222-222222222222',
+                        formula_cost={'total_cost':158.8}))
                 else:
                     self.fail('unexpected offline endpoint: '+endpoint)
                 worker.finished.emit()
@@ -118,6 +127,111 @@ class DocumentProgress(unittest.TestCase):
         self.assertIn('底座高度',self.controller.reason)
         self.assertTrue(self.controller.widgets['generate'][1].property('failed'))
         self.assertEqual(self.window.scheme2_cost_generate.text(),'重试生成')
+
+    def edited_glass(self):
+        item=self.window.draft_items[0]
+        row=dict(item_name='玻璃门',attachment_price_id=1192,quantity=1,status='CALCULATED',
+            formula_amount=8.8,quick_amount=250.26,
+            manual_inputs={'玻璃门宽度':400,'玻璃门高度':400})
+        item['attachments']=[row]
+        item['attachment_confirmation_inputs']=v2.confirmation_inputs([{**row,'manual_inputs':{}}])
+        item['formula']={'total_cost':158.8,'attachment_fee':8.8}
+        item['quick']={'total_cost':750.26,'attachment_fee':250.26}
+        return item,row
+
+    def test_generate_replaces_stale_glass_snapshot_before_precheck(self):
+        item,row=self.edited_glass()
+        self.controller.generate()
+        wait(lambda:not self.controller.busy)
+        self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],
+                         ['recalculate-line','preview-check'])
+        self.assertEqual(self.requests[0][1]['attachments'][0]['manual_inputs'],row['manual_inputs'])
+        self.assertEqual(item['quote_line_id'],'22222222-2222-4222-8222-222222222222')
+        checked=self.requests[1][1]['items'][0]
+        self.assertEqual(checked['quote_line_id'],item['quote_line_id'])
+        self.assertEqual(checked['attachments'][0]['manual_inputs'],row['manual_inputs'])
+        self.assertEqual(self.window.stack.currentIndex(),ui.QUOTE_ROUTE)
+        self.assertFalse(v2.attachment_snapshot_needs_refresh(item))
+
+    def test_snapshot_refresh_preserves_manual_zero_and_temporary_attachment(self):
+        item,row=self.edited_glass()
+        row.update(quick_amount=0,quick_amount_override=0,custom_amount_edited=True)
+        temporary=dict(custom=True,item_name='临时附件',quantity=1,formula_amount=5,
+                       quick_amount=6,quick_amount_override=6,custom_amount_edited=True)
+        item['attachments'].append(copy.deepcopy(temporary))
+        item['quick']={'total_cost':506,'attachment_fee':6}
+        item['formula']={'total_cost':163.8,'attachment_fee':13.8}
+        self.controller.generate()
+        wait(lambda:not self.controller.busy)
+        self.assertEqual(item['attachments'][0]['quick_amount'],0)
+        self.assertEqual(item['attachments'][1],temporary)
+        self.assertEqual(len(self.requests[0][1]['attachments']),1)
+        self.assertEqual(item['quick']['total_cost'],506)
+        self.assertEqual(item['formula']['total_cost'],163.8)
+        self.assertEqual(item['quantity'],2)
+
+    def test_export_refreshes_snapshot_before_preflight_and_commit(self):
+        item,row=self.edited_glass()
+        self.controller.export()
+        wait(lambda:not self.controller.busy)
+        self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],
+                         ['recalculate-line','confirm-check','confirm'])
+        self.assertTrue((Path(self.folder.name)/'result.xlsx').is_file())
+        for _url,payload in self.requests[1:]:
+            self.assertEqual(payload['items'][0]['quote_line_id'],item['quote_line_id'])
+        self.assertEqual(self.messages,[])
+
+    def test_refresh_error_preserves_old_snapshot_and_attachment_locator(self):
+        item,row=self.edited_glass()
+        old=copy.deepcopy(item)
+        self.response_error={'message':'玻璃门尺寸无效','issues':[
+            {'attachment_name':'玻璃门','attachment_price_id':1192,'reason':'高度必须是正数'}]}
+        self.controller.generate()
+        wait(lambda:not self.controller.busy)
+        self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],['recalculate-line'])
+        self.assertEqual(item,old)
+        self.assertEqual(self.controller.issues[0]['line_number'],1)
+        self.assertEqual(self.controller.issues[0]['attachment_price_id'],1192)
+        self.assertTrue(self.controller.widgets['generate'][1].property('failed'))
+
+    def test_model_change_refreshes_id_but_price_only_edit_does_not(self):
+        item,row=self.edited_glass()
+        item['attachment_confirmation_inputs']=v2.confirmation_inputs(item['attachments'])
+        row.update(quick_amount_override=0,custom_amount_edited=True)
+        self.assertFalse(v2.attachment_snapshot_needs_refresh(item))
+        row['attachment_price_id']=1178
+        self.assertTrue(v2.attachment_snapshot_needs_refresh(item))
+        self.controller.generate()
+        wait(lambda:not self.controller.busy)
+        self.assertEqual(self.requests[0][1]['attachments'][0]['attachment_price_id'],1178)
+        self.assertEqual(item['attachment_confirmation_inputs'][0]['attachment_price_id'],1178)
+
+    def test_segment_board_popup_height_edit_refreshes_snapshot_before_generate(self):
+        item=self.window.draft_items[0]
+        row=dict(item_name='分段板',category_level1='安装附件',attachment_price_id=29,
+                 quantity=1,status='PENDING_MANUAL',manual_inputs={},
+                 pending_manual_dimensions=['分段板高度'],
+                 required_parameters=[{'name':'分段板高度','source':'MANUAL'}],
+                 formula_amount=0,quick_amount=0)
+        item['attachments']=[row]
+        item['attachment_confirmation_inputs']=v2.confirmation_inputs(item['attachments'])
+        old_inputs=copy.deepcopy(item['attachment_confirmation_inputs'])
+        editor=ui.AttachmentEditor(self.window,item)
+        self.addCleanup(editor.close)
+        source={**row,'manual_inputs':{'分段板高度':150}}
+        editor._reprice_row(0,source,editor.table.item(0,editor.COL_SPECIFICATION))
+        wait(lambda:editor.table.cellWidget(0,editor.COL_AMOUNT).isEnabled())
+        editor.accept()
+        self.assertTrue(item['attachment_snapshot_dirty'])
+        self.assertEqual(item['attachment_confirmation_inputs'],old_inputs)
+        self.controller.generate()
+        wait(lambda:not self.controller.busy)
+        self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],
+                         ['preview','recalculate-line','preview-check'])
+        checked=self.requests[-1][1]['items'][0]
+        self.assertEqual(checked['attachments'][0]['manual_inputs'],{'分段板高度':150})
+        self.assertEqual(checked['quote_line_id'],'22222222-2222-4222-8222-222222222222')
+        self.assertFalse(v2.attachment_snapshot_needs_refresh(item))
 
     def test_server_failure_locator_and_successful_retry(self):
         self.response_error={'message':'附件成本存在错误，不能确认或导出',

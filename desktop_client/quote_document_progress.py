@@ -10,7 +10,7 @@ from uuid import uuid4
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QPushButton, QWidget
 
-from attachment_v2_client import confirmation_payload
+from attachment_v2_client import confirmation_payload, attachment_snapshot_needs_refresh
 
 LOGGER = logging.getLogger("ai_quote.client")
 UPDATE_INTERVAL_MS = 100
@@ -175,15 +175,51 @@ class QuoteDocumentProgress:
                     raise ValueError(f"第{number}行报价（{item.get('name') or item.get('product_code') or '未命名'}）的“{name}”：{reason}")
         return confirmation_payload({"items": items}, validate=True)["items"]
 
+    def prepare_snapshots(self, ready):
+        try:
+            pending = [(number, item) for number, item in enumerate(self.window.draft_items, 1)
+                       if isinstance(item, dict) and attachment_snapshot_needs_refresh(item)]
+        except Exception as error:
+            self.fail(error)
+            return
+        def advance(index=0):
+            if index == len(pending):
+                ready()
+                return
+            number, item = pending[index]
+            self.set_stage(2 if self.kind == "generate" else 1, f"更新第{number}行附件快照")
+            LOGGER.info("refresh attachment snapshot trace=%s line=%s old_line=%s", self.trace, number, item.get("quote_line_id"))
+            refresh = getattr(self.window, "refresh_draft_attachment_snapshot", None)
+            if not callable(refresh):
+                self.fail("附件快照更新功能不可用，请更新客户端。")
+                return
+            def failed(message):
+                try:
+                    data = json.loads(str(message))
+                except (ValueError, TypeError):
+                    data = None
+                if isinstance(data, dict):
+                    reason = data.get("message") or str(message)
+                    issues = [issue for issue in (data.get("issues") or []) if isinstance(issue, dict)]
+                else:
+                    reason, issues = failure_info(message)
+                self.fail(json.dumps({"message":f"第{number}行报价（{item.get('name') or item.get('product_code')}）：{reason}",
+                    "issues":[{**issue,"line_number":number,"product_name":item.get('name') or item.get('product_code')}
+                              for issue in issues]}, ensure_ascii=False))
+            try:
+                refresh(item, lambda:advance(index+1), failed)
+            except Exception as error:
+                failed(error)
+        advance()
+
     def generate(self):
         if self.busy:
             return
         self.begin("generate")
-        items = copy.deepcopy(self.window.draft_items)
-        self.snapshot = json.dumps(items, sort_keys=True, ensure_ascii=False, default=str)
-
         def check():
             try:
+                items = copy.deepcopy(self.window.draft_items)
+                self.snapshot = json.dumps(items, sort_keys=True, ensure_ascii=False, default=str)
                 self.set_stage(2, "逐行检查附件")
                 checked = self.validate(items)
                 self.set_stage(3, "服务端预检")
@@ -196,7 +232,7 @@ class QuoteDocumentProgress:
                 worker.start()
             except Exception as error:
                 self.fail(error)
-        QTimer.singleShot(0, check)
+        QTimer.singleShot(0, lambda:self.prepare_snapshots(check))
 
     def preview_done(self, body):
         if not body.get("valid") or body.get("persisted") is not False:
@@ -214,6 +250,9 @@ class QuoteDocumentProgress:
         if self.busy:
             return
         self.begin("export")
+        self.prepare_snapshots(self.start_export)
+
+    def start_export(self):
         try:
             self.set_stage(1, "逐行检查附件")
             self.validate(copy.deepcopy(self.window.draft_items))
