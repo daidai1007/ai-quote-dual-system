@@ -24,10 +24,19 @@ function harness(children=[],catalogItem=glass){
     row.attachment_price_id=catalogItem.attachment_price_id;
     row.item_name=catalogItem.item_name;
   }
-  const old={environment,attachments:failed},queries=[];
+  const old={environment,attachments:failed},queries=[],timings=[];
+  const versions=[{data_version:'offline',status:'ACTIVE'}];
   let stored=null;
-  const service=createAttachmentService({env:{},runPsql:async sql=>{
+  const service=createAttachmentService({env:{},onTiming:event=>timings.push(event),runPsql:async sql=>{
     queries.push(sql);
+    if(sql.startsWith('WITH refresh_line AS')) {
+      const ids=/p\.attachment_price_id IN \(([\d, ]+)\)/.exec(sql);
+      assert.ok(ids,'read only selected catalogue IDs');
+      const selected=ids[1].split(',').map(Number);
+      return JSON.stringify({saved:old,versions,
+        items:selected.includes(catalogItem.attachment_price_id)?[catalogItem]:[],
+        prices:{density_g_cm3:7.85,spray_unit_price:26}});
+    }
     if(sql.startsWith('BEGIN;')){
       assert.ok(!/\bUPDATE\b|attachment_price\s*\(|quote_history/.test(sql),'must not edit prices, old snapshots or history');
       const objects=[...sql.matchAll(/decode\('([0-9a-f]+)'/g)].flatMap(match=>{
@@ -47,10 +56,42 @@ function harness(children=[],catalogItem=glass){
     if(sql.includes('density_g_cm3'))return JSON.stringify({density_g_cm3:7.85,spray_unit_price:26});
     throw new Error('unexpected query');
   }});
-  return {service,environment,old,queries,get stored(){return stored;}};
+  return {service,environment,old,queries,timings,versions,get stored(){return stored;}};
 }
 const selection=(manual,index)=>({attachment_price_id:glass.attachment_price_id,quantity:1,manual_inputs:manual,
   ...(index===undefined?{}:{ganged_cabinet_index:index})});
+
+test('existing line endpoint needs only one selected-input read and one snapshot transaction',async()=>{
+  const h=harness();
+  await h.service.recalculateLine({quote_line_id:oldId,attachments:[selection({玻璃门宽度:400,玻璃门高度:400})]});
+  assert.equal(h.queries.length,2);
+  assert.ok(h.queries[0].startsWith('WITH refresh_line AS'));
+  assert.ok(h.queries[0].includes('attachment_cost_rule_product'));
+  assert.ok(h.queries[0].includes('attachment_cost_rule_material'));
+  assert.ok(h.queries[0].includes('density_g_cm3'));
+  assert.ok(h.queries[0].includes('get_spray_unit_price'));
+  assert.ok(h.queries[1].startsWith('BEGIN;'));
+  assert.deepEqual(h.timings.map(event=>event.phase),['read','calculate','save']);
+  assert.ok(h.timings.every(event=>event.elapsed_ms>=0&&event.success===true));
+});
+
+test('invalid quantity and UUID are rejected before any database connection',async()=>{
+  const h=harness();
+  await assert.rejects(h.service.recalculateLine({quote_line_id:oldId,attachments:[{...selection({}),quantity:-2}]}),/数量必须为正数/);
+  await assert.rejects(h.service.recalculateLine({quote_line_id:"bad'; DELETE --",attachments:[]}),/报价行ID无效/);
+  assert.equal(h.queries.length,0);
+});
+
+test('combined read still rejects inactive, ambiguous catalogues and missing selected IDs without writes',async()=>{
+  const input={quote_line_id:oldId,attachments:[selection({玻璃门宽度:400,玻璃门高度:400})]};
+  const inactive=harness();inactive.versions[0].status='STAGED';
+  await assert.rejects(inactive.service.recalculateLine(input),/目录尚未启用/);
+  const ambiguous=harness();ambiguous.versions.push({...ambiguous.versions[0]});
+  await assert.rejects(ambiguous.service.recalculateLine(input),/没有可用/);
+  const absent=harness();
+  await assert.rejects(absent.service.recalculateLine({...input,attachments:[{...input.attachments[0],attachment_price_id:99999}]}),/不属于当前目录/);
+  for(const h of [inactive,ambiguous,absent])assert.equal(h.queries.length,1);
+});
 
 test('filled glass dimensions create a fresh valid snapshot; old ERROR remains unchanged',async()=>{
   const h=harness(),unchanged=structuredClone(h.old);

@@ -118,6 +118,101 @@ class DocumentProgress(unittest.TestCase):
         self.assertEqual(bar.value(),4)
         self.assertIn('秒',bar.format())
 
+    def snapshot_queue(self, count=5):
+        self.window.draft_items = [dict(copy.deepcopy(good), name=f'柜{index+1}',
+            attachment_snapshot_dirty=True) for index in range(count)]
+        requests, ready = [], []
+        self.window.refresh_draft_attachment_snapshot = lambda item, succeeded, failed: requests.append(
+            (item, succeeded, failed))
+        self.controller.begin('generate')
+        self.controller.prepare_snapshots(lambda: (ready.append(True), self.controller.end()))
+        return requests, ready
+
+    def test_snapshot_updates_two_at_a_time_and_waits_for_every_row(self):
+        requests, ready = self.snapshot_queue()
+        self.assertEqual(len(requests), 2)
+        self.assertIn('已完成 0/5 行', self.controller.label)
+        requests[1][1]()
+        self.assertEqual(len(requests), 3)
+        self.assertIn('已完成 1/5 行', self.controller.label)
+        self.window._scheme2_dirty=False
+        self.window.resize(1560,900)
+        self.window.show_section(ui.COST_ROUTE)
+        self.window.show()
+        app.processEvents()
+        host,bar,_locate=self.controller.widgets['generate']
+        self.assertIn('已完成 1/5 行',bar.toolTip())
+        self.assertTrue(host.grab().save(str(ROOT/'outputs/quote-snapshot-concurrent-progress.png')))
+        requests[0][1]()
+        self.assertEqual(len(requests), 4)
+        requests[3][1]()
+        self.assertEqual(len(requests), 5)
+        requests[4][1]()
+        self.assertEqual(ready, [])
+        requests[2][1]()
+        self.assertEqual(ready, [True])
+        self.assertIn('已完成 5/5 行', self.controller.label)
+        requests[2][1]()  # A duplicated callback must not start precheck twice.
+        self.assertEqual(ready, [True])
+
+    def test_snapshot_failure_stops_new_rows_drains_active_and_keeps_locator(self):
+        requests, ready = self.snapshot_queue()
+        requests[1][2](json.dumps({'message':'玻璃门尺寸无效', 'issues':[
+            {'attachment_name':'玻璃门','attachment_price_id':1192,'reason':'高度必须是正数'}]},ensure_ascii=False))
+        self.assertTrue(self.controller.busy, 'do not permit retry while the other request is in flight')
+        self.assertEqual(len(requests), 2)
+        requests[0][1]()
+        self.assertFalse(self.controller.busy)
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(ready, [])
+        self.assertEqual(self.controller.issues[0]['line_number'], 2)
+        self.assertEqual(self.controller.issues[0]['product_name'], '柜2')
+        self.assertIn('高度必须是正数', self.controller.reason)
+        self.assertNotIn('第?行', self.controller.reason)
+        self.controller.begin('generate')
+        requests[1][2]('过期失败')
+        self.assertTrue(self.controller.busy)
+        self.assertEqual(self.controller.reason, '')
+        self.controller.end()
+
+    def test_parallel_real_refresh_preserves_each_copy_manual_price_and_custom_rows(self):
+        item,row=self.edited_glass()
+        self.window.draft_items=[dict(copy.deepcopy(item),name=f'复制柜{i+1}',quantity=i+1) for i in range(4)]
+        first=self.window.draft_items[0]
+        first['attachments'][0].update(quick_amount=0,quick_amount_override=0,custom_amount_edited=True)
+        temporary=dict(custom=True,item_name='临时附件',quantity=1,formula_amount=5,quick_amount=6,
+            quick_amount_override=6,custom_amount_edited=True)
+        first['attachments'].append(temporary)
+        first['quick']={'total_cost':506,'attachment_fee':6}
+        first['formula']={'total_cost':163.8,'attachment_fee':13.8}
+        started=[]
+        original=Worker.start
+        def track(worker):
+            original(worker)
+            if worker.test_url.endswith('/recalculate-line'):
+                started.append(worker)
+                self.assertLessEqual(sum(candidate.test_running for candidate in started),2)
+        with patch.object(Worker,'start',track):
+            self.controller.generate()
+            wait(lambda:not self.controller.busy)
+        self.assertEqual(len(started),4)
+        self.assertEqual(self.requests[-1][0].rsplit('/',1)[-1],'preview-check')
+        self.assertEqual(first['attachments'][0]['quick_amount'],0)
+        self.assertEqual(first['attachments'][1],temporary)
+        self.assertEqual(first['quick']['total_cost'],506)
+        self.assertEqual([copy['quantity'] for copy in self.window.draft_items],[1,2,3,4])
+        self.assertTrue(all(not v2.attachment_snapshot_needs_refresh(copy) for copy in self.window.draft_items))
+        self.assertEqual(self.controller.reason,'')
+
+    def test_unchanged_rows_retain_snapshots_without_extra_requests(self):
+        self.window.draft_items *= 4
+        ready=[]
+        self.controller.begin('generate')
+        self.controller.prepare_snapshots(lambda: ready.append(True))
+        self.assertEqual(ready,[True])
+        self.assertEqual(self.requests,[])
+        self.controller.end()
+
     def test_local_failure_names_attachment_and_never_requests_server(self):
         row=self.window.draft_items[0]['attachments'][0]
         row.update(status='PENDING_MANUAL',pending_manual_dimensions=['底座高度'])

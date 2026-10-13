@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
 import { materialUnitPriceFromSidebar } from './material_price_override.mjs';
@@ -87,16 +88,20 @@ export function applyAttachmentTotals(base,rows) {
     risk_flags:[...(base.risk_flags||[]),...totals.errors.map(r=>({code:'attachment_error',severity:'blocker',message:`${r.item_name}：${r.error}`}))]};
 }
 
-export function createAttachmentService({runPsql,calculateBase,env=process.env,onProgress=()=>{}}) {
+export function createAttachmentService({runPsql,calculateBase,env=process.env,onProgress=()=>{},onTiming=()=>{}}) {
   const query=async sql=>{const text=await runPsql(sql);return JSON.parse(text.trim().split(/\r?\n/).filter(Boolean).at(-1)||'null');};
-  async function catalog() {
+  function catalogCondition() {
     const version=env.AI_QUOTE_ATTACHMENT_V2_VERSION||'';
-    const condition=version?`data_version=${sqlValue(version)}`:"status='ACTIVE'";
-    const versions=await query(`SELECT coalesce(jsonb_agg(to_jsonb(v)),'[]') FROM calc.attachment_catalog_version v WHERE ${condition};`);
+    return version?`data_version=${sqlValue(version)}`:"status='ACTIVE'";
+  }
+  function checkedCatalogVersion(versions) {
     if(versions.length!==1) throw new Error('没有可用的附件V2目录；请配置已审查的目录版本');
     const v=versions[0];
     if(v.status!=='ACTIVE'&&!(v.status==='STAGED'&&env.AI_QUOTE_ATTACHMENT_V2_ALLOW_STAGED==='1')) throw new Error('附件目录尚未启用；待启用数据仅供明确配置的兼容测试');
-    const items=await query(`SELECT coalesce(jsonb_agg(to_jsonb(a)||jsonb_build_object('rules',coalesce((
+    return v;
+  }
+  function catalogItemsSql(version, activeFilter, selectedIds=null) {
+    return `SELECT coalesce(jsonb_agg(to_jsonb(a)||jsonb_build_object('rules',coalesce((
       SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object(
         'products',(SELECT coalesce(jsonb_agg(product_code),'[]') FROM calc.attachment_cost_rule_product WHERE rule_id=r.rule_id),
         'materials',(SELECT coalesce(jsonb_agg(material_code),'[]') FROM calc.attachment_cost_rule_material WHERE rule_id=r.rule_id)))
@@ -106,10 +111,16 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         coalesce(c.category_level3,'') AS category_level3,p.item_name,p.model_code,p.unit,p.color,p.width_mm,p.height_mm,p.depth_mm,
         p.quick_face_price AS price,p.data_version,p.source_file,p.source_sheet,p.source_row_no
         FROM calc.attachment_price p JOIN calc.attachment_classification c USING(attachment_price_id)
-        WHERE p.data_version=${sqlValue(v.data_version)}${v.status==='ACTIVE'?' AND p.is_active':''}) a;`);
+        WHERE p.data_version=${version}${activeFilter}
+          ${selectedIds===null?'':selectedIds.length?`AND p.attachment_price_id IN (${selectedIds.join(',')})`:'AND FALSE'}) a`;
+  }
+  async function catalog() {
+    const versions=await query(`SELECT coalesce(jsonb_agg(to_jsonb(v)),'[]') FROM calc.attachment_catalog_version v WHERE ${catalogCondition()};`);
+    const v=checkedCatalogVersion(versions);
+    const items=await query(catalogItemsSql(sqlValue(v.data_version),v.status==='ACTIVE'?' AND p.is_active':'')+';');
     return {items,data_version:v.data_version,status:v.status,attachment_contract:2,catalog_write_supported:true};
   }
-  async function preview(input) {
+  async function preview(input, prepared=null) {
     onProgress('attachments');
     if(!Array.isArray(input.attachments)||input.attachments.length>100) throw new Error('attachments必须为不超过100项的数组');
     const gangedCount=Number(input.ganged_cabinet_count||1);
@@ -117,12 +128,12 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     const gangedInputs=Array.isArray(input.ganged_cabinet_inputs)?input.ganged_cabinet_inputs:gangedCabinets;
     if(!Number.isSafeInteger(gangedCount)||gangedCount<1||gangedCount>20) throw new Error('并柜数量必须为1至20的整数');
     if(gangedCount>1&&gangedCabinets.length!==gangedCount) throw new Error('并柜明细数量与并柜数量不一致');
-    const selections=input.attachments.map(attachmentInput),data=await catalog();
+    const selections=input.attachments.map(attachmentInput),data=prepared?.catalog??await catalog();
     const quoteDate=input.quote_date;
     if(!/^\d{4}-\d{2}-\d{2}$/.test(quoteDate||'')) throw new Error('报价日期无效');
     if(!['SECC','SUS304','SUS316'].includes(input.material_code)) throw new Error('材质必须为SECC、SUS304或SUS316');
     for(const key of ['width_mm','height_mm','depth_mm']) if(!Number.isFinite(Number(input[key]))||Number(input[key])<=0) throw new Error(`${key}必须为正数`);
-    const prices=await query(`SELECT jsonb_build_object(
+    const prices=prepared?.prices??await query(`SELECT jsonb_build_object(
       'density_g_cm3',(SELECT density_g_cm3 FROM calc.material WHERE material_code=${sqlValue(input.material_code)}),
       'spray_unit_price',CASE WHEN ${sqlValue(input.coating_type)}='不喷塑' THEN 0 ELSE calc.get_spray_unit_price(${sqlValue(quoteDate)}::date,${sqlValue(input.coating_type)}) END);`);
     const environment={quote_line_id:randomUUID(),product_code:input.product_code,material_code:input.material_code,
@@ -186,7 +197,37 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     return persistCalculated(input,previewed,{...base,formula_cost:{...base.formula_cost},quick_quote:{...base.quick_quote}});
   }
   async function recalculateLine(input) {
-    const saved=await query(snapshotSql(input.quote_line_id));
+    if(!Array.isArray(input.attachments)||input.attachments.length>100) throw new Error('attachments必须为不超过100项的数组');
+    const selections=input.attachments.map(attachmentInput);
+    const selectedIds=[...new Set(selections.map(row=>row.attachment_price_id))];
+    const lineId=uuid(input.quote_line_id);
+    const timed=async(phase,action)=>{
+      const started=performance.now();let success=false;
+      try {const result=await action();success=true;return result;}
+      finally {onTiming({phase,elapsed_ms:Math.round(performance.now()-started),success});}
+    };
+    // One MVCC-consistent read, only selected IDs and their bound rules. No cross-request cache.
+    const context=await timed('read',()=>query(`WITH refresh_line AS (
+      SELECT l.quote_line_id,l.environment_snapshot FROM calc.attachment_quote_line l
+      WHERE l.quote_line_id=${sqlValue(lineId)}::uuid
+    ), refresh_versions AS (
+      SELECT to_jsonb(v) AS version FROM calc.attachment_catalog_version v WHERE ${catalogCondition()}
+    ) SELECT jsonb_build_object(
+      'saved',(SELECT jsonb_build_object('environment',l.environment_snapshot,
+        'attachments',coalesce((SELECT jsonb_agg(s.cost_snapshot||jsonb_build_object(
+          'attachment_selection_id',s.attachment_selection_id,'quote_line_id',s.quote_line_id)
+          ORDER BY s.attachment_selection_id) FROM calc.attachment_selection s
+          WHERE s.quote_line_id=l.quote_line_id),'[]'::jsonb)) FROM refresh_line l),
+      'versions',(SELECT coalesce(jsonb_agg(version),'[]'::jsonb) FROM refresh_versions),
+      'items',(${catalogItemsSql("(SELECT version->>'data_version' FROM refresh_versions LIMIT 1)",
+        " AND ((SELECT version->>'status' FROM refresh_versions LIMIT 1)<>'ACTIVE' OR p.is_active)",selectedIds)}),
+      'prices',(SELECT jsonb_build_object(
+        'density_g_cm3',(SELECT density_g_cm3 FROM calc.material
+          WHERE material_code=l.environment_snapshot->>'material_code'),
+        'spray_unit_price',CASE WHEN l.environment_snapshot->>'coating_type'='不喷塑' THEN 0
+          ELSE calc.get_spray_unit_price((l.environment_snapshot->>'quote_date')::date,
+            l.environment_snapshot->>'coating_type') END) FROM refresh_line l));`));
+    const saved=context?.saved;
     if(!saved?.environment?.quote_result) throw new Error('附件报价行不存在，请重新计算整柜');
     const environment=saved.environment;
     const supplied=input.environment||environment;
@@ -216,16 +257,22 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         const previous=saved.attachments.find(row=>row.ganged_cabinet_index===index);
         return {...child,product_code:previous?.environment?.product_code||child.product_code||environment.product_code};
       })};
-    const previewed=await preview(replay);
-    const errors=previewed.attachments.filter(row=>row.status==='ERROR');
-    if(errors.length){
-      const error=new Error(errors.map(row=>`${row.item_name}：${row.error}`).join('；'));
-      error.statusCode=422;
-      error.issues=errors.map(row=>({attachment_price_id:row.attachment_price_id,
-        attachment_name:row.item_name,reason:row.error}));
-      throw error;
-    }
-    return persistCalculated(replay,previewed,base);
+    const version=checkedCatalogVersion(context.versions);
+    const previewed=await timed('calculate',async()=>{
+      const result=await preview(replay,{
+        catalog:{items:context.items,data_version:version.data_version,status:version.status},prices:context.prices,
+      });
+      const errors=result.attachments.filter(row=>row.status==='ERROR');
+      if(errors.length){
+        const error=new Error(errors.map(row=>`${row.item_name}：${row.error}`).join('；'));
+        error.statusCode=422;
+        error.issues=errors.map(row=>({attachment_price_id:row.attachment_price_id,
+          attachment_name:row.item_name,reason:row.error}));
+        throw error;
+      }
+      return result;
+    });
+    return timed('save',()=>persistCalculated(replay,previewed,base));
   }
   function snapshotSql(lineId) {return `SELECT jsonb_build_object('environment',l.environment_snapshot,
     'attachments',coalesce((SELECT jsonb_agg(s.cost_snapshot||jsonb_build_object('attachment_selection_id',s.attachment_selection_id,'quote_line_id',s.quote_line_id) ORDER BY s.attachment_selection_id)

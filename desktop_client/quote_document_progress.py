@@ -14,6 +14,7 @@ from attachment_v2_client import confirmation_payload, attachment_snapshot_needs
 
 LOGGER = logging.getLogger("ai_quote.client")
 UPDATE_INTERVAL_MS = 100
+SNAPSHOT_REFRESH_CONCURRENCY = 2
 
 
 def failure_info(value):
@@ -182,35 +183,82 @@ class QuoteDocumentProgress:
         except Exception as error:
             self.fail(error)
             return
-        def advance(index=0):
-            if index == len(pending):
-                ready()
-                return
-            number, item = pending[index]
-            self.set_stage(2 if self.kind == "generate" else 1, f"更新第{number}行附件快照")
+        if not pending:
+            ready()
+            return
+        trace = self.trace
+        state = dict(next=0, active=0, completed=0, error=None, done=False, pumping=False)
+
+        def current():
+            return self.busy and self.trace == trace and not state["done"]
+
+        def progress():
+            label = (f"附件更新失败，等待剩余 {state['active']} 行" if state["error"] else
+                     f"更新附件快照，已完成 {state['completed']}/{len(pending)} 行")
+            self.set_stage(2 if self.kind == "generate" else 1, label)
+
+        def launch(number, item):
+            started, settled = time.monotonic(), False
             LOGGER.info("refresh attachment snapshot trace=%s line=%s old_line=%s", self.trace, number, item.get("quote_line_id"))
-            refresh = getattr(self.window, "refresh_draft_attachment_snapshot", None)
-            if not callable(refresh):
-                self.fail("附件快照更新功能不可用，请更新客户端。")
-                return
-            def failed(message):
-                try:
-                    data = json.loads(str(message))
-                except (ValueError, TypeError):
-                    data = None
-                if isinstance(data, dict):
-                    reason = data.get("message") or str(message)
-                    issues = [issue for issue in (data.get("issues") or []) if isinstance(issue, dict)]
-                else:
-                    reason, issues = failure_info(message)
-                self.fail(json.dumps({"message":f"第{number}行报价（{item.get('name') or item.get('product_code')}）：{reason}",
-                    "issues":[{**issue,"line_number":number,"product_name":item.get('name') or item.get('product_code')}
-                              for issue in issues]}, ensure_ascii=False))
+
+            def finish(success, message=None):
+                nonlocal settled
+                if settled or not current():
+                    return
+                settled = True
+                state["active"] -= 1
+                LOGGER.info("attachment snapshot completed trace=%s line=%s success=%s elapsed=%.3fs",
+                            trace, number, success, time.monotonic() - started)
+                if success:
+                    state["completed"] += 1
+                elif state["error"] is None:
+                    try:
+                        data = json.loads(str(message))
+                    except (ValueError, TypeError):
+                        data = None
+                    if isinstance(data, dict):
+                        reason = data.get("message") or str(message)
+                        issues = [issue for issue in (data.get("issues") or []) if isinstance(issue, dict)]
+                    else:
+                        reason, issues = failure_info(message)
+                    state["error"] = json.dumps({
+                        "message":f"第{number}行报价（{item.get('name') or item.get('product_code')}）：{reason}",
+                        "issues":[{**issue,"line_number":number,
+                                   "product_name":item.get('name') or item.get('product_code')} for issue in issues],
+                    }, ensure_ascii=False)
+                progress()
+                if not state["pumping"]:
+                    pump()
+
             try:
-                refresh(item, lambda:advance(index+1), failed)
+                refresh = getattr(self.window, "refresh_draft_attachment_snapshot", None)
+                if not callable(refresh):
+                    raise RuntimeError("附件快照更新功能不可用，请更新客户端。")
+                refresh(item, lambda:finish(True), lambda message:finish(False, message))
             except Exception as error:
-                failed(error)
-        advance()
+                finish(False, error)
+
+        def pump():
+            if not current():
+                return
+            state["pumping"] = True
+            try:
+                while (state["active"] < SNAPSHOT_REFRESH_CONCURRENCY
+                       and state["next"] < len(pending) and state["error"] is None):
+                    number, item = pending[state["next"]]
+                    state["next"] += 1
+                    state["active"] += 1
+                    progress()
+                    launch(number, item)
+            finally:
+                state["pumping"] = False
+            if not state["active"]:
+                state["done"] = True
+                if state["error"]:
+                    self.fail(state["error"])
+                elif state["next"] == len(pending):
+                    ready()
+        pump()
 
     def generate(self):
         if self.busy:

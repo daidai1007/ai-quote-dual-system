@@ -376,7 +376,10 @@ const createQuoteServices = (readExecutor = runPsql) => {
     }
   }
   const attachmentService = createAttachmentService({runPsql: readExecutor,
-    calculateBase: calculateBaseQuote, onProgress: emitQuoteProgress});
+    calculateBase: calculateBaseQuote, onProgress: emitQuoteProgress,
+    onTiming: event => recordQuoteEvent('attachment_snapshot_refresh', {
+      phase: event.phase, elapsed_ms: event.elapsed_ms, status: event.success ? 'ok' : 'failed',
+    })});
   return {cabinetMaterialService, cabinetSprayService, cabinetLaborService, cabinetAuxiliaryService,
     attachmentService, calculateBaseQuote};
 };
