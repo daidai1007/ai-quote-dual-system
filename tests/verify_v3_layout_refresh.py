@@ -1047,18 +1047,8 @@ board_summary = next(
     if button.isVisible() and "安装板" in button.text()
 )
 assert board_summary.text().startswith("人工已选择  ·  安装板  ·  ")
-board_sign = next(
-    button for button in attachment_dialog.findChildren(QPushButton, "attachmentPriceSignPositive")
-    if button.isVisible()
-)
-assert board_sign.text() == "+"
-board_sign.click()
-app.processEvents()
-negative_sign = next(
-    button for button in attachment_dialog.findChildren(QPushButton, "attachmentPriceSignNegative")
-    if button.isVisible()
-)
-assert negative_sign.text() == "−"
+assert not attachment_dialog.findChildren(QPushButton, "attachmentPriceSignPositive")
+assert not attachment_dialog.findChildren(QPushButton, "attachmentPriceSignNegative")
 board_source = attachment_dialog.table.item(
     board_row, attachment_dialog.COL_CHECK
 ).data(Qt.ItemDataRole.UserRole)
@@ -1067,8 +1057,8 @@ assert board_source["size_match_target_width_mm"] == 760
 assert board_source["size_match_target_height_mm"] == 960
 assert board_source["size_match_target_depth_mm"] == 500
 assert board_source["size_match_depth_mm"] == 100
-assert board_source["attachment_price_sign"] == -1
-assert attachment_dialog.table.item(board_row, attachment_dialog.COL_PRICE).text() == "-75"
+assert board_source.get("attachment_price_sign", 1) == 1
+assert attachment_dialog.table.item(board_row, attachment_dialog.COL_PRICE).text() == "75"
 selected_board = next(
     item for item in attachment_dialog.attachments if item.get("item_name") == "安装板"
 )
@@ -1076,8 +1066,8 @@ fresh_board = next(
     item for item in attachment_dialog.collect_attachments(False)
     if item.get("item_name") == "安装板"
 )
-assert fresh_board["attachment_price_sign"] == -1, fresh_board
-assert selected_board["attachment_price_sign"] == -1, attachment_dialog.attachments
+assert fresh_board["attachment_price_sign"] == 1, fresh_board
+assert selected_board["attachment_price_sign"] == 1, attachment_dialog.attachments
 assert selected_board["matched_price"] == 75
 
 # Product routing is enforced at the interaction boundary as well: on a JK

@@ -29,8 +29,8 @@ ADD_PROGRESS_MIN_WIDTH = 110
 ADD_PROGRESS_MAX_WIDTH = 460
 ADD_PROGRESS_TEXT_PADDING = 30
 
-from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, QStandardPaths, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPainter, QPen, QPolygon, QShortcut, QTextDocument
+from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, QSizeF, QStandardPaths, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPageLayout, QPainter, QPen, QPolygon, QShortcut, QTextCursor, QTextDocument, QTextFrameFormat, QTextOption
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -364,6 +364,11 @@ def _attachment_amount(row):
     price = row.get("unit_price_override", row.get("matched_price", 0))
     sign = -1 if int(_number(row.get("attachment_price_sign", 1), 1)) == -1 else 1
     return _number(row.get("quantity", 1), 1) * abs(_number(price)) * sign
+
+
+def _displayed_attachment_quantity(row):
+    from attachment_v2_client import displayed_attachment_quantity
+    return displayed_attachment_quantity(row)
 
 
 def _attachment_total(item):
@@ -906,16 +911,20 @@ class AttachmentEditor(QDialog):
             self.table.setItem(row, self.COL_SPECIFICATION, specification_item)
         quantity = QSpinBox()
         quantity.setObjectName("scheme2AttachmentEditorQuantity")
-        quantity.setRange(-9999 * self.cabinet_quantity, 9999 * self.cabinet_quantity)
+        from attachment_v2_client import allows_negative_attachment_quantity
+        negative_allowed = allows_negative_attachment_quantity(source)
+        quantity.setRange(-9999 * self.cabinet_quantity if negative_allowed else 1,
+                          9999 * self.cabinet_quantity)
         quantity.setSingleStep(self.cabinet_quantity)
         quantity.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         quantity.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        total_quantity = round(_number(source.get("quantity", 1), 1) * self.cabinet_quantity)
+        total_quantity = round(_displayed_attachment_quantity(source) * self.cabinet_quantity)
         quantity.setValue(total_quantity)
         quantity.setProperty("previousQuantity", quantity.value())
         quantity.setToolTip(
-            f"整批数量 = 单柜数量 {_number(source.get('quantity', 1), 1):g}"
-            f" × 柜体数量 {self.cabinet_quantity}；修改后按柜体数量折算保存"
+            f"整批数量 = 单柜数量 {_displayed_attachment_quantity(source):g}"
+            f" × 柜体数量 {self.cabinet_quantity}；修改后按柜体数量折算保存\n"
+            "仅安装板允许负数量（负数表示扣减）；其他附件数量必须为正数"
         )
         self.table.setCellWidget(row, self.COL_QUANTITY, quantity)
         self.table.item(row, self.COL_NAME).setData(ROLE_ROW, dict(source))
@@ -1080,7 +1089,7 @@ class AttachmentEditor(QDialog):
                 with QSignalBlocker(cost_editor):
                     cost_editor.setValue(unit_cost * value)
             return
-        selected_quantity = _number(source.get("quantity", 1), 1)
+        selected_quantity = _displayed_attachment_quantity(source)
         previous_formula = _number(source.get("formula_amount"), 0)
         formula = self.table.item(row, self.COL_FORMULA_AMOUNT)
         if formula is not None:
@@ -1190,6 +1199,11 @@ class AttachmentEditor(QDialog):
                 data["computer_tray_auto_match"] = True
             quantity = self.table.cellWidget(row, self.COL_QUANTITY).value() / self.cabinet_quantity
             data["quantity"] = int(quantity) if quantity.is_integer() else quantity
+            from attachment_v2_client import installation_board, normalize_installation_board_quantity
+            board = not data.get("custom") and installation_board(data)
+            if board:
+                data["attachment_price_sign"] = 1
+                data = normalize_installation_board_quantity(data)
             amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
             amount = _number(amount_editor.value()) / self.cabinet_quantity
             custom = bool(data.get("custom"))
@@ -1221,6 +1235,8 @@ class AttachmentEditor(QDialog):
                     if data.get("formula_unit_cost") is not None
                     else previous_formula_amount / previous_quantity if previous_quantity else 0
                 )
+                if board and data.get("formula_unit_cost") is None:
+                    formula_unit_amount = abs(formula_unit_amount) * data["attachment_price_sign"]
                 data["formula_amount"] = round(formula_unit_amount * data["quantity"], 2)
             if not data.get("attachment_price_id") and not data.get("selection_source"):
                 data["selection_source"] = "QUOTE_LOCAL"
@@ -1265,7 +1281,7 @@ def _apply_attachment_summary_price(items, identity, unit_price):
     for item, matches, old_fee in plans:
         delta = 0.0
         for source, old_amount in matches:
-            amount = unit_price * _number(source.get("quantity", 1), 1)
+            amount = unit_price * _displayed_attachment_quantity(source)
             source["unit_price_override"] = abs(unit_price)
             source["quick_amount_override"] = source["quick_amount"] = amount
             source["custom_amount_edited"] = True
@@ -1286,7 +1302,7 @@ def _all_attachment_rows(items):
                 continue
             name = _attachment_summary_name(source)
             spec = _attachment_dimension_or_model(source)
-            selected = _number(source.get("quantity", 1), 1)
+            selected = _displayed_attachment_quantity(source)
             pending = bool(AttachmentEditor._pending_dimensions(source))
             cost, amount = AttachmentEditor._display_amounts(source)
             identity = _attachment_summary_identity(source)
@@ -1368,6 +1384,14 @@ class AttachmentSummaryDialog(AttachmentEditor):
     SECTION_TITLE_HEIGHT = 28
     SPLITTER_HANDLE_WIDTH = 8
     PANEL_MIN_HEIGHT = 140
+    PRINT_FONT_POINTS = 9
+    PRINT_COLUMN_POINTS = 80
+    PRINT_BORDER_WIDTH = .7
+    PRINT_CELL_PADDING = 3
+    PRINT_TITLE_SPACE_POINTS = 48
+    PRINT_MAX_PAGE = 9999
+    PRINT_PRODUCT_ANCHOR_POINTS = (32, 85, 115, 48)
+    PRINT_DETAIL_ANCHOR_POINTS = (100, 150)
 
     def __init__(self, window):
         # Reuse the shell; only sale-price edits propagate to matching rows.
@@ -1375,6 +1399,16 @@ class AttachmentSummaryDialog(AttachmentEditor):
         self.setWindowTitle("附件汇总")
         self.findChild(QLabel, "scheme2AttachmentEditorTitle").setText("附件汇总")
         self.findChild(QToolButton, "scheme2AttachmentEditorClose").setToolTip("关闭（单价修改已自动保存）")
+        header_layout = self.findChild(QFrame, "scheme2AttachmentEditorHeader").layout()
+        self.print_button = QPushButton("打印")
+        self.print_button.setAutoDefault(False)
+        self.print_button.setObjectName("scheme2PrimaryGhost")
+        self.print_button.setAccessibleName("打印附件汇总")
+        self.print_button.setToolTip("设置打印机、纸张、页码及份数后，打印完整产品报价和附件明细")
+        self.print_button.setFixedHeight(self.findChild(QToolButton, "scheme2AttachmentEditorClose").height())
+        self.print_button.setEnabled(bool(window.draft_items))
+        self.print_button.clicked.connect(self.print_summary)
+        header_layout.insertWidget(header_layout.count() - 1, self.print_button)
         # Reference layout: product quotation and its fee audit above detail.
         # Retain the shared shell, resize grip and attachment price controls.
         self.setStyleSheet(self.styleSheet() + """
@@ -1541,6 +1575,150 @@ class AttachmentSummaryDialog(AttachmentEditor):
                 self.table.cellWidget(row_index, 5).setValue(value)
         self.window.refresh_summary()
         self._refresh_product_table()
+
+    def _commit_print_edits(self):
+        # Keyboard tracking is off: include a price still being typed when Print is clicked.
+        for row in range(self.table.rowCount()):
+            price = self.table.cellWidget(row, 5)
+            if price is not None:
+                price.interpretText()
+
+    def _print_document(self, printer):
+        document = QTextDocument()
+        document.documentLayout().setPaintDevice(printer)
+        document.setDefaultFont(QFont("Microsoft YaHei", self.PRINT_FONT_POINTS))
+        option = document.defaultTextOption()
+        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        document.setDefaultTextOption(option)
+        document.setDocumentMargin(0)
+        page_size = QSizeF(printer.pageLayout().paintRectPixels(printer.resolution()).size())
+        # Measure whole rows without page breaks, then partition them before printing.
+        document.setPageSize(QSizeF(page_size.width(), 1e9))
+        printable_width = printer.pageLayout().paintRect(QPageLayout.Unit.Point).width()
+        sections = []
+        for title, table, anchor_widths in (
+            ("产品报价", self.product_table, self.PRINT_PRODUCT_ANCHOR_POINTS),
+            ("附件明细", self.table, self.PRINT_DETAIL_ANCHOR_POINTS),
+        ):
+            headers = [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())]
+            rows = []
+            for row in range(table.rowCount()):
+                values = []
+                for column in range(table.columnCount()):
+                    widget = table.cellWidget(row, column)
+                    cell = table.item(row, column)
+                    values.append(_money(widget.value()) if isinstance(widget, QDoubleSpinBox)
+                                  else cell.text() if cell is not None else "")
+                rows.append(values)
+            anchors = list(range(len(anchor_widths)))
+            # Keep identifying columns on every horizontal band instead of shrinking a wide table.
+            capacity = max(1, int((printable_width - sum(anchor_widths)) / self.PRINT_COLUMN_POINTS))
+            remaining = list(range(len(anchors), table.columnCount()))
+            bands = [remaining[i:i + capacity] for i in range(0, len(remaining), capacity)] or [[]]
+            for band_index, band in enumerate(bands, 1):
+                columns = anchors + band
+                widths = (*anchor_widths, *(self.PRINT_COLUMN_POINTS for _ in band))
+                total_width = sum(widths)
+                suffix = f"（{band_index}/{len(bands)}）" if len(bands) > 1 else ""
+                header = ''.join(f'<th width="{width * 100 / total_width:.2f}%">{html.escape(headers[c])}</th>'
+                                 for c, width in zip(columns, widths))
+                body = []
+                for values in rows:
+                    cells = ''.join(f'<td align="{"left" if c < len(anchors) else "right"}">'
+                                    f'{html.escape(values[c]).replace(chr(10), "<br>")}</td>' for c in columns)
+                    body.append(f'<tr>{cells}</tr>')
+                sections.append((title + suffix, header, body))
+        self._set_print_html(document, sections, page_breaks=False)
+        tables = [frame for frame in document.rootFrame().childFrames() if hasattr(frame, "columns")]
+        pages = []
+        for (title, header, body), table in zip(sections, tables):
+            layout = document.documentLayout()
+            tops = [min(layout.blockBoundingRect(table.cellAt(row, c).firstCursorPosition().block()).top()
+                        for c in range(table.columns())) for row in range(table.rows())]
+            bottom = layout.frameBoundingRect(table).bottom()
+            header_height = tops[1] - tops[0] if len(tops) > 1 else bottom - tops[0]
+            budget = page_size.height() - header_height - self.PRINT_TITLE_SPACE_POINTS * printer.resolution() / 72
+            chunk, used = [], 0
+            for index, row_html in enumerate(body, 1):
+                height = (tops[index + 1] if index + 1 < len(tops) else bottom) - tops[index]
+                if height > budget:
+                    raise RuntimeError("表格内容过长，无法在当前纸张完整排版，请选择更大的纸张。")
+                if chunk and used + height > budget:
+                    pages.append((title, header, chunk))
+                    chunk, used = [], 0
+                chunk.append(row_html)
+                used += height
+            pages.append((title, header, chunk))
+        document.setPageSize(page_size)
+        self._set_print_html(document, pages, page_breaks=True)
+        return document
+
+    def _set_print_html(self, document, sections, *, page_breaks):
+        tables_html = []
+        for index, (title, header, rows) in enumerate(sections):
+            page_break = ' style="page-break-before:always"' if page_breaks and index else ''
+            tables_html.append(f'<h2{page_break}>{title}</h2>'
+                               f'<table width="100%" cellspacing="0" cellpadding="4" border="1">'
+                               f'<thead><tr>{header}</tr></thead>{"".join(rows)}</table>')
+        document.setHtml(f'''<html><head><style>
+            body {{font-family:'Microsoft YaHei';font-size:{self.PRINT_FONT_POINTS}pt;color:#202B38}}
+            h2 {{font-size:12pt;color:#1F3A6A}} table {{border-collapse:collapse}}
+            th {{background:#E6F1FB}} th,td {{border-color:#64748B}}
+            </style></head><body>{''.join(tables_html)}</body></html>''')
+        # Explicit solid cell borders; Qt scales these logical-pixel metrics to printer DPI.
+        cursor = QTextCursor(document)
+        cursor.beginEditBlock()
+        for table in document.rootFrame().childFrames():
+            if not hasattr(table, "columns"):
+                continue
+            border = self.PRINT_BORDER_WIDTH
+            format_ = table.format()
+            format_.setBorder(border)
+            format_.setBorderBrush(QColor("#64748B"))
+            format_.setBorderStyle(QTextFrameFormat.BorderStyle.BorderStyle_Solid)
+            format_.setCellPadding(self.PRINT_CELL_PADDING)
+            format_.setBorderCollapse(True)
+            table.setFormat(format_)
+            for row in range(table.rows()):
+                for column in range(table.columns()):
+                    cell = table.cellAt(row, column)
+                    cell_format = cell.format().toTableCellFormat()
+                    cell_format.setBorder(border)
+                    cell_format.setBorderBrush(QColor("#64748B"))
+                    cell_format.setBorderStyle(QTextFrameFormat.BorderStyle.BorderStyle_Solid)
+                    cell.setFormat(cell_format)
+        cursor.endEditBlock()
+
+    def print_summary(self):
+        if not self.window.draft_items:
+            return
+        self.print_button.setEnabled(False)
+        try:
+            self._commit_print_edits()
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setPageOrientation(QPageLayout.Orientation.Landscape)
+            dialog = QPrintDialog(printer, self)
+            dialog.setWindowTitle("打印附件汇总")
+            dialog.setOption(QPrintDialog.PrintDialogOption.PrintPageRange, True)
+            # Layout/page count changes with paper settings; don't cap ranges at the old layout.
+            dialog.setMinMax(1, self.PRINT_MAX_PAGE)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            # Paper/orientation/margins may have changed in the native properties dialog.
+            document = self._print_document(printer)
+            if printer.printRange() == printer.PrintRange.PageRange:
+                page_count = document.pageCount()
+                if printer.fromPage() > page_count:
+                    raise RuntimeError(f"当前纸张设置共 {page_count} 页，请重新选择打印页码。")
+                printer.setFromTo(printer.fromPage(), min(printer.toPage(), page_count))
+            document.print_(printer)
+            if printer.printerState() == printer.PrinterState.Error:
+                raise RuntimeError("打印机返回错误，请检查打印机连接和纸张设置。")
+        except Exception as exc:
+            LOGGER.exception("Attachment summary printing failed")
+            QMessageBox.warning(self, "附件汇总打印失败", str(exc))
+        finally:
+            self.print_button.setEnabled(bool(self.window.draft_items))
 
     def accept(self):
         QDialog.accept(self)

@@ -6336,57 +6336,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             return ""
         return names[0] if len(names) == 1 else f"{names[0]}等 {len(names)} 项"
 
-    def installation_board_price_sign(self) -> int:
-        try:
-            return -1 if int(getattr(self, "installation_board_sign", 1)) == -1 else 1
-        except (TypeError, ValueError):
-            return 1
-
     def stored_attachment_price_sign(item: dict | None) -> int:
         try:
             return -1 if int((item or {}).get("attachment_price_sign", 1)) == -1 else 1
         except (TypeError, ValueError):
             return 1
-
-    def apply_installation_board_sign(self, source: dict, price_cell=None) -> dict:
-        signed = dict(source)
-        sign = installation_board_price_sign(self)
-        signed["attachment_price_sign"] = sign
-        if price_cell is not None:
-            try:
-                price = abs(float(price_cell.text().strip()))
-                price_cell.setText(f"{price * sign:g}")
-            except (AttributeError, TypeError, ValueError):
-                pass
-        return signed
-
-    def toggle_installation_board_sign(self) -> None:
-        self.installation_board_sign = -installation_board_price_sign(self)
-        table = getattr(self, "table", None)
-        if isinstance(table, QTableWidget):
-            self._default_selection_guard = True
-            table.blockSignals(True)
-            try:
-                for row in range(table.rowCount()):
-                    check_item = table.item(row, self.COL_CHECK)
-                    source = check_item.data(Qt.ItemDataRole.UserRole) if check_item else None
-                    if (
-                        check_item is None
-                        or check_item.checkState() != Qt.CheckState.Checked
-                        or not isinstance(source, dict)
-                        or not is_installation_board(source)
-                    ):
-                        continue
-                    price_cell = table.item(row, self.COL_PRICE)
-                    check_item.setData(
-                        Qt.ItemDataRole.UserRole,
-                        apply_installation_board_sign(self, source, price_cell),
-                    )
-            finally:
-                table.blockSignals(False)
-                self._default_selection_guard = False
-        sync_attachments_from_table(self)
-        refresh_category_browser(self, preserve_scroll=True)
 
     def default_card_state(
         self,
@@ -7097,31 +7051,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                     )
                 quick_buttons.append(quick_button)
 
-            if category_name == "安装板":
-                quick_row = QHBoxLayout()
-                quick_row.setContentsMargins(0, 0, 0 if root_level else 8, 0)
-                quick_row.setSpacing(6)
-                if quick_buttons:
-                    quick_row.addWidget(quick_buttons[0], 1)
-                else:
-                    quick_row.addStretch(1)
-                sign = installation_board_price_sign(self)
-                sign_button = QPushButton("−" if sign < 0 else "+", card)
-                sign_button.setObjectName(
-                    "attachmentPriceSignNegative" if sign < 0 else "attachmentPriceSignPositive"
-                )
-                sign_button.setAccessibleName("安装板价格减项" if sign < 0 else "安装板价格加项")
-                sign_button.setToolTip(
-                    "当前安装板按负值计价；单击恢复加项"
-                    if sign < 0 else "当前安装板按正值计价；单击切换为减项"
-                )
-                sign_button.setFixedSize(34, 34)
-                sign_button.clicked.connect(lambda: toggle_installation_board_sign(self))
-                quick_row.addWidget(sign_button, 0, Qt.AlignmentFlag.AlignVCenter)
-                selection_layout.addLayout(quick_row)
-            else:
-                for quick_button in quick_buttons:
-                    selection_layout.addWidget(quick_button)
+            for quick_button in quick_buttons:
+                selection_layout.addWidget(quick_button)
             for manual_item in manual_items:
                 manual_text = manual_selection_card_text(self, manual_item)
                 manual_horizontal_text = "  ·  ".join(
@@ -7459,20 +7390,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                         f"当前产品应匹配“{expected_name}”，但附件库中没有可用的宽、高尺寸记录，"
                         "本次未选择安装板。"
                     )
-            if (
-                item.checkState() == Qt.CheckState.Checked
-                and isinstance(source, dict)
-                and is_installation_board(source)
-            ):
-                self._default_selection_guard = True
-                self.table.blockSignals(True)
-                try:
-                    price_cell = self.table.item(item.row(), self.COL_PRICE)
-                    source = apply_installation_board_sign(self, source, price_cell)
-                    item.setData(Qt.ItemDataRole.UserRole, source)
-                finally:
-                    self.table.blockSignals(False)
-                    self._default_selection_guard = False
             rule = default_rule_for_item(source) if isinstance(source, dict) else None
             if rule is not None:
                 if item.checkState() == Qt.CheckState.Checked:
@@ -7603,7 +7520,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if source.get("unit_price_override") is not None:
                 output["unit_price_override"] = source["unit_price_override"]
             if is_installation_board(source) or is_installation_board(output):
-                output["attachment_price_sign"] = installation_board_price_sign(self)
+                output["attachment_price_sign"] = stored_attachment_price_sign(source)
                 for price_key in ("matched_price", "unit_price_override"):
                     if output.get(price_key) is not None:
                         try:
@@ -7612,7 +7529,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                             pass
         for output in selected:
             if is_installation_board(output):
-                output["attachment_price_sign"] = installation_board_price_sign(self)
+                output["attachment_price_sign"] = stored_attachment_price_sign(output)
                 for price_key in ("matched_price", "unit_price_override"):
                     if output.get(price_key) is not None:
                         try:
@@ -7717,12 +7634,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 rule for rule in self.default_selection_opt_outs
                 if not str(rule).startswith(DOOR_TRANSFORMATION_RULE_PREFIX)
             }
-        self.installation_board_sign = -1 if any(
-            isinstance(item, dict)
-            and is_installation_board(item)
-            and stored_attachment_price_sign(item) == -1
-            for item in getattr(self, "attachments", [])
-        ) else 1
         panel = QFrame(self)
         panel.setObjectName("attachmentCategoryBar")
         panel.setStyleSheet(
@@ -7742,11 +7653,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             "QPushButton#attachmentQuickMatchManual:hover,QPushButton#attachmentManualSelection:hover {background:#d4eadc;}"
             "QPushButton#attachmentQuickMatchCancelled:hover {background:#e4e9ed;color:#44515d;}"
             "QPushButton#attachmentQuickMatchMissing {background:#fff5df;color:#9a620e;font-weight:700;padding:7px 12px;border:0;text-align:left;}"
-            "QPushButton#attachmentPriceSignPositive,QPushButton#attachmentPriceSignNegative {border-radius:17px;font-size:20px;font-weight:800;padding:0;}"
-            "QPushButton#attachmentPriceSignPositive {background:#e7f1fb;color:#245f91;border:1px solid #7eafd3;}"
-            "QPushButton#attachmentPriceSignPositive:hover {background:#d8e9f7;}"
-            "QPushButton#attachmentPriceSignNegative {background:#fff0f0;color:#b42318;border:1px solid #e59a94;}"
-            "QPushButton#attachmentPriceSignNegative:hover {background:#ffe0e0;}"
         )
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(14, 10, 14, 12)

@@ -12,7 +12,7 @@ import unicodedata
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import uuid4
 from PySide6.QtCore import Qt, QTimer, QDate
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QInputDialog, QWidget
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QWidget
 from shiboken6 import isValid
 from material_prices import material_unit_price
 from ganged_cabinet_rules import parse_ganged_specification
@@ -393,7 +393,7 @@ def discard_automatic_amount_override(row):
 def merge_cost(source, cost, automatic_base_height=None):
     if is_base_attachment(source) and source.get("ganged_cabinet_index", source.get("ganged_fixed_base_index")) is not None:
         automatic_base_height = None
-    source = discard_automatic_amount_override(source)
+    source = normalize_installation_board_quantity(discard_automatic_amount_override(source))
     merged = {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
     # Older V2 APIs return the catalogue amount for sized attachments. Apply
     # the selected size price to all approved families; newer APIs derive it.
@@ -448,6 +448,36 @@ def price_sign(source):
 def installation_board(source):
     identity = " ".join(str(source.get(key) or "") for key in ("category_level1", "category_level2", "category_level3", "item_name", "model_code"))
     return "安装板" in identity and "安装板单发" not in identity
+
+
+def allows_negative_attachment_quantity(source):
+    return not source.get("custom") and installation_board(source)
+
+
+def normalize_installation_board_quantity(source):
+    """Translate a displayed negative board count to the existing API contract."""
+    try:
+        quantity = float(source.get("quantity", 1))
+    except (ValueError, TypeError):
+        return source
+    if math.isfinite(quantity) and quantity < 0:
+        if not allows_negative_attachment_quantity(source):
+            raise ValueError("仅安装板允许负数量，其他附件数量必须为正数")
+        quantity = abs(quantity)
+        return {**source, "quantity": int(quantity) if quantity.is_integer() else quantity,
+                "attachment_price_sign": -1}
+    return source
+
+
+def displayed_attachment_quantity(source):
+    try:
+        quantity = float(source.get("quantity", 1))
+    except (TypeError, ValueError):
+        quantity = 1.0
+    if allows_negative_attachment_quantity(source) and quantity >= 0:
+        return quantity * price_sign(source)
+    return quantity
+
 
 def _is_computer_tray(source):
     return (not source.get("custom")
@@ -770,7 +800,7 @@ def uses_base_height(item):
     return any("底座高度" in json.dumps(value, ensure_ascii=False) for value in formulas if value)
 
 def selected_input(item, automatic_base_height=None):
-    item = discard_automatic_amount_override(item)
+    item = normalize_installation_board_quantity(discard_automatic_amount_override(item))
     if is_base_attachment(item) and item.get("ganged_cabinet_index", item.get("ganged_fixed_base_index")) is not None:
         automatic_base_height = None
     manual_inputs = copy.deepcopy(item.get("manual_inputs") or {})
@@ -916,6 +946,13 @@ def validate_confirmation_attachments(item, line_number):
         cabinet = item.get("name") or item.get("model_code") or item.get("product_code") or "未命名"
         raise ValueError(f"第{line_number}行报价（{cabinet}）的“{label}”：{reason}。请重新计算该柜并重新加入报价单。")
 
+    for index, row in enumerate(rows, 1):
+        if isinstance(row, dict):
+            try:
+                normalize_installation_board_quantity(row)
+            except ValueError as error:
+                fail(index, row, str(error))
+
     if isinstance(frozen, list):
         catalog = [row for row in frozen if not isinstance(row, dict) or row.get("custom") is not True]
         if len(named_rows) != len(catalog):
@@ -1054,9 +1091,11 @@ def install_attachment_v2(namespace):
                 if scheme:
                     scheme.setText(source.get("unit") or "")
                 face = source.get("face_price", source.get("price", source.get("matched_price")))
+                if price:
+                    price.setFlags(price.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if price and face is not None:
-                    price.setText(str(abs(float(face)) * price_sign(source)))
-                    price.setToolTip("Excel面价；仅安装板可双击切换加价/扣减")
+                    price.setText(str(abs(float(face))))
+                    price.setToolTip("Excel面价（只读）；安装板扣减请在已选附件中输入负数量")
                 source.setdefault("selection_key", str(uuid4()))
                 if cell:
                     cell.setData(Qt.ItemDataRole.UserRole, source)
@@ -1182,20 +1221,6 @@ def install_attachment_v2(namespace):
             return
         source_cell = dialog.table.item(row, dialog.COL_CHECK)
         source = dict(source_cell.data(Qt.ItemDataRole.UserRole) or {})
-        if column == dialog.COL_PRICE and installation_board(source):
-            choice, accepted = QInputDialog.getItem(dialog, "安装板加减", "面价固定，选择金额方向", ["加价", "扣减"], 0 if price_sign(source) > 0 else 1, False)
-            if accepted:
-                source["attachment_price_sign"] = -1 if choice == "扣减" else 1
-                if hasattr(dialog, "installation_board_sign"):
-                    dialog.installation_board_sign = source["attachment_price_sign"]
-                    for _, cell, item in checked(dialog):
-                        if installation_board(item):
-                            cell.setData(Qt.ItemDataRole.UserRole, {**item, "attachment_price_sign": source["attachment_price_sign"]})
-                source_cell.setData(Qt.ItemDataRole.UserRole, source)
-                decorate(dialog)
-                dialog._v2_ready = False
-                dialog._v2_timer.start()
-            return
         if column != dialog.COL_QUANTITY + len(EXTRA_HEADERS):
             return
         automatic_base = base_height(dialog.parentWidget())

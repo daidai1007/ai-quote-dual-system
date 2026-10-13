@@ -1206,7 +1206,7 @@ class AttachmentDialog(QDialog):
         if price is None:
             price = self._number(catalog_item.get("price"))
         if price is not None:
-            price = abs(price) * self._price_sign(selected)
+            price = abs(price)
         price_item = QTableWidgetItem("" if price is None else f"{price:g}")
         price_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
         price_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -1386,14 +1386,14 @@ class AttachmentDialog(QDialog):
                 return None
             try:
                 price = float(self.table.item(row, self.COL_PRICE).text().strip())
-                if price < 0 and not self._is_installation_board(source):
+                if price < 0:
                     raise ValueError
             except (AttributeError, TypeError, ValueError):
                 if show_errors:
                     QMessageBox.warning(self, "单价格式错误", f"第 {row + 1} 行尚无有效数字单价，请填写后再确认。")
                 return None
 
-            price_sign = -1 if price < 0 else self._price_sign(source)
+            price_sign = self._price_sign(source)
             absolute_price = abs(price)
             item = {"item_name": source.get("item_name") or self.table.item(row, self.COL_NAME).text()}
             item["quantity"] = int(quantity)

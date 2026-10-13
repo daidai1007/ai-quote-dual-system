@@ -64,9 +64,10 @@ class DocumentProgress(unittest.TestCase):
                 elif endpoint=='confirm':
                     worker.succeeded.emit({'confirmed':True,'history_items':1})
                 elif endpoint in ('recalculate-line','preview'):
-                    costs=[dict(selection, item_name='分段板' if '分段板高度' in selection['manual_inputs'] else '玻璃门', status='CALCULATED',
-                        formula_unit_cost=8.8,formula_amount=8.8*selection['quantity'],
-                        quick_amount=250.26*selection['quantity'])
+                    costs=[dict(selection, item_name='安装板' if selection['attachment_price_id']==1 else
+                        '分段板' if '分段板高度' in selection['manual_inputs'] else '玻璃门', status='CALCULATED',
+                        formula_unit_cost=8.8,formula_amount=8.8*selection['quantity']*selection.get('attachment_price_sign',1),
+                        quick_amount=250.26*selection['quantity']*selection.get('attachment_price_sign',1))
                         for selection in worker.test_payload['attachments']]
                     worker.succeeded.emit(dict(attachments=costs,attachment_contract=2,
                         quote_line_id='22222222-2222-4222-8222-222222222222',
@@ -231,6 +232,30 @@ class DocumentProgress(unittest.TestCase):
         checked=self.requests[-1][1]['items'][0]
         self.assertEqual(checked['attachments'][0]['manual_inputs'],{'分段板高度':150})
         self.assertEqual(checked['quote_line_id'],'22222222-2222-4222-8222-222222222222')
+        self.assertFalse(v2.attachment_snapshot_needs_refresh(item))
+
+    def test_negative_board_quantity_recalculates_and_generates_with_deduction_contract(self):
+        item,row=self.edited_glass()
+        row.update(item_name='安装板',category_level1='安装板',attachment_price_id=1,
+                   formula_unit_cost=8.8,manual_inputs={})
+        item['quick']['total_cost']=1250.26
+        item['attachment_confirmation_inputs']=v2.confirmation_inputs([row])
+        editor=ui.AttachmentEditor(self.window,item)
+        self.addCleanup(editor.close)
+        editor.table.cellWidget(0,editor.COL_QUANTITY).setValue(-4)
+        editor.accept()
+        self.controller.generate()
+        wait(lambda:not self.controller.busy)
+        self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],
+                         ['recalculate-line','preview-check'])
+        for payload in (self.requests[0][1],self.requests[1][1]['items'][0]):
+            selected=payload['attachments'][0]
+            self.assertEqual(selected['quantity'],2)
+            self.assertEqual(selected['attachment_price_sign'],-1)
+        self.assertEqual(item['attachments'][0]['formula_amount'],-17.6)
+        self.assertEqual(item['attachments'][0]['quick_amount'],-500.52)
+        self.assertEqual(item['quick']['total_cost'],499.48)
+        self.assertEqual(self.window.stack.currentIndex(),ui.QUOTE_ROUTE)
         self.assertFalse(v2.attachment_snapshot_needs_refresh(item))
 
     def test_server_failure_locator_and_successful_retry(self):

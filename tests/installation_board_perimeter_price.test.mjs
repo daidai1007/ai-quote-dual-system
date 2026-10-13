@@ -38,6 +38,12 @@ test('quick total changes without changing installation-board formula cost',()=>
   assert.equal(result.quick_quote.total_cost,1333.22);
   assert.equal(result.quick_quote.attachment_fee,333.22);
   assert.equal(result.formula_cost.total_cost,550.83);
+  const deducted=applyAttachmentTotals({quick_quote:{total_cost:1000,attachment_fee:0},
+    formula_cost:{total_cost:500,attachment_fee:0}},[
+    calculateAttachment({quantity:2,attachment_price_sign:-1},board,[{rule_id:1,method:'FIXED',fixed_cost:50.83}],environment)]);
+  assert.equal(deducted.formula_cost.attachment_fee,-101.66);
+  assert.equal(deducted.formula_cost.total_cost,398.34);
+  assert.equal(deducted.quick_quote.total_cost,333.56);
 });
 
 test('installation-board costs use actual face dimensions, never catalogue size or perimeter-scaled cost',()=>{
@@ -83,16 +89,22 @@ test('immutable catalogue audit price and scaled quote/export snapshots both sur
         sql.includes('jsonb_object_agg')?{[snapshot.environment.quote_line_id]:snapshot}:snapshot);
       throw new Error('Unexpected offline SQL');
     }});
-  const input={...environment,material_unit_price_override:4.2,quote_id:'offline-quote',attachments:[{attachment_price_id:1,quantity:1}]};
+  for(const [quantity,sign] of [[1,1],[2,-1]]){
+  const expected=round(333.2175*quantity*sign);
+  const input={...environment,material_unit_price_override:4.2,quote_id:'offline-quote',
+    attachments:[{attachment_price_id:1,quantity,attachment_price_sign:sign}]};
   const result=await service.calculate(input);
-  assert.equal(result.attachments[0].quick_amount,333.22);
-  assert.equal(result.quick_quote.total_cost,1333.22);
+  assert.equal(result.attachments[0].quick_amount,expected);
+  assert.equal(result.quick_quote.total_cost,round(1000+expected));
   // Existing DB CHECK(quantity * quick_face_price) and catalogue guard stay valid.
   assert.match(insertSql,/quick_face_price,quick_amount/);
-  assert.match(insertSql,/,363\.51,363\.51,/);
+  assert.ok(insertSql.includes(`,363.51,${round(363.51*quantity*sign)},`));
   const hydrated=await service.hydrateDocument({items:[{...environment,attachment_contract:2,
     quote_line_id:result.quote_line_id,attachments:input.attachments,quantity:3}]});
-  assert.equal(hydrated.items[0].quick.total_cost,1333.22);
-  assert.equal(hydrated.items[0].attachments[0].quick_amount,333.22);
+  assert.equal(hydrated.items[0].quick.total_cost,round(1000+expected));
+  assert.equal(hydrated.items[0].attachments[0].quick_amount,expected);
+  assert.equal(hydrated.items[0].attachments[0].quantity,quantity);
+  assert.equal(hydrated.items[0].attachments[0].attachment_price_sign,sign);
   assert.equal(hydrated.items[0].attachments[0].unit_price_override,333.2175);
+  }
 });

@@ -1,9 +1,10 @@
-param([switch]$AllowPendingDeployment)
+param([switch]$AllowPendingDeployment, [string]$Version = '2026.10.09.11')
 $ErrorActionPreference = 'Stop'
+if ($Version -notmatch '^\d{4}\.\d{2}\.\d{2}\.\d+$') { throw 'Invalid version.' }
 $taskWorkspace = 'G:\gongsi\banjinxitong\板件后续二次修改'
-$taskSource = Join-Path $taskWorkspace 'render-test-deploy\outputs\review-client-2026.10.09.11\AIQuoteDualSystem'
+$taskSource = Join-Path $taskWorkspace "render-test-deploy\outputs\review-client-$Version\AIQuoteDualSystem"
 $taskLive = Join-Path $taskWorkspace 'AIQuoteDualSystem'
-$taskZip = Join-Path $taskWorkspace 'AIQuoteDualSystem_Portable_v2026.10.09.11.zip'
+$taskZip = Join-Path $taskWorkspace "AIQuoteDualSystem_Portable_v$Version.zip"
 foreach ($taskPath in @($taskSource, $taskZip)) {
     if (-not [IO.Path]::GetFullPath($taskPath).StartsWith($taskWorkspace + '\', [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Archive path escaped the workspace.'
@@ -11,13 +12,13 @@ foreach ($taskPath in @($taskSource, $taskZip)) {
 }
 if (Test-Path -LiteralPath $taskZip) { throw 'Archive already exists; do not overwrite it.' }
 $taskEntry = Join-Path $taskSource 'AIQuoteDualSystem_layout_v0.exe'
-if ((Get-Item -LiteralPath $taskEntry).VersionInfo.ProductVersion -ne '2026.10.09.11') {
+if ((Get-Item -LiteralPath $taskEntry).VersionInfo.ProductVersion -ne $Version) {
     throw 'Portable client has the wrong version.'
 }
 $taskExeHash = (Get-FileHash -LiteralPath $taskEntry -Algorithm SHA256).Hash
 $taskMatchesCurrent = $taskExeHash -eq (Get-FileHash -LiteralPath (Join-Path $taskLive 'AIQuoteDualSystem_layout_v0.exe')).Hash
 $taskBuildManifest = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $taskSource) 'manifest.json') -Raw | ConvertFrom-Json
-if ($taskBuildManifest.version -ne '2026.10.09.11' -or $taskBuildManifest.sha256 -ne $taskExeHash) {
+if ($taskBuildManifest.version -ne $Version -or $taskBuildManifest.sha256 -ne $taskExeHash) {
     throw 'Portable executable differs from the verified build manifest.'
 }
 if (-not $taskMatchesCurrent -and -not $AllowPendingDeployment) {
@@ -63,7 +64,7 @@ try {
 }
 [ordered]@{
     archive = $taskZip
-    version = '2026.10.09.11'
+    version = $Version
     bytes = (Get-Item -LiteralPath $taskZip).Length
     file_count = $taskFiles.Count
     sha256 = (Get-FileHash -LiteralPath $taskZip -Algorithm SHA256).Hash

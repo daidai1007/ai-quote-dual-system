@@ -156,6 +156,7 @@ assert not manual_row.get("error"), "stale error survived a successful calculati
 for identifier, row in rows.items():
     expected = next(a["price"] for a in catalog["items"] if a["attachment_price_id"] == identifier)
     assert float(dialog.table.item(row, dialog.COL_PRICE).text()) == expected
+    assert not dialog.table.item(row, dialog.COL_PRICE).flags() & Qt.ItemFlag.ItemIsEditable
 identity = catalog["items"][0]
 assert not Dialog._same_catalog_choice(identity, {**identity, "attachment_price_id": -999, "category_level1": "其他分类"})
 assert Dialog._same_catalog_choice(identity, identity)
