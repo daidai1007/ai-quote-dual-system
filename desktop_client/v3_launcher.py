@@ -200,25 +200,20 @@ def _format_ui_number(value: float) -> str:
 
 
 def _scale_ui_style_text(text: str) -> str:
-    """Increase every explicit font by one step and keep compact rows usable."""
+    """Increase explicit fonts once; leave geometry to responsive Qt layouts.
+
+    The extracted client runs with Qt's logical-pixel high-DPI mode.  Adding a
+    second fixed-height multiplier here makes controls grow once for the code
+    rewrite and again when the OS changes its scale factor.  Minimum/maximum
+    heights are therefore intentionally left untouched; route-specific
+    responsive code owns those constraints.
+    """
 
     def scale_font(match: re.Match) -> str:
         size = float(match.group("size")) + 1.0
         return f"font-size: {_format_ui_number(size)}{match.group('unit')}"
 
-    def scale_height(match: re.Match) -> str:
-        size = float(match.group("size"))
-        if 16.0 <= size <= 64.0:
-            size += 4.0
-        return (
-            f"{match.group('name')}: {_format_ui_number(size)}"
-            f"{match.group('unit')}"
-        )
-
-    return _COMPACT_HEIGHT_PATTERN.sub(
-        scale_height,
-        _FONT_SIZE_PATTERN.sub(scale_font, text),
-    )
+    return _FONT_SIZE_PATTERN.sub(scale_font, text)
 
 
 def _scale_ui_code(code: types.CodeType) -> types.CodeType:

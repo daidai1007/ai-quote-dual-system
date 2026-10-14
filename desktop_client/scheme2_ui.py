@@ -69,6 +69,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from layout_refresh import _fit_window_minimum_to_screen
 from pypdf import PdfReader, PdfWriter
 
 from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, door_transformation_default_names
@@ -86,6 +88,7 @@ DETAIL_ROUTE = 5
 NAV_EXPANDED_WIDTH = 128
 COST_SIDEBAR_WIDTH = 130
 COMPANY_COMBO_HEIGHT = 56
+SCHEME2_ACTION_DOCK_HEIGHT = 48
 QUOTE_COMPANY_FIELD_WIDTH = 420
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
@@ -3116,7 +3119,27 @@ def _layout_cost_actions(window, compact):
         grid.takeAt(0)
     for column in range(grid.columnCount()):
         grid.setColumnStretch(column, 0)
-    for column, button in enumerate(buttons[:-2]):
+    generate_docked = (
+        len(buttons) >= 2
+        and getattr(window, "scheme2_action_dock", None) is not None
+        and buttons[-1].parentWidget() is window.scheme2_action_dock
+    )
+    primary_buttons = buttons[:-2]
+    if generate_docked:
+        # The fixed action row owns “生成报价单”; keep the other cost-page
+        # editing controls in their original grid.
+        for column, button in enumerate(primary_buttons):
+            grid.addWidget(button, 0, column)
+        back = buttons[-2]
+        column = len(primary_buttons)
+        if compact:
+            grid.addWidget(back, 1, 0)
+            grid.setColumnStretch(1, 1)
+        else:
+            grid.setColumnStretch(column, 1)
+            grid.addWidget(back, 0, column + 1)
+        return
+    for column, button in enumerate(primary_buttons):
         grid.addWidget(button, 0, column)
     if compact:
         grid.addWidget(buttons[-2], 1, 0)
@@ -6242,6 +6265,83 @@ def _apply_proportional_scale(window):
     return scale
 
 
+def _ensure_scheme2_action_dock(window):
+    """Keep the scheme-2 primary actions outside the scrolling canvas.
+
+    The option, cost and formal-quote pages are all children of ``mainScroll``.
+    Their primary buttons used to disappear with the long page on short
+    logical desktops.  Reparenting the existing buttons (without changing
+    object names or signal connections) gives every route one fixed action
+    row below the scroll area.
+    """
+
+    dock = getattr(window, "scheme2_action_dock", None)
+    host = getattr(window, "quote_action_dock_host", None)
+    if dock is not None:
+        _position_scheme2_action_dock(window)
+        return dock
+    if host is None or host.layout() is None:
+        return None
+
+    actions = [
+        (getattr(window, "scheme2_add_button", None), {OPTION_ROUTE}),
+        (getattr(window, "scheme2_cost_generate", None), {COST_ROUTE}),
+        (getattr(window, "scheme2_quote_print", None), {QUOTE_ROUTE}),
+        (getattr(window, "scheme2_quote_export", None), {QUOTE_ROUTE}),
+    ]
+    actions = [(button, routes) for button, routes in actions if isinstance(button, QPushButton)]
+    if not actions:
+        return None
+
+    dock = QFrame(host)
+    dock.setObjectName("scheme2ActionDock")
+    dock.setFixedHeight(SCHEME2_ACTION_DOCK_HEIGHT)
+    dock_layout = QHBoxLayout(dock)
+    dock_layout.setContentsMargins(8, 6, 8, 6)
+    dock_layout.setSpacing(6)
+    label = QLabel("当前操作", dock)
+    label.setObjectName("scheme2ActionDockLabel")
+    dock_layout.addWidget(label)
+    dock_layout.addStretch(1)
+    entries = []
+    for button, routes in actions:
+        parent = button.parentWidget()
+        parent_layout = parent.layout() if parent is not None else None
+        if parent_layout is not None:
+            parent_layout.removeWidget(button)
+        button.setParent(dock)
+        button.setMinimumHeight(28)
+        button.setMaximumHeight(32)
+        button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        dock_layout.addWidget(button)
+        entries.append((button, routes))
+    host.layout().addWidget(dock, 0)
+    window.scheme2_action_dock = dock
+    window.scheme2_action_dock_label = label
+    window._scheme2_action_dock_entries = entries
+    _position_scheme2_action_dock(window)
+    return dock
+
+
+def _position_scheme2_action_dock(window):
+    dock = getattr(window, "scheme2_action_dock", None)
+    if dock is None:
+        return
+    route = getattr(window, "stack", None).currentIndex() if getattr(window, "stack", None) is not None else -1
+    visible = route in {OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE}
+    dock.setVisible(visible)
+    for button, routes in getattr(window, "_scheme2_action_dock_entries", ()):
+        # Style-sheet metric scaling is allowed for content controls, but the
+        # fixed action row must retain a reliable hit target at every logical
+        # DPI/size.  Reassert the row height after each responsive pass.
+        button.setFixedHeight(28)
+        button.setVisible(visible and route in routes)
+    width = max(1, dock.width())
+    label = getattr(window, "scheme2_action_dock_label", None)
+    if isinstance(label, QLabel):
+        label.setVisible(width >= 760)
+
+
 def _apply_responsive(window):
     scale = _apply_proportional_scale(window)
     splitter = getattr(window, "scheme2_option_splitter", None)
@@ -6249,6 +6349,9 @@ def _apply_responsive(window):
     width = window.width()
     option_page = window.stack.widget(OPTION_ROUTE)
     main_scroll = window.findChild(QScrollArea, "mainScroll")
+    # Create the fixed row before arranging cost actions so the cost grid
+    # leaves its “生成报价单” button in that row.
+    _ensure_scheme2_action_dock(window)
     if splitter is not None:
         if route != OPTION_ROUTE:
             option_page.setMinimumHeight(0)
@@ -6364,6 +6467,7 @@ def _apply_responsive(window):
             target_height,
         )
     _apply_navigation_state(window)
+    _position_scheme2_action_dock(window)
 
 
 def _increase_font_sizes(style_sheet, step=1.0):
@@ -6552,6 +6656,8 @@ QPushButton#scheme2PrimaryAction:hover { background:#1D4ED8; }
 QPushButton#scheme2PrimaryAction:disabled { background:#AFC7E8; border-color:#AFC7E8; }
 QPushButton#scheme2PrimaryGhost, QPushButton#scheme2CollapseButton, QPushButton#scheme2ExpandButton { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:6px; padding:0 10px; }
 QFrame#scheme2RecognitionFooter { background:#FFFFFF; border-top:1px solid rgba(0,0,0,.12); }
+QFrame#scheme2ActionDock { background:#FFFFFF; border:1px solid #B8C7D3; border-radius:8px; }
+QLabel#scheme2ActionDockLabel { color:#3F5A82; font-weight:600; padding-left:4px; }
 QTableWidget#summaryTable, QTableWidget#scheme2DetailTable { background:#FFFFFF; color:#2A3541; alternate-background-color:#F6F7F9; border:1px solid rgba(0,0,0,.12); border-radius:8px; gridline-color:rgba(0,0,0,.12); font-size:12px; font-weight:400; }
 QTableWidget#summaryTable::item:selected, QTableWidget#scheme2DetailTable::item:selected { background:#E6F1FB; color:#1C1C1E; }
 QTableWidget#summaryTable::item:hover { background:#F5F9FF; }
@@ -6688,9 +6794,9 @@ def install_scheme2_ui(namespace):
         window._scheme2_recognition_elapsed_timer.timeout.connect(
             lambda: _sync_scheme2_page_navigation(window)
         )
-        # The reference explicitly supports the <900 logical-pixel stacked
-        # layout; the recovered client used a wider fixed minimum.
-        window.setMinimumSize(1024, 700)
+        # Let the shared monitor re-run this route's responsive pass after a
+        # monitor move or a logical-DPI/work-area change.
+        window._scheme2_responsive_callback = lambda: _apply_responsive(window)
         window.statusBar().hide()
         old_cost_page = window.stack.widget(COST_ROUTE)
         window.stack.removeWidget(old_cost_page)
@@ -6768,6 +6874,11 @@ def install_scheme2_ui(namespace):
         window.show_section(OPTION_ROUTE)
         _set_dirty(window, False)
         _apply_responsive(window)
+        # scheme2_ui is installed after layout_refresh.  Reapply the shared
+        # screen constraint here so the final wrapper cannot overwrite it
+        # with a fixed 1024x700 minimum.
+        _fit_window_minimum_to_screen(window)
+        _position_scheme2_action_dock(window)
         from quote_document_progress import QuoteDocumentProgress
         window._scheme2_document_controller = QuoteDocumentProgress(window, namespace, sys.modules[__name__])
         startup_workspace = next((

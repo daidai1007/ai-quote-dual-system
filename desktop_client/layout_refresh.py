@@ -28,6 +28,7 @@ from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QApplication,
     QComboBox,
     QCompleter,
     QDialog,
@@ -3676,11 +3677,15 @@ def _fit_window_minimum_to_screen(window) -> None:
 
     screen = window.screen()
     if screen is None:
-        window.setMinimumSize(980, 700)
+        screen = QApplication.primaryScreen()
+    if screen is None:
+        # This is only reachable before a QApplication has a screen.  Do not
+        # reintroduce a desktop-sized fallback that can exceed the work area.
+        window.setMinimumSize(1, 1)
         return
     available = screen.availableGeometry()
     if not available.isValid():
-        window.setMinimumSize(980, 700)
+        window.setMinimumSize(1, 1)
         return
     geometry_key = (
         available.x(),
@@ -3688,13 +3693,163 @@ def _fit_window_minimum_to_screen(window) -> None:
         available.width(),
         available.height(),
     )
-    if getattr(window, "_layout_refresh_screen_geometry", None) == geometry_key:
-        return
     window._layout_refresh_screen_geometry = geometry_key
-    window.setMinimumSize(
-        max(1, min(980, available.width())),
-        max(1, min(700, available.height())),
+    margin_x = min(32, max(8, available.width() // 24))
+    margin_y = min(48, max(24, available.height() // 16))
+    maximum_width = max(1, available.width() - margin_x)
+    maximum_height = max(1, available.height() - margin_y)
+    minimum_width = max(1, min(980, maximum_width))
+    minimum_height = max(1, min(620, maximum_height))
+    window.setMinimumSize(minimum_width, minimum_height)
+
+    # A normal window can retain a geometry larger than the new screen after
+    # moving between monitors or changing Windows scaling.  Clamp only when
+    # it would extend outside the available work area; ordinary user resizing
+    # inside the work area is left untouched.
+    geometry = getattr(window, "geometry", lambda: None)()
+    set_geometry = getattr(window, "setGeometry", None)
+    if geometry is None or not callable(set_geometry):
+        return
+    current_width = max(minimum_width, min(geometry.width(), maximum_width))
+    current_height = max(minimum_height, min(geometry.height(), maximum_height))
+    current_x = geometry.x()
+    current_y = geometry.y()
+    bounded_x = min(
+        max(current_x, available.x()),
+        available.right() - current_width + 1,
     )
+    bounded_y = min(
+        max(current_y, available.y()),
+        available.bottom() - current_height + 1,
+    )
+    # Never turn a user-requested maximized/full-screen state into a normal
+    # window while refreshing constraints.  Qt will apply the new minimum to
+    # the next normal restore operation.
+    if getattr(window, "isMaximized", lambda: False)() or getattr(
+        window, "isFullScreen", lambda: False
+    )():
+        _install_window_screen_tracking(window)
+        return
+    if (
+        current_width != geometry.width()
+        or current_height != geometry.height()
+        or bounded_x != current_x
+        or bounded_y != current_y
+    ):
+        set_geometry(bounded_x, bounded_y, current_width, current_height)
+    _install_window_screen_tracking(window)
+
+
+def _schedule_window_screen_fit(window) -> None:
+    """Refresh logical geometry after monitor/DPI/work-area changes."""
+
+    if getattr(window, "_layout_refresh_fit_pending", False):
+        return
+    window._layout_refresh_fit_pending = True
+
+    def refresh() -> None:
+        window._layout_refresh_fit_pending = False
+        _fit_window_minimum_to_screen(window)
+        if getattr(window, "stack", None) is not None:
+            _apply_quote_responsive_layout(window)
+        callback = getattr(window, "_scheme2_responsive_callback", None)
+        if callable(callback):
+            callback()
+
+    QTimer.singleShot(0, refresh)
+
+
+def _install_window_screen_tracking(window) -> None:
+    """Track the active QScreen without creating duplicate signal bindings."""
+
+    if getattr(window, "_layout_refresh_screen_tracking", False):
+        # The first pass often runs before Qt creates the native QWindow.
+        # Bind its screenChanged signal lazily once the window is shown.
+        handle = getattr(window, "windowHandle", lambda: None)()
+        bind_screen = getattr(window, "_layout_refresh_bind_screen", None)
+        if handle is not None and not getattr(
+            window, "_layout_refresh_window_handle_bound", False
+        ):
+            try:
+                handle.screenChanged.connect(
+                    lambda screen: (
+                        bind_screen(screen) if callable(bind_screen) else None,
+                        _schedule_window_screen_fit(window),
+                    )
+                )
+                window._layout_refresh_window_handle_bound = True
+                if callable(bind_screen):
+                    bind_screen(handle.screen())
+            except (AttributeError, RuntimeError):
+                pass
+        if not getattr(window, "_layout_refresh_state_bound", False):
+            try:
+                window.windowStateChanged.connect(
+                    lambda *_args: _schedule_window_screen_fit(window)
+                )
+                window._layout_refresh_state_bound = True
+            except (AttributeError, RuntimeError):
+                pass
+        return
+    window._layout_refresh_screen_tracking = True
+
+    def bind_screen(screen) -> None:
+        if screen is None:
+            return
+        bound_screens = getattr(
+            window, "_layout_refresh_bound_screen_ids", set()
+        )
+        if id(screen) in bound_screens:
+            return
+        bound_screens.add(id(screen))
+        window._layout_refresh_bound_screen_ids = bound_screens
+        try:
+            screen.availableGeometryChanged.connect(
+                lambda *_args: _schedule_window_screen_fit(window)
+            )
+        except (AttributeError, RuntimeError):
+            pass
+        try:
+            screen.geometryChanged.connect(
+                lambda *_args: _schedule_window_screen_fit(window)
+            )
+        except (AttributeError, RuntimeError):
+            pass
+        try:
+            screen.logicalDotsPerInchChanged.connect(
+                lambda *_args: _schedule_window_screen_fit(window)
+            )
+        except (AttributeError, RuntimeError):
+            pass
+
+    def handle_screen_changed(screen) -> None:
+        bind_screen(screen)
+        _schedule_window_screen_fit(window)
+
+    window._layout_refresh_bind_screen = bind_screen
+    try:
+        window.windowStateChanged.connect(
+            lambda *_args: _schedule_window_screen_fit(window)
+        )
+        window._layout_refresh_state_bound = True
+    except (AttributeError, RuntimeError):
+        pass
+    handle = getattr(window, "windowHandle", lambda: None)()
+    if handle is not None:
+        try:
+            handle.screenChanged.connect(handle_screen_changed)
+            window._layout_refresh_window_handle_bound = True
+        except (AttributeError, RuntimeError):
+            pass
+        bind_screen(handle.screen())
+    else:
+        try:
+            window.windowHandleChanged.connect(
+                lambda *_args: _schedule_window_screen_fit(window)
+            )
+        except (AttributeError, RuntimeError):
+            pass
+    bind_screen(getattr(window, "screen", lambda: None)())
 
 
 def _configure_quote_action_dock_density(window, width: int) -> None:

@@ -2326,8 +2326,22 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI 智能报价 - 双报价录入")
-        self.setMinimumSize(980, 700)
-        self.resize(1460, 920)
+        # Use the desktop work area in logical pixels.  The V3 launcher may
+        # apply a more specific responsive pass later, but the core window
+        # must already be constructible on a 125%/150% scaled laptop.
+        screen = self.screen()
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+        available_width = available.width() if available is not None else 1280
+        available_height = available.height() if available is not None else 720
+        minimum_width = max(1, min(980, available_width - 32))
+        minimum_height = max(1, min(620, available_height - 48))
+        self.setMinimumSize(minimum_width, minimum_height)
+        self.resize(
+            max(minimum_width, min(1440, available_width - 32)),
+            max(minimum_height, min(900, available_height - 48)),
+        )
         self.worker: ApiWorker | None = None
         self.template_worker: ApiWorker | None = None
         self.catalog_worker: ApiWorker | None = None
