@@ -50,11 +50,11 @@ assert [products.horizontalHeaderItem(c).text() for c in range(products.columnCo
     '原价单价', '原价总价', '柜体', '固定底座', '木托', '接地线-编织带', '运费', '折扣']
 assert products.rowCount() == 3
 assert [products.item(0, c).text().replace('\n', '') for c in range(7)] == [
-    '1', 'JP', '(1000+800)*600*(1800+100)', '3', '台', '255.00', '765.00']
+    '1', 'JP', '(1000+800)*600*(1800+100)', '3', '台', '300.00', '900.00']
 assert [products.item(0, c).text() for c in range(7, 15)] == [
-    '510.00', '1,530.00', '180.00', '45.00', '10.00', '15.00', '5.00', '0.50']
-assert products.item(1, 5).text() == '163.20' and products.item(1, 6).text() == '326.40'
-assert products.item(2, 1).text() == '合计' and products.item(2, 6).text() == '1,091.40'
+    '510.00', '1,530.00', '195.00', '45.00', '20.00', '30.00', '10.00', '0.50']
+assert products.item(1, 5).text() == '164.00' and products.item(1, 6).text() == '328.00'
+assert products.item(2, 1).text() == '合计' and products.item(2, 6).text() == '1,228.00'
 assert products.item(1, 8).text() == '408.00'
 assert products.item(2, 8).text() == '1,938.00'
 assert all(not products.item(r, c).flags() & Qt.ItemFlag.ItemIsEditable
@@ -66,16 +66,16 @@ assert dialog.table.item(1, 1).text() == '800×600×100 mm'
 assert dialog.table.item(0, 2).text() == dialog.table.item(1, 2).text() == '3'
 assert window.draft_items == before
 dialog.table.cellWidget(0, 5).setValue(70)
-assert products.item(0, 5).text() == '265.00'
-assert products.item(0, 6).text() == '795.00'
+assert products.item(0, 5).text() == '310.00'
+assert products.item(0, 6).text() == '930.00'
 assert products.item(0, 8).text() == '1,590.00'
 assert products.item(2, 8).text() == '1,998.00'
-assert products.item(0, 9).text() == '180.00'
+assert products.item(0, 9).text() == '195.00'
 assert products.item(0, 10).text() == '55.00'
-assert products.item(1, 5).text() == '163.20'
-assert products.item(2, 6).text() == '1,121.40'
+assert products.item(1, 5).text() == '164.00'
+assert products.item(2, 6).text() == '1,258.00'
 assert dialog.table.item(0, 4).text() == '210.00'
-assert window.summary_table.item(0, 9).text() == '265.00'
+assert window.summary_table.item(0, 9).text() == '310.00'
 assert window.draft_items[0]['formula'] == before[0]['formula']
 # The fee audit must always reconcile to the current cost-table quote.
 for row, item in enumerate(window.draft_items):
@@ -89,7 +89,7 @@ sus.update(material_code='SUS316', scheme2_cost_settings={'material_difference':
 sus['formula']['corrected_material_weight_kg'] = 10
 values = ui._attachment_summary_product_values(sus, 1)
 material_column = len(ui.AttachmentSummaryDialog.PRODUCT_BASE_HEADERS) + len(ui._attachment_summary_columns([sus])[0])
-assert values[material_column] == 25 and abs(values[5] - 188.2) < .000001
+assert values[material_column] == 25 and abs(values[5] - 189.0) < .000001
 assert abs(sum(values[9:-1]) - values[5]) < .000001
 dialog.resize(1560, 720)
 dialog.show()

@@ -21,6 +21,32 @@ def test_discounted_unit_price_edit_updates_discount_and_total():
     assert scheme2_ui._row_values(item)[16] == 1500
 
 
+def test_quick_quote_keeps_unlisted_attachment_fee_outside_discount():
+    item = {
+        "quantity": 1, "quick_discount": 0.75,
+        "quick": {"total_cost": 597.92, "attachment_fee": 95},
+        "formula": {"total_cost": 400}, "freight_fee": 0,
+        "attachments": [
+            {"item_name": "接地线-黄绿线", "quantity": 1, "catalog_version": "v2", "quick_amount": 10},
+            {"item_name": "铜排", "quantity": 1, "catalog_version": "v2", "quick_amount": 15},
+        ],
+    }
+    # 597.92 - 95 = 502.92 is the discountable cabinet portion;
+    # the authoritative 95 attachment/unlisted fee remains at original price.
+    assert round(scheme2_ui._row_values(item)[15], 2) == 472.19
+    assert round(scheme2_ui._row_values(item)[16], 2) == 472.19
+    freight_case = dict(
+        item,
+        quick={"total_cost": 527.92, "attachment_fee": 25},
+        freight_fee=70,
+    )
+    # With the 70 freight stored separately, the same visible face price is
+    # 527.92 + 70 = 597.92; freight remains outside the discount:
+    # 502.92 * .75 + 25 + 70 = 472.19.
+    assert round(scheme2_ui._row_values(freight_case)[13], 2) == 597.92
+    assert round(scheme2_ui._row_values(freight_case)[15], 2) == 472.19
+
+
 def test_quote_name_edit_updates_the_saved_item_and_rejects_blank_names():
     item = {"name": "未命名", "quantity": 1, "quick": {"total_cost": 100}, "formula": {"total_cost": 60}}
     table = QTableWidget(0, 8)
@@ -62,3 +88,46 @@ def test_quote_table_wraps_full_remarks_and_company_change_refreshes_it():
     assert "preview.setTextElideMode(Qt.TextElideMode.ElideNone)" in source
     assert "preview.setRowHeight(row, max(72, preview.rowHeight(row)))" in source
     assert "window.scheme2_company.currentTextChanged.connect" in source
+
+
+def test_export_snapshot_freezes_exact_visible_quote_row_without_mutating_draft():
+    copper = {
+        "item_name": "铜排", "quantity": 1, "catalog_version": "v2",
+        "quick_amount": 15, "quick_amount_override": 15,
+        "unit_price_override": 15, "custom_amount_edited": True,
+    }
+    item = {
+        "name": "人工名称", "source_pdf_name": "旧图号.pdf",
+        "specification": "600*230*400", "quantity": 2, "quick_discount": 0.8,
+        "quick": {"total_cost": 560, "attachment_fee": 15, "base_price": 545},
+        "formula": {"total_cost": 300},
+        "final_remark": "人工备注。", "attachments": [copper],
+    }
+    table = QTableWidget(0, 8)
+    window = SimpleNamespace(
+        _scheme2_refreshing_quote=False, draft_items=[item], scheme2_quote_preview=table,
+        scheme2_company=SimpleNamespace(currentText=lambda: "买方公司"),
+        scheme2_order_number=QLineEdit(), refresh_summary=lambda: None,
+    )
+    scheme2_ui._refresh_quote_page(window)
+    expected = {
+        "name": table.item(10, 1).text(),
+        "specification": table.item(10, 2).text(),
+        "quantity": 2,
+        "unit": table.item(10, 4).text(),
+        "unit_price": 451.0,
+        "discount": 0.8,
+        "total": 902.0,
+        "remark": table.item(10, 7).text(),
+        "attachments": [copper],
+        "quick_total_cost": 560,
+        "quick_attachment_fee": 15,
+        "quick_base_price": 545,
+    }
+
+    exported = scheme2_ui._quote_export_items_snapshot(window)
+
+    assert exported[0]["quote_display"] == expected
+    assert "quote_display" not in item
+    item["name"] = "导出后继续修改"
+    assert exported[0]["quote_display"]["name"] == "人工名称"

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import math
 import os
@@ -3278,7 +3279,14 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.confirmation_failed(str(exc))
             return
-        quote_id = self.next_quote_id()
+        order_number_control = getattr(self, "scheme2_order_number", None)
+        visible_order_number = (
+            order_number_control.text().strip()
+            if isinstance(order_number_control, QLineEdit) else ""
+        )
+        quote_id = visible_order_number or self.next_quote_id()
+        if isinstance(order_number_control, QLineEdit) and not visible_order_number:
+            order_number_control.setText(quote_id)
         output_dir = application_root() / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
         safe_company = re.sub(r'[<>:"/\\|?*]+', "_", company).strip(" ._")
@@ -3294,7 +3302,9 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith(".xlsx"): path += ".xlsx"
         export_path = Path(path)
         export_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"quote_id": quote_id, "quote_date": self.quote_date.date().toString("yyyy-MM-dd"), "company_code": self.selected_company_code() or company, "company_name": company, "items": self.draft_items}
+        snapshot_builder = getattr(self, "quote_export_items_snapshot", None)
+        export_items = snapshot_builder() if callable(snapshot_builder) else deepcopy(self.draft_items)
+        payload = {"quote_id": quote_id, "quote_date": self.quote_date.date().toString("yyyy-MM-dd"), "company_code": self.selected_company_code() or company, "company_name": company, "items": export_items}
         self.pending_export_path = path
         # First exercise the actual confirmation transaction and roll it back.
         # Only after UTF-8/jsonb, constraints and history inserts all pass do we

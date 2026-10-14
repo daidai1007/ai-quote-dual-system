@@ -56,11 +56,11 @@ assert other == before[0]['attachments'][1]
 assert window.draft_items[2] == before[2]
 assert window.draft_items[0]['quick']['total_cost'] == 132
 assert window.draft_items[1]['quick']['total_cost'] == 240
-assert ui._row_values(window.draft_items[0])[16] == 132 * .5 * 3
+assert ui._row_values(window.draft_items[0])[16] == 201
 assert ui._row_values(window.draft_items[1])[16] == 240 * .8 * 2
-assert window.summary_table.item(0, 9).text() == '66.00'
+assert window.summary_table.item(0, 9).text() == '67.00'
 assert window.summary_table.item(1, 9).text() == '192.00'
-assert dialog.product_table.item(0, 5).text() == '66.00'
+assert dialog.product_table.item(0, 5).text() == '67.00'
 assert dialog.product_table.item(1, 5).text() == '192.00'
 assert dialog.table.item(0, 4).text() == '60.00'
 # Same catalogue/spec across a different product/material/cost is linked too.

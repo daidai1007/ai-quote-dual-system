@@ -420,8 +420,29 @@ def _row_values(item):
     face_base = _number(quick.get("total_cost")) + freight
     discount = _number(item.get("quick_discount", 1), 1)
     material_difference = _material_difference_amount(item)
-    quote = face_base * discount + material_difference
-    quote_total = quote * quantity
+    # The old Scheme2 summary applied the discount to the whole quick total:
+    # ``(cabinet + attachments + freight) * discount``.  That bypassed the
+    # shared selective-discount rules and incorrectly discounted items such
+    # as 接地线/铜排 as well as freight.  Use the same line breakdown as the
+    # cost page and exporter: eligible attachment categories are discounted,
+    # original-price attachments and freight are added afterwards.
+    try:
+        from quick_discount_rules import quick_order_line_breakdown
+    except ModuleNotFoundError:  # Package import used by focused tests.
+        from .quick_discount_rules import quick_order_line_breakdown
+    ganged_count = _number(item.get("ganged_cabinet_count"), 1)
+    if ganged_count <= 1 and isinstance(item.get("ganged_cabinets"), list):
+        ganged_count = max(1, len(item["ganged_cabinets"]))
+    quick_line = quick_order_line_breakdown(
+        quick,
+        item.get("attachments", []),
+        discount,
+        quantity,
+        ganged_count,
+        freight,
+    )
+    quote = quick_line["equivalent_unit_total"] + material_difference
+    quote_total = quick_line["line_total"] + material_difference * quantity
     cost_total = formula_unit * quantity
     gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0
     billable_weight = _number(formula.get("corrected_material_weight_kg"))
@@ -632,6 +653,60 @@ def _sidebar_price_spin(value, display_decimals=2, decimals=2):
     return control
 
 
+class _DoubleClickEditGuard(QObject):
+    """Arm a native monetary spin box only after a left-button double click."""
+
+    def __init__(self, spin):
+        super().__init__(spin)
+        self.spin = spin
+        self.line_edit = spin.lineEdit()
+        self.armed = False
+        self.line_edit.setReadOnly(True)
+        self.spin.installEventFilter(self)
+        self.line_edit.installEventFilter(self)
+        self.spin.editingFinished.connect(self._finish)
+
+    def _begin(self):
+        self.armed = True
+        self.line_edit.setReadOnly(False)
+        self.spin.setFocus(Qt.FocusReason.MouseFocusReason)
+        self.line_edit.selectAll()
+
+    def _finish(self):
+        if not self.armed:
+            return
+        self.armed = False
+        try:
+            self.line_edit.setReadOnly(True)
+        except RuntimeError:
+            pass
+
+    def eventFilter(self, watched, event):
+        if watched is not self.spin and watched is not self.line_edit:
+            return super().eventFilter(watched, event)
+        event_type = event.type()
+        if event_type == QEvent.Type.MouseButtonDblClick:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._begin()
+            return False
+        if event_type == QEvent.Type.FocusOut and self.armed:
+            self._finish()
+        if event_type == QEvent.Type.Wheel and not self.armed:
+            event.ignore()
+            return True
+        if event_type == QEvent.Type.KeyPress and not self.armed:
+            if event.key() not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab, Qt.Key.Key_Escape):
+                event.ignore()
+                return True
+        return super().eventFilter(watched, event)
+
+
+def _double_click_edit_spin(parent=None):
+    spin = QDoubleSpinBox(parent)
+    spin._double_click_edit_guard = _DoubleClickEditGuard(spin)
+    return spin
+
+
 class _SchemeDimensionEditor(QDialog):
     def __init__(self, parent, title, dimensions, current_values):
         super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
@@ -833,7 +908,7 @@ class AttachmentEditor(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(False)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.setToolTip("右键可添加或删除临时附件；按 Esc 取消修改")
+        self.table.setToolTip("金额和成本需左键双击后修改；右键可添加或删除临时附件；按 Esc 取消修改")
         self.table.customContextMenuRequested.connect(self._show_table_menu)
         table_header = self.table.horizontalHeader()
         table_header.setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeMode.Stretch)
@@ -982,7 +1057,7 @@ class AttachmentEditor(QDialog):
         if custom:
             cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
             if not isinstance(cost_editor, QDoubleSpinBox):
-                cost_editor = QDoubleSpinBox()
+                cost_editor = _double_click_edit_spin()
                 cost_editor.setObjectName("scheme2AttachmentEditorCost")
                 cost_editor.setRange(-999999.99, 999999.99)
                 cost_editor.setDecimals(2)
@@ -997,7 +1072,7 @@ class AttachmentEditor(QDialog):
             cost_editor.setToolTip("整批附件成本；未手工改金额时，金额=成本×1.2")
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if not isinstance(amount_editor, QDoubleSpinBox):
-            amount_editor = QDoubleSpinBox()
+            amount_editor = _double_click_edit_spin()
             amount_editor.setObjectName("scheme2AttachmentEditorAmount")
             amount_editor.setRange(-999999.99, 999999.99)
             amount_editor.setDecimals(2)
@@ -1012,7 +1087,7 @@ class AttachmentEditor(QDialog):
         amount_editor.setProperty("schemeEdited", manual_attachment_amount_edited(source))
         amount_editor.setProperty("pending", pending)
         amount_editor.setEnabled(not pending)
-        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "整批附件金额，支持人工修改")
+        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "左键双击后修改整批附件金额")
         amount_editor.style().unpolish(amount_editor)
         amount_editor.style().polish(amount_editor)
 
@@ -1359,12 +1434,37 @@ def _attachment_summary_product_values(item, sequence, columns=None):
     quick = _quick(item)
     fee = _number(quick.get("attachment_fee"), listed)
     discount = values[14]
-    cabinet = (_number(quick.get("total_cost")) - fee) * discount
-    attachments = tuple(amounts.get(name, 0.0) * discount for name in names)
+    try:
+        from quick_discount_rules import quick_discount_category
+    except ModuleNotFoundError:  # Package import used by focused tests.
+        from .quick_discount_rules import quick_discount_category
+    # Keep each named attachment at its original amount unless its catalogue
+    # category is explicitly eligible for quick-quote discounting.  The
+    # residual between the authoritative attachment fee and listed rows is
+    # also original-price: it represents unlisted attachments/fees.
+    attachments = []
+    for name in names:
+        amount = 0.0
+        for source in item.get("attachments", []):
+            if not isinstance(source, dict) or _attachment_summary_name(source) != name:
+                continue
+            raw = _number(AttachmentEditor._display_amounts(source)[1])
+            amount += raw * discount if quick_discount_category(source) else raw
+        attachments.append(amount)
+    attachments = tuple(attachments)
+    residual = fee - listed
+    freight = max(0.0, _number(values[10]))
+    material = values[22] if show_material else 0.0
+    # Allocate any quantity/ganged-set normalization difference to the
+    # cabinet component so the audit columns always reconcile to the visible
+    # selective-discount quote (the row value at index 15).
+    cabinet = values[15] - sum(attachments) - material - freight
     extra = ((values[22],) if show_material else ()) + (
-        ((fee - listed) * discount,) if show_difference else ())
+        (residual,) if show_difference else ())
+    if show_difference:
+        cabinet -= residual
     return (sequence, values[1], values[3], values[11], "台", values[15], values[16],
-            values[13], values[13] * values[11], cabinet, *attachments, *extra, values[10] * discount, discount)
+            values[13], values[13] * values[11], cabinet, *attachments, *extra, freight, discount)
 
 
 class AttachmentSummaryDialog(AttachmentEditor):
@@ -1498,7 +1598,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
                 if column >= 2:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(index, column, cell)
-            price = QDoubleSpinBox()
+            price = _double_click_edit_spin()
             price.setObjectName("scheme2AttachmentEditorAmount")
             price.setAccessibleName("单价")
             price.setDecimals(2)
@@ -1508,7 +1608,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
             price.setKeyboardTracking(False)
             price.setValue(row["unit_price"])
             price.setEnabled(not row["pending"])
-            price.setToolTip("请先补充附件尺寸" if row["pending"] else "修改后自动同步当前清单中相同附件、规格的全部订单")
+            price.setToolTip("请先补充附件尺寸" if row["pending"] else "左键双击后修改；修改后自动同步相同附件、规格的全部订单")
             self.table.setCellWidget(index, 5, price)
             price.valueChanged.connect(lambda value, target=index: self._unit_price_changed(target, value))
         self.product_table.ensurePolished()
@@ -1861,7 +1961,7 @@ def _printable_quote_html(window, font_step=0) -> str:
     <tr><th>电话</th><td></td><th>电话</th><td colspan="5">0571-88520091</td></tr>
     <tr><th>传真</th><td></td><th>传真</th><td colspan="5">0571-88520077</td></tr>
     <tr><th>邮箱</th><td></td><th>邮箱</th><td colspan="5"></td></tr><tr><td colspan="8">&nbsp;</td></tr>
-    <tr><th>序号</th><th>名称</th><th>规格型号(W*D*H)</th><th>数量</th><th>单位</th><th>单价</th><th>总价</th><th>备注</th></tr>
+    <tr><th>序号</th><th>名称</th><th>规格型号(W*D*H)</th><th>数量</th><th>单位</th><th>折后单价</th><th>折后总价</th><th>备注</th></tr>
     {''.join(rows)}<tr class="total"><td></td><td>合计</td><td colspan="4"></td><td>{total:,.2f}</td><td></td></tr></table></body></html>
     """
 
@@ -1889,12 +1989,28 @@ def _quote_unit_price_changed(window, row, column):
         return
     cell = window.scheme2_quote_preview.item(row, column)
     unit_price = _number(cell.text().replace(",", ""), -1) if cell is not None else -1
-    face_price = _number(_row_values(items[index])[13])
-    discounted_face_price = unit_price - _material_difference_amount(items[index])
-    if discounted_face_price < 0 or face_price <= 0:
+    item = items[index]
+    discounted_face_price = unit_price - _material_difference_amount(item)
+    try:
+        from quick_discount_rules import quick_order_line_breakdown
+    except ModuleNotFoundError:  # Package import used by focused tests.
+        from .quick_discount_rules import quick_order_line_breakdown
+    quantity = max(1, int(_number(item.get("quantity", 1), 1)))
+    freight = max(0.0, _number(item.get("freight_fee", item.get("freight", 0))))
+    ganged_count = _number(item.get("ganged_cabinet_count"), 1)
+    if ganged_count <= 1 and isinstance(item.get("ganged_cabinets"), list):
+        ganged_count = max(1, len(item["ganged_cabinets"]))
+    zero = quick_order_line_breakdown(
+        _quick(item), item.get("attachments", []), 0, quantity, ganged_count, freight,
+    )["equivalent_unit_total"]
+    full = quick_order_line_breakdown(
+        _quick(item), item.get("attachments", []), 1, quantity, ganged_count, freight,
+    )["equivalent_unit_total"]
+    discountable = full - zero
+    if discounted_face_price < 0 or discountable <= 0:
         _refresh_quote_page(window)
         return
-    items[index]["quick_discount"] = discounted_face_price / face_price
+    items[index]["quick_discount"] = discounted_face_price / discountable
     window.refresh_summary()
 
 
@@ -1927,6 +2043,38 @@ def _quote_cell_changed(window, row, column):
         _quote_unit_price_changed(window, row, column)
 
 
+def _quote_export_items_snapshot(window):
+    """Freeze the exact customer-visible quote rows at export-click time."""
+
+    exported = deepcopy(getattr(window, "draft_items", []))
+    for item in exported:
+        values = _row_values(item)
+        quick = _quick(item)
+        display = {
+            "name": str(values[1]),
+            "specification": str(values[3]),
+            "quantity": _number(values[11], 1),
+            "unit": "台",
+            "unit_price": _number(values[15]),
+            "discount": _number(values[14], 1),
+            "total": _number(values[16]),
+            "remark": str(item.get("final_remark") or _scheme2_quote_remark(item)),
+            # Confirmation hydrates catalogue rows again on the server. Keep
+            # the exact UI attachment values separately so a manual amount
+            # edit (for example 铜排 50 -> 15) survives that refresh.
+            "attachments": deepcopy(item.get("attachments") or []),
+        }
+        for source, target in (
+            ("total_cost", "quick_total_cost"),
+            ("attachment_fee", "quick_attachment_fee"),
+            ("base_price", "quick_base_price"),
+        ):
+            if quick.get(source) is not None:
+                display[target] = _number(quick.get(source))
+        item["quote_display"] = display
+    return exported
+
+
 def _refresh_quote_page(window):
     preview = getattr(window, "scheme2_quote_preview", None)
     if isinstance(preview, QTableWidget):
@@ -1953,7 +2101,7 @@ def _refresh_quote_page(window):
                 preview.item(row, 0).setText(left_label); preview.item(row, 1).setText(left_value)
                 preview.item(row, 2).setText(right_label); preview.item(row, 3).setText(right_value)
                 preview.setSpan(row, 3, 1, 5)
-            headings = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "单价", "总价", "备注")
+            headings = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价", "备注")
             for column, heading in enumerate(headings):
                 preview.item(9, column).setText(heading)
             total = 0.0
@@ -5196,6 +5344,7 @@ def _configure_option_page(window, namespace):
     order_number = QLineEdit()
     order_number.setObjectName("scheme2OrderNumber")
     order_number.hide()
+    order_number.textChanged.connect(lambda _text: _refresh_quote_page(window))
     window.scheme2_order_number = order_number
 
     name_edit = QLineEdit()
@@ -5694,9 +5843,16 @@ def _calculate_and_add(window):
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict) and not item.get("custom") and item.get("attachment_price_id") is None
     ]
-    from attachment_v2_client import needs_base_height_resolution, needs_computer_tray_resolution, needs_ganged_door_resolution, needs_installation_board_resolution
+    from attachment_v2_client import (
+        needs_base_height_resolution,
+        needs_computer_tray_resolution,
+        needs_ganged_door_resolution,
+        needs_installation_board_resolution,
+        needs_size_match_resolution,
+    )
     pending_doors = (needs_ganged_door_resolution(window) or needs_installation_board_resolution(window)
-                     or needs_computer_tray_resolution(window) or needs_base_height_resolution(window))
+                     or needs_computer_tray_resolution(window) or needs_base_height_resolution(window)
+                     or needs_size_match_resolution(window))
     current = getattr(window, "current_result", None)
     valid = not pending_attachments and not pending_doors and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
     if valid:
@@ -6518,6 +6674,9 @@ def install_scheme2_ui(namespace):
             "labor_discount": 1.0, "surface_price": 26.0,
         }
         original_init(window, *args, **kwargs)
+        window.quote_export_items_snapshot = MethodType(
+            lambda owner: _quote_export_items_snapshot(owner), window
+        )
         window.setWindowTitle(WORKBENCH_WINDOW_TITLE)
         window._scheme2_add_started_at = None
         window._scheme2_add_elapsed_timer = QTimer(window)

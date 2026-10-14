@@ -105,6 +105,61 @@ const xlsxEntryNames = (buffer) => {
   return names;
 };
 
+test("quick public quote uses the click-time UI snapshot verbatim", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-ui-snapshot-"));
+  const inputPath = path.join(tempDir, "quote-ui-snapshot.json");
+  const outputPath = path.join(tempDir, "quote-ui-snapshot.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(fixturePath, "utf8"));
+    const item = structuredClone(payload.items[0]);
+    item.name = "人工名称";
+    item.attachments = [{
+      item_name: "铜排", quantity: 1, catalog_version: "server-v2",
+      quick_amount: 50, unit_price_override: 50, formula_amount: 8.1, status: "OK",
+    }];
+    item.quick = { ...item.quick, attachment_fee: 50 };
+    item.quote_display = {
+      name: "人工名称",
+      specification: "600*230*400",
+      quantity: 1,
+      unit: "台",
+      unit_price: 448.44,
+      discount: 0.8,
+      total: 448.44,
+      remark: "人工备注。",
+      attachments: [{
+        item_name: "铜排", quantity: 1, catalog_version: "client-v2",
+        quick_amount: 15, quick_amount_override: 15,
+        unit_price_override: 15, formula_amount: 8.1, status: "OK",
+        custom_amount_edited: true,
+      }],
+      quick_total_cost: 560,
+      quick_attachment_fee: 15,
+      quick_base_price: 545,
+    };
+    payload.items = [item];
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    const quickSheet = workbook.getWorksheet("快速报价单");
+    assert.deepEqual(
+      [2, 3, 4, 5, 6, 7, 8].map((column) => quickSheet.getCell(11, column).value),
+      ["人工名称", "600*230*400", 1, "台", 448.44, 448.44, "人工备注。"],
+    );
+    const headers = quickSheet.getRow(10).values;
+    const discountColumn = headers.findIndex((value) => value === "折扣");
+    assert.equal(quickSheet.getCell(11, discountColumn).value, 0.8);
+    const copperColumn = headers.findIndex((value) => value === "铜排");
+    assert.ok(copperColumn > 0, "铜排 audit column is missing");
+    assert.equal(quickSheet.getCell(11, copperColumn).value, 15);
+    assert.equal(headers.includes("其他附件/差额"), false);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("door limiter and reinforcement quantities reach quick columns and cost-detail BOM", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-door-limiter-"));
   const inputPath = path.join(tempDir, "door-limiter-input.json");

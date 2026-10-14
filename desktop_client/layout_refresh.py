@@ -4119,7 +4119,7 @@ def _ensure_attachment_summary_table(window) -> QTableWidget | None:
     for column in range(3, 6):
         table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
     table.setEditTriggers(
-        QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed
+        QTableWidget.EditTrigger.DoubleClicked
     )
     table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
     table.setAlternatingRowColors(True)

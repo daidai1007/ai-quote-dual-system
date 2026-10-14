@@ -91,6 +91,29 @@ const templateColumnWidths = {
 const QUICK_ATTACHMENT_CATEGORY_ORDER = [
   "底座", "侧板", "安装板", "内门", "玻璃门", "通风顶罩", "防雨顶", "分段板", "JK安装板",
 ];
+const quoteDisplay = (item = {}) => (
+  item.quote_display && typeof item.quote_display === "object" && !Array.isArray(item.quote_display)
+    ? item.quote_display : null
+);
+const quickExportAttachments = (item = {}) => {
+  const display = quoteDisplay(item);
+  return Array.isArray(display?.attachments) ? display.attachments : (item.attachments || []);
+};
+const quickExportQuote = (item = {}) => {
+  const display = quoteDisplay(item);
+  const quote = { ...(item.quick || {}) };
+  for (const [displayKey, quoteKey] of [
+    ["quick_total_cost", "total_cost"],
+    ["quick_attachment_fee", "attachment_fee"],
+    ["quick_base_price", "base_price"],
+  ]) {
+    const value = display?.[displayKey];
+    if (value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value))) {
+      quote[quoteKey] = Number(value);
+    }
+  }
+  return quote;
+};
 const quickAttachmentName = (item = {}) => String(item.item_name || item.model_code || "未命名附件").trim();
 const earlyAttachmentLineAmount = (item = {}) => {
   const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
@@ -110,14 +133,14 @@ const earlyAttachmentLineAmount = (item = {}) => {
   return unitPrice * quantity * sign;
 };
 const quickItemsByName = new Map();
-for (const item of payload.items.flatMap((quoteItem) => quoteItem.attachments || [])) {
+for (const item of payload.items.flatMap(quickExportAttachments)) {
   const name = quickAttachmentName(item);
   if (!name) continue;
   if (!quickItemsByName.has(name)) quickItemsByName.set(name, []);
   quickItemsByName.get(name).push(item);
 }
 const quickAttachmentNames = [...new Set(
-  payload.items.flatMap((item) => (item.attachments || []).map(quickAttachmentName)).filter(Boolean),
+  payload.items.flatMap((item) => quickExportAttachments(item).map(quickAttachmentName)).filter(Boolean),
 )].sort((left, right) => {
   const rankFor = (name) => Math.min(999, ...(quickItemsByName.get(name) || [])
     .map(quickDiscountCategory)
@@ -128,12 +151,13 @@ const quickAttachmentNames = [...new Set(
   return leftRank - rightRank || left.localeCompare(right, "zh-CN", { numeric: true, sensitivity: "base" });
 });
 const hasQuickOtherColumn = payload.items.some((item) => {
-  const attachments = item.attachments || [];
+  const attachments = quickExportAttachments(item);
   const listed = attachments.reduce((sum, attachment) => sum + earlyAttachmentLineAmount(attachment), 0);
-  const fee = item.quick?.attachment_fee !== null
-    && item.quick?.attachment_fee !== undefined
-    && Number.isFinite(Number(item.quick.attachment_fee))
-    ? Number(item.quick.attachment_fee)
+  const quick = quickExportQuote(item);
+  const fee = quick.attachment_fee !== null
+    && quick.attachment_fee !== undefined
+    && Number.isFinite(Number(quick.attachment_fee))
+    ? Number(quick.attachment_fee)
     : listed;
   return Math.abs(fee - listed) > 0.000001;
 });
@@ -788,40 +812,54 @@ function fillSheet(sheet, method) {
   let subtotal = 0;
   items.forEach((item, index) => {
     const row = firstRow + index;
-    const quote = method === "formula" ? item.formula : item.quick;
-    const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
-    const attachments = item.attachments || [];
-    const qty = asNumber(item.quantity || 1);
+    const display = quoteDisplay(item);
+    const discount = asNumber(method === "formula"
+      ? item.formula_discount : display?.discount ?? item.quick_discount) || 1;
+    const attachments = method === "quick" ? quickExportAttachments(item) : (item.attachments || []);
+    const qty = asNumber(display?.quantity ?? item.quantity ?? 1);
+    const quickAuditItem = method === "quick" ? {
+      ...item,
+      attachments,
+      quantity: qty,
+      quick_discount: discount,
+      quick: quickExportQuote(item),
+    } : null;
+    const quote = method === "formula" ? item.formula : quickAuditItem.quick;
     const gangedCount = gangedCabinetCount(item);
     const isGanged = gangedCount > 1;
     const auditCabinetQuantity = isGanged ? qty : 1;
     const auditGangedCount = isGanged ? gangedCount : 1;
     const quickBreakdown = method === "quick"
-      ? quickPublicLineBreakdown(item)
+      ? quickPublicLineBreakdown(quickAuditItem)
       : null;
     const quickOriginalBreakdown = method === "quick"
-      ? quickPublicLineBreakdown({ ...item, quick_discount: 1 })
+      ? quickPublicLineBreakdown({ ...quickAuditItem, quick_discount: 1 })
       : null;
     const formulaBreakdown = method === "formula" ? formulaOrderLineBreakdown(item) : null;
-    const unitCost = method === "quick"
-      ? quickBreakdown.equivalentUnitTotal
+    const unitCost = method === "quick" && hasFiniteNumber(display?.unit_price)
+      ? Number(display.unit_price)
+      : method === "quick"
+        ? quickBreakdown.equivalentUnitTotal
       : formulaBreakdown.equivalentUnitTotal;
-    const lineTotal = method === "quick" ? quickBreakdown.lineTotal : formulaBreakdown.lineTotal;
+    const lineTotal = method === "quick" && hasFiniteNumber(display?.total)
+      ? Number(display.total)
+      : method === "quick" ? quickBreakdown.lineTotal : formulaBreakdown.lineTotal;
     subtotal += lineTotal;
     // final_remark is the operator-confirmed wording shown on the Remarks page.
     // Keep notes as a backward-compatible fallback for older saved drafts.
-    const note = standardizedRemark(item);
+    const note = display && Object.hasOwn(display, "remark")
+      ? String(display.remark ?? "") : standardizedRemark(item);
     // 规格型号优先使用人工确认的 W*D*H 高度表达式；未提供时按
     // 内部 W/H/D 尺寸回退，不能再被图号或产品型号覆盖。
-    const spec = quoteSpecification(item);
+    const spec = String(display?.specification || quoteSpecification(item));
     const values = Array(columnCount).fill("");
     values[0] = index + 1;
-    values[1] = drawingNameBeforeChinese(
-      item.source_pdf_name || item.name || item.product_family || item.product_code,
-    );
+    values[1] = display && Object.hasOwn(display, "name")
+      ? String(display.name ?? "")
+      : drawingNameBeforeChinese(item.name || item.source_pdf_name || item.product_family || item.product_code);
     values[2] = spec;
     values[3] = qty;
-    values[4] = "台";
+    values[4] = String(display?.unit || "台");
     values[5] = unitCost;
     values[6] = lineTotal;
     values[7] = note;
@@ -1386,23 +1424,31 @@ const verifyWorkbookContents = (candidateWorkbook) => {
     items.forEach((item, index) => {
       const row = 11 + index;
       const quote = method === "formula" ? item.formula : item.quick;
-      const discount = asNumber(method === "formula" ? item.formula_discount : item.quick_discount) || 1;
-      const quantity = asNumber(item.quantity || 1);
+      const display = quoteDisplay(item);
+      const discount = asNumber(method === "formula"
+        ? item.formula_discount : display?.discount ?? item.quick_discount) || 1;
+      const quantity = asNumber(display?.quantity ?? item.quantity ?? 1);
       const lineBreakdown = method === "quick"
         ? quickPublicLineBreakdown(item)
         : formulaOrderLineBreakdown(item);
-      const unitCost = lineBreakdown.equivalentUnitTotal;
-      subtotal += lineBreakdown.lineTotal;
+      const unitCost = method === "quick" && hasFiniteNumber(display?.unit_price)
+        ? Number(display.unit_price) : lineBreakdown.equivalentUnitTotal;
+      const lineTotal = method === "quick" && hasFiniteNumber(display?.total)
+        ? Number(display.total) : lineBreakdown.lineTotal;
+      subtotal += lineTotal;
       const actual = rangePlainValues(sheet, `A${row}:H${row}`)[0];
       const expected = [
         index + 1,
-        drawingNameBeforeChinese(item.source_pdf_name || item.name || item.product_family || item.product_code),
-        quoteSpecification(item),
+        display && Object.hasOwn(display, "name")
+          ? String(display.name ?? "")
+          : drawingNameBeforeChinese(item.name || item.source_pdf_name || item.product_family || item.product_code),
+        String(display?.specification || quoteSpecification(item)),
         quantity,
-        "台",
+        String(display?.unit || "台"),
         unitCost,
-        lineBreakdown.lineTotal,
-        standardizedRemark(item),
+        lineTotal,
+        display && Object.hasOwn(display, "remark")
+          ? String(display.remark ?? "") : standardizedRemark(item),
       ];
       assertRow(actual.slice(0, 5), expected.slice(0, 5), `${sheetName} row ${row} identity`);
       assertClose(actual[5], expected[5], `${sheetName} row ${row} unit price`);

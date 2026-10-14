@@ -287,7 +287,15 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         if attachment_image_match_key(item.get("category_level1")) == wanted_category
     ]
     wanted_model = str(selection.get("model_code") or selection.get("specification") or "").strip().upper()
-    if wanted_model and not (target_dimensions is not None and (installation_board(selection) or is_base_attachment(selection))):
+    # A saved draft carries the previously matched model code.  For every
+    # size-aware attachment that model is only a historical result, not an
+    # operator-pinned choice: when the cabinet dimensions changed, the size
+    # matcher must be allowed to choose a new catalogue row first.
+    size_aware_target_changed = _size_match_target_changed(selection, target_dimensions)
+    if wanted_model and not (
+        target_dimensions is not None
+        and (installation_board(selection) or is_base_attachment(selection) or size_aware_target_changed)
+    ):
         exact_models = [
             item for item in (category_matches or candidates)
             if str(item.get("model_code") or "").strip().upper() == wanted_model
@@ -516,6 +524,43 @@ def needs_installation_board_resolution(window):
         for row in getattr(window, "attachments", []) if isinstance(row, dict)
     )
 
+
+def _size_match_target_changed(source, dimensions):
+    """Return whether a saved size-match result belongs to another target."""
+
+    # Bases and installation boards have dedicated target builders (base
+    # height and face W/H respectively); do not compare them with the
+    # cabinet's ordinary height/depth tuple here.
+    if (
+        source.get("custom")
+        or size_match_attachment_name(source) is None
+        or installation_board(source)
+        or is_base_attachment(source)
+    ):
+        return False
+    if not isinstance(dimensions, (tuple, list)) or len(dimensions) < 3:
+        return False
+    keys = ("width", "height") if installation_board(source) else ("width", "height", "depth")
+    for index, key in enumerate(keys):
+        stored = source.get("size_match_target_" + key + "_mm")
+        try:
+            if stored is None or abs(float(stored) - float(dimensions[index])) > 0.0001:
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
+def needs_size_match_resolution(window):
+    """Whether a draft contains a size-aware attachment for an old target."""
+
+    dimensions = _visible_quote_dimensions(window)
+    return bool(dimensions) and any(
+        _size_match_target_changed(row, dimensions)
+        for row in getattr(window, "attachments", [])
+        if isinstance(row, dict)
+    )
+
 def resolve_installation_board(source, matched, version):
     source = discard_automatic_amount_override(source)
     # Catalogue identity/dimensions and generated prices must be refreshed,
@@ -531,6 +576,37 @@ def resolve_installation_board(source, matched, version):
         for key in ("quick_amount", "quick_amount_override", "unit_price_override"):
             if key in source:
                 resolved[key] = source[key]
+    elif matched.get("unit_price_override") is not None:
+        resolved["unit_price_override"] = matched["unit_price_override"]
+    return resolved
+
+
+def resolve_size_matched_attachment(source, matched, version):
+    """Replace a stale generated size result while retaining manual edits."""
+
+    source = discard_automatic_amount_override(source)
+    manual_amount = manual_attachment_amount_edited(source)
+    old_amount = source.get("quick_amount")
+    old_override = source.get("quick_amount_override")
+    old_unit_override = source.get("unit_price_override")
+    resolved = {
+        **{key: value for key, value in source.items() if key not in COST_KEYS},
+        **copy.deepcopy(matched),
+        "catalog_version": version,
+    }
+    for key in ("quantity", "attachment_price_sign", "manual_inputs"):
+        if key in source:
+            resolved[key] = copy.deepcopy(source[key])
+    for key in ("quick_amount", "quick_amount_override", "unit_price_override"):
+        resolved.pop(key, None)
+    if manual_amount:
+        if old_amount is not None:
+            resolved["quick_amount"] = old_amount
+        if old_override is not None:
+            resolved["quick_amount_override"] = old_override
+        if old_unit_override is not None:
+            resolved["unit_price_override"] = old_unit_override
+        resolved["custom_amount_edited"] = True
     elif matched.get("unit_price_override") is not None:
         resolved["unit_price_override"] = matched["unit_price_override"]
     return resolved
@@ -1334,7 +1410,8 @@ def install_attachment_v2(namespace):
         window.attachments = rows
         pending = [item for item in rows if not item.get("custom") and item.get("attachment_price_id") is None]
         needs_ganged_base_catalog = any(is_base_attachment(item) for item in rows)
-        if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window) and not needs_installation_board_resolution(window) and not needs_computer_tray_resolution(window):
+        needs_size_match = needs_size_match_resolution(window)
+        if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window) and not needs_installation_board_resolution(window) and not needs_computer_tray_resolution(window) and not needs_size_match:
             succeeded()
             return
         active = getattr(window, "_scheme2_attachment_catalog_worker", None)
@@ -1364,12 +1441,14 @@ def install_attachment_v2(namespace):
             )
             resolved = []
             missing = list(fixed_base_missing) + inner_door_missing + glass_door_missing
+            target_dimensions = _visible_quote_dimensions(window)
             for source in source_rows:
                 if source.get("custom"):
                     resolved.append(source)
                     continue
+                rematch_size = _size_match_target_changed(source, target_dimensions)
                 if source.get("attachment_price_id") is not None and not installation_board(source) and not is_base_attachment(source) and not (
-                        _is_computer_tray(source) and source.get("computer_tray_auto_match")):
+                        _is_computer_tray(source) and source.get("computer_tray_auto_match")) and not rematch_size:
                     resolved.append(source)
                     continue
                 match = match_quote_attachment(window, source, catalog)
@@ -1381,6 +1460,9 @@ def install_attachment_v2(namespace):
                     continue
                 if _is_computer_tray(source):
                     resolved.append(resolve_computer_tray(source, match, version))
+                    continue
+                if size_match_attachment_name(source) is not None:
+                    resolved.append(resolve_size_matched_attachment(source, match, version))
                     continue
                 resolved.append({
                     **copy.deepcopy(match),
