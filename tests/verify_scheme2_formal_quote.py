@@ -131,3 +131,37 @@ def test_export_snapshot_freezes_exact_visible_quote_row_without_mutating_draft(
     assert "quote_display" not in item
     item["name"] = "导出后继续修改"
     assert exported[0]["quote_display"]["name"] == "人工名称"
+
+
+def test_recovered_core_export_receives_frozen_snapshot_and_restores_live_draft():
+    live_item = {
+        "name": "柜体",
+        "attachments": [{"item_name": "风机", "quick_amount": 51}],
+    }
+    live_items = [live_item]
+    frozen_items = [{
+        "name": "柜体",
+        "quote_display": {
+            "attachments": [{"item_name": "风机", "quick_amount": 60}],
+        },
+    }]
+    seen = []
+    window = SimpleNamespace(
+        draft_items=live_items,
+        quote_export_items_snapshot=lambda: frozen_items,
+    )
+
+    def capture_payload():
+        seen.append({"items": window.draft_items})
+        return "started"
+
+    result = scheme2_ui._call_core_confirm_and_export_with_snapshot(
+        window,
+        capture_payload,
+    )
+
+    assert result == "started"
+    assert seen[0]["items"] is frozen_items
+    assert seen[0]["items"][0]["quote_display"]["attachments"][0]["quick_amount"] == 60
+    assert window.draft_items is live_items
+    assert live_items[0]["attachments"][0]["quick_amount"] == 51

@@ -39,7 +39,7 @@ def attachment_image_match_key(value):
 def attachment_model_suffix(value, category):
     """Return the comparable fan/filter model suffix, including its variant."""
     normalized = attachment_image_match_key(value)
-    prefix = "ka" if str(category).strip() == "风机" else "fu-?" if str(category).strip() == "滤网" else ""
+    prefix = r"(?:ka|sg)" if str(category).strip() == "风机" else "fu-?" if str(category).strip() == "滤网" else ""
     if not prefix:
         return ""
     match = re.search(rf"({prefix}[0-9a-z/-]+(?:\([^()]+\))?)$", normalized)

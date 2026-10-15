@@ -2078,6 +2078,31 @@ def _quote_export_items_snapshot(window):
     return exported
 
 
+def _call_core_confirm_and_export_with_snapshot(window, callback):
+    """Feed the recovered V3 core the same rows that the operator can see.
+
+    The packaged client loads ``main.raw``.  That older core builds its
+    confirmation payload directly from ``self.draft_items`` and therefore
+    does not know about ``quote_export_items_snapshot`` (the source
+    ``main.py`` does).  Keep the replacement limited to the synchronous core
+    call: the payload/worker receives the frozen list, while the live draft
+    is restored before any asynchronous response or UI refresh can run.
+    """
+
+    builder = getattr(window, "quote_export_items_snapshot", None)
+    if not callable(builder):
+        return callback()
+    original_items = getattr(window, "draft_items", None)
+    frozen_items = builder()
+    if not isinstance(frozen_items, list):
+        return callback()
+    window.draft_items = frozen_items
+    try:
+        return callback()
+    finally:
+        window.draft_items = original_items
+
+
 def _refresh_quote_page(window):
     preview = getattr(window, "scheme2_quote_preview", None)
     if isinstance(preview, QTableWidget):
@@ -4427,6 +4452,7 @@ ATTACHMENT_OPTIONS = {
         "KA1238HA2/B(卡固)", "KA1238DC/24V(卡固)", "KA1725HA2/B(卡固)",
         "KA1725DC/24V(卡固)", "KA2072HA2/B(卡固)", "KA1238HA2/B（国产）",
         "KA1725HA2/B（国产）", "KA1725DC/24V（国产）", "KA2072HA2/B（国产）",
+        "SG22060HA2/220V（国产）",
     ),
     "滤网": (
         "过滤网FU-9803A(卡固)", "过滤网FU-9804A(卡固)", "过滤网FU-9805A(卡固)",
@@ -6899,7 +6925,9 @@ def install_scheme2_ui(namespace):
         previous = window.__dict__.get("validate_export_environment")
         window.validate_export_environment = MethodType(lambda _self: None, window)
         try:
-            return original_confirm_and_export(window)
+            return _call_core_confirm_and_export_with_snapshot(
+                window, lambda: original_confirm_and_export(window)
+            )
         finally:
             if had_override:
                 window.validate_export_environment = previous
