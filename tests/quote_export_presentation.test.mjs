@@ -160,6 +160,92 @@ test("quick public quote uses the click-time UI snapshot verbatim", async () => 
   }
 });
 
+test("ganged quick export keeps the click-time attachment amount", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-ganged-ui-snapshot-"));
+  const inputPath = path.join(tempDir, "ganged-ui-snapshot.json");
+  const outputPath = path.join(tempDir, "ganged-ui-snapshot.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(fixturePath, "utf8"));
+    const item = structuredClone(payload.items[0]);
+    item.quantity = 1;
+    item.ganged_cabinet_count = 3;
+    item.ganged_cabinets = [{}, {}, {}];
+    item.attachments = [{
+      item_name: "风机SG22060HA2/220V（国产）", quantity: 4,
+      catalog_version: "client-v2", quick_amount: 480,
+      unit_price_override: 120, formula_amount: 280, status: "FIXED",
+    }];
+    item.quick = { base_price: 1000, attachment_fee: 480, total_cost: 1480 };
+    item.quote_display = {
+      name: "并柜报价", specification: "900+900+1400*800*(2200+200)",
+      quantity: 1, unit: "台", unit_price: 1480, discount: 1, total: 1480,
+      remark: "并柜报价。",
+      attachments: [{
+        item_name: "风机SG22060HA2/220V（国产）", quantity: 4,
+        catalog_version: "client-v2", quick_amount: 480,
+        unit_price_override: 120, formula_amount: 280, status: "FIXED",
+      }],
+      quick_total_cost: 1480, quick_attachment_fee: 480, quick_base_price: 1000,
+    };
+    payload.items = [item];
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    const quickSheet = workbook.getWorksheet("快速报价单");
+    const headers = quickSheet.getRow(10).values;
+    const fanColumn = headers.findIndex((value) => value === "风机SG22060HA2/220V（国产）");
+    assert.ok(fanColumn > 0, "ganged fan audit column is missing");
+    closeTo(quickSheet.getCell(11, fanColumn).value, 480, "ganged click-time fan amount");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("formula quotation mirrors quick attachment-name detail columns", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-formula-attachment-columns-"));
+  const inputPath = path.join(tempDir, "formula-attachment-columns.json");
+  const outputPath = path.join(tempDir, "formula-attachment-columns.xlsx");
+  try {
+    const payload = JSON.parse(await fs.readFile(fixturePath, "utf8"));
+    const item = structuredClone(payload.items[0]);
+    item.formula_discount = 1;
+    item.attachments = [
+      { item_name: "A4资料盒", quantity: 2, unit_price: 20 },
+      {
+        item_name: "平面锁改为MS830锁", quantity: 6, formula_amount: 132,
+        quick_amount: 300, catalog_version: "server-v2", status: "FIXED",
+      },
+    ];
+    item.formula = {
+      material_cost: 100, auxiliary_cost: 50, labor_cost: 20,
+      spray_cost: 10, management_fee: 5, attachment_fee: 172, total_cost: 357,
+    };
+    item.quick = { base_price: 300, attachment_fee: 340, total_cost: 640 };
+    payload.items = [item];
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    const quickSheet = workbook.getWorksheet("快速报价单");
+    const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
+    const quickHeaderIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
+    for (const name of ["A4资料盒", "平面锁改为MS830锁"]) {
+      assert.ok(formulaHeaderIndex(name) > 0, `formula ${name} column is missing`);
+      assert.ok(quickHeaderIndex(name) > 0, `quick ${name} column is missing`);
+    }
+    closeTo(formulaSheet.getCell(11, formulaHeaderIndex("A4资料盒")).value, 40, "formula A4 document-box cost");
+    closeTo(formulaSheet.getCell(11, formulaHeaderIndex("平面锁改为MS830锁")).value, 132, "formula MS830 lock cost");
+    closeTo(quickSheet.getCell(11, quickHeaderIndex("A4资料盒")).value, 40, "quick A4 document-box amount");
+    closeTo(quickSheet.getCell(11, quickHeaderIndex("平面锁改为MS830锁")).value, 300, "quick MS830 lock amount");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("door limiter and reinforcement quantities reach quick columns and cost-detail BOM", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-door-limiter-"));
   const inputPath = path.join(tempDir, "door-limiter-input.json");
@@ -197,7 +283,8 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
     await workbook.xlsx.readFile(outputPath);
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     const quickSheet = workbook.getWorksheet("快速报价单");
-    closeTo(formulaSheet.getCell("X11").value, 90, "formula limiter per-cabinet amount after discount");
+    const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
+    closeTo(formulaSheet.getCell(11, formulaHeaderIndex("门限位器")).value, 90, "formula limiter per-cabinet amount after discount");
     const limiterColumn = quickSheet.getRow(10).values.findIndex((value) => value === "门限位器");
     assert.ok(limiterColumn > 0, "quick limiter name column is missing");
     closeTo(quickSheet.getCell(11, limiterColumn).value, 100, "quick limiter per-cabinet amount");
@@ -353,7 +440,7 @@ test("quick workbook uses stable selected-name columns without obsolete configur
     const boardColumn = headerIndex("标准安装板");
     assert.equal(sheet.getCell(12, boardColumn).value, -100);
     assert.match(sheet.getCell(12, 11).value.formula, new RegExp(`${sheet.getColumn(boardColumn).letter}12`));
-    const formulaBoardColumn = formulaSheet.getRow(10).values.findIndex((value) => value === "安装板");
+    const formulaBoardColumn = formulaSheet.getRow(10).values.findIndex((value) => value === "标准安装板");
     assert.ok(formulaBoardColumn > 0);
     assert.equal(formulaSheet.getCell(12, formulaBoardColumn).value, -90);
 
@@ -453,7 +540,8 @@ test("workbook uses final attachment quantities with the three manual exceptions
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     closeTo(formulaSheet.getCell("F11").value, 744.4, "formula unit excludes door transformation");
     closeTo(formulaSheet.getCell("G11").value, 2233.2, "formula line excludes door transformation");
-    closeTo(formulaSheet.getCell("AB11").value, 150, "formula final freight");
+    const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
+    closeTo(formulaSheet.getCell(11, formulaHeaderIndex("运费")).value, 150, "formula final freight");
     [360, 90, 180, 72, 23.4].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
       expected,
@@ -557,7 +645,8 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     closeTo(formulaSheet.getCell("F11").value, 910.4, "ganged formula equivalent unit excludes door transformation");
     closeTo(formulaSheet.getCell("G11").value, 1820.8, "ganged formula line excludes door transformation");
-    closeTo(formulaSheet.getCell("AB11").value, 100, "ganged formula freight ignores split count");
+    const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
+    closeTo(formulaSheet.getCell(11, formulaHeaderIndex("运费")).value, 100, "ganged formula freight ignores split count");
     [720, 180, 360, 144, 46.8].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
       expected,

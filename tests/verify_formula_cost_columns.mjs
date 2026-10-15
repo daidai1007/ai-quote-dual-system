@@ -18,39 +18,42 @@ const assertClose = (actual, expected, label) => {
   assert(Math.abs(Number(actual) - expected) < 0.01, `${label}: expected ${expected}, got ${actual}`);
 };
 
-const formulaHeaders = formulaSheet.getRange("L10:AC10").values[0].map(normalize);
+const formulaHeaders = formulaSheet.getRange("L10:AZ10").values[0]
+  .map(normalize).filter(Boolean);
 const expectedFormulaHeaders = [
   "材料成本", "辅材成本", "人工成本", "喷塑费用", "管理费用",
-  "底座", "侧板", "三排纵梁", "安装板", "灯/开关", "文件夹",
-  "风机滤网", "门限位器", "接地线", "双开门", "安装板单发", "运费", "折扣",
+  "固定底座", "内门", "风机", "接地线", "文件夹", "运费", "折扣",
 ];
 assert(
-  JSON.stringify(formulaHeaders) === JSON.stringify(expectedFormulaHeaders.map(normalize)),
-  `formula headers changed: ${JSON.stringify(formulaHeaders)}`,
+  expectedFormulaHeaders.slice(0, 5).every((header, index) => formulaHeaders[index] === normalize(header))
+    && expectedFormulaHeaders.slice(5).every((header) => formulaHeaders.includes(normalize(header))),
+  `formula attachment-name headers changed: ${JSON.stringify(formulaHeaders)}`,
 );
 
+const formulaColumn = (header) => formulaHeaders.findIndex((value) => value === normalize(header));
+const formulaValue = (row, header) => formulaSheet.getRange("L" + row + ":AZ" + row).values[0][formulaColumn(header)];
+const formulaRow1 = formulaSheet.getRange("L11:AZ11").values[0];
+const formulaRow2 = formulaSheet.getRange("L12:AZ12").values[0];
 const quickHeaders = quickSheet.getRange("K10:R10").values[0].map(normalize);
 const expectedQuickHeaders = [
-  "成本计算公式", "柜体", "固定底座", "内门", "风机", "接地线", "文件夹", "折扣",
+  "折后单价", "柜体", "固定底座", "内门", "风机", "接地线", "文件夹", "运费",
 ];
 assert(
   JSON.stringify(quickHeaders) === JSON.stringify(expectedQuickHeaders.map(normalize)),
   `quick headers were modified: ${JSON.stringify(quickHeaders)}`,
 );
 
-const formulaRow1 = formulaSheet.getRange("L11:AC11").values[0];
-const formulaRow2 = formulaSheet.getRange("L12:AC12").values[0];
 for (const [index, expected] of [700, 300, 500, 165.81, 65].entries()) {
   assertClose(formulaRow1[index], expected, `formula row 1 component ${index + 1}`);
 }
 for (const [index, expected] of [1800, 270, 720, 277.92, 93.6].entries()) {
   assertClose(formulaRow2[index], expected, `formula row 2 discounted component ${index + 1}`);
 }
-assertClose(formulaRow1[11], 80, "formula row 1 fan price");
-assertClose(formulaRow1[13], 12, "formula row 1 grounding-wire price");
-assertClose(formulaRow1[17], 1, "formula row 1 discount");
-assertClose(formulaRow2[10], 16.2, "formula row 2 discounted folder price");
-assertClose(formulaRow2[17], 0.9, "formula row 2 discount");
+assertClose(formulaValue(11, "风机"), 80, "formula row 1 fan price");
+assertClose(formulaValue(11, "接地线"), 12, "formula row 1 grounding-wire price");
+assertClose(formulaValue(11, "折扣"), 1, "formula row 1 discount");
+assertClose(formulaValue(12, "文件夹"), 16.2, "formula row 2 discounted folder price");
+assertClose(formulaValue(12, "折扣"), 0.9, "formula row 2 discount");
 
 assertClose(formulaSheet.getRange("F11").values[0][0], 2122.81, "formula row 1 unit price");
 assertClose(formulaSheet.getRange("F12").values[0][0], 3177.72, "formula row 2 unit price");

@@ -150,6 +150,23 @@ const quickAttachmentNames = [...new Set(
   const rightRank = rankFor(right);
   return leftRank - rightRank || left.localeCompare(right, "zh-CN", { numeric: true, sensitivity: "base" });
 });
+// The formula quotation must expose the same attachment-name detail as the
+// quick quotation.  Use the union so a formula-cost row that is absent from a
+// legacy quick snapshot is still visible instead of being silently dropped.
+const formulaAttachmentNames = [...new Set(
+  payload.items.flatMap((item) => [
+    ...quickExportAttachments(item),
+    ...(Array.isArray(item.attachments) ? item.attachments : []),
+  ].map(quickAttachmentName)).filter(Boolean),
+)].sort((left, right) => {
+  const rankFor = (name) => Math.min(999, ...(quickItemsByName.get(name) || [])
+    .map(quickDiscountCategory)
+    .filter(Boolean)
+    .map((category) => QUICK_ATTACHMENT_CATEGORY_ORDER.indexOf(category)));
+  const leftRank = rankFor(left);
+  const rightRank = rankFor(right);
+  return leftRank - rightRank || left.localeCompare(right, "zh-CN", { numeric: true, sensitivity: "base" });
+});
 const hasQuickOtherColumn = payload.items.some((item) => {
   const attachments = quickExportAttachments(item);
   const listed = attachments.reduce((sum, attachment) => sum + earlyAttachmentLineAmount(attachment), 0);
@@ -171,6 +188,15 @@ const quickNameColumnByName = new Map(
 const quickOtherColumnIndex = hasQuickOtherColumn ? 13 + quickAttachmentNames.length : null;
 const quickFreightColumnIndex = 13 + quickAttachmentNames.length + (hasQuickOtherColumn ? 1 : 0);
 const quickDiscountColumnIndex = quickFreightColumnIndex + 1;
+const formulaAttachmentStartColumnIndex = 17; // Q, after L:P formula components
+const formulaNameColumnByName = new Map(
+  formulaAttachmentNames.map((name, index) => [name, formulaAttachmentStartColumnIndex + index]),
+);
+const formulaFreightColumnIndex = formulaAttachmentStartColumnIndex + formulaAttachmentNames.length;
+const formulaDiscountColumnIndex = formulaFreightColumnIndex + 1;
+const formulaCostHeaders = [
+  ...formulaAttachmentNames, "运费", "折扣",
+];
 const templateRowHeights = {
   1: 20.1, 2: 20.1, 3: 22.5,
   4: 16.5, 5: 16.5, 6: 16.5, 7: 16.5, 8: 16.5,
@@ -393,6 +419,34 @@ formulaSheet.getRange("M1:P28").clear({ applyTo: "contents" });
 formulaSheet.getRange("L10:P10").values = [[
   "材料成本", "辅材成本", "人工成本", "喷塑费用", "管理费用",
 ]];
+// Replace the old fixed attachment-category block with the same dynamic
+// attachment-name columns used by the quick quotation.  Extend the copied
+// template style when a quote contains more names than the legacy Q:AC area.
+const formulaLastColumn = col(formulaDiscountColumnIndex);
+const formulaLayoutEndColumn = col(Math.max(29, formulaDiscountColumnIndex));
+for (let targetIndex = formulaAttachmentStartColumnIndex; targetIndex <= formulaDiscountColumnIndex; targetIndex += 1) {
+  const targetLetter = col(targetIndex);
+  if (targetIndex > 29) {
+    formulaSheet.getRange(`${targetLetter}1:${targetLetter}28`).copyFrom(
+      formulaSheet.getRange("AC1:AC28"),
+      "all",
+    );
+  }
+  formulaSheet.getRange(`${targetLetter}1:${targetLetter}28`).format.columnWidth = 14;
+}
+formulaSheet.getRange(`Q10:${formulaLayoutEndColumn}18`).clear({ applyTo: "contents" });
+formulaSheet.getRange(`Q10:${formulaLastColumn}10`).values = [formulaCostHeaders];
+formulaSheet.getRange(`Q10:${formulaLastColumn}10`).format.fill = "#EEF3F8";
+formulaSheet.getRange(`Q10:${formulaLastColumn}10`).format.font = { bold: true, color: "#40566F" };
+formulaSheet.getRange(`Q10:${formulaLastColumn}10`).format.horizontalAlignment = "center";
+formulaSheet.getRange(`Q10:${formulaLastColumn}10`).format.verticalAlignment = "middle";
+formulaSheet.getRange(`Q10:${formulaLastColumn}10`).format.wrapText = true;
+formulaSheet.getRange(`Q10:${formulaLastColumn}10`).format.borders = {
+  preset: "all", style: "thin", color: "#CBD5E1",
+};
+formulaSheet.getRange(`Q11:${formulaLastColumn}18`).format.horizontalAlignment = "center";
+formulaSheet.getRange(`Q11:${formulaLastColumn}18`).format.verticalAlignment = "middle";
+formulaSheet.getRange(`Q11:${formulaLastColumn}18`).format.numberFormat = "#,##0.00";
 
 // Return the one-based Excel column used by the fixed quotation template.
 // The attachment price area begins at L (柜体). K is an intentional spacer.
@@ -484,13 +538,9 @@ const attachmentAmounts = (
   const out = {};
   for (const item of attachments) {
     if (method === "formula" && formulaAttachmentExcluded(item)) continue;
-    let index = attachmentColumn(item.item_name || item.model_code);
-    if (method === "formula") {
-      // “柜体” is replaced by formula cost components; all real attachment
-      // columns from 底座 onward move four places right on the formula sheet.
-      if (index === 12) index = null;
-      else if (index >= 13) index += 4;
-    }
+    let index = method === "formula"
+      ? formulaNameColumnByName.get(quickAttachmentName(item))
+      : attachmentColumn(item.item_name || item.model_code);
     const factor = method === "formula" && attachmentExcludedFromDiscount(item)
       ? 1 : discount;
     if (index) out[index] = (out[index] || 0)
@@ -499,13 +549,17 @@ const attachmentAmounts = (
   }
   return out;
 };
-const quickAttachmentAmounts = (attachments = [], cabinetQuantity = 1, gangedCount = 1) => {
+const quickAttachmentAmounts = (
+  attachments = [], cabinetQuantity = 1, gangedCount = 1, preserveSnapshotAmounts = false,
+) => {
   const out = {};
   for (const item of attachments) {
     const index = quickNameColumnByName.get(quickAttachmentName(item));
     if (!index) continue;
     out[index] = (out[index] || 0)
-      + effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount);
+      + (preserveSnapshotAmounts
+        ? effectiveAttachmentLineAmount(item, 1, 1)
+        : effectiveAttachmentLineAmount(item, cabinetQuantity, gangedCount));
   }
   return out;
 };
@@ -765,9 +819,9 @@ const standardizedRemark = (item = {}) => {
 
 function fillSheet(sheet, method) {
   const items = payload.items || [];
-  const lastColumn = method === "formula" ? "AC" : quickLastColumn;
-  const columnCount = method === "formula" ? 29 : quickDiscountColumnIndex;
-  const discountColumn = method === "formula" ? "AC" : quickLastColumn;
+  const lastColumn = method === "formula" ? formulaLastColumn : quickLastColumn;
+  const columnCount = method === "formula" ? formulaDiscountColumnIndex : quickDiscountColumnIndex;
+  const discountColumn = method === "formula" ? formulaLastColumn : quickLastColumn;
   const firstRow = 11;
   const dataEnd = firstRow + items.length - 1;
   const subtotalRow = firstRow + items.length;
@@ -864,7 +918,12 @@ function fillSheet(sheet, method) {
     values[6] = lineTotal;
     values[7] = note;
     const extras = method === "quick"
-      ? quickAttachmentAmounts(attachments, auditCabinetQuantity, auditGangedCount)
+      ? quickAttachmentAmounts(
+        attachments,
+        auditCabinetQuantity,
+        auditGangedCount,
+        Array.isArray(display?.attachments),
+      )
       : attachmentAmounts(
         attachments, discount, method, auditCabinetQuantity, auditGangedCount,
       );
@@ -884,9 +943,10 @@ function fillSheet(sheet, method) {
       values[13] = asNumber(quote?.labor_cost) * discount * componentMultiplier;
       values[14] = asNumber(quote?.spray_cost) * discount * componentMultiplier;
       values[15] = asNumber(quote?.management_fee) * discount * componentMultiplier;
-      // AB shows the final freight for the complete quote line and is never discounted.
-      values[27] = formulaBreakdown.freightTotal || "";
-      values[28] = discount;
+      // Freight is the final dynamic attachment-detail column and is never
+      // discounted; the following column records the formula discount.
+      values[formulaFreightColumnIndex - 1] = formulaBreakdown.freightTotal || "";
+      values[formulaDiscountColumnIndex - 1] = discount;
     } else {
       const listedAmount = attachmentTotalFromItems(attachments);
       // Every selected attachment name has one original-price audit column.
@@ -1475,10 +1535,9 @@ const verifyWorkbookContents = (candidateWorkbook) => {
     "formula cost headers",
   );
   assertRow(
-    rangePlainValues(serializedFormulaSheet, "Q10:AC10")[0],
-    ["底座", "侧板", "三排纵梁", "安装板", "灯/开关", "文件夹",
-      "风机滤网", "门限位器", "接地线", "双开门", "安装板单发", "运费", "折扣"],
-    "shifted formula attachment headers",
+    rangePlainValues(serializedFormulaSheet, `Q10:${formulaLastColumn}10`)[0],
+    formulaCostHeaders,
+    "formula attachment-name headers",
   );
   assertRow(
     rangePlainValues(serializedQuickSheet, `J10:${quickLastColumn}10`)[0],
