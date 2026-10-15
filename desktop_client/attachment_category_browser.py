@@ -470,10 +470,10 @@ def final_attachment_quantity(
         or item.get("ganged_glass_door_match")
     ):
         return quantity * cabinets * max(1.0, split_count)
-    if split_count > 1:
-        return quantity * cabinets
-    if not attachment_uses_cabinet_quantity(item):
-        return quantity
+    # Selected catalogue rows are stored per cabinet.  Every ordinary row,
+    # including fans/side panels/door transformations, follows the order
+    # quantity.  Keeping those rows at quantity 1 caused duplicate cabinet
+    # lines with quantities 1 and 10 to disagree instead of scaling linearly.
     return quantity * cabinets
 
 

@@ -167,17 +167,9 @@ const formulaAttachmentNames = [...new Set(
   const rightRank = rankFor(right);
   return leftRank - rightRank || left.localeCompare(right, "zh-CN", { numeric: true, sensitivity: "base" });
 });
-const hasQuickOtherColumn = payload.items.some((item) => {
-  const attachments = quickExportAttachments(item);
-  const listed = attachments.reduce((sum, attachment) => sum + earlyAttachmentLineAmount(attachment), 0);
-  const quick = quickExportQuote(item);
-  const fee = quick.attachment_fee !== null
-    && quick.attachment_fee !== undefined
-    && Number.isFinite(Number(quick.attachment_fee))
-    ? Number(quick.attachment_fee)
-    : listed;
-  return Math.abs(fee - listed) > 0.000001;
-});
+// Every attachment fee is represented by a current popup row, so no
+// synthetic "other attachment/delta" column is needed.
+const hasQuickOtherColumn = false;
 const quickCostHeaders = [
   "原价单价", "折后单价", "柜体", ...quickAttachmentNames,
   ...(hasQuickOtherColumn ? ["其他附件/差额"] : []), "运费", "折扣",
@@ -583,15 +575,23 @@ const formulaOrderLineBreakdown = (item = {}) => {
   const discount = asNumber(item.formula_discount) || 1;
   const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
   const freightTotal = freightFee * cabinetQuantity;
-  const listedAttachmentTotal = attachments.reduce((sum,row)=>sum+formulaAttachmentLineAmount(row),0);
-  const attachmentFee = hasFiniteNumber(quote.attachment_fee)
+  // Formula attachment cost follows the rows currently shown in the
+  // attachment editor.  Keep the API fee only to recover the cabinet base
+  // from an old snapshot whose aggregate fee is stale.
+  const listedAttachmentTotal = attachments.reduce(
+    (sum, row) => sum + (!formulaAttachmentExcluded(row)
+      ? formulaAttachmentLineAmount(row) : 0),
+    0,
+  );
+  const storedAttachmentFee = hasFiniteNumber(quote.attachment_fee)
     ? Number(quote.attachment_fee) : listedAttachmentTotal;
+  const attachmentFee = listedAttachmentTotal;
   const excludedFormulaAttachmentTotal = attachments.reduce(
     (sum, attachment) => sum + (!attachment.catalog_version && formulaAttachmentExcluded(attachment)
       ? attachmentLineAmount(attachment) : 0),
     0,
   );
-  const formulaAttachmentFee = attachmentFee - excludedFormulaAttachmentTotal;
+  const formulaAttachmentFee = attachmentFee;
   const componentKeys = [
     "material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee",
   ];
@@ -600,7 +600,7 @@ const formulaOrderLineBreakdown = (item = {}) => {
   );
   const basePrice = hasCompleteComponentBreakdown
     ? componentKeys.reduce((sum, key) => sum + asNumber(quote[key]), 0)
-    : asNumber(quote.total_cost) - attachmentFee;
+    : asNumber(quote.total_cost) - storedAttachmentFee;
   const originalPriceAttachmentTotal = attachments.reduce(
     (sum, attachment) => sum + (!formulaAttachmentExcluded(attachment)
       && attachmentExcludedFromDiscount(attachment)
@@ -608,14 +608,13 @@ const formulaOrderLineBreakdown = (item = {}) => {
     0,
   );
   const effectiveAttachmentTotal = attachments.filter((attachment) => !formulaAttachmentExcluded(attachment))
-    .reduce((sum,row)=>sum+effectiveFormulaAttachmentLineAmount(row,cabinetQuantity,gangedCount),0)
-    + (attachmentFee - listedAttachmentTotal) * cabinetQuantity;
+    .reduce((sum,row)=>sum+effectiveFormulaAttachmentLineAmount(row,cabinetQuantity,gangedCount),0);
   const discountedAttachmentTotal = attachments.reduce(
     (sum, attachment) => sum + (!formulaAttachmentExcluded(attachment)
       && !attachmentExcludedFromDiscount(attachment)
       ? effectiveFormulaAttachmentLineAmount(attachment, cabinetQuantity, gangedCount) : 0),
     0,
-  ) + (attachmentFee - listedAttachmentTotal) * cabinetQuantity;
+  );
   const lineTotal = (basePrice * cabinetQuantity + discountedAttachmentTotal) * discount
     + originalPriceAttachmentTotal + freightTotal;
   return {
@@ -928,10 +927,13 @@ function fillSheet(sheet, method) {
         attachments, discount, method, auditCabinetQuantity, auditGangedCount,
       );
     for (const [columnIndex, amount] of Object.entries(extras)) values[Number(columnIndex) - 1] = amount;
-    const attachmentFee = quote?.attachment_fee !== null
-      && quote?.attachment_fee !== undefined
-      && Number.isFinite(Number(quote.attachment_fee))
-      ? Number(quote.attachment_fee)
+    // Export the same attachment aggregate that is visible in the editor.
+    const attachmentFee = method === "formula"
+      ? attachments.reduce(
+        (sum, attachment) => sum + (!formulaAttachmentExcluded(attachment)
+          ? formulaAttachmentLineAmount(attachment) : 0),
+        0,
+      )
       : attachmentTotalFromItems(attachments);
     if (method === "formula") {
       // Keep the five component columns reconcilable with the discounted
@@ -1046,11 +1048,12 @@ function buildFormulaCostDetailSheet() {
   const detailStyles = [];
 
   const addDetail = (itemIndex, item, category, detailName, spec, basis, usage, unit,
-    unitPrice, unitAmount, source, note = "", kind = "detail", quantityMultiplier = null) => {
+    unitPrice, unitAmount, source, note = "", kind = "detail", quantityMultiplier = null,
+    cabinetLabel = null) => {
     const cabinetQuantity = quantityMultiplier === null
       ? asNumber(item.quantity || 1) : asNumber(quantityMultiplier);
     detailRows.push([
-      itemIndex + 1,
+      cabinetLabel ?? itemIndex + 1,
       drawingNameBeforeChinese(
         item.source_pdf_name || item.name || item.product_family || item.product_code,
       ),
@@ -1071,9 +1074,11 @@ function buildFormulaCostDetailSheet() {
     detailStyles.push(kind);
   };
 
-  items.forEach((item, itemIndex) => {
-    const quote = item.formula || {};
-    const materialCost = asNumber(quote.material_cost);
+  // A ganged formula snapshot contains one formula_cost per child cabinet.
+  // Expand material rows from those child snapshots instead of displaying
+  // only the aggregate parent material row.  Other cost categories retain
+  // their existing aggregate/detail behaviour below.
+  const addMaterialRows = (itemIndex, item, quote, cabinetLabel = null) => {
     const materialPartDetails = Array.isArray(quote.cabinet_material_part_details)
       ? quote.cabinet_material_part_details : [];
     const materialDetails = Array.isArray(quote.material_details) ? quote.material_details : [];
@@ -1091,9 +1096,12 @@ function buildFormulaCostDetailSheet() {
           billableWeight, "kg", unitPrice, amount,
           `${quote.cabinet_material_version || "最新柜体材料明细"} / ${part.source_sheet || ""} 第 ${part.source_row_no || ""} 行`,
           `面积公式：${part.area_formula || ""}；最终用量为每台柜体计价重量。`,
+          "detail", null, cabinetLabel,
         );
       }
-    } else if (materialDetails.length) {
+      return true;
+    }
+    if (materialDetails.length) {
       for (const material of materialDetails) {
         const netWeight = optionalNumber(material.net_weight_kg);
         const billableWeight = optionalNumber(material.billable_weight_kg);
@@ -1114,23 +1122,52 @@ function buildFormulaCostDetailSheet() {
           appliesWasteFactor
             ? "最终用量为每台柜体计价材料重量；柜体数量在行金额中另乘。"
             : "经验重量按源表或非标尺寸周长比例计算，不乘损耗系数；柜体数量在行金额中另乘。",
+          "detail", null, cabinetLabel,
         );
       }
-    } else {
-      const materialUnitPrice = optionalNumber(quote.material_unit_price);
-      const correctedWeight = optionalNumber(quote.corrected_material_weight_kg);
-      const weight = correctedWeight !== null
-        ? correctedWeight
-        : (materialUnitPrice !== null && materialUnitPrice > 0 ? materialCost / materialUnitPrice : null);
-      addDetail(
-        itemIndex, item, "材料成本", `${item.material_code || "材料"}板材`,
-        item.material_code || "", weight !== null && materialUnitPrice !== null
-          ? `${weight.toFixed(6)} kg × ${materialUnitPrice.toFixed(4)} 元/kg = ${materialCost.toFixed(2)} 元`
-          : "修正后材料重量 × 材料单价",
-        weight, "kg", materialUnitPrice,
-        materialCost, "历史公式法快照", "旧报价缺少新版柜体材料分材质明细",
-      );
+      return true;
     }
+    const materialCost = asNumber(quote.material_cost);
+    const materialUnitPrice = optionalNumber(quote.material_unit_price);
+    const correctedWeight = optionalNumber(quote.corrected_material_weight_kg);
+    const weight = correctedWeight !== null
+      ? correctedWeight
+      : (materialUnitPrice !== null && materialUnitPrice > 0 ? materialCost / materialUnitPrice : null);
+    addDetail(
+      itemIndex, item, "材料成本", `${item.material_code || "材料"}板材`,
+      item.material_code || "", weight !== null && materialUnitPrice !== null
+        ? `${weight.toFixed(6)} kg × ${materialUnitPrice.toFixed(4)} 元/kg = ${materialCost.toFixed(2)} 元`
+        : "修正后材料重量 × 材料单价",
+      weight, "kg", materialUnitPrice, materialCost, "历史公式法快照",
+      "旧报价缺少新版柜体材料分材质明细", "detail", null, cabinetLabel,
+    );
+    return true;
+  };
+
+  items.forEach((item, itemIndex) => {
+    const quote = item.formula || {};
+    const materialCost = asNumber(quote.material_cost);
+    const gangedMaterialCosts = Array.isArray(quote.ganged_cabinet_costs)
+      ? quote.ganged_cabinet_costs.filter((child) => child && typeof child.formula_cost === "object")
+      : [];
+    let materialExpanded = false;
+    if (gangedMaterialCosts.length) {
+      for (const [position, child] of gangedMaterialCosts.entries()) {
+        const cabinetIndex = Number.isFinite(Number(child.cabinet_index))
+          ? Number(child.cabinet_index) : position + 1;
+        const childSpecification = String(child.model_code || "").trim();
+        const childItem = {
+          ...item,
+          model_code: childSpecification || item.model_code,
+          specification: childSpecification || item.specification,
+        };
+        materialExpanded = addMaterialRows(
+          itemIndex, childItem, child.formula_cost,
+          `${itemIndex + 1}-子柜${cabinetIndex}`,
+        ) || materialExpanded;
+      }
+    }
+    if (!materialExpanded) addMaterialRows(itemIndex, item, quote);
 
     const auxiliaryCost = asNumber(quote.auxiliary_cost);
     const auxiliary = item.auxiliary_detail || {};

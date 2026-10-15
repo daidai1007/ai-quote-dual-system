@@ -21,18 +21,20 @@ def test_discounted_unit_price_edit_updates_discount_and_total():
     assert scheme2_ui._row_values(item)[16] == 1500
 
 
-def test_quick_quote_keeps_unlisted_attachment_fee_outside_discount():
+def test_quick_quote_uses_popup_attachment_fee_and_keeps_freight_outside_discount():
     item = {
         "quantity": 1, "quick_discount": 0.75,
-        "quick": {"total_cost": 597.92, "attachment_fee": 95},
+        "quick": {"total_cost": 527.92, "attachment_fee": 25},
         "formula": {"total_cost": 400}, "freight_fee": 0,
         "attachments": [
             {"item_name": "接地线-黄绿线", "quantity": 1, "catalog_version": "v2", "quick_amount": 10},
             {"item_name": "铜排", "quantity": 1, "catalog_version": "v2", "quick_amount": 15},
         ],
     }
-    # 597.92 - 95 = 502.92 is the discountable cabinet portion;
-    # the authoritative 95 attachment/unlisted fee remains at original price.
+    # The popup rows total 25 and the cabinet base is 502.92.  Both popup
+    # attachment rows stay outside the discount, while freight is handled
+    # separately below.
+    item["freight_fee"] = 70
     assert round(scheme2_ui._row_values(item)[15], 2) == 472.19
     assert round(scheme2_ui._row_values(item)[16], 2) == 472.19
     freight_case = dict(

@@ -314,10 +314,10 @@ assert door_matches[DOOR_TRANSFORMATION_RULE_PREFIX + "JS、JP单开门改为双
 
 for attachment, cabinets, expected in (
     ({"item_name": "安装板", "quantity": 2}, 3, 6),
-    ({"item_name": "侧板", "quantity": 2}, 3, 2),
-    ({"category_level1": "门变形", "item_name": "JS、JP后背板改为单开门", "quantity": 1}, 3, 1),
-    ({"item_name": "KA2206风机", "quantity": 2}, 3, 2),
-    ({"item_name": "FU滤网", "quantity": 2}, 3, 2),
+    ({"item_name": "侧板", "quantity": 2}, 3, 6),
+    ({"category_level1": "门变形", "item_name": "JS、JP后背板改为单开门", "quantity": 1}, 3, 3),
+    ({"item_name": "KA2206风机", "quantity": 2}, 3, 6),
+    ({"item_name": "FU滤网", "quantity": 2}, 3, 6),
 ):
     assert final_attachment_quantity(attachment, cabinets) == expected
 

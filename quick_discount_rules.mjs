@@ -115,10 +115,11 @@ export function effectiveAttachmentQuantity(
       && !item.ganged_glass_door_match) {
     return selected * cabinets * Math.max(1, splitCount);
   }
-  if (splitCount > 1) {
-    return selected * cabinets;
-  }
-  if (!attachmentUsesCabinetQuantity(item)) return selected;
+  // Attachment rows stored on a quote are per-cabinet values.  Scale every
+  // ordinary row by the order quantity; exempting fans/side panels/door
+  // transformations made identical cabinet lines with quantities 1 and 10
+  // produce different unit prices.  Ganged child rows are already expanded
+  // by child index and still use the complete-set branch above.
   return selected * cabinets;
 }
 
@@ -139,7 +140,11 @@ export function formulaAttachmentLineAmount(item = {}) {
       throw new Error('人工新增附件公式成本未完成，不能汇总');
     return Number(item.formula_amount);
   }
-  if(!item.catalog_version) return quickAttachmentLineAmount(item);
+  if(!item.catalog_version) {
+    if(item.formula_amount!=null && Number.isFinite(Number(item.formula_amount)))
+      return Number(item.formula_amount);
+    return quickAttachmentLineAmount(item);
+  }
   if(item.status==='QUICK_ONLY') return 0;
   if(item.status==='ERROR'||item.formula_amount==null) throw new Error('附件公式成本未完成，不能汇总');
   return Number(item.formula_amount);
@@ -159,12 +164,16 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
     (sum, item) => sum + quickAttachmentLineAmount(item),
     0,
   );
-  const attachmentFee = hasFiniteNumber(quote.attachment_fee)
+  // The attachment editor is the source of truth for the current draft.
+  // Keep the API fee only long enough to recover the cabinet base when an
+  // old snapshot still contains a different aggregate attachment fee.
+  const storedAttachmentFee = hasFiniteNumber(quote.attachment_fee)
     ? Number(quote.attachment_fee)
     : listedAttachmentTotal;
+  const attachmentFee = listedAttachmentTotal;
   const basePrice = hasFiniteNumber(quote.base_price)
     ? Number(quote.base_price)
-    : rawTotal - attachmentFee;
+    : rawTotal - storedAttachmentFee;
   const listedEligible = attachments.reduce(
     (sum, item) => sum + (quickDiscountCategory(item) ? quickAttachmentLineAmount(item) : 0),
     0,
@@ -204,7 +213,9 @@ export function quickOrderLineBreakdown({
       ? 0 : effectiveAttachmentLineAmount(item, cabinets, splitCount)),
     0,
   );
-  const unlistedDifference = unit.attachmentFee - unit.listedAttachmentTotal;
+  // There is no second, hidden attachment bucket: all current attachment
+  // money comes from the rows displayed in the editor.
+  const unlistedDifference = 0;
   const originalPriceAttachmentTotal = listedOriginalTotal
     + unlistedDifference * cabinets;
   const factor = asFiniteNumber(discount, 1);

@@ -2258,11 +2258,19 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
     cabinets = _safe_float(item.get("quantity")) or 1.0
     split_count = float(ganged_split_count(item))
     discount = _safe_float(item.get("formula_discount")) or 1.0
-    listed = sum(formula_attachment_line_amount(row) for row in attachments)
-    attachment_fee = _safe_float(quote.get("attachment_fee"))
-    if attachment_fee is None:
-        attachment_fee = listed
-    base = (_safe_float(quote.get("total_cost")) or 0.0) - attachment_fee
+    # Formula attachment cost follows the rows currently shown in the
+    # attachment editor.  Keep the API fee only to recover the cabinet base
+    # from an old snapshot whose aggregate fee is stale.
+    listed = sum(
+        formula_attachment_line_amount(row)
+        for row in attachments
+        if not formula_attachment_excluded(row)
+    )
+    stored_attachment_fee = _safe_float(quote.get("attachment_fee"))
+    if stored_attachment_fee is None:
+        stored_attachment_fee = listed
+    attachment_fee = listed
+    base = (_safe_float(quote.get("total_cost")) or 0.0) - stored_attachment_fee
     original_price_attachment_total = sum(
         effective_formula_attachment_line_amount(row, cabinets, split_count)
         for row in attachments
@@ -2275,7 +2283,6 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
         if not formula_attachment_excluded(row)
         and not attachment_excluded_from_discount(row)
     )
-    discounted_attachment_total += (attachment_fee - listed) * cabinets
     effective = discounted_attachment_total + original_price_attachment_total
     freight_fee = max(
         0.0,

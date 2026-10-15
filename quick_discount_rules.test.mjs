@@ -200,14 +200,30 @@ test("negative installation board remains in the discount base", () => {
   assert.equal(result.discountedTotal, 810);
 });
 
-test("cabinet quantity multiplies normal attachments but not the three manual categories", () => {
+test("cabinet quantity multiplies every ordinary attachment row", () => {
   assert.equal(effectiveAttachmentQuantity({ item_name: "门限位器", quantity: 2 }, 3), 6);
   assert.equal(effectiveAttachmentQuantity({ item_name: "安装板", quantity: 1 }, 3), 3);
   assert.equal(effectiveAttachmentQuantity({ item_name: "铜排", category_level1: "铜排", quantity: 2 }, 3), 6);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3), 2);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1 }, 3), 1);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "KA2206风机", quantity: 2 }, 3), 2);
-  assert.equal(effectiveAttachmentQuantity({ item_name: "FU滤网", quantity: 2 }, 3), 2);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "侧板", quantity: 2 }, 3), 6);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "JS、JP后背板改为单开门", category_level1: "门变形", quantity: 1 }, 3), 3);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "KA2206风机", quantity: 2 }, 3), 6);
+  assert.equal(effectiveAttachmentQuantity({ item_name: "FU滤网", quantity: 2 }, 3), 6);
+});
+
+test("identical cabinet lines scale linearly with order quantity", () => {
+  const attachments = [
+    { item_name: "固定底座", quantity: 1, unit_price: 100 },
+    { item_name: "风机", category_level1: "风机滤网", quantity: 1, unit_price: 50 },
+  ];
+  const quote = { base_price: 3000, attachment_fee: 150, total_cost: 3150 };
+  const one = quickOrderLineBreakdown({
+    quote, attachments, discount: 0.5, cabinetQuantity: 1,
+  });
+  const ten = quickOrderLineBreakdown({
+    quote, attachments, discount: 0.5, cabinetQuantity: 10,
+  });
+  assert.equal(ten.lineTotal, one.lineTotal * 10);
+  assert.equal(ten.equivalentUnitTotal, one.equivalentUnitTotal);
 });
 
 test("ganged attachments use selected quantity times complete-set quantity only", () => {
@@ -245,7 +261,7 @@ test("manually selected ganged attachments multiply by child cabinet count", () 
   }, 3, 4), 6);
 });
 
-test("quick order line applies quantity exceptions and scales negative boards once", () => {
+test("quick order line scales every attachment with the cabinet quantity", () => {
   const attachments = [
     { item_name: "安装板", category_level1: "安装板", quantity: 1, unit_price: 100, attachment_price_sign: -1 },
     { item_name: "侧板", category_level1: "侧板", quantity: 2, unit_price: 50 },
@@ -258,12 +274,12 @@ test("quick order line applies quantity exceptions and scales negative boards on
     discount: 0.9,
     cabinetQuantity: 3,
   });
-  // Discounted: cabinet 3000 - installation board 300 + side panels 100.
-  // Original price: fan 30 + door transformation 150.
-  assert.equal(result.eligibleAttachmentTotal, -200);
-  assert.equal(result.originalPriceAttachmentTotal, 180);
-  assert.equal(result.lineTotal, 2700);
-  assert.equal(result.equivalentUnitTotal, 900);
+  // Discounted: cabinet 3000 - installation board 300 + side panels 300.
+  // Original price: fan 90 + door transformation 450.
+  assert.equal(result.eligibleAttachmentTotal, 0);
+  assert.equal(result.originalPriceAttachmentTotal, 540);
+  assert.equal(result.lineTotal, 3240);
+  assert.equal(result.equivalentUnitTotal, 1080);
 });
 
 test("quick order line does not multiply attachments by the ganged split count", () => {

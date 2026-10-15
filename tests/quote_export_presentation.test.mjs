@@ -457,7 +457,7 @@ test("quick workbook uses stable selected-name columns without obsolete configur
   }
 });
 
-test("quick workbook creates the other-attachment column only for a real unlisted delta", async () => {
+test("quick workbook uses popup attachment rows and omits synthetic fee deltas", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-other-delta-export-"));
   const inputPath = path.join(tempDir, "other-delta.json");
   const outputPath = path.join(tempDir, "other-delta.xlsx");
@@ -475,18 +475,17 @@ test("quick workbook creates the other-attachment column only for a real unliste
     const headers = sheet.getRow(10).values;
     const otherColumn = headers.findIndex((value) => value === "其他附件/差额");
     const discountColumn = headers.findIndex((value) => value === "折扣");
-    assert.ok(otherColumn > 0);
+    assert.equal(otherColumn, -1);
     assert.equal(headers.includes("配置变形说明"), false);
     assert.equal(headers.includes("配置变形"), false);
-    assert.equal(sheet.getCell(11, otherColumn).value, 25);
-    assert.equal(sheet.getCell(11, 11).value.formula, `(L11+M11)*${sheet.getColumn(discountColumn).letter}11+${sheet.getColumn(otherColumn).letter}11`);
-    closeTo(sheet.getCell(11, 6).value, 1015, "quick delta row total");
+    assert.equal(sheet.getCell(11, 11).value.formula, `(L11+M11)*${sheet.getColumn(discountColumn).letter}11`);
+    closeTo(sheet.getCell(11, 6).value, 990, "popup attachment row total");
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
 
-test("workbook uses final attachment quantities with the three manual exceptions", async () => {
+test("workbook uses final attachment quantities for every ordinary row", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-attachment-quantity-"));
   const inputPath = path.join(tempDir, "attachment-quantity.json");
   const outputPath = path.join(tempDir, "attachment-quantity.xlsx");
@@ -538,8 +537,8 @@ test("workbook uses final attachment quantities with the three manual exceptions
     );
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 744.4, "formula unit excludes door transformation");
-    closeTo(formulaSheet.getCell("G11").value, 2233.2, "formula line excludes door transformation");
+    closeTo(formulaSheet.getCell("F11").value, 822.4, "formula unit scales ordinary attachment rows");
+    closeTo(formulaSheet.getCell("G11").value, 2467.2, "formula line scales ordinary attachment rows");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(formulaSheet.getCell(11, formulaHeaderIndex("运费")).value, 150, "formula final freight");
     [360, 90, 180, 72, 23.4].forEach((expected, index) => closeTo(
@@ -568,9 +567,9 @@ test("workbook uses final attachment quantities with the three manual exceptions
       }
     });
     assert.equal(quantityByName.get("标准安装板"), 3);
-    assert.equal(quantityByName.get("侧板"), 2);
-    assert.equal(quantityByName.get("KA2206风机"), 1);
-    assert.equal(quantityByName.get("JS、JP后背板改为单开门"), 1);
+    assert.equal(quantityByName.get("侧板"), 6);
+    assert.equal(quantityByName.get("KA2206风机"), 3);
+    assert.equal(quantityByName.get("JS、JP后背板改为单开门"), 3);
     assert.equal(quantityByName.get("门安装条"), 3);
     assert.match(doorStripNote, /不参与公式法或快速报价折扣/);
     assert.equal(doorTransformationAmount, 0);

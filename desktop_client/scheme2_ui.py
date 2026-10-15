@@ -378,6 +378,44 @@ def _attachment_total(item):
     return sum(_attachment_amount(row) for row in item.get("attachments", []) if isinstance(row, dict))
 
 
+def _popup_quick_amount(row):
+    """Return the quick amount currently visible in the attachment editor."""
+
+    if row.get("pending_manual_dimensions"):
+        return 0.0
+    amount = row.get("quick_amount")
+    override = row.get("quick_amount_override")
+    manually_edited = row.get("custom_amount_edited") is True or (
+        "custom_amount_edited" not in row and override not in (None, 0)
+    )
+    if manually_edited and override is not None:
+        amount = override
+    return _number(amount, _attachment_amount(row))
+
+
+def _popup_formula_amount(row):
+    """Return the formula cost currently visible in the attachment editor."""
+
+    if row.get("pending_manual_dimensions"):
+        return 0.0
+    return _number(row.get("formula_amount"), 0.0)
+
+
+def _quote_with_popup_attachment_fee(quote, attachments, amount_getter):
+    """Replace a stale aggregate attachment fee with the popup row sum."""
+
+    normalized = dict(quote or {})
+    current_fee = sum(amount_getter(row) for row in attachments)
+    stored_fee = _number(normalized.get("attachment_fee"), current_fee)
+    normalized["attachment_fee"] = current_fee
+    if normalized.get("total_cost") is not None:
+        if normalized.get("base_price") is not None:
+            normalized["total_cost"] = _number(normalized.get("base_price")) + current_fee
+        else:
+            normalized["total_cost"] = _number(normalized.get("total_cost")) - stored_fee + current_fee
+    return normalized, current_fee
+
+
 def _cost_product(item):
     return str(
         item.get("scheme2_selected_product_name")
@@ -416,7 +454,23 @@ def _material_difference_amount(item):
 
 def _row_values(item):
     formula = _formula(item)
-    quick = _quick(item)
+    attachments = [row for row in item.get("attachments", []) if isinstance(row, dict)]
+    quick, _ = _quote_with_popup_attachment_fee(
+        _quick(item), attachments, _popup_quick_amount,
+    )
+    formula_current_fee = sum(_popup_formula_amount(row) for row in attachments)
+    stored_formula_fee = _number(formula.get("attachment_fee"), formula_current_fee)
+    formula_total = _number(formula.get("total_cost"))
+    if formula.get("total_cost") is None:
+        formula_base_total = sum(
+            _number(formula.get(key))
+            for key in ("material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee")
+        )
+    else:
+        formula_base_total = formula_total - stored_formula_fee
+    formula = dict(formula)
+    formula["attachment_fee"] = formula_current_fee
+    formula["total_cost"] = formula_base_total + formula_current_fee
     quantity = max(1, int(_number(item.get("quantity", 1), 1)))
     freight = max(0.0, _number(item.get("freight_fee", item.get("freight", 0))))
     formula_unit = _number(formula.get("total_cost")) + freight
@@ -438,7 +492,7 @@ def _row_values(item):
         ganged_count = max(1, len(item["ganged_cabinets"]))
     quick_line = quick_order_line_breakdown(
         quick,
-        item.get("attachments", []),
+        attachments,
         discount,
         quantity,
         ganged_count,
@@ -452,7 +506,6 @@ def _row_values(item):
     specification = str(item.get("specification") or item.get("model_code") or "—")
     name = str(item.get("name") or item.get("model_code") or "未命名")
     product = _cost_product(item)
-    attachments = [row for row in item.get("attachments", []) if isinstance(row, dict)]
     return (
         "", name, product, specification,
         _number(formula.get("material_cost")),
@@ -2051,6 +2104,17 @@ def _quote_export_items_snapshot(window):
 
     exported = deepcopy(getattr(window, "draft_items", []))
     for item in exported:
+        attachment_rows = [
+            row for row in item.get("attachments", []) if isinstance(row, dict)
+        ]
+        quick_snapshot, _ = _quote_with_popup_attachment_fee(
+            _quick(item), attachment_rows, _popup_quick_amount,
+        )
+        formula_snapshot, _ = _quote_with_popup_attachment_fee(
+            _formula(item), attachment_rows, _popup_formula_amount,
+        )
+        item["quick"] = quick_snapshot
+        item["formula"] = formula_snapshot
         values = _row_values(item)
         quick = _quick(item)
         display = {

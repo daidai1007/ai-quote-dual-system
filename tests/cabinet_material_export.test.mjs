@@ -109,3 +109,48 @@ test('workbook labels experience weight as not using the waste factor',async()=>
     assert.ok(material.some(value=>value.includes('cabinet-material-fixed-test-v2')));
   } finally {await fs.rm(dir,{recursive:true,force:true});}
 });
+
+test('ganged workbook expands material rows by child cabinet',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'ganged-cabinet-material-export-'));
+  try{
+    const payload=JSON.parse(await fs.readFile(path.join(root,'tests/fixtures/export_formula_cost_detail.json'),'utf8'));
+    const item=payload.items[0];
+    item.quantity=1;
+    item.specification='（1000+800）×600×（2100+200）';
+    item.ganged_cabinet_count=2;
+    item.ganged_cabinets=[{width_mm:1000},{width_mm:800}];
+    const child=(model,amount,weight)=>({
+      cabinet_index:model.startsWith('1000')?1:2, model_code:model,
+      formula_cost:{material_cost:amount, auxiliary_cost:0, labor_cost:0,
+        attachment_fee:0, spray_cost:0, management_fee:0, total_cost:amount,
+        cabinet_material_part_details:[{part_name:'箱体',material_code:'SECC',area_m2:1,
+          sheet_thickness_mm:1.5,internal_quantity:1,density_g_cm3:7.85,
+          net_weight_kg:weight/1.2,billable_weight_kg:weight,waste_factor:1.2,
+          material_unit_price:4.2,material_cost:amount,area_formula:'测试公式',
+          source_sheet:'JM',source_row_no:1}],
+      },
+    });
+    item.formula={material_cost:250, auxiliary_cost:0, labor_cost:0, attachment_fee:0,
+      spray_cost:0, management_fee:0, total_cost:250,
+      ganged_cabinet_costs:[child('1000*600*(2100+200)',100,23.8095238),child('800*600*(2100+200)',150,35.7142857)]};
+    item.attachments=[];
+    payload.items=[item];
+    const input=path.join(dir,'input.json'),output=path.join(dir,'output.xlsx');
+    await fs.writeFile(input,JSON.stringify(payload),'utf8');await run(input,output);
+    const workbook=new ExcelJS.Workbook();await workbook.xlsx.readFile(output);
+    const materialRows=[];workbook.getWorksheet('成本明细').eachRow(row=>{
+      if(row.getCell(4).text==='材料成本') materialRows.push(row);
+    });
+    assert.equal(materialRows.length,2,'one material row should be emitted per child cabinet');
+    assert.deepEqual(materialRows.map(row=>row.getCell(1).value),['1-子柜1','1-子柜2']);
+    assert.deepEqual(materialRows.map(row=>row.getCell(3).text),[
+      '1000*600*(2100+200)',
+      '800*600*(2100+200)',
+    ]);
+    assert.deepEqual(materialRows.map(row=>row.getCell(6).text),[
+      'SECC / 1.5 mm',
+      'SECC / 1.5 mm',
+    ]);
+    assert.deepEqual(materialRows.map(row=>Number(row.getCell(11).value)),[100,150]);
+  } finally {await fs.rm(dir,{recursive:true,force:true});}
+});

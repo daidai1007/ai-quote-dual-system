@@ -97,6 +97,8 @@ def formula_attachment_line_amount(item):
         if item.get("status") == "ERROR" or item.get("formula_amount") is None:
             raise ValueError("附件公式成本未完成，不能汇总")
         return float(item["formula_amount"])
+    if (item or {}).get("formula_amount") is not None:
+        return float(item["formula_amount"])
     return quick_attachment_line_amount(item)
 
 
@@ -166,10 +168,13 @@ def effective_attachment_quantity(
         or item.get("ganged_glass_door_match")
     ):
         return selected * cabinets * max(1.0, split_count)
-    if split_count > 1:
-        return selected * cabinets
-    if not attachment_uses_cabinet_quantity(item):
-        return selected
+    # Attachment rows stored on a quote are per-cabinet values.  The order
+    # quantity must therefore scale every ordinary row, including fans,
+    # side panels and door transformations.  Those categories used to be
+    # treated as already complete-set quantities, which made two identical
+    # cabinet lines with quantities 1 and 10 produce different unit prices.
+    # Ganged child rows are already expanded by child index; they still use
+    # the complete-set quantity branch above.
     return selected * cabinets
 
 
@@ -194,15 +199,19 @@ def quick_discount_breakdown(
     rows = list(attachments or [])
     raw_total = _number(quote.get("total_cost"))
     listed_attachment_total = sum(quick_attachment_line_amount(item) for item in rows)
-    attachment_fee = (
+    # The attachment editor is the source of truth for the current draft.
+    # Keep the API fee only long enough to recover the cabinet base when an
+    # old snapshot still contains a different aggregate attachment fee.
+    stored_attachment_fee = (
         _number(quote.get("attachment_fee"))
         if quote.get("attachment_fee") is not None
         else listed_attachment_total
     )
+    attachment_fee = listed_attachment_total
     base_price = (
         _number(quote.get("base_price"))
         if quote.get("base_price") is not None
-        else raw_total - attachment_fee
+        else raw_total - stored_attachment_fee
     )
     listed_eligible = sum(
         quick_attachment_line_amount(item)
@@ -248,7 +257,9 @@ def quick_order_line_breakdown(
         effective_attachment_line_amount(item, cabinets, split_count)
         for item in rows if not quick_discount_category(item)
     )
-    unlisted_difference = unit["attachment_fee"] - unit["listed_attachment_total"]
+    # There is no second, hidden attachment bucket: all current attachment
+    # money comes from the rows displayed in the editor.
+    unlisted_difference = 0.0
     original_total += unlisted_difference * cabinets
     factor = _number(discount, 1.0)
     unit_freight = max(0.0, _number(freight_fee, 0.0))
