@@ -154,3 +154,40 @@ test('ganged workbook expands material rows by child cabinet',async()=>{
     assert.deepEqual(materialRows.map(row=>Number(row.getCell(11).value)),[100,150]);
   } finally {await fs.rm(dir,{recursive:true,force:true});}
 });
+
+test('ganged workbook expands auxiliary rows by child cabinet',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'ganged-cabinet-auxiliary-export-'));
+  try{
+    const payload=JSON.parse(await fs.readFile(path.join(root,'tests/fixtures/export_formula_cost_detail.json'),'utf8'));
+    const item=payload.items[0];
+    item.quantity=1;
+    item.specification='（1000+800）×600×（2100+200）';
+    item.ganged_cabinet_count=2;
+    item.ganged_cabinets=[{width_mm:1000},{width_mm:800}];
+    const child=(cabinetIndex,model,amount)=>({
+      cabinet_index:cabinetIndex, model_code:model,
+      formula_cost:{material_cost:0, auxiliary_cost:amount, labor_cost:0, attachment_fee:0,
+        spray_cost:0, management_fee:0, total_cost:amount,
+        cabinet_auxiliary_version:'auxiliary-child-test-v1',
+        cabinet_auxiliary_lines:[{item_name:`辅材${cabinetIndex}`,spec_model:'L型',material_name:'SECC',
+          internal_quantity:cabinetIndex,unit:'件',unit_price:amount/cabinetIndex,line_total:amount,
+          source_sheet:'辅材BOM',source_row_no:cabinetIndex}],
+      },
+    });
+    item.formula={material_cost:0, auxiliary_cost:50, labor_cost:0, attachment_fee:0,
+      spray_cost:0, management_fee:0, total_cost:50,
+      ganged_cabinet_costs:[child(1,'1000*600*(2100+200)',20),child(2,'800*600*(2100+200)',30)]};
+    item.attachments=[];
+    payload.items=[item];
+    const input=path.join(dir,'input.json'),output=path.join(dir,'output.xlsx');
+    await fs.writeFile(input,JSON.stringify(payload),'utf8');await run(input,output);
+    const workbook=new ExcelJS.Workbook();await workbook.xlsx.readFile(output);
+    const auxiliaryRows=[];workbook.getWorksheet('成本明细').eachRow(row=>{
+      if(row.getCell(4).text==='辅材成本') auxiliaryRows.push(row);
+    });
+    assert.equal(auxiliaryRows.length,2,'one auxiliary detail row should be emitted per child cabinet');
+    assert.deepEqual(auxiliaryRows.map(row=>row.getCell(1).value),['1-子柜1','1-子柜2']);
+    assert.deepEqual(auxiliaryRows.map(row=>row.getCell(5).text),['辅材1','辅材2']);
+    assert.deepEqual(auxiliaryRows.map(row=>Number(row.getCell(11).value)),[20,30]);
+  } finally {await fs.rm(dir,{recursive:true,force:true});}
+});

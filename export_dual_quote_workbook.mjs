@@ -1144,6 +1144,54 @@ function buildFormulaCostDetailSheet() {
     return true;
   };
 
+  const addAuxiliaryRows = (itemIndex, item, quote, cabinetLabel = null) => {
+    const auxiliaryCost = asNumber(quote.auxiliary_cost);
+    const auxiliary = item.auxiliary_detail || {};
+    const auxiliaryLines = Array.isArray(quote.cabinet_auxiliary_lines)
+      ? quote.cabinet_auxiliary_lines : (Array.isArray(auxiliary.lines) ? auxiliary.lines : []);
+    let auxiliaryLineSum = 0;
+    for (const line of auxiliaryLines) {
+      const quantity = asNumber(line.internal_quantity ?? line.quantity);
+      const price = Number(line.unit_price);
+      const amount = Number.isFinite(Number(line.line_total))
+        ? Number(line.line_total)
+        : (Number.isFinite(price) ? quantity * price : 0);
+      auxiliaryLineSum += amount;
+      addDetail(
+        itemIndex, item, "辅材成本", line.item_name || line.item_code || "辅材",
+        [line.spec_model, line.material_name].filter(Boolean).join(" / "),
+        line.length_per_piece_m == null
+          ? `${quantity} 件 × ${Number.isFinite(price) ? price.toFixed(4) : ""} 元/件 = ${amount.toFixed(2)} 元`
+          : `${line.length_per_piece_m} m/件 × ${quantity} 件 × ${Number.isFinite(price) ? price.toFixed(4) : ""} 元/m`
+            + (asNumber(line.spray_area_m2) > 0 ? `；喷塑 ${line.spray_area_m2} m² × ${asNumber(line.spray_unit_price).toFixed(4)} 元/m²` : "")
+            + ` = ${amount.toFixed(2)} 元`,
+        quantity, line.unit || "件", Number.isFinite(price) ? price : null, amount,
+        quote.cabinet_auxiliary_version
+          ? `${quote.cabinet_auxiliary_version} / ${line.source_sheet || ""} 第 ${line.source_row_no || ""} 行`
+          : ([auxiliary.source_file, auxiliary.source_sheet || line.source_sheet].filter(Boolean).join(" / ") || "数据库辅材 BOM"),
+        [line.length_formula ? `长度公式：${line.length_formula}` : "", line.notes || ""].filter(Boolean).join("；"),
+        "detail", null, cabinetLabel,
+      );
+    }
+    if (!auxiliaryLines.length) {
+      addDetail(
+        itemIndex, item, "辅材成本", "辅材成本（经验值）", "无 BOM 明细",
+        "数据库辅材经验值（同柜型尺寸规则）", 1, "项", auxiliaryCost, auxiliaryCost,
+        "数据库辅材经验值", "该柜型按经验值计价", "detail", null, cabinetLabel,
+      );
+      auxiliaryLineSum = auxiliaryCost;
+    } else if (Math.abs(auxiliaryCost - auxiliaryLineSum) > 0.01) {
+      const adjustment = auxiliaryCost - auxiliaryLineSum;
+      addDetail(
+        itemIndex, item, "辅材成本", "BOM 汇总调整", "使 BOM 明细与公式法辅材成本一致",
+        `${auxiliaryCost.toFixed(2)} - ${auxiliaryLineSum.toFixed(2)} = ${adjustment.toFixed(2)} 元`,
+        1, "项", adjustment, adjustment, "数据库公式法计算结果",
+        "源表 BOM 合计与当前计价结果的差额", "adjustment", null, cabinetLabel,
+      );
+    }
+    return true;
+  };
+
   items.forEach((item, itemIndex) => {
     const quote = item.formula || {};
     const materialCost = asNumber(quote.material_cost);
@@ -1170,48 +1218,24 @@ function buildFormulaCostDetailSheet() {
     if (!materialExpanded) addMaterialRows(itemIndex, item, quote);
 
     const auxiliaryCost = asNumber(quote.auxiliary_cost);
-    const auxiliary = item.auxiliary_detail || {};
-    const auxiliaryLines = Array.isArray(quote.cabinet_auxiliary_lines)
-      ? quote.cabinet_auxiliary_lines : (Array.isArray(auxiliary.lines) ? auxiliary.lines : []);
-    let auxiliaryLineSum = 0;
-    for (const line of auxiliaryLines) {
-      const quantity = asNumber(line.internal_quantity ?? line.quantity);
-      const price = Number(line.unit_price);
-      const amount = Number.isFinite(Number(line.line_total))
-        ? Number(line.line_total)
-        : (Number.isFinite(price) ? quantity * price : 0);
-      auxiliaryLineSum += amount;
-      addDetail(
-        itemIndex, item, "辅材成本", line.item_name || line.item_code || "辅材",
-        [line.spec_model, line.material_name].filter(Boolean).join(" / "),
-        line.length_per_piece_m == null
-          ? `${quantity} 件 × ${Number.isFinite(price) ? price.toFixed(4) : ""} 元/件 = ${amount.toFixed(2)} 元`
-          : `${line.length_per_piece_m} m/件 × ${quantity} 件 × ${Number.isFinite(price) ? price.toFixed(4) : ""} 元/m`
-            + (asNumber(line.spray_area_m2) > 0 ? `；喷塑 ${line.spray_area_m2} m² × ${asNumber(line.spray_unit_price).toFixed(4)} 元/m²` : "")
-            + ` = ${amount.toFixed(2)} 元`,
-        quantity, line.unit || "件", Number.isFinite(price) ? price : null, amount,
-        quote.cabinet_auxiliary_version
-          ? `${quote.cabinet_auxiliary_version} / ${line.source_sheet || ""} 第 ${line.source_row_no || ""} 行`
-          : ([auxiliary.source_file, auxiliary.source_sheet || line.source_sheet].filter(Boolean).join(" / ") || "数据库辅材 BOM"),
-        [line.length_formula ? `长度公式：${line.length_formula}` : "", line.notes || ""].filter(Boolean).join("；"),
-      );
+    let auxiliaryExpanded = false;
+    if (gangedMaterialCosts.length) {
+      for (const [position, child] of gangedMaterialCosts.entries()) {
+        const cabinetIndex = Number.isFinite(Number(child.cabinet_index))
+          ? Number(child.cabinet_index) : position + 1;
+        const childSpecification = String(child.model_code || "").trim();
+        const childItem = {
+          ...item,
+          model_code: childSpecification || item.model_code,
+          specification: childSpecification || item.specification,
+        };
+        auxiliaryExpanded = addAuxiliaryRows(
+          itemIndex, childItem, child.formula_cost,
+          `${itemIndex + 1}-子柜${cabinetIndex}`,
+        ) || auxiliaryExpanded;
+      }
     }
-    if (!auxiliaryLines.length) {
-      addDetail(
-        itemIndex, item, "辅材成本", "辅材成本（经验值）", "无 BOM 明细",
-        "数据库辅材经验值（同柜型尺寸规则）", 1, "项", auxiliaryCost, auxiliaryCost,
-        "数据库辅材经验值", "该柜型按经验值计价",
-      );
-      auxiliaryLineSum = auxiliaryCost;
-    } else if (Math.abs(auxiliaryCost - auxiliaryLineSum) > 0.01) {
-      const adjustment = auxiliaryCost - auxiliaryLineSum;
-      addDetail(
-        itemIndex, item, "辅材成本", "BOM 汇总调整", "使 BOM 明细与公式法辅材成本一致",
-        `${auxiliaryCost.toFixed(2)} - ${auxiliaryLineSum.toFixed(2)} = ${adjustment.toFixed(2)} 元`,
-        1, "项", adjustment, adjustment, "数据库公式法计算结果",
-        "源表 BOM 合计与当前计价结果的差额", "adjustment",
-      );
-    }
+    if (!auxiliaryExpanded) addAuxiliaryRows(itemIndex, item, quote);
 
     const laborCost = asNumber(quote.labor_cost);
     if (quote.cabinet_labor_version) {
