@@ -11,6 +11,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QPushButton, QWidget
 
 from attachment_v2_client import confirmation_payload, attachment_snapshot_needs_refresh
+from quote_diagnostics import record_event
 
 LOGGER = logging.getLogger("ai_quote.client")
 UPDATE_INTERVAL_MS = 100
@@ -78,6 +79,8 @@ class QuoteDocumentProgress:
         self._hook_export()
 
     def begin(self, kind):
+        record_event(self.window, "document_requested", kind=kind,
+                     items=len(getattr(self.window, "draft_items", [])))
         self.kind, self.busy = kind, True
         self.reason, self.issues = "", []
         self.trace = uuid4().hex
@@ -104,6 +107,7 @@ class QuoteDocumentProgress:
 
     def set_stage(self, step, label):
         if step != self.step:
+            record_event(self.window, "document_stage", kind=self.kind, step=step, label=label)
             LOGGER.info("document phase mode=%s trace=%s step=%s elapsed=%.3fs", self.kind,
                         self.trace, step, time.monotonic() - self.started)
             self.phase_started = time.monotonic()
@@ -147,6 +151,8 @@ class QuoteDocumentProgress:
         if not hasattr(self, "started"):
             self.begin("export")
         self.reason, self.issues = failure_info(value)
+        record_event(self.window, "document_failed", kind=self.kind, step=self.step,
+                     reason=self.reason[:500], trace=getattr(self, "trace", ""))
         _host, bar, locate = self.widgets[self.kind]
         bar.setProperty("failed", True)
         bar.setCursor(Qt.CursorShape.PointingHandCursor)

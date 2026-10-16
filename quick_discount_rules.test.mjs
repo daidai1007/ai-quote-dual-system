@@ -96,6 +96,40 @@ test("perforated and solid support plates enter the quick discount base", () => 
   assert.equal(result.discountedTotal, 1040);
 });
 
+test("filling installation board remains at original price for every identity field", () => {
+  for (const key of ["item_name", "category_level1", "category_level2", "category_level3",
+    "attachment_category", "category", "model_code"]) {
+    const row = { item_name: "安装板", category_level1: "安装板", [key]: " 填充安装板 " };
+    assert.equal(quickDiscountCategory(row), null, key);
+    assert.equal(attachmentExcludedFromDiscount(row), true, key);
+  }
+  for (const item_name of ["安装板", "JK安装板", "填充板", "填充安装板固定件"]) {
+    assert.ok(quickDiscountCategory({ item_name }), item_name);
+    assert.equal(attachmentExcludedFromDiscount({ item_name }), false, item_name);
+  }
+});
+
+test("filling installation board preserves amount, quantity, deduction and cost without changing other discounts", () => {
+  for (const sign of [1, -1]) {
+    const fill = { item_name: "填充安装板", category_level1: "配置变形", quantity: 2,
+      catalog_version: "offline", quick_amount: 200 * sign, formula_amount: 120 * sign,
+      attachment_price_sign: sign };
+    const attachments = [fill, { item_name: "安装板", quantity: 1, unit_price: 100 },
+      { item_name: "风机", quantity: 1, unit_price: 50 }];
+    const before = structuredClone(attachments);
+    const quote = { base_price: 1000, attachment_fee: 150 + 200 * sign,
+      total_cost: 1150 + 200 * sign };
+    const unit = quickDiscountBreakdown({ quote, attachments, discount: .5 });
+    assert.equal(unit.eligibleAttachmentTotal, 100);
+    assert.equal(unit.originalPriceAttachmentTotal, 50 + 200 * sign);
+    assert.equal(unit.discountedTotal, 600 + 200 * sign);
+    const order = quickOrderLineBreakdown({ quote, attachments, discount: .5,
+      cabinetQuantity: 3, gangedCabinetCount: 2, freightFee: 10 });
+    assert.equal(order.lineTotal, (600 + 200 * sign) * 3 + 30);
+    assert.deepEqual(attachments, before);
+  }
+});
+
 test("other attachments remain at original price in both quotation methods", () => {
   const attachments = [
     { item_name: "侧门", category_level1: "其他附件", quantity: 1, unit_price: 150 },

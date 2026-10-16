@@ -18,6 +18,7 @@ import { normalizeDrawingContext } from './drawing_context.mjs';
 import { formulaTemplateSql } from './formula_template_query.mjs';
 import { createBatchReadExecutor, validateGangedBatch, calculateGangedBatch } from './ganged_quote_service.mjs';
 import { withQuoteRequest, withQuoteChild, timedQuotePhase, emitQuoteProgress, startQuoteStream, recordQuoteEvent, sqlTimingFields } from './quote_telemetry.mjs';
+import {MAX_DIAGNOSTIC_BYTES, diagnosticReportSql, validateDiagnosticSubmission} from './diagnostic_report.mjs';
 
 const RUNTIME_CONFIG = resolveRuntimeConfig();
 const PORT = RUNTIME_CONFIG.port;
@@ -862,7 +863,7 @@ RETURNING jsonb_build_object(
 )::text;`;
 };
 
-const readBody = (req) => new Promise((resolve, reject) => {
+const readBody = (req, maxBytes = MAX_REQUEST_BYTES) => new Promise((resolve, reject) => {
   const chunks = [];
   let byteLength = 0;
   let failed = false;
@@ -870,9 +871,9 @@ const readBody = (req) => new Promise((resolve, reject) => {
     if (failed) return;
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     byteLength += bytes.length;
-    if (byteLength > MAX_REQUEST_BYTES) {
+    if (byteLength > maxBytes) {
       failed = true;
-      reject(new Error(`request body is too large (maximum ${MAX_REQUEST_BYTES / 1024 / 1024} MB)`));
+      reject(new Error(`request body is too large (maximum ${maxBytes / 1024 / 1024} MB)`));
       return;
     }
     chunks.push(bytes);
@@ -1018,6 +1019,22 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
   }
   if (API_KEY && req.url?.startsWith('/api/') && String(req.headers['x-ai-quote-key'] || '') !== API_KEY) {
     return json(res, 401, { error: 'unauthorized', message: 'invalid client access key' });
+  }
+  if (req.method === 'POST' && req.url === '/api/diagnostics/reports') {
+    try {
+      const report = validateDiagnosticSubmission(await readBody(req, MAX_DIAGNOSTIC_BYTES + 1024));
+      const output = await runPsql(diagnosticReportSql(report));
+      const resultLine = output.split(/\r?\n/).map(line => line.trim())
+        .findLast(line => line.startsWith('{'));
+      recordQuoteEvent('diagnostic_report_submitted', {status: 'ok'});
+      return json(res, 201, JSON.parse(resultLine));
+    } catch (error) {
+      recordQuoteEvent('diagnostic_report_failed', {status: 'failed'});
+      return json(res, clientErrorStatus(error), {
+        error: 'diagnostic_report_failed',
+        message: error.statusCode ? error.message : '报告提交失败，请联系管理员检查诊断表是否已部署。',
+      });
+    }
   }
   if (req.method === 'GET' && req.url === '/api/health/database') {
     try {

@@ -28,6 +28,13 @@ ADD_PROGRESS_COMPACT_THRESHOLD = 650
 ADD_PROGRESS_MIN_WIDTH = 110
 ADD_PROGRESS_MAX_WIDTH = 460
 ADD_PROGRESS_TEXT_PADDING = 30
+SCROLLBAR_EXTENT = 20
+SCROLLBAR_HANDLE_MIN_LENGTH = 40
+SCROLLBAR_CORNER_RADIUS = 6
+SCROLLBAR_COLORS = {
+    "track": "#EEF0F3", "handle": "#A8B5C5",
+    "hover": "#6E91BF", "pressed": "#2563EB",
+}
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, QSizeF, QStandardPaths, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPageLayout, QPainter, QPen, QPolygon, QShortcut, QTextCursor, QTextDocument, QTextFrameFormat, QTextOption
@@ -75,6 +82,7 @@ from pypdf import PdfReader, PdfWriter
 
 from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, door_transformation_default_names
 from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
+from quote_diagnostics import build_report, record_event, submit_report
 try:
     from cost_adjustments import rescale_material_weight
 except ModuleNotFoundError:  # Package import used by focused tests.
@@ -93,6 +101,104 @@ QUOTE_COMPANY_FIELD_WIDTH = 420
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
 DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE = 25.0
+
+
+class _DiagnosticSubmissionWorker(QThread):
+    submitted = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, api_url, headers, report, parent=None):
+        super().__init__(parent)
+        self.api_url, self.headers, self.report = api_url, headers, report
+
+    def run(self):
+        try:
+            self.submitted.emit(submit_report(self.api_url, self.headers, self.report))
+        except Exception as error:
+            LOGGER.exception("operator-approved diagnostic report submission failed")
+            self.failed.emit(str(error))
+
+
+def _diagnostic_client_version():
+    manifest = Path(sys.executable).parent / "release-manifest.json"
+    try:
+        return str(json.loads(manifest.read_text(encoding="utf-8-sig")).get("version") or "")
+    except (OSError, ValueError):
+        return "source"
+
+
+def _submit_diagnostic_report(window):
+    worker = getattr(window, "_scheme2_diagnostic_worker", None)
+    if worker is not None and worker.isRunning():
+        return
+    try:
+        snapshot = window.quote_export_items_snapshot()
+        report = build_report(window, snapshot, client_version=_diagnostic_client_version())
+    except Exception as error:
+        QMessageBox.warning(window, "无法生成诊断报告", str(error))
+        return
+    preview = QDialog(window)
+    preview.setWindowTitle("查看并提交诊断报告")
+    preview.resize(760, 540)
+    layout = QVBoxLayout(preview)
+    problem = QLineEdit(preview)
+    problem.setPlaceholderText("例如：修改第 2 行附件金额后，导出金额未更新")
+    operator = QLineEdit(preview)
+    operator.setPlaceholderText("可选，便于开发人员联系")
+    form = QFormLayout()
+    form.addRow("遇到的问题", problem)
+    form.addRow("操作人员", operator)
+    layout.addLayout(form)
+    description = QLabel(
+        "此报告包含当前报价的产品型号、尺寸、数量、价格、折扣、附件、成本明细、订单信息与最近操作记录。"
+        "开发人员可查看这些内容；不包含图纸文件、电脑文件路径、API 密钥或数据库凭据。"
+        "只有点击“确认提交”后才会上传。"
+    )
+    description.setWordWrap(True)
+    layout.addWidget(description)
+    content = QTextBrowser(preview)
+    content.setPlainText(json.dumps(report, ensure_ascii=False, indent=2))
+    layout.addWidget(content, 1)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确认提交")
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+    buttons.accepted.connect(preview.accept)
+    buttons.rejected.connect(preview.reject)
+    layout.addWidget(buttons)
+    if preview.exec() != QDialog.DialogCode.Accepted:
+        return
+    report["issue_description"] = problem.text().strip()[:500]
+    report["operator_name"] = operator.text().strip()[:100]
+    headers_factory = getattr(window, "_scheme2_diagnostic_headers_factory", None)
+    try:
+        headers = headers_factory() if callable(headers_factory) else {}
+        api_url = window._scheme2_diagnostic_api_url
+    except Exception as error:
+        QMessageBox.warning(window, "无法提交诊断报告", str(error))
+        return
+    button = window.scheme2_diagnostic_button
+    button.setEnabled(False)
+    button.setText("提交中…")
+    worker = _DiagnosticSubmissionWorker(api_url, headers, report, window)
+    window._scheme2_diagnostic_worker = worker
+
+    def finished(message, success):
+        button.setEnabled(True)
+        button.setText("提交诊断报告")
+        if success:
+            record_event(window, "diagnostic_submitted", report_id=message)
+            QMessageBox.information(window, "提交成功", f"诊断报告编号：{message}\n请将此编号告知开发人员。")
+        else:
+            QMessageBox.warning(window, "提交失败", f"报告未上传，请稍后重试。\n原因：{message}")
+
+    worker.submitted.connect(lambda report_id: finished(report_id, True))
+    worker.failed.connect(lambda message: finished(message, False))
+    def cleanup():
+        window._scheme2_diagnostic_worker = None
+        worker.deleteLater()
+
+    worker.finished.connect(cleanup)
+    worker.start()
 COEFFICIENT_FIELDS = (
     ("galvanized_price", "镀锌板价格", 4.55, 2),
     ("carbon_price", "碳钢价格", 4.20, 1),
@@ -718,15 +824,25 @@ class _DoubleClickEditGuard(QObject):
         self.line_edit = spin.lineEdit()
         self.armed = False
         self.line_edit.setReadOnly(True)
+        self.spin.setProperty("schemeEditing", False)
         self.spin.installEventFilter(self)
         self.line_edit.installEventFilter(self)
         self.spin.editingFinished.connect(self._finish)
 
     def _begin(self):
+        if not self.spin.isEnabled():
+            return
         self.armed = True
         self.line_edit.setReadOnly(False)
+        self._refresh_edit_frame(True)
         self.spin.setFocus(Qt.FocusReason.MouseFocusReason)
         self.line_edit.selectAll()
+
+    def _refresh_edit_frame(self, editing):
+        self.spin.setProperty("schemeEditing", editing)
+        self.spin.style().unpolish(self.spin)
+        self.spin.style().polish(self.spin)
+        self.spin.update()
 
     def _finish(self):
         if not self.armed:
@@ -734,6 +850,7 @@ class _DoubleClickEditGuard(QObject):
         self.armed = False
         try:
             self.line_edit.setReadOnly(True)
+            self._refresh_edit_frame(False)
         except RuntimeError:
             pass
 
@@ -744,6 +861,8 @@ class _DoubleClickEditGuard(QObject):
         if event_type == QEvent.Type.MouseButtonDblClick:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._begin()
+                # Keep the whole amount selected instead of native word-only selection.
+                return True
             return False
         if event_type == QEvent.Type.FocusOut and self.armed:
             self._finish()
@@ -927,6 +1046,12 @@ class AttachmentEditor(QDialog):
             QTableWidget#scheme2AttachmentEditorTable::item { padding:6px 8px; border:0; border-bottom:1px solid #D7DCE3; }
             QTableWidget#scheme2AttachmentEditorTable QHeaderView::section { background:#2563EB; color:#FFFFFF; border:0; padding:7px 8px; font-size:12px; font-weight:600; }
             QSpinBox#scheme2AttachmentEditorQuantity, QDoubleSpinBox#scheme2AttachmentEditorCost, QDoubleSpinBox#scheme2AttachmentEditorAmount, QComboBox#scheme2AttachmentModelCombo { font-size:12px; min-height:24px; max-height:30px; }
+            QDoubleSpinBox#scheme2AttachmentEditorAmount[schemeEditing="false"] {
+                border:0; border-bottom:1px solid #5F5E5A; border-radius:0; padding:2px;
+            }
+            QDoubleSpinBox#scheme2AttachmentEditorAmount[schemeEditing="true"] {
+                background:#FFFFFF; border:2px solid #2563EB; border-radius:6px; padding:0;
+            }
         """)
         self.setMinimumSize(self.MINIMUM_SIZE)
         self.resize(self.DEFAULT_SIZE)
@@ -1071,6 +1196,7 @@ class AttachmentEditor(QDialog):
         current = source.get("item_name") if is_light_switch else source.get("model_code")
         if str(current or "").strip() == model:
             return
+        record_event(self.window, "attachment_model_changed", row=row + 1, model=model)
         if is_light_switch:
             source.update({"category_level1": "照明灯/行程开关", "item_name": model, "specification": model})
             source.pop("model_code", None)
@@ -1177,11 +1303,13 @@ class AttachmentEditor(QDialog):
                     cell.setData(Qt.ItemDataRole.BackgroundRole, None)
 
     def _amount_changed(self, row, value):
+        record_event(self.window, "attachment_amount_changed", row=row + 1, amount=value)
         editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if editor is not None:
             editor.setProperty("schemeEdited", True)
 
     def _custom_cost_changed(self, row, value):
+        record_event(self.window, "attachment_cost_changed", row=row + 1, cost=value)
         cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
         if isinstance(cost_editor, QDoubleSpinBox):
             cost_editor.setProperty("schemeEdited", True)
@@ -1191,6 +1319,7 @@ class AttachmentEditor(QDialog):
                 amount_editor.setValue(value * 1.2)
 
     def _quantity_changed(self, row, value):
+        record_event(self.window, "attachment_quantity_changed", row=row + 1, quantity=value)
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         quantity_editor = self.table.cellWidget(row, self.COL_QUANTITY)
         previous_quantity = _number(quantity_editor.property("previousQuantity"), 1)
@@ -2093,6 +2222,11 @@ def _quote_name_changed(window, row, column):
 
 
 def _quote_cell_changed(window, row, column):
+    if not getattr(window, "_scheme2_refreshing_quote", False) and row >= 10 and column in (1, 5):
+        cell = window.scheme2_quote_preview.item(row, column)
+        record_event(window, "quote_cell_changed", row=row - 9,
+                     field="name" if column == 1 else "unit_price",
+                     value=cell.text() if cell is not None else "")
     if column == 1:
         _quote_name_changed(window, row, column)
     elif column == 5:
@@ -2993,6 +3127,7 @@ def _apply_cost_control(window, key, value):
         base = _number(base_state.setdefault("spray_cost", formula.get("spray_cost")))
         original_price = _number(base_state.setdefault(key, old), old)
         _replace_component(item, "spray_cost", base * value / max(original_price, .01))
+    record_event(window, "cost_coefficient_changed", field=key, value=value)
     window.refresh_summary()
 
 
@@ -3036,7 +3171,7 @@ def _build_cost_page(window):
     table.setAlternatingRowColors(True)
     table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
     table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     table.verticalHeader().hide()
     table.horizontalHeader().setMinimumSectionSize(66)
     for column, width in enumerate(COST_COLUMN_WIDTHS):
@@ -3288,6 +3423,7 @@ def _cost_cell_changed(window, row, column):
             drawing_ref[0]["quantity"] = item["quantity"]
     else:
         item["quick_discount"] = value
+    record_event(window, "cost_cell_changed", row=row + 1, column=HEADERS[column], value=value)
     window.refresh_summary()
 
 
@@ -3304,6 +3440,7 @@ def _cost_cell_clicked(window, row, column):
         targets = [candidate for candidate in items if _cost_product(candidate) == product]
         FaceDiscountEditor(window, item, targets).exec()
     elif column == 5:
+        record_event(window, "attachment_editor_opened", row=row + 1)
         AttachmentEditor(window, item).exec()
     elif column == 22:
         _show_detail(window, item)
@@ -3529,6 +3666,12 @@ def _configure_navigation(window):
         nav_layout.addWidget(wanted[COST_ROUTE])
         nav_layout.addWidget(wanted[QUOTE_ROUTE])
         nav_layout.addStretch(1)
+        diagnostic_button = QPushButton("提交诊断报告")
+        diagnostic_button.setObjectName("scheme2PrimaryGhost")
+        diagnostic_button.setToolTip("先预览当前详细报价与操作记录，确认后提交给开发人员")
+        diagnostic_button.clicked.connect(lambda: _submit_diagnostic_report(window))
+        nav_layout.addWidget(diagnostic_button)
+        window.scheme2_diagnostic_button = diagnostic_button
         nav_layout.addWidget(collapse, 0, Qt.AlignmentFlag.AlignLeft)
     expand = QPushButton("»", window)
     expand.setObjectName("scheme2ExpandButton")
@@ -3954,7 +4097,7 @@ def _capture_scheme2_page_state(window):
     spins = {}
     for name in ("quantity_spin", "cabinet_body_thickness_spin"):
         spin = getattr(window, name, None)
-        if isinstance(spin, QAbstractSpinBox) and hasattr(spin, "value"):
+        if isinstance(spin, (QAbstractSpinBox, QComboBox)) and hasattr(spin, "value"):
             spins[name] = spin.value()
     return {
         "name": window.scheme2_name_edit.text() if hasattr(window, "scheme2_name_edit") else "",
@@ -3981,7 +4124,7 @@ def _restore_scheme2_page_state(window, state):
             _restore_scheme2_combo(combo, value)
     for name, value in (state.get("spins") or {}).items():
         spin = getattr(window, name, None)
-        if isinstance(spin, QAbstractSpinBox) and hasattr(spin, "setValue"):
+        if isinstance(spin, (QAbstractSpinBox, QComboBox)) and hasattr(spin, "setValue"):
             with QSignalBlocker(spin):
                 spin.setValue(value)
     window.attachments = deepcopy(state.get("attachments") or [])
@@ -5589,6 +5732,8 @@ def _configure_option_page(window, namespace):
     if thickness is not None:
         thickness_field = _option_field(window, "箱体料厚", thickness)
         _promote_option_label(thickness_field)
+        if isinstance(thickness, QComboBox):
+            _style_scheme_dropdown(thickness, thickness_field)
         form.addWidget(thickness_field)
 
     form.addWidget(_scheme2_group_title("门型"))
@@ -6169,6 +6314,7 @@ def _finish_add(window):
     window.add_current_to_summary()
     if len(getattr(window, "draft_items", [])) != before + 1:
         return
+    record_event(window, "quote_item_added", row=editing_index + 1 if editing_index is not None else before + 1)
     if source_route == OPTION_ROUTE and window.stack.currentIndex() != OPTION_ROUTE:
         window.show_section(OPTION_ROUTE)
     item = window.draft_items[-1]
@@ -6316,6 +6462,20 @@ def _scaled_style_metrics(style_sheet, scale):
     return _STYLE_LENGTH_RULE.sub(replace, style_sheet)
 
 
+def _scrollbar_style_sheet():
+    """Shared logical-pixel targets: never shrink them with the page artwork."""
+    return f"""
+QScrollBar:vertical {{ background:{SCROLLBAR_COLORS['track']}; width:{SCROLLBAR_EXTENT}px; margin:0; border:0; }}
+QScrollBar:horizontal {{ background:{SCROLLBAR_COLORS['track']}; height:{SCROLLBAR_EXTENT}px; margin:0; border:0; }}
+QScrollBar::handle:vertical {{ background:{SCROLLBAR_COLORS['handle']}; min-height:{SCROLLBAR_HANDLE_MIN_LENGTH}px; border-radius:{SCROLLBAR_CORNER_RADIUS}px; }}
+QScrollBar::handle:horizontal {{ background:{SCROLLBAR_COLORS['handle']}; min-width:{SCROLLBAR_HANDLE_MIN_LENGTH}px; border-radius:{SCROLLBAR_CORNER_RADIUS}px; }}
+QScrollBar::handle:hover {{ background:{SCROLLBAR_COLORS['hover']}; }}
+QScrollBar::handle:pressed {{ background:{SCROLLBAR_COLORS['pressed']}; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background:{SCROLLBAR_COLORS['track']}; }}
+QAbstractScrollArea::corner {{ background:{SCROLLBAR_COLORS['track']}; border:0; }}
+"""
+
+
 def _apply_proportional_scale(window):
     reference = getattr(window, "_scheme2_scale_reference", None)
     styles = getattr(window, "_scheme2_scale_styles", None)
@@ -6326,7 +6486,12 @@ def _apply_proportional_scale(window):
         return scale
     window._scheme2_scale = scale
     for widget, base_style in styles:
-        widget.setStyleSheet(_scaled_style_metrics(base_style, scale))
+        style = _scaled_style_metrics(base_style, scale)
+        if widget is window:
+            # Apply after metric scaling, including to child dialogs/dropdowns.
+            # Smaller windows must not make pointer targets harder to acquire.
+            style += _scrollbar_style_sheet()
+        widget.setStyleSheet(style)
     nav = getattr(window, "scheme2_nav", None)
     if nav is not None:
         nav.setFixedWidth(max(1, round(NAV_EXPANDED_WIDTH * scale)))
@@ -6432,6 +6597,37 @@ def _position_scheme2_action_dock(window):
         label.setVisible(width >= 760)
 
 
+def _set_cost_scroll_mode(window, main_scroll, active):
+    """Let the cost table/sidebar own overflow, not the surrounding canvas."""
+    if main_scroll is None or main_scroll.widget() is None:
+        return
+    saved = getattr(window, '_scheme2_cost_scroll_restore', None)
+    if active:
+        if saved is None:
+            widgets = (main_scroll.widget(), window.stack.parentWidget(), window.stack)
+            saved = [(widget, widget.sizePolicy().verticalPolicy(), widget.maximumHeight())
+                     for widget in widgets]
+            window._scheme2_cost_scroll_restore = saved
+        main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        for widget, _policy, _maximum in saved:
+            policy = widget.sizePolicy()
+            # Hidden option pages have large size hints. They must not force
+            # the cost canvas taller than its viewport after a route/size change.
+            policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
+            widget.setSizePolicy(policy)
+            widget.setMinimumHeight(0)
+            widget.setMaximumHeight(16777215)
+        main_scroll.verticalScrollBar().setValue(0)
+    elif saved is not None:
+        for widget, vertical_policy, maximum in saved:
+            policy = widget.sizePolicy()
+            policy.setVerticalPolicy(vertical_policy)
+            widget.setSizePolicy(policy)
+            widget.setMaximumHeight(maximum)
+        main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        window._scheme2_cost_scroll_restore = None
+
+
 def _apply_responsive(window):
     scale = _apply_proportional_scale(window)
     splitter = getattr(window, "scheme2_option_splitter", None)
@@ -6439,6 +6635,7 @@ def _apply_responsive(window):
     width = window.width()
     option_page = window.stack.widget(OPTION_ROUTE)
     main_scroll = window.findChild(QScrollArea, "mainScroll")
+    _set_cost_scroll_mode(window, main_scroll, route == COST_ROUTE)
     # Create the fixed row before arranging cost actions so the cost grid
     # leaves its “生成报价单” button in that row.
     _ensure_scheme2_action_dock(window)
@@ -6534,12 +6731,21 @@ def _apply_responsive(window):
         # Every route must consume the available height.  Pinning the option
         # page to the top leaves a grey strip when the window grows vertically.
         host_layout.setAlignment(window.stack, Qt.AlignmentFlag(0))
-        if route != OPTION_ROUTE and main_scroll is not None and main_scroll.widget() is not None:
+        if route == COST_ROUTE and main_scroll is not None and main_scroll.widget() is not None:
+            # Size the whole canvas to the viewport before laying out the
+            # stack. No growing minimum based on the previous (larger) host:
+            # that used to produce the second scrollbar and clipped actions.
+            canvas = main_scroll.widget()
+            canvas.resize(main_scroll.viewport().size())
+            if canvas.layout() is not None:
+                canvas.layout().invalidate()
+                canvas.layout().activate()
+        elif route != OPTION_ROUTE and main_scroll is not None and main_scroll.widget() is not None:
             main_scroll.widget().setMinimumHeight(main_scroll.viewport().height())
         host_layout.invalidate()
         host_layout.activate()
         margins = host_layout.contentsMargins()
-        if route != OPTION_ROUTE:
+        if route not in (OPTION_ROUTE, COST_ROUTE):
             window.stack.setMinimumHeight(max(
                 0, host.height() - margins.top() - margins.bottom()
             ))
@@ -6621,8 +6827,6 @@ QPushButton#scheme2ConfirmReject { color:#1C1C1E; background:#FFFFFF; border:1px
 QPushButton#scheme2ConfirmDanger { color:#FFFFFF; background:#C9362B; border:1px solid #C9362B; border-radius:6px; padding:0 14px; font-weight:600; }
 QPushButton#scheme2ConfirmDanger:hover { background:#B52E25; border-color:#B52E25; }
 QScrollArea#scheme2OptionScroll, QWidget#scheme2OptionForm { background:#FFFFFF; border:0; }
-QScrollArea#scheme2OptionScroll QScrollBar:vertical { background:#EEF0F3; width:10px; margin:0; }
-QScrollArea#scheme2OptionScroll QScrollBar::handle:vertical { background:#C3CBD6; border-radius:5px; min-height:36px; }
 QScrollArea#scheme2OptionScroll QScrollBar::add-line:vertical, QScrollArea#scheme2OptionScroll QScrollBar::sub-line:vertical { height:0; }
 QFrame#scheme2DrawingShell { background:#EEF0F3; border-left:1px solid rgba(0,0,0,.12); }
 QFrame#scheme2DrawingHeader { background:#FFFFFF; border-bottom:1px solid rgba(0,0,0,.12); }
@@ -6849,6 +7053,10 @@ def install_scheme2_ui(namespace):
     original_company_catalog_loaded = getattr(cls, "company_catalog_loaded", None)
 
     def init(window, *args, **kwargs):
+        window._scheme2_diagnostic_api_url = namespace.get("API_URL", "")
+        window._scheme2_diagnostic_headers_factory = namespace.get("api_headers")
+        window._scheme2_diagnostic_worker = None
+        record_event(window, "client_opened")
         window._scheme2_add_after_calculate = False
         window._scheme2_edit_item = None
         window._scheme2_detail_item = None
@@ -6906,6 +7114,23 @@ def install_scheme2_ui(namespace):
         window.stack.insertWidget(DETAIL_ROUTE, detail)
         _configure_navigation(window)
         _configure_option_page(window, namespace)
+        for field, control in (
+            ("product", getattr(window, "product_combo", None)),
+            ("model_name", getattr(window, "scheme2_name_edit", None)),
+            ("dimensions", getattr(window, "quote_spec_edit", None)),
+            ("quantity", getattr(window, "quantity_spin", None)),
+            ("material", getattr(window, "material_combo", None)),
+            ("coating", getattr(window, "coating_combo", None)),
+        ):
+            if isinstance(control, QComboBox):
+                control.activated.connect(
+                    lambda _index, name=field, combo=control: record_event(
+                        window, "selection_changed", field=name, value=combo.currentText()))
+            elif isinstance(control, (QLineEdit, QSpinBox)):
+                control.editingFinished.connect(
+                    lambda name=field, editor=control: record_event(
+                        window, "selection_changed", field=name,
+                        value=editor.value() if isinstance(editor, QSpinBox) else editor.text()))
         _register_order_workspace_file_type()
         window._scheme2_loading_order = False
         window._scheme2_order_save_worker = None
@@ -6984,6 +7209,7 @@ def install_scheme2_ui(namespace):
         QTimer.singleShot(0, lambda: _apply_responsive(window))
 
     def confirm_and_export(window):
+        record_event(window, "quote_export_requested", items=len(getattr(window, "draft_items", [])))
         _sync_export_company(window)
         had_override = "validate_export_environment" in window.__dict__
         previous = window.__dict__.get("validate_export_environment")
@@ -6999,6 +7225,11 @@ def install_scheme2_ui(namespace):
                 del window.validate_export_environment
 
     def close(window, event):
+        diagnostic_worker = getattr(window, "_scheme2_diagnostic_worker", None)
+        if diagnostic_worker is not None and diagnostic_worker.isRunning():
+            QMessageBox.information(window, "诊断报告提交中", "请等待诊断报告提交完成后再关闭客户端。")
+            event.ignore()
+            return
         if getattr(window, "_scheme2_paused_quote_workers", set()):
             window._scheme2_close_after_quote_pause = True
             window.risk_label.setText("正在等待已暂停的网络请求结束后安全关闭客户端…")
@@ -7020,6 +7251,8 @@ def install_scheme2_ui(namespace):
         if index == 0:
             index = OPTION_ROUTE
         previous_index = window.stack.currentIndex()
+        if previous_index != index:
+            record_event(window, "page_changed", from_route=previous_index, to_route=index)
         if index == COST_ROUTE:
             window.refresh_summary()
             if previous_index != COST_ROUTE:
@@ -7043,6 +7276,8 @@ def install_scheme2_ui(namespace):
                 != getattr(window, "_scheme2_calculation_epoch", 0)):
             return
         result = original_show_result(window, payload, *args, **kwargs)
+        record_event(window, "quote_calculation_completed",
+                     request_id=getattr(window, "_quote_progress_request_id", ""))
         _stamp_quote_result_signature(window)
         if hasattr(window, "quote_right_stack"):
             window.quote_right_stack.setCurrentIndex(0)
@@ -7060,6 +7295,8 @@ def install_scheme2_ui(namespace):
         sender = window.sender()
         if getattr(window, "_scheme2_calculation_paused", False) or getattr(sender, "_client_cancelled", False):
             return
+        record_event(window, "quote_calculation_failed", message=str(message)[:500],
+                     request_id=getattr(window, "_quote_progress_request_id", ""))
         window._scheme2_add_after_calculate = False
         if hasattr(window, "scheme2_add_button"):
             window.scheme2_add_button.setEnabled(True)

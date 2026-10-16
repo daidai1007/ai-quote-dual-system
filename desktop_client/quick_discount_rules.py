@@ -44,6 +44,8 @@ def quick_discount_category(item: Mapping[str, Any] | None) -> str | None:
         item.get("model_code"),
     ]
     combined = " ".join(str(value).strip() for value in candidates if value)
+    if any(str(value).strip() == "填充安装板" for value in candidates if value):
+        return None
     if "安装板单发" in combined:
         return None
     if "JK安装板" in combined.upper().replace(" ", ""):
@@ -70,7 +72,7 @@ def attachment_excluded_from_discount(item: Mapping[str, Any] | None) -> bool:
         item.get("category_level1"), item.get("attachment_category"),
         item.get("category"), item.get("item_name"), item.get("model_code"),
     )
-    return any(str(value).strip() == "门安装条" for value in candidates if value)
+    return any(str(value).strip() in ("门安装条", "填充安装板") for value in candidates if value)
 
 
 def formula_attachment_excluded(item: Mapping[str, Any] | None) -> bool:

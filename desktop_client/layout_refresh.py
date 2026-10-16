@@ -435,7 +435,7 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
         thickness_widget = getattr(owner, "cabinet_body_thickness_spin", None)
         if isinstance(waste_widget, QDoubleSpinBox):
             payload["waste_factor"] = float(waste_widget.value())
-        if isinstance(thickness_widget, QDoubleSpinBox):
+        if isinstance(thickness_widget, (QDoubleSpinBox, _CabinetThicknessCombo)):
             payload["cabinet_body_thickness_mm"] = float(thickness_widget.value())
         LOGGER.info(
             "dual quote request started product=%s quote_id=%s timeout=%ss",
@@ -4660,6 +4660,39 @@ def _ensure_freight_field(window) -> None:
         labels["freight"] = value
 
 
+class _CabinetThicknessCombo(QComboBox):
+    """Fixed choices with the numeric interface used by quote/history controllers."""
+
+    OPTIONS = (1.5, 2.0, 2.5)
+    valueChanged = Signal(float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._legacy_value = self.OPTIONS[0]
+        self.setEditable(False)
+        for value in self.OPTIONS:
+            self.addItem(f"{value:.1f} mm", value)
+        self.currentIndexChanged.connect(lambda _index: self.valueChanged.emit(self.value()))
+
+    def value(self):
+        value = self.currentData()
+        return float(value if value is not None else self._legacy_value)
+
+    def setValue(self, value):
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError("箱体料厚必须为有效数值")
+        previous = self.value()
+        index = self.findData(value)
+        self._legacy_value = value
+        # Keep old records intact without adding unapproved options or silently repricing them.
+        self.setPlaceholderText(f"原值 {value:g} mm，请重新选择" if index < 0 else "请选择箱体料厚")
+        if self.currentIndex() != index:
+            self.setCurrentIndex(index)
+        elif value != previous:
+            self.valueChanged.emit(value)
+
+
 def _ensure_cabinet_material_fields(window) -> None:
     """Expose inputs consumed by the versioned cabinet-material rules."""
 
@@ -4678,16 +4711,25 @@ def _ensure_cabinet_material_fields(window) -> None:
     new_widgets = []
     for attr, object_name, caption, default, minimum, maximum, decimals, step, suffix, tip in specs:
         widget = getattr(window, attr, None)
-        if not isinstance(widget, QDoubleSpinBox):
-            widget = QDoubleSpinBox(card)
-            widget.setValue(default)
+        widget_type = _CabinetThicknessCombo if attr == "cabinet_body_thickness_spin" else QDoubleSpinBox
+        if not isinstance(widget, widget_type):
+            previous = widget
+            widget = widget_type(previous.parentWidget() if isinstance(previous, QWidget) else card)
+            widget.setValue(previous.value() if isinstance(previous, QDoubleSpinBox) else default)
             setattr(window, attr, widget)
-            new_widgets.append((caption, widget))
+            previous_layout = (_layout_containing_widget(card.layout(), previous)
+                               if card is not None and isinstance(previous, QWidget) else None)
+            if previous_layout is not None:
+                previous_layout.replaceWidget(previous, widget)
+                previous.hide()
+            else:
+                new_widgets.append((caption, widget))
         widget.setObjectName(object_name)
-        widget.setRange(minimum, maximum)
-        widget.setDecimals(decimals)
-        widget.setSingleStep(step)
-        widget.setSuffix(suffix)
+        if isinstance(widget, QDoubleSpinBox):
+            widget.setRange(minimum, maximum)
+            widget.setDecimals(decimals)
+            widget.setSingleStep(step)
+            widget.setSuffix(suffix)
         widget.setToolTip(tip)
         widget.setMinimumHeight(UI_CONTROL_HEIGHT)
         if not getattr(widget, "_cabinet_material_change_connected", False):
@@ -5232,7 +5274,7 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             if isinstance(freight_widget, QDoubleSpinBox):
                 freight_widget.setValue(0)
             thickness_widget = getattr(self, "cabinet_body_thickness_spin", None)
-            if isinstance(thickness_widget, QDoubleSpinBox):
+            if isinstance(thickness_widget, (QDoubleSpinBox, _CabinetThicknessCombo)):
                 thickness_widget.setValue(1.5)
             waste_widget = getattr(self, "waste_factor_spin", None)
             if isinstance(waste_widget, QDoubleSpinBox):
@@ -5395,7 +5437,7 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
                 multiplier_widget.setValue(float(item.get("labor_multiplier", 1.0)))
             thickness_widget = getattr(self, "cabinet_body_thickness_spin", None)
             waste_widget = getattr(self, "waste_factor_spin", None)
-            if isinstance(thickness_widget, QDoubleSpinBox):
+            if isinstance(thickness_widget, (QDoubleSpinBox, _CabinetThicknessCombo)):
                 thickness_widget.blockSignals(True)
                 thickness_widget.setValue(float(item.get("cabinet_body_thickness_mm", 1.5) or 1.5))
                 thickness_widget.blockSignals(False)

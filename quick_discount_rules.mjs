@@ -42,6 +42,7 @@ export function quickDiscountCategory(item = {}) {
   if (topLevelCategory(item) === "其他附件") return null;
   const candidates = categoryCandidates(item);
   const combined = candidates.join(" ");
+  if (candidates.includes("填充安装板")) return null;
   if (combined.includes("安装板单发")) return null;
   if (/JK\s*安装板/i.test(combined)) return "JK安装板";
   for (const category of [
@@ -57,7 +58,7 @@ export function quickDiscountCategory(item = {}) {
 /** Attachments that remain at original price in both quotation methods. */
 export function attachmentExcludedFromDiscount(item = {}) {
   if (topLevelCategory(item) === "其他附件") return true;
-  return categoryCandidates(item).some((value) => value === "门安装条");
+  return categoryCandidates(item).some((value) => value === "门安装条" || value === "填充安装板");
 }
 
 /** Attachments omitted only from formula quotations. */
