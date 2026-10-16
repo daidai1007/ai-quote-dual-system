@@ -163,6 +163,7 @@ from quote_defaults import (
 )
 from quote_remark_rules import door_phrase_for_item, replace_door_configuration_phrase
 from quick_discount_rules import (
+    money_sum, money_product,
     attachment_excluded_from_discount,
     effective_attachment_line_amount,
     formula_attachment_excluded,
@@ -229,8 +230,11 @@ from attachment_category_browser import (
     match_jp_side_panel,
     parse_base_specification,
     SIZE_MATCH_METADATA_KEYS,
+    size_match_axes,
     size_match_attachment_name,
+    size_match_display_text,
     size_match_group_key,
+    size_match_target_dimensions,
     valid_selection_prefix,
     with_attachment_selection_source,
 )
@@ -2288,9 +2292,14 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
         0.0,
         _safe_float(item.get("freight_fee", item.get("freight"))) or 0.0,
     )
-    freight_total = freight_fee * cabinets
-    line_total = (base * cabinets + discounted_attachment_total) * discount \
-        + original_price_attachment_total + freight_total
+    freight_total = money_product(freight_fee, cabinets)
+    unit_discounted = money_sum(formula_attachment_line_amount(row) for row in attachments
+                                if not formula_attachment_excluded(row) and not attachment_excluded_from_discount(row))
+    unit_original = money_sum(formula_attachment_line_amount(row) for row in attachments
+                              if not formula_attachment_excluded(row) and attachment_excluded_from_discount(row))
+    unit_total = money_sum((money_product(money_sum((base, unit_discounted)), discount),
+                           unit_original, freight_fee))
+    line_total = money_product(unit_total, cabinets)
     return {
         "cabinet_quantity": cabinets,
         "ganged_cabinet_count": split_count,
@@ -2300,7 +2309,7 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
         "freight_fee": freight_fee,
         "freight_total": freight_total,
         "line_total": line_total,
-        "equivalent_unit_total": line_total / cabinets if cabinets else line_total,
+        "equivalent_unit_total": unit_total,
     }
 
 
@@ -5908,13 +5917,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         ]
 
     def format_attachment_size(item: dict) -> str:
-        if "安装板" in str(size_match_attachment_name(item) or ""):
-            values = (item.get("width_mm"), item.get("height_mm"))
-            if not any(value is not None for value in values):
-                return "通用"
-            return " × ".join(
-                "-" if value is None else str(value) for value in values
-            ) + " mm"
+        matched_size = size_match_display_text(item)
+        if matched_size is not None:
+            return matched_size
         return original_format_size(item)
 
     def ensure_selection_status_bar(self) -> None:
@@ -6185,7 +6190,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             parsed = parse_base_specification(specification_text(self))
             if parsed is not None:
                 return parsed[0], parsed[3], parsed[2]
-        return dimensions
+        return size_match_target_dimensions(source, dimensions)
 
     def quick_match_source(self, source: dict) -> dict | None:
         target = size_target_for_source(self, source)
@@ -6435,7 +6440,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         return added
 
     def rematch_selected_for_dimensions(self) -> int:
-        """Re-match selected sized items only when the true W/H/D target changed."""
+        """Re-match only when this attachment's relevant physical axes changed."""
 
         changed = 0
         rematched = []
@@ -6457,8 +6462,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             )
             try:
                 target_unchanged = all(
-                    value is not None and abs(float(value) - target[index]) <= 0.0001
-                    for index, value in enumerate(stored_target)
+                    stored_target[index] is not None
+                    and abs(float(stored_target[index]) - target[index]) <= 0.0001
+                    for index in size_match_axes(selected)
                 )
             except (TypeError, ValueError):
                 target_unchanged = False
@@ -6681,12 +6687,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         elif rule == QUICK_INNER_DOOR:
             detail = "内门"
             if dimensions is not None:
-                detail += f" · {dimensions[0]:g}×{dimensions[1]:g}×{dimensions[2]:g} mm"
+                detail += f" · 宽 {dimensions[0]:g}×高 {dimensions[1]:g} mm"
             missing_tip = "当前产品对应的附件目录中没有可用于尺寸匹配的内门"
         elif rule == QUICK_RAIN_COVER:
             detail = "防雨顶"
             if dimensions is not None:
-                detail += f" · {dimensions[0]:g}×{dimensions[1]:g}×{dimensions[2]:g} mm"
+                detail += f" · 宽 {dimensions[0]:g}×深 {dimensions[2]:g} mm"
             missing_tip = "当前产品对应的附件目录中没有可用于尺寸匹配的防雨顶"
         elif rule == QUICK_VENTILATION_HOOD:
             manual_height = getattr(self, "ventilation_hood_manual_height_mm", None)
@@ -7558,15 +7564,43 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                         if warning:
                             quick_match_notice = f"尺寸已匹配；{warning}。请人工填写安全的单一数值价格。"
                         elif matched.get("size_match_exact"):
+                            match_name = size_match_attachment_name(matched)
+                            dimensions_label = (
+                                "宽、高" if is_installation_board(matched) or match_name in {"内门", "玻璃门", "分段板"}
+                                else "高、深" if match_name == "侧板"
+                                else "高度" if match_name == "固定立柱"
+                                else "宽、深" if match_name == "防雨顶"
+                                else "附件尺寸"
+                            )
                             quick_match_notice = (
                                 "已按柜体宽、高精确匹配安装板，保留数据库原价。"
                                 if is_installation_board(matched)
-                                else "已精确匹配附件尺寸，保留数据库原价。"
+                                else f"已按{dimensions_label}精确匹配，保留数据库原价。"
                             )
                         else:
                             if is_installation_board(matched):
                                 quick_match_notice = (
                                     "已按柜体宽、高匹配最相近安装板，并按周长比例折价："
+                                    f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                                )
+                            elif size_match_attachment_name(matched) == "侧板":
+                                quick_match_notice = (
+                                    "已按柜体高、深匹配最相近侧板，并按高+深比例折价："
+                                    f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                                )
+                            elif size_match_attachment_name(matched) == "固定立柱":
+                                quick_match_notice = (
+                                    "已按柜体高度匹配最相近固定立柱，并按高度比例折价："
+                                    f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                                )
+                            elif size_match_attachment_name(matched) in {"内门", "玻璃门", "分段板"}:
+                                quick_match_notice = (
+                                    "已按柜体宽、高匹配最相近附件，并按宽+高比例折价："
+                                    f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                                )
+                            elif size_match_attachment_name(matched) == "防雨顶":
+                                quick_match_notice = (
+                                    "已按柜体宽、深匹配最相近防雨顶，并按宽+深比例折价："
                                     f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
                                 )
                             else:

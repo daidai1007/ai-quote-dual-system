@@ -22,27 +22,28 @@ item = {
                     {"material_code": "SUS316", "billable_weight_kg": 10.0},
                     {"material_code": "SGCC", "billable_weight_kg": 2.345},
                 ]},
-    "freight_fee": 10, "attachments": [{"item_name": "附件"}],
+    "freight_fee": 10, "attachments": [{"item_name": "附件", "quantity": 1, "quick_amount": 0, "formula_amount": 40}],
 }
 table = QTableWidget(0, len(scheme2_ui.HEADERS))
 window = SimpleNamespace(summary_table=table, draft_items=[item], _scheme2_refreshing=False)
 scheme2_ui._refresh_cost_table(window)
 actual = [table.item(0, column).text() for column in range(table.columnCount())]
-assert actual[4:12] == ["2", "1 项 ›", "510.00", "—", "0.9", "459.00", "918.00", "310.00"], actual
-assert actual[12:20] == ["100.00", "20.00", "30.00", "40.00", "50.00", "60.00", "10.00", "620.00"]
-assert actual[20:] == ["32.46%", "12.35", "明细 ›"]
+assert actual[4:13] == ["2", "1 项 ›", "0.00", "510.00", "—", "0.9", "460.00", "920.00", "310.00"], actual
+assert actual[13:21] == ["100.00", "20.00", "30.00", "40.00", "50.00", "60.00", "10.00", "620.00"]
+assert actual[21:] == ["32.61%", "12.35", "明细 ›"]
 assert table.isColumnHidden(scheme2_ui.MATERIAL_DIFFERENCE_COLUMN)
-assert [table.item(0, column).background().color().name().upper() for column in (0, 5, 6, 11, 20, 21, 22)] == [
+assert [table.item(0, column).background().color().name().upper() for column in (0, 5, 7, 12, 21, 22, 23)] == [
     "#FFFFFF", "#F5F6F8", "#FFF7E6", "#F0F6FD", "#F5F0FA", "#ECF4F1", "#F5F6F8",
 ]
-assert table.item(0, 20).foreground().color().name().upper() == "#D97706"
+assert table.item(0, 21).foreground().color().name().upper() == "#D97706"
 
 item["material_code"] = "SUS316"
 item["scheme2_cost_settings"] = {"material_difference": 25.0}
 scheme2_ui._refresh_cost_table(window)
 assert not table.isColumnHidden(scheme2_ui.MATERIAL_DIFFERENCE_COLUMN)
-assert table.item(0, 7).text() == "250.00"
-assert table.item(0, 9).text() == "709.00"
-assert table.item(0, 10).text() == "1,418.00"
+assert table.item(0, 8).text() == "250.00"
+assert table.item(0, 7).text() == "760.00"
+assert table.item(0, 10).text() == "710.00"
+assert table.item(0, 11).text() == "1,420.00"
 table.close()
-print("PASS: cost row values align with all 23 conditional headers")
+print("PASS: cost row values align with all 24 conditional headers")

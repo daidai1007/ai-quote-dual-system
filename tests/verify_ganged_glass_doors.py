@@ -83,6 +83,22 @@ class GangedGlassDoors(unittest.TestCase):
         self.assertEqual(changed[1]["unit_price_override"], expected["unit_price_override"])
         self.assertEqual(changed[1]["size_match_target_height_mm"], 2000)
 
+    def test_each_child_uses_its_own_manual_glass_dimensions(self):
+        window = window_for()
+        rows, missing = expand(window)
+        self.assertEqual(missing, [])
+        rows[0]["manual_inputs"] = {"玻璃门宽度": 400, "玻璃门高度": 500}
+        rows[1]["manual_inputs"] = {"玻璃门宽度": 600, "玻璃门高度": 2100}
+        window.attachments = rows
+        changed, missing = expand(window)
+        self.assertEqual(missing, [])
+        self.assertEqual([row["attachment_price_id"] for row in changed], [261, 262])
+        self.assertEqual(
+            [(row["size_match_target_width_mm"], row["size_match_target_height_mm"])
+             for row in changed],
+            [(400, 500), (600, 2100)],
+        )
+
     def test_single_custom_other_and_inner_door_not_expanded_as_glass(self):
         self.assertEqual(expand(window_for([CHILDREN[0]])), ([CHOICE], []))
         others = [{"item_name": "风机", "quantity": 3}, {**CHOICE, "custom": True},

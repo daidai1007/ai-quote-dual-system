@@ -1,4 +1,5 @@
 import { evaluateFormula, formulaVariables, round } from './attachment_formula.mjs';
+import {PRICING_BASIS, money, moneySum, moneyProduct} from '../quick_discount_rules.mjs';
 
 export const PRODUCT_CODES = Object.freeze({
   JS: ['JS', 'JS_SINGLE', 'JS_DOUBLE'], JP: ['JP', 'JP_SINGLE', 'JP_DOUBLE'],
@@ -49,6 +50,14 @@ function sizeMatchedQuickPrice(catalog, selection, environment, facePrice) {
   if (!name) return null;
   const board = name.includes('安装板');
   const target = [environment.width_mm,environment.height_mm,environment.depth_mm].map(Number);
+  if (name==='玻璃门') {
+    const width=Number(selection.manual_inputs?.玻璃门宽度);
+    const height=Number(selection.manual_inputs?.玻璃门高度);
+    if (width>0&&height>0) [target[0],target[1]]=[width,height];
+  } else if (name==='分段板') {
+    const height=Number(selection.manual_inputs?.分段板高度);
+    if (height>0) target[1]=height;
+  }
   if (name==='固定底座'||name==='活动底座') {
     target[1] = Number(selection.manual_inputs?.底座高度);
   } else if (name==='通风顶罩'&&selection.manual_inputs?.通风顶罩高度!=null) {
@@ -60,16 +69,22 @@ function sizeMatchedQuickPrice(catalog, selection, environment, facePrice) {
     const model = String(catalog.model_code||'').trim().toUpperCase().match(/^JP7602(40|50|60|80|10)$/);
     if (model) stored[2] = {40:400,50:500,60:600,80:800,10:1000}[model[1]];
   }
-  const count = board ? 2 : 3;
-  if (!target.slice(0,count).every(value=>Number.isFinite(value)&&value>0)) return null;
+  if (name==='防雨顶') {
+    const roofDepth = catalog.depth_mm ?? catalog.height_mm;
+    if (roofDepth===null || roofDepth===undefined || roofDepth==='') return null;
+    stored[2] = roofDepth;
+  }
+  const axes = board ? [0,1] : name==='侧板' ? [1,2] : name==='固定立柱' ? [1]
+    : ['内门','玻璃门','分段板'].includes(name) ? [0,1] : name==='防雨顶' ? [0,2] : [0,1,2];
+  if (!axes.every(index=>Number.isFinite(target[index])&&target[index]>0)) return null;
   if (board&&!stored.slice(0,2).every(value=>value!=null&&value!==''&&Number(value)>0)) return null;
   const matched = stored.map((value,index)=>value==null||value===''?target[index]:Number(value));
-  if (!matched.slice(0,count).every(value=>Number.isFinite(value)&&value>=0)) return null;
+  if (!axes.every(index=>Number.isFinite(matched[index])&&matched[index]>=0)) return null;
   const factor = board ? 2 : 1;
-  const targetPerimeter = target.slice(0,count).reduce((sum,value)=>sum+value,0)*factor;
-  const perimeter = matched.slice(0,count).reduce((sum,value)=>sum+value,0)*factor;
+  const targetPerimeter = axes.reduce((sum,index)=>sum+target[index],0)*factor;
+  const perimeter = axes.reduce((sum,index)=>sum+matched[index],0)*factor;
   if (perimeter<=0) return null;
-  const exact = matched.slice(0,count).every((value,index)=>Math.abs(value-target[index])<=0.0001);
+  const exact = axes.every(index=>Math.abs(matched[index]-target[index])<=0.0001);
   const ratio = exact ? 1 : targetPerimeter/perimeter;
   return {width_mm:catalog.width_mm,height_mm:catalog.height_mm,depth_mm:catalog.depth_mm,
     size_match_target_width_mm:target[0],size_match_target_height_mm:target[1],size_match_target_depth_mm:target[2],
@@ -103,6 +118,11 @@ export function calculateAttachment(selection, catalog, rules, environment) {
     if (sizedPrice) {
       Object.assign(result,sizedPrice,{catalogue_quick_amount:result.quick_amount});
       result.quick_amount = round(quantity*(result.unit_price_override??facePrice)*sign);
+    }
+    if(environment.pricing_basis===PRICING_BASIS){
+      result.face_price=result.matched_price=money(facePrice);
+      if(result.unit_price_override!=null) result.unit_price_override=money(result.unit_price_override);
+      result.quick_amount=moneyProduct(quantity,result.unit_price_override??result.face_price,sign);
     }
     const rule = selectRule(rules, environment.product_code, environment.material_code);
     if (!rule) { result.status = 'QUICK_ONLY'; result.status_text = '仅快速报价'; return result; }
@@ -150,7 +170,12 @@ export function calculateAttachment(selection, catalog, rules, environment) {
       result.formula_unit_cost = round(result.material_cost + result.spray_cost + result.auxiliary_cost + result.labor_cost,8);
       result.status = 'CALCULATED';
     }
-    result.formula_amount = round(quantity * result.formula_unit_cost * sign);
+    if(environment.pricing_basis===PRICING_BASIS){
+      const components=['material_cost','spray_cost','auxiliary_cost','labor_cost'];
+      for(const key of components) if(result[key]!=null) result[key]=money(result[key]);
+      result.formula_unit_cost=rule.method==='FIXED'?money(result.formula_unit_cost):moneySum(components.map(key=>result[key]));
+      result.formula_amount=moneyProduct(quantity,result.formula_unit_cost,sign);
+    } else result.formula_amount = round(quantity * result.formula_unit_cost * sign);
     result.status_text = result.status === 'FIXED' ? '固定成本' : '已计算';
   } catch (error) { result.status = 'ERROR'; result.error = error.message; result.status_text = error.message; result.formula_amount = null; result.formula_unit_cost = null; }
   return result;

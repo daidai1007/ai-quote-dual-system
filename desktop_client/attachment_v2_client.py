@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, QTimer, QDate
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QWidget
 from shiboken6 import isValid
 from material_prices import material_unit_price
+from quick_discount_rules import money_sum, quick_attachment_line_amount
 from ganged_cabinet_rules import parse_ganged_specification
 
 from attachment_category_browser import (
@@ -23,7 +24,9 @@ from attachment_category_browser import (
     match_installation_board_for_product,
     match_named_quick_attachment_size,
     parse_base_specification,
+    size_match_axes,
     size_match_attachment_name,
+    size_match_target_dimensions,
 )
 
 PREVIEW_DELAY_MS = 350
@@ -226,6 +229,7 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         base_height_mm = attachment_base_height(selection, base_height_mm)
         if base_height_mm is None:
             return None
+    target_dimensions = size_match_target_dimensions(selection, target_dimensions) or target_dimensions
     wanted_name = attachment_image_match_key(selection.get("item_name") or selection.get("name"))
     wanted_category = attachment_image_match_key(
         selection.get("category_level1") or selection.get("attachment_category")
@@ -538,10 +542,12 @@ def _size_match_target_changed(source, dimensions):
         or is_base_attachment(source)
     ):
         return False
-    if not isinstance(dimensions, (tuple, list)) or len(dimensions) < 3:
+    dimensions = size_match_target_dimensions(source, dimensions)
+    if dimensions is None:
         return False
-    keys = ("width", "height") if installation_board(source) else ("width", "height", "depth")
-    for index, key in enumerate(keys):
+    keys = ("width", "height", "depth")
+    for index in size_match_axes(source):
+        key = keys[index]
         stored = source.get("size_match_target_" + key + "_mm")
         try:
             if stored is None or abs(float(stored) - float(dimensions[index])) > 0.0001:
@@ -792,16 +798,24 @@ def _expand_ganged_doors_for_quote(window, rows, catalog, version, door_name):
             except (KeyError, TypeError, ValueError):
                 missing.append(f"柜体{index + 1}{door_name}尺寸")
                 continue
-            matched = match_catalog_attachment(choice, catalog, target_dimensions=dimensions)
+            previous = next((row for row in doors if row.get("ganged_cabinet_index") == index), None)
+            child_choice = {
+                **choice,
+                "manual_inputs": copy.deepcopy(
+                    (previous.get("manual_inputs") if previous is not None
+                     else choice.get("manual_inputs")) or {}
+                ),
+            }
+            matched = match_catalog_attachment(child_choice, catalog, target_dimensions=dimensions)
             if matched is None or _catalogue_id(matched.get("attachment_price_id")) is None:
                 missing.append(f"柜体{index + 1}{door_name}")
                 continue
-            previous = next((row for row in doors if row.get("ganged_cabinet_index") == index), None)
             unchanged = previous is not None and (
                 previous.get("attachment_price_id") == matched.get("attachment_price_id")
                 and previous.get(specification_key) == specification
+                and not _size_match_target_changed(previous, dimensions)
             )
-            resolved = {**choice, **copy.deepcopy(matched)}
+            resolved = {**child_choice, **copy.deepcopy(matched)}
             # Preserve local edits only when this child's matched size is unchanged.
             if unchanged:
                 resolved.update(previous)
@@ -1498,6 +1512,27 @@ def install_attachment_v2(namespace):
         if attachment.get("custom") is True:
             succeeded(copy.deepcopy(attachment))
             return
+        children = quote_item.get("ganged_cabinets") or []
+        child_index = attachment.get("ganged_cabinet_index", attachment.get("ganged_fixed_base_index"))
+        try:
+            child_position = int(child_index) if child_index is not None else None
+        except (TypeError, ValueError):
+            child_position = None
+        target_item = (
+            children[child_position]
+            if child_position is not None and 0 <= child_position < len(children)
+            else quote_item
+        )
+        cabinet_dimensions = tuple(target_item.get(key) for key in ("width_mm", "height_mm", "depth_mm"))
+        has_match_snapshot = any(
+            attachment.get(f"size_match_target_{axis}_mm") is not None
+            for axis in ("width", "height", "depth")
+        )
+        if has_match_snapshot and _size_match_target_changed(attachment, cabinet_dimensions):
+            # An edited glass/segment dimension can change the nearest
+            # catalogue row, not only the proportional price of the old row.
+            attachment = {**attachment}
+            attachment.pop("attachment_price_id", None)
         if is_base_attachment(attachment):
             missing_height = (attachment.get("manual_inputs") or {}).get("底座高度") in (None, "")
             try:
@@ -1552,6 +1587,8 @@ def install_attachment_v2(namespace):
                     resolved = resolve_installation_board(attachment, match, body.get("data_version"))
                 elif _is_computer_tray(attachment):
                     resolved = resolve_computer_tray(attachment, match, body.get("data_version"))
+                elif size_match_attachment_name(attachment) is not None:
+                    resolved = resolve_size_matched_attachment(attachment, match, body.get("data_version"))
                 recalculate_draft_attachment(window, quote_item, resolved, succeeded, failed)
 
             worker.succeeded.connect(catalog_loaded)
@@ -1665,9 +1702,10 @@ def install_attachment_v2(namespace):
             for key, amount_key in (("formula", "formula_amount"), ("quick", "quick_amount")):
                 quote = copy.deepcopy(item.get(key) or {})
                 old_fee = float(quote.get("attachment_fee") or 0)
-                new_fee = round(sum(float(row.get(amount_key) or 0) for row in updated), 2)
+                new_fee = money_sum(quick_attachment_line_amount(row) if key == "quick"
+                                    else row.get(amount_key) or 0 for row in updated)
                 if quote.get("total_cost") is not None:
-                    quote["total_cost"] = round(float(quote["total_cost"]) - old_fee + new_fee, 2)
+                    quote["total_cost"] = money_sum((quote["total_cost"], -old_fee, new_fee))
                 elif key == "formula":
                     quote["total_cost"] = body.get("formula_cost", {}).get("total_cost")
                 quote["attachment_fee"] = new_fee

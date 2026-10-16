@@ -1,70 +1,15 @@
 """V3 drawing/quote presentation state. Existing API and quote math are untouched."""
-from pathlib import Path
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QDrag
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import (
-    QFrame, QHeaderView, QHBoxLayout, QLabel, QPushButton, QSplitter,
-    QSizePolicy, QStackedWidget, QStyle, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QPushButton, QSplitter, QSizePolicy, QStackedWidget, QWidget,
 )
 from freight_state import FreightState, billable_weight, money
 from quote_drawing_preview import QuoteDrawingPreview, normalized_path, resolve_document
 
-# Keep the recovered core's route IDs: 0 recognition, 1 quote, 2 notes, 3 list.
-# Navigation order is independent of route IDs, so internal callers stay valid.
-CABINET_SUMMARY_ROUTE = 4
-
-
-class CabinetSummaryTable(QTableWidget):
-    """Whole-row drag table that delegates data order to the shared model."""
-
-    row_move_requested = Signal(int, int)
-
-    def __init__(self, rows=0, columns=0, parent=None):
-        super().__init__(rows, columns, parent)
-        self._drag_source_row = -1
-
-    def startDrag(self, supported_actions):
-        self._drag_source_row = self.currentRow()
-        if self._drag_source_row < 0:
-            return
-        indexes = self.selectedIndexes()
-        if not indexes:
-            self._drag_source_row = -1
-            return
-        # QAbstractItemView.startDrag removes the source items after an
-        # accepted MoveAction. The shared drawing list is already reordered
-        # and the table is rebuilt in dropEvent, so that default cleanup would
-        # clear a row from the freshly rebuilt table. Run QDrag directly and
-        # leave all data movement to reorder_cabinets exactly once.
-        drag = QDrag(self)
-        drag.setMimeData(self.model().mimeData(indexes))
-        try:
-            drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
-        finally:
-            self._drag_source_row = -1
-
-    def dropEvent(self, event):
-        source = self._drag_source_row
-        self._drag_source_row = -1
-        if source < 0 or source >= self.rowCount():
-            event.ignore()
-            return
-        point = event.position().toPoint()
-        index = self.indexAt(point)
-        insert_at = self.rowCount()
-        if index.isValid():
-            insert_at = index.row()
-            rect = self.visualRect(self.model().index(insert_at, 0))
-            if point.y() > rect.center().y():
-                insert_at += 1
-        if insert_at > source:
-            insert_at -= 1
-        insert_at = max(0, min(insert_at, self.rowCount() - 1))
-        if insert_at == source:
-            event.acceptProposedAction()
-            return
-        self.row_move_requested.emit(source, insert_at)
-        event.acceptProposedAction()
+# The recovered core still reserves these numeric slots.  They are controller
+# compatibility routes only; the old recognition and cabinet-summary screens
+# are intentionally absent from the live application.
+RETIRED_CABINET_SUMMARY_ROUTE = 4
 
 
 def drawing_key(item):
@@ -180,152 +125,6 @@ def sync_current_cabinet_quantity(window, value):
     if item.get('quantity') == quantity:
         return
     item['quantity'] = quantity
-    refresh_cabinets(window)
-
-
-def refresh_cabinets(window):
-    if not hasattr(window, 'cabinet_summary_table'):
-        return
-    table = window.cabinet_summary_table
-    selected = table.currentRow()
-    selected_key = None
-    if selected >= 0 and table.item(selected, 0) is not None:
-        selected_key = table.item(selected, 0).data(Qt.ItemDataRole.UserRole)
-    table.setRowCount(len(window.recognized_drawings))
-    for row, item in enumerate(window.recognized_drawings):
-        ready = window._drawing_ready(item)
-        source = item.get('source_document_name') or Path(item.get('source_path') or item.get('path') or '').name
-        values = (str(row + 1), item.get('name') or '未命名柜体', item.get('specification') or '待核验',
-                  cabinet_quantity(item), source, '可报价' if ready else '待核验')
-        for column, value in enumerate(values):
-            table.setItem(row, column, QTableWidgetItem(str(value)))
-        # Store only a stable key; resolve against the canonical recognition list.
-        table.item(row, 0).setData(Qt.ItemDataRole.UserRole, drawing_key(item))
-    selected_after = next((
-        row for row in range(table.rowCount())
-        if table.item(row, 0) is not None
-        and table.item(row, 0).data(Qt.ItemDataRole.UserRole) == selected_key
-    ), None)
-    if selected_after is not None:
-        table.selectRow(selected_after)
-    elif 0 <= selected < table.rowCount():
-        table.selectRow(selected)
-    window.cabinet_summary_empty.setVisible(table.rowCount() == 0)
-
-
-def open_cabinet(window, for_quote):
-    row = window.cabinet_summary_table.currentRow()
-    if row < 0:
-        return
-    key = window.cabinet_summary_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-    index = next((i for i, item in enumerate(window.recognized_drawings) if drawing_key(item) == key), None)
-    if index is None:
-        refresh_cabinets(window)
-        return
-    window.drawing_list.selectRow(index)
-    window.select_drawing_row(index)
-    if for_quote and window._drawing_ready(window.active_drawing):
-        window.use_selected_drawing()
-    else:
-        window.show_section(0)
-
-
-def reorder_cabinets(window, source_row: int, target_row: int):
-    drawings = getattr(window, 'recognized_drawings', None)
-    if not isinstance(drawings, list) or not (0 <= source_row < len(drawings)):
-        return
-    target_row = max(0, min(int(target_row), len(drawings) - 1))
-    if source_row == target_row:
-        return
-    moved = drawings.pop(source_row)
-    drawings.insert(target_row, moved)
-    refresh_recognition = getattr(window, '_refresh_document_list', None)
-    if callable(refresh_recognition):
-        refresh_recognition()
-    refresh_cabinets(window)
-    window.cabinet_summary_table.selectRow(target_row)
-    window.statusBar().showMessage(
-        f'柜体顺序已调整：{target_row + 1}. {moved.get("name") or "未命名柜体"}',
-        3500,
-    )
-
-
-def build_summary(window):
-    page = QWidget()
-    page.setObjectName('cabinetSummaryPage')
-    box = QVBoxLayout(page)
-    box.setContentsMargins(0, 0, 0, 0)
-    box.setSpacing(12)
-    header = QFrame()
-    header.setObjectName('commandBar')
-    heading = QVBoxLayout(header)
-    title = QLabel('柜体汇总')
-    title.setObjectName('workbenchTitle')
-    heading.addWidget(title)
-    subtitle = QLabel('核对识别柜体；按住任意柜体行上下拖动可调整顺序')
-    subtitle.setObjectName('workbenchSubtitle')
-    heading.addWidget(subtitle)
-    box.addWidget(header)
-    panel = QFrame()
-    panel.setObjectName('quoteResultsPanel')
-    body = QVBoxLayout(panel)
-    empty = QLabel('暂无识别柜体，请先返回图纸识别导入图纸。')
-    empty.setWordWrap(True)
-    body.addWidget(empty)
-    table = CabinetSummaryTable(0, 6)
-    table.setObjectName('cabinetSummaryTable')
-    table.setHorizontalHeaderLabels(('序号', '柜体名称', '规格型号（W*D*H）', '数量', '来源图纸', '状态'))
-    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-    table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-    table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-    table.setDragEnabled(True)
-    table.setAcceptDrops(True)
-    table.viewport().setAcceptDrops(True)
-    table.setDropIndicatorShown(True)
-    table.setDragDropMode(QTableWidget.DragDropMode.InternalMove)
-    table.setDragDropOverwriteMode(False)
-    table.setDefaultDropAction(Qt.DropAction.MoveAction)
-    table.setAutoScroll(True)
-    table.setToolTip('按住任意柜体行上下拖动，松开后保存当前会话中的柜体顺序')
-    table.verticalHeader().hide()
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-    table.setMinimumHeight(300)
-    body.addWidget(table, 1)
-    row = QHBoxLayout()
-    for text, callback in (
-        ('返回图纸识别', lambda: window.show_section(0)),
-        ('核验选中柜体', lambda: open_cabinet(window, False)),
-        ('进入报价计算', lambda: open_cabinet(window, True)),
-    ):
-        button = QPushButton(text)
-        button.setObjectName('primaryAction' if text == '进入报价计算' else 'outlineAction')
-        button.clicked.connect(callback)
-        row.addWidget(button)
-    body.addLayout(row)
-    box.addWidget(panel, 1)
-    window.cabinet_summary_table, window.cabinet_summary_empty = table, empty
-    table.row_move_requested.connect(lambda source, target: reorder_cabinets(window, source, target))
-    table.cellDoubleClicked.connect(lambda *_: open_cabinet(window, True))
-    window.stack.addWidget(page)
-    nav = window.nav_buttons[0].parentWidget()
-    button = QPushButton('柜体汇总', nav)
-    button.setObjectName('navButton')
-    button.setCheckable(True)
-    reference = window.nav_buttons[1]
-    button.setFont(reference.font())
-    button.setIcon(window.fluent_icon('\ue80f', QStyle.StandardPixmap.SP_DirIcon,
-                                     color='#3A3A3C', checked_color='#FFFFFF'))
-    button.setIconSize(reference.iconSize())
-    button.setMinimumHeight(reference.minimumHeight())
-    button.clicked.connect(lambda: window.show_section(CABINET_SUMMARY_ROUTE))
-    nav.layout().insertWidget(nav.layout().indexOf(reference), button)
-    routes = list(window.nav_routes)
-    routes.insert(1, (CABINET_SUMMARY_ROUTE, '柜体汇总', '\ue80f', QStyle.StandardPixmap.SP_DirIcon))
-    window.nav_routes = tuple(routes)
-    window.nav_buttons.insert(1, button)
-    refresh_cabinets(window)
 
 
 def install_drawing_workflow(namespace):
@@ -346,7 +145,9 @@ def install_drawing_workflow(namespace):
         # The legacy recognition/review workbench is retired.  Reserve its
         # former route only so later quote-page indices stay compatible; no
         # page, controls or navigation entry from that workbench are created.
-        window.stack.insertWidget(CABINET_SUMMARY_ROUTE, QWidget())
+        retired_route = QWidget()
+        retired_route.setObjectName('retiredCabinetSummaryRoute')
+        window.stack.insertWidget(RETIRED_CABINET_SUMMARY_ROUTE, retired_route)
         workspace = window.stack.widget(1).findChild(QSplitter, 'quoteWorkspace')
         result_panel = workspace.widget(1)
         window.quote_right_stack = QStackedWidget()
@@ -408,11 +209,7 @@ def install_drawing_workflow(namespace):
             if index == 1:
                 window.active_drawing = window._quote_drawing
                 sync_drawing(window)
-            elif index == CABINET_SUMMARY_ROUTE:
-                refresh_cabinets(window)
         result = original_section(window, index)
-        if index == CABINET_SUMMARY_ROUTE:
-            window.statusBar().showMessage('当前模块：柜体汇总')
         return result
 
     cls.show_section = section
@@ -563,14 +360,6 @@ def install_drawing_workflow(namespace):
         return result
 
     cls.load_draft_item = load
-    original_review = cls.complete_inline_review
-
-    def review(window):
-        result = original_review(window)
-        refresh_cabinets(window)
-        return result
-
-    cls.complete_inline_review = review
     original_close = cls.closeEvent
 
     def close(window, event):

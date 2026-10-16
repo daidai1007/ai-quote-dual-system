@@ -572,6 +572,42 @@ def size_match_attachment_name(item: dict) -> str | None:
     return None
 
 
+def size_match_axes(item: dict) -> tuple[int, ...]:
+    """Physical cabinet axes used by this attachment's size/price rule."""
+
+    name = size_match_attachment_name(item)
+    if name == "侧板":
+        return (1, 2)
+    if name == "固定立柱":
+        return (1,)
+    if name in {"安装板", "JK安装板", "内门", "玻璃门", "分段板"}:
+        return (0, 1)
+    if name == "防雨顶":
+        return (0, 2)
+    return (0, 1, 2)
+
+
+def size_match_display_text(item: dict) -> str | None:
+    """Show the catalogue dimensions that actually determine matching."""
+
+    name = size_match_attachment_name(item)
+    if name not in {"侧板", "固定立柱", "安装板", "JK安装板",
+                    "内门", "玻璃门", "分段板", "防雨顶"}:
+        return None
+    values = [_number(item.get(key)) for key in ("width_mm", "height_mm", "depth_mm")]
+    if name == "防雨顶":
+        # Older control-cabinet catalogue rows store physical roof depth in H.
+        values[2] = values[2] if values[2] is not None else values[1]
+    axes = size_match_axes(item)
+    if not any(values[index] is not None for index in axes):
+        return "通用"
+    labels = ("宽", "高", "深")
+    parts = ["-" if values[index] is None else f"{values[index]:g}" for index in axes]
+    if name in {"安装板", "JK安装板"}:
+        return " × ".join(parts) + " mm"
+    return " × ".join(f"{labels[index]} {part}" for index, part in zip(axes, parts)) + " mm"
+
+
 def installation_board_catalogue_name(item: dict) -> str | None:
     """Return the installation-board branch for a valid catalogue row.
 
@@ -604,6 +640,29 @@ def target_dimension_tuple(dimensions) -> tuple[float, float, float] | None:
     if any(value is None or value <= 0 for value in values):
         return None
     return values  # type: ignore[return-value]
+
+
+def size_match_target_dimensions(source: dict, cabinet_dimensions) -> tuple[float, float, float] | None:
+    """Use entered physical attachment dimensions when this family has them."""
+
+    target = target_dimension_tuple(cabinet_dimensions)
+    if target is None:
+        return None
+    manual = source.get("manual_inputs") or {}
+    if not isinstance(manual, dict):
+        return target
+    values = list(target)
+    name = size_match_attachment_name(source)
+    if name == "玻璃门":
+        width = _number(manual.get("玻璃门宽度"))
+        height = _number(manual.get("玻璃门高度"))
+        if width is not None and width > 0 and height is not None and height > 0:
+            values[0], values[1] = width, height
+    elif name == "分段板":
+        height = _number(manual.get("分段板高度"))
+        if height is not None and height > 0:
+            values[1] = height
+    return tuple(values)
 
 
 def completed_size_dimensions(
@@ -818,18 +877,35 @@ def match_attachment_size(
     if "安装板" in str(size_match_attachment_name(source) or ""):
         return match_installation_board_size(items, source, target_dimensions)
 
-    target = target_dimension_tuple(target_dimensions)
+    target = size_match_target_dimensions(source, target_dimensions)
     candidates = _matching_candidates(items, source)
     if target is None or not candidates:
         return None
-    target_perimeter = sum(target)
+    # Each attachment family uses only its physical catalogue dimensions for
+    # both nearest-row selection and sale-price scaling.
+    match_name = size_match_attachment_name(source)
+    axes = size_match_axes(source)
+    target_perimeter = sum(target[index] for index in axes)
+
+    def matched_dimensions(item: dict) -> tuple[float, float, float] | None:
+        completed = completed_size_dimensions(item, target)
+        if completed is None or match_name != "防雨顶":
+            return completed
+        # Imported control-box rain covers store physical depth in depth_mm;
+        # control-cabinet covers store it in height_mm. Neither is cabinet H.
+        roof_depth = _number(item.get("depth_mm"))
+        if roof_depth is None:
+            roof_depth = _number(item.get("height_mm"))
+        if roof_depth is None or roof_depth <= 0:
+            return None
+        return completed[0], completed[1], roof_depth
 
     def choice_key(item: dict):
-        completed = completed_size_dimensions(item, target)
+        completed = matched_dimensions(item)
         if completed is None:
             return (float("inf"), float("inf"), float("inf"), (), (), (), (), float("inf"))
-        perimeter = sum(completed)
-        squared_distance = sum((actual - expected) ** 2 for actual, expected in zip(completed, target))
+        perimeter = sum(completed[index] for index in axes)
+        squared_distance = sum((completed[index] - target[index]) ** 2 for index in axes)
         price_id = _number(item.get("attachment_price_id"))
         # A fixed base's explicitly entered/recognized height is the primary
         # engineering constraint.  Exact W/H/D still wins; otherwise prefer
@@ -843,7 +919,7 @@ def match_attachment_size(
             height_rank,
             abs(perimeter - target_perimeter),
             squared_distance,
-            completed,
+            tuple(completed[index] for index in axes),
             _natural_text_key(item.get("model_code")),
             _natural_text_key(item.get("variant")),
             _natural_text_key(item.get("price_source")),
@@ -851,13 +927,13 @@ def match_attachment_size(
         )
 
     matched = min(candidates, key=choice_key)
-    completed = completed_size_dimensions(matched, target)
+    completed = matched_dimensions(matched)
     if completed is None:
         return None
-    matched_perimeter = sum(completed)
+    matched_perimeter = sum(completed[index] for index in axes)
     if matched_perimeter <= 0:
         return None
-    exact = all(abs(actual - expected) <= 0.0001 for actual, expected in zip(completed, target))
+    exact = all(abs(completed[index] - target[index]) <= 0.0001 for index in axes)
     ratio = 1.0 if exact else target_perimeter / matched_perimeter
     selected = dict(matched)
     original_price = _number(matched.get("price"))

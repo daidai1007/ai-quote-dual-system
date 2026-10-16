@@ -72,6 +72,7 @@ from attachment_category_browser import (
     is_base_selection,
     match_fixed_base,
     parse_base_specification,
+    size_match_display_text,
     size_match_attachment_name,
     valid_selection_prefix,
 )
@@ -899,6 +900,9 @@ class AttachmentDialog(QDialog):
 
     @staticmethod
     def format_size(item: dict) -> str:
+        matched_size = size_match_display_text(item)
+        if matched_size is not None:
+            return matched_size
         values = [item.get("width_mm"), item.get("height_mm")]
         if "安装板" not in str(size_match_attachment_name(item) or ""):
             values.append(item.get("depth_mm"))

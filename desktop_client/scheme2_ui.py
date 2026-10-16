@@ -13,6 +13,7 @@ import hashlib
 import html
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -22,6 +23,7 @@ import tempfile
 import time
 from types import MethodType
 import zipfile
+from decimal import Decimal
 
 LOGGER = logging.getLogger("ai_quote.client")
 ADD_PROGRESS_COMPACT_THRESHOLD = 650
@@ -78,9 +80,15 @@ from PySide6.QtWidgets import (
 )
 
 from layout_refresh import _fit_window_minimum_to_screen
+try:
+    from quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product,
+                                     quick_attachment_line_amount, quick_discount_breakdown)
+except ModuleNotFoundError:
+    from .quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product,
+                                      quick_attachment_line_amount, quick_discount_breakdown)
 from pypdf import PdfReader, PdfWriter
 
-from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, door_transformation_default_names
+from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, door_transformation_default_names, size_match_display_text
 from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
 from quote_diagnostics import build_report, record_event, submit_report
 try:
@@ -201,40 +209,40 @@ def _submit_diagnostic_report(window):
     worker.start()
 COEFFICIENT_FIELDS = (
     ("galvanized_price", "镀锌板价格", 4.55, 2),
-    ("carbon_price", "碳钢价格", 4.20, 1),
+    ("carbon_price", "碳钢价格", 4.20, 2),
     ("stainless_304_price", "不锈钢304价格", STAINLESS_DEFAULT_PRICES["SUS304"], 2),
     ("stainless_316_price", "不锈钢316价格", STAINLESS_DEFAULT_PRICES["SUS316"], 2),
-    ("material_difference", "材料差价价格", DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE, 0),
+    ("material_difference", "材料差价价格", DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE, 2),
     ("waste_factor", "废料系数", 1.20, 1),
     ("labor_discount", "人工折扣", 1.00, 2),
-    ("surface_price", "表面处理价格", 26.00, 0),
+    ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
 WORKBENCH_WINDOW_TITLE = ""
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
-    "序号", "名称", "产品", "尺寸", "数量", "已选附件", "面价", "材料差价", "折扣系数",
+    "序号", "名称", "产品", "尺寸", "数量", "已选附件", "附件面价", "面价", "材料差价", "折扣系数",
     "报价", "报价总价", "成本单价", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "成本总价",
     "毛利率", "自制件重量", "成本明细",
 )
-COST_DISPLAY_ORDER = (0, 1, 2, 3, 11, 12, 13, 22, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21)
-COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88)
+COST_DISPLAY_ORDER = (0, 1, 2, 3, 11, 12, 23, 13, 22, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21)
+COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88)
 COST_HEADER_GROUPS = (
-    ("柜体信息", 0, 3), ("数量", 4, 4), ("附件", 5, 5), ("报价结果", 6, 10),
-    ("成本数据", 11, 19), ("利润率", 20, 20), ("自制件重量", 21, 21), ("操作", 22, 22),
+    ("柜体信息", 0, 3), ("数量", 4, 4), ("附件", 5, 6), ("报价结果", 7, 11),
+    ("成本数据", 12, 20), ("利润率", 21, 21), ("自制件重量", 22, 22), ("操作", 23, 23),
 )
 COST_COLUMN_BACKGROUNDS = (
-    "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#F5F6F8",
+    "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#F5F6F8", "#F5F6F8",
     "#FFF7E6", "#FFF7E6", "#FFF7E6", "#FFF7E6", "#FFF7E6",
     "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD",
     "#F5F0FA", "#ECF4F1", "#F5F6F8",
 )
 DETAIL_COLUMN_WIDTHS = (72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)
-MONEY_COLUMNS = frozenset((6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19))
-EDITABLE_COLUMNS = frozenset((1, 4, 8, 18))
-MATERIAL_DIFFERENCE_COLUMN = 7
+MONEY_COLUMNS = frozenset((6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
+EDITABLE_COLUMNS = frozenset((1, 4, 9, 19))
+MATERIAL_DIFFERENCE_COLUMN = 8
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
 _FONT_SIZE_RULE = re.compile(r"font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
@@ -448,7 +456,7 @@ def _number(value, fallback=0.0):
 
 
 def _money(value):
-    return f"{_number(value):,.2f}"
+    return f"{money(_number(value)):,.2f}"
 
 
 def _surface_default_price(value):
@@ -487,16 +495,7 @@ def _attachment_total(item):
 def _popup_quick_amount(row):
     """Return the quick amount currently visible in the attachment editor."""
 
-    if row.get("pending_manual_dimensions"):
-        return 0.0
-    amount = row.get("quick_amount")
-    override = row.get("quick_amount_override")
-    manually_edited = row.get("custom_amount_edited") is True or (
-        "custom_amount_edited" not in row and override not in (None, 0)
-    )
-    if manually_edited and override is not None:
-        amount = override
-    return _number(amount, _attachment_amount(row))
+    return quick_attachment_line_amount(row)
 
 
 def _popup_formula_amount(row):
@@ -504,21 +503,21 @@ def _popup_formula_amount(row):
 
     if row.get("pending_manual_dimensions"):
         return 0.0
-    return _number(row.get("formula_amount"), 0.0)
+    return money(_number(row.get("formula_amount"), 0.0))
 
 
 def _quote_with_popup_attachment_fee(quote, attachments, amount_getter):
     """Replace a stale aggregate attachment fee with the popup row sum."""
 
     normalized = dict(quote or {})
-    current_fee = sum(amount_getter(row) for row in attachments)
+    current_fee = money_sum(amount_getter(row) for row in attachments)
     stored_fee = _number(normalized.get("attachment_fee"), current_fee)
     normalized["attachment_fee"] = current_fee
     if normalized.get("total_cost") is not None:
         if normalized.get("base_price") is not None:
-            normalized["total_cost"] = _number(normalized.get("base_price")) + current_fee
+            normalized["total_cost"] = money_sum((_number(normalized.get("base_price")), current_fee))
         else:
-            normalized["total_cost"] = _number(normalized.get("total_cost")) - stored_fee + current_fee
+            normalized["total_cost"] = money_sum((_number(normalized.get("total_cost")), -stored_fee, current_fee))
     return normalized, current_fee
 
 
@@ -555,7 +554,7 @@ def _material_difference_amount(item):
         if isinstance(row, dict)
         and str(row.get("material_code") or "").strip().upper() == "SGCC"
     )
-    return max(0.0, total_weight - sgcc_weight) * unit_price
+    return money_product(max(0.0, total_weight - sgcc_weight), unit_price)
 
 
 def _row_values(item):
@@ -564,7 +563,7 @@ def _row_values(item):
     quick, _ = _quote_with_popup_attachment_fee(
         _quick(item), attachments, _popup_quick_amount,
     )
-    formula_current_fee = sum(_popup_formula_amount(row) for row in attachments)
+    formula_current_fee = money_sum(_popup_formula_amount(row) for row in attachments)
     stored_formula_fee = _number(formula.get("attachment_fee"), formula_current_fee)
     formula_total = _number(formula.get("total_cost"))
     if formula.get("total_cost") is None:
@@ -579,10 +578,10 @@ def _row_values(item):
     formula["total_cost"] = formula_base_total + formula_current_fee
     quantity = max(1, int(_number(item.get("quantity", 1), 1)))
     freight = max(0.0, _number(item.get("freight_fee", item.get("freight", 0))))
-    formula_unit = _number(formula.get("total_cost")) + freight
-    face_base = _number(quick.get("total_cost")) + freight
+    formula_unit = money_sum((_number(formula.get("total_cost")), freight))
     discount = _number(item.get("quick_discount", 1), 1)
     material_difference = _material_difference_amount(item)
+    face_base = money_sum((_number(quick.get("total_cost")), freight, material_difference))
     # The old Scheme2 summary applied the discount to the whole quick total:
     # ``(cabinet + attachments + freight) * discount``.  That bypassed the
     # shared selective-discount rules and incorrectly discounted items such
@@ -603,10 +602,11 @@ def _row_values(item):
         quantity,
         ganged_count,
         freight,
+        material_difference,
     )
-    quote = quick_line["equivalent_unit_total"] + material_difference
-    quote_total = quick_line["line_total"] + material_difference * quantity
-    cost_total = formula_unit * quantity
+    quote = quick_line["equivalent_unit_total"]
+    quote_total = quick_line["line_total"]
+    cost_total = money_product(formula_unit, quantity)
     gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0
     billable_weight = _number(formula.get("corrected_material_weight_kg"))
     specification = str(item.get("specification") or item.get("model_code") or "—")
@@ -624,6 +624,7 @@ def _row_values(item):
         quote, quote_total, formula_unit, cost_total,
         f"{gross_margin:.2%}", f"{billable_weight:.2f}", "明细 ›",
         material_difference,
+        money_sum(_popup_quick_amount(row) for row in attachments),
     )
 
 
@@ -980,6 +981,14 @@ def _attachment_dimension_or_model(source):
         width, height = (_number(manual.get(key)) for key in ("玻璃门宽度", "玻璃门高度"))
         if width > 0 and height > 0:
             return f"宽 {width:g} × 高 {height:g} mm"
+    if "分段板" in str(source.get("item_name") or ""):
+        width = _number(source.get("size_match_target_width_mm") or source.get("width_mm"))
+        height = _number(manual.get("分段板高度"))
+        if width > 0 and height > 0:
+            return f"宽 {width:g} × 高 {height:g} mm"
+    matched_size = size_match_display_text(source)
+    if matched_size not in (None, "通用"):
+        return matched_size
     dimensions = []
     for axis, label in (("width", "宽"), ("depth", "深"), ("height", "高")):
         number = _number(source.get(f"{axis}_mm"))
@@ -1025,9 +1034,9 @@ class AttachmentEditor(QDialog):
         self.item = item
         from attachment_v2_client import confirmation_inputs
         self.original_snapshot_inputs = confirmation_inputs(item.get("attachments", []))
-        # Draft attachments and quote amounts remain per cabinet (or per
-        # complete ganged set). Only the editor projects them to order totals.
-        self.cabinet_quantity = max(1, int(_number(item.get("quantity", 1), 1)))
+        # A row is already a complete cabinet/ganged set; the product's order
+        # quantity must never change these editable attachment values.
+        self.cabinet_quantity = 1
         self.setWindowTitle("已选附件")
         self.setObjectName("scheme2AttachmentEditorDialog")
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
@@ -1107,6 +1116,8 @@ class AttachmentEditor(QDialog):
                 self.add_row(attachment)
 
     def _show_table_menu(self, position):
+        if getattr(self, "_pending_reprices", {}):
+            return
         menu = QMenu(self)
         add_action = menu.addAction("＋ 临时附件")
         remove_action = menu.addAction("删除所选")
@@ -1178,8 +1189,7 @@ class AttachmentEditor(QDialog):
         quantity.setValue(total_quantity)
         quantity.setProperty("previousQuantity", quantity.value())
         quantity.setToolTip(
-            f"整批数量 = 单柜数量 {_displayed_attachment_quantity(source):g}"
-            f" × 柜体数量 {self.cabinet_quantity}；修改后按柜体数量折算保存\n"
+            "单台柜子／单套并柜所需附件数量；不随主表产品数量变化\n"
             "仅安装板允许负数量（负数表示扣减）；其他附件数量必须为正数"
         )
         self.table.setCellWidget(row, self.COL_QUANTITY, quantity)
@@ -1251,7 +1261,8 @@ class AttachmentEditor(QDialog):
             with QSignalBlocker(cost_editor):
                 cost_editor.setValue(formula_amount)
             cost_editor.setProperty("schemeEdited", bool(source.get("custom_cost_edited")))
-            cost_editor.setToolTip("整批附件成本；未手工改金额时，金额=成本×1.2")
+            cost_editor.setProperty("unitCost", None)
+            cost_editor.setToolTip("单台／单套附件成本；未手工改金额时，金额=成本×1.2")
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if not isinstance(amount_editor, QDoubleSpinBox):
             amount_editor = _double_click_edit_spin()
@@ -1267,9 +1278,10 @@ class AttachmentEditor(QDialog):
             amount_editor.setValue(quick_amount)
         from attachment_v2_client import manual_attachment_amount_edited
         amount_editor.setProperty("schemeEdited", manual_attachment_amount_edited(source))
+        amount_editor.setProperty("unitAmount", None)
         amount_editor.setProperty("pending", pending)
         amount_editor.setEnabled(not pending)
-        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "左键双击后修改整批附件金额")
+        amount_editor.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充" if pending else "左键双击修改单台／单套附件折前金额（已包含附件自身数量）")
         amount_editor.style().unpolish(amount_editor)
         amount_editor.style().polish(amount_editor)
 
@@ -1307,16 +1319,21 @@ class AttachmentEditor(QDialog):
         editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if editor is not None:
             editor.setProperty("schemeEdited", True)
+            quantity = self.table.cellWidget(row, self.COL_QUANTITY).value()
+            editor.setProperty("unitAmount", value / quantity if quantity else value)
 
     def _custom_cost_changed(self, row, value):
         record_event(self.window, "attachment_cost_changed", row=row + 1, cost=value)
         cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
         if isinstance(cost_editor, QDoubleSpinBox):
             cost_editor.setProperty("schemeEdited", True)
+            quantity = self.table.cellWidget(row, self.COL_QUANTITY).value()
+            cost_editor.setProperty("unitCost", value / quantity if quantity else value)
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if isinstance(amount_editor, QDoubleSpinBox) and not amount_editor.property("schemeEdited"):
             with QSignalBlocker(amount_editor):
-                amount_editor.setValue(value * 1.2)
+                amount_editor.setValue(money_product(value, 1.2))
+            amount_editor.setProperty("unitAmount", None)
 
     def _quantity_changed(self, row, value):
         record_event(self.window, "attachment_quantity_changed", row=row + 1, quantity=value)
@@ -1339,21 +1356,32 @@ class AttachmentEditor(QDialog):
         else:
             selected = _number(source.get("quantity", 1), 1)
             unit_amount = _number(source.get("quick_amount"), _attachment_amount(source)) / selected if selected else 0
+        if amount_editor.property("unitAmount") is not None:
+            unit_amount = amount_editor.property("unitAmount")
+        else:
+            amount_editor.setProperty("unitAmount", unit_amount)
         with QSignalBlocker(amount_editor):
-            amount_editor.setValue(unit_amount * value)
+            amount_editor.setValue(money_product(unit_amount, value))
         if source.get("custom"):
             cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
             if isinstance(cost_editor, QDoubleSpinBox):
                 previous_cost = cost_editor.value()
                 unit_cost = previous_cost / previous_quantity if previous_quantity else previous_cost
+                if cost_editor.property("unitCost") is not None:
+                    unit_cost = cost_editor.property("unitCost")
+                else:
+                    cost_editor.setProperty("unitCost", unit_cost)
                 with QSignalBlocker(cost_editor):
-                    cost_editor.setValue(unit_cost * value)
+                    cost_editor.setValue(money_product(unit_cost, value))
             return
         selected_quantity = _displayed_attachment_quantity(source)
         previous_formula = _number(source.get("formula_amount"), 0)
         formula = self.table.item(row, self.COL_FORMULA_AMOUNT)
         if formula is not None:
-            formula.setText(_money((previous_formula / selected_quantity if selected_quantity else 0) * value))
+            unit_cost = (abs(_number(source["formula_unit_cost"]))
+                         if source.get("formula_unit_cost") is not None
+                         else previous_formula / selected_quantity if selected_quantity else 0)
+            formula.setText(_money(money_product(unit_cost, value)))
 
     def edit_missing_dimensions(self, row, column):
         if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
@@ -1383,6 +1411,20 @@ class AttachmentEditor(QDialog):
 
     def _reprice_row(self, row, source, specification=None):
         source_item = self.table.item(row, self.COL_NAME)
+        source = dict(source)
+        quantity_editor = self.table.cellWidget(row, self.COL_QUANTITY)
+        if quantity_editor is not None:
+            from attachment_v2_client import normalize_installation_board_quantity
+            source["quantity"] = quantity_editor.value()
+            source["attachment_price_sign"] = 1
+            source = normalize_installation_board_quantity(source)
+            source_item.setData(ROLE_ROW, source)
+        pending = getattr(self, "_pending_reprices", {})
+        token = object()
+        pending[row] = token
+        self._pending_reprices = pending
+        if quantity_editor is not None:
+            quantity_editor.setEnabled(False)
         specification_editor = self.table.cellWidget(row, self.COL_SPECIFICATION)
         if isinstance(specification_editor, QComboBox):
             specification_editor.setEnabled(False)
@@ -1395,11 +1437,22 @@ class AttachmentEditor(QDialog):
             formula_item.setText("计算中…")
             formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
         reprice = getattr(self.window, "recalculate_draft_attachment", None)
-        if not callable(reprice):
-            QMessageBox.warning(self, "附件计算失败", "附件数据库计算功能不可用。")
-            return
+        def current():
+            from shiboken6 import isValid
+            return (isValid(self) and self.result() != QDialog.DialogCode.Accepted
+                    and pending.get(row) is token and isValid(source_item)
+                    and self.table.item(row, self.COL_NAME) is source_item)
+
+        def finished():
+            pending.pop(row, None)
+            for editor in (quantity_editor, amount_editor, specification_editor):
+                if editor is not None:
+                    editor.setEnabled(True)
 
         def succeeded(calculated):
+            if not current():
+                return
+            finished()
             source_item.setData(ROLE_ROW, dict(calculated))
             if isinstance(specification, QTableWidgetItem):
                 specification.setData(Qt.ItemDataRole.ForegroundRole, QColor("#1C1C1E"))
@@ -1410,6 +1463,10 @@ class AttachmentEditor(QDialog):
             self._render_amounts(row, calculated)
 
         def failed(message):
+            if not current():
+                return
+            finished()
+            source_item.setData(ROLE_ROW, {**source, "status": "ERROR", "error": str(message)})
             if isinstance(amount_editor, QDoubleSpinBox):
                 with QSignalBlocker(amount_editor):
                     amount_editor.setValue(0)
@@ -1423,13 +1480,26 @@ class AttachmentEditor(QDialog):
                 formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
             QMessageBox.warning(self, "附件计算失败", str(message))
 
-        reprice(self.item, source, succeeded, failed)
+        if not callable(reprice):
+            failed("附件数据库计算功能不可用。")
+            return
+        try:
+            reprice(self.item, source, succeeded, failed)
+        except Exception as error:
+            failed(str(error))
 
     def accept(self):
+        if getattr(self, "_pending_reprices", {}):
+            QMessageBox.warning(self, "附件正在计算", "请等待附件计算完成后再确认。")
+            return
         old_formula_total = _number(_formula(self.item).get("attachment_fee"), 0)
         old_quick_total = _number(_quick(self.item).get("attachment_fee"), _attachment_total(self.item))
         rows = []
         for row in range(self.table.rowCount()):
+            for column in (self.COL_QUANTITY, self.COL_AMOUNT, self.COL_FORMULA_AMOUNT):
+                editor = self.table.cellWidget(row, column)
+                if isinstance(editor, QAbstractSpinBox):
+                    editor.interpretText()
             data = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
             data = dict(data)
             previous_quantity = _number(data.get("quantity", 1), 1)
@@ -1469,7 +1539,7 @@ class AttachmentEditor(QDialog):
             custom = bool(data.get("custom"))
             cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
             if custom and isinstance(cost_editor, QDoubleSpinBox):
-                data["formula_amount"] = round(cost_editor.value() / self.cabinet_quantity, 2)
+                data["formula_amount"] = money(cost_editor.value())
                 data["custom_cost"] = data["formula_amount"]
                 data["custom_cost_edited"] = bool(cost_editor.property("schemeEdited"))
                 data["custom_amount_edited"] = bool(amount_editor.property("schemeEdited"))
@@ -1478,10 +1548,10 @@ class AttachmentEditor(QDialog):
                 if not data["custom_amount_edited"]:
                     data.pop("quick_amount_override", None)
             elif data["custom_amount_edited"] or custom:
-                data["quick_amount_override"] = round(amount, 2)
+                data["quick_amount_override"] = money(amount)
             else:
                 data.pop("quick_amount_override", None)
-            data["quick_amount"] = round(amount, 2)
+            data["quick_amount"] = money(amount)
             if data["custom_amount_edited"] and not custom and data["quantity"]:
                 data["unit_price_override"] = abs(amount / data["quantity"])
             if custom:
@@ -1497,22 +1567,23 @@ class AttachmentEditor(QDialog):
                 )
                 if board and data.get("formula_unit_cost") is None:
                     formula_unit_amount = abs(formula_unit_amount) * data["attachment_price_sign"]
-                data["formula_amount"] = round(formula_unit_amount * data["quantity"], 2)
+                data["formula_amount"] = money_product(formula_unit_amount, data["quantity"])
             if not data.get("attachment_price_id") and not data.get("selection_source"):
                 data["selection_source"] = "QUOTE_LOCAL"
             rows.append(data)
         self.item["attachments"] = rows
+        self.item["pricing_basis"] = PRICING_BASIS
         from attachment_v2_client import confirmation_inputs
         if self.item.get("attachment_contract") == 2 and confirmation_inputs(rows) != self.original_snapshot_inputs:
             self.item["attachment_snapshot_dirty"] = True
-        new_quick_total = sum(_number(row.get("quick_amount"), _attachment_amount(row)) for row in rows)
-        new_formula_total = sum(_number(row.get("formula_amount"), 0) for row in rows)
+        new_quick_total = money_sum(_popup_quick_amount(row) for row in rows)
+        new_formula_total = money_sum(_popup_formula_amount(row) for row in rows)
         for quote, previous, current in (
             (_formula(self.item), old_formula_total, new_formula_total),
             (_quick(self.item), old_quick_total, new_quick_total),
         ):
-            quote["attachment_fee"] = round(current, 2)
-            quote["total_cost"] = round(_number(quote.get("total_cost")) - previous + current, 2)
+            quote["attachment_fee"] = money(current)
+            quote["total_cost"] = money_sum((_number(quote.get("total_cost")), -previous, current))
         self.window.refresh_summary()
         super().accept()
 
@@ -1526,14 +1597,15 @@ def _attachment_summary_identity(source):
             json.dumps(source.get("manual_inputs") or {}, sort_keys=True, ensure_ascii=False))
 
 
-def _apply_attachment_summary_price(items, identity, unit_price):
+def _apply_attachment_summary_price(items, identity, unit_price, members=None):
     # Capture every old amount before changing anything, including rows that
     # may share a legacy attachment object. Quantity/cost/snapshot stay intact.
     plans = []
     for item in items:
         sources = [source for source in item.get("attachments", []) if isinstance(source, dict)]
         matches = [(source, AttachmentEditor._display_amounts(source)[1]) for source in sources
-                   if _attachment_summary_identity(source) == identity]
+                   if _attachment_summary_identity(source) == identity
+                   and (members is None or any(owner is item and row is source for owner, row in members))]
         if matches:
             old_fee = _number(_quick(item).get("attachment_fee"), sum(
                 AttachmentEditor._display_amounts(source)[1] for source in sources))
@@ -1541,15 +1613,16 @@ def _apply_attachment_summary_price(items, identity, unit_price):
     for item, matches, old_fee in plans:
         delta = 0.0
         for source, old_amount in matches:
-            amount = unit_price * _displayed_attachment_quantity(source)
-            source["unit_price_override"] = abs(unit_price)
+            amount = money_product(unit_price, _displayed_attachment_quantity(source))
+            source["unit_price_override"] = money(abs(unit_price))
             source["quick_amount_override"] = source["quick_amount"] = amount
             source["custom_amount_edited"] = True
             delta += amount - old_amount
         quote = _quick(item)
-        quote["attachment_fee"] = old_fee + delta
+        item["pricing_basis"] = PRICING_BASIS
+        quote["attachment_fee"] = money_sum((old_fee, delta))
         if quote.get("total_cost") is not None:
-            quote["total_cost"] = _number(quote["total_cost"]) + delta
+            quote["total_cost"] = money_sum((_number(quote["total_cost"]), delta))
 
 
 def _all_attachment_rows(items):
@@ -1571,13 +1644,14 @@ def _all_attachment_rows(items):
             # multiplying them by the child count again would double-count.
             key = (identity, name, item.get("material_code"), cost / selected if selected else cost)
             row = grouped.setdefault(key, dict(name=name, specification=spec, quantity=0.0,
-                                               cost=0.0, amount=0.0, identity=identity, pending=pending))
+                                               cost=0.0, amount=0.0, identity=identity, pending=pending, members=[]))
+            row["members"].append((item, source))
             row["quantity"] += selected * cabinets
-            row["cost"] += cost * cabinets
-            row["amount"] += amount * cabinets
+            row["cost"] = money_sum((row["cost"], money_product(cost, cabinets)))
+            row["amount"] = money_sum((row["amount"], money_product(amount, cabinets)))
     rows = list(grouped.values())
     for row in rows:
-        row["unit_price"] = row["amount"] / row["quantity"] if row["quantity"] else 0.0
+        row["unit_price"] = money(row["amount"] / row["quantity"]) if row["quantity"] else 0.0
     return rows
 
 
@@ -1605,7 +1679,7 @@ def _attachment_summary_columns(items):
         names.update(dict.fromkeys(amounts))
         listed = sum(amounts.values())
         fee = _number(_quick(item).get("attachment_fee"), listed)
-        attachment_difference |= abs(fee - listed) > .000001
+        # Stale aggregate fees are not a separate, chargeable attachment.
         material_difference |= str(item.get("material_code") or "").strip().upper() == "SUS316"
     return tuple(name for name in names if name in selected_names), material_difference, attachment_difference
 
@@ -1768,7 +1842,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.table.cellClicked.disconnect(self.edit_missing_dimensions)
-        self.table.setToolTip("修改单价后，自动更新当前清单所有对应附件及报价；金额=单价×数量。")
+        self.table.setToolTip("修改折前单价后，同步当前汇总分组对应的附件及报价；不修改成本，其他分组不受影响。")
         self._summary_rows = _all_attachment_rows(window.draft_items)
         for index, row in enumerate(self._summary_rows):
             self.table.insertRow(index)
@@ -1793,7 +1867,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
             price.setKeyboardTracking(False)
             price.setValue(row["unit_price"])
             price.setEnabled(not row["pending"])
-            price.setToolTip("请先补充附件尺寸" if row["pending"] else "左键双击后修改；修改后自动同步相同附件、规格的全部订单")
+            price.setToolTip("请先补充附件尺寸" if row["pending"] else "左键双击修改折前单价；仅同步当前汇总分组对应的附件")
             self.table.setCellWidget(index, 5, price)
             price.valueChanged.connect(lambda value, target=index: self._unit_price_changed(target, value))
         self.product_table.ensurePolished()
@@ -1812,8 +1886,8 @@ class AttachmentSummaryDialog(AttachmentEditor):
             for index, item in enumerate(items):
                 values = _attachment_summary_product_values(item, index + 1, self._product_columns)
                 total_quantity += values[3]
-                total_amount += values[6]
-                total_original_amount += values[8]
+                total_amount = money_sum((total_amount, values[6]))
+                total_original_amount = money_sum((total_original_amount, values[8]))
                 self.product_table.setRowHeight(index, self.PRODUCT_ROW_HEIGHT)
                 for column, value in enumerate(values):
                     text = _money(value) if 5 <= column < len(values) - 1 else (
@@ -1849,12 +1923,13 @@ class AttachmentSummaryDialog(AttachmentEditor):
         changed = self._summary_rows[index]
         if changed["pending"]:
             return
-        _apply_attachment_summary_price(self.window.draft_items, changed["identity"], value)
+        _apply_attachment_summary_price(self.window.draft_items, changed["identity"], value, changed["members"])
         for row_index, row in enumerate(self._summary_rows):
-            if row["identity"] != changed["identity"]:
+            if row is not changed:
                 continue
             row["unit_price"] = value
-            row["amount"] = value * row["quantity"]
+            row["amount"] = money_sum(money_product(_popup_quick_amount(source), item.get("quantity", 1))
+                                       for item, source in row["members"])
             self.table.item(row_index, self.COL_AMOUNT).setText(_money(row["amount"]))
             with QSignalBlocker(self.table.cellWidget(row_index, 5)):
                 self.table.cellWidget(row_index, 5).setValue(value)
@@ -2066,7 +2141,7 @@ class FaceDiscountEditor(QDialog):
         header_layout.addStretch(1)
         header_layout.addWidget(close)
         layout.addWidget(header)
-        base = _number(_quick(item).get("total_cost")) + _number(item.get("freight_fee", 0))
+        base = _row_values(item)[13]
         material_difference = _material_difference_amount(item)
         base_row = QHBoxLayout()
         base_row.addWidget(QLabel("原面价"))
@@ -2097,7 +2172,7 @@ class FaceDiscountEditor(QDialog):
         preview_layout.addWidget(self.preview)
         layout.addWidget(preview_frame)
         self.discount.valueChanged.connect(
-            lambda value: self.preview.setText(f"{_money(base * value + material_difference)} 元")
+            lambda value: self.preview.setText(f"{_money(_row_values({**item, 'quick_discount': value})[15])} 元")
         )
         self.discount.valueChanged.emit(self.discount.value())
         actions = QHBoxLayout()
@@ -2191,11 +2266,17 @@ def _quote_unit_price_changed(window, row, column):
     full = quick_order_line_breakdown(
         _quick(item), item.get("attachments", []), 1, quantity, ganged_count, freight,
     )["equivalent_unit_total"]
-    discountable = full - zero
+    discountable = money_sum((full, -zero))
     if discounted_face_price < 0 or discountable <= 0:
         _refresh_quote_page(window)
         return
-    items[index]["quick_discount"] = discounted_face_price / discountable
+    fixed = money_sum((zero, _material_difference_amount(item)))
+    if money(unit_price) < fixed:
+        _refresh_quote_page(window)
+        return
+    items[index]["quick_discount"] = float((Decimal(str(money(unit_price))) - Decimal(str(fixed)))
+                                            / Decimal(str(discountable)))
+    items[index]["pricing_basis"] = PRICING_BASIS
     window.refresh_summary()
 
 
@@ -2233,17 +2314,25 @@ def _quote_cell_changed(window, row, column):
         _quote_unit_price_changed(window, row, column)
 
 
-def _quote_export_items_snapshot(window):
+def _quote_export_items_snapshot(window, items=None):
     """Freeze the exact customer-visible quote rows at export-click time."""
 
-    exported = deepcopy(getattr(window, "draft_items", []))
-    for item in exported:
+    focus = getattr(window, "focusWidget", lambda: None)()
+    if isinstance(focus, QLineEdit):
+        focus.clearFocus()  # Commit a live table editor before freezing the draft.
+    exported = deepcopy(getattr(window, "draft_items", []) if items is None else items)
+    for number, item in enumerate(exported, 1):
+        item["pricing_basis"] = PRICING_BASIS
         attachment_rows = [
             row for row in item.get("attachments", []) if isinstance(row, dict)
         ]
         quick_snapshot, _ = _quote_with_popup_attachment_fee(
             _quick(item), attachment_rows, _popup_quick_amount,
         )
+        base = quick_discount_breakdown(quick_snapshot, attachment_rows, 1)["base_price"]
+        quick_snapshot["base_price"] = base
+        quick_snapshot["attachment_fee"] = money_sum(_popup_quick_amount(row) for row in attachment_rows)
+        quick_snapshot["total_cost"] = money_sum((base, quick_snapshot["attachment_fee"]))
         formula_snapshot, _ = _quote_with_popup_attachment_fee(
             _formula(item), attachment_rows, _popup_formula_amount,
         )
@@ -2259,6 +2348,8 @@ def _quote_export_items_snapshot(window):
             "unit_price": _number(values[15]),
             "discount": _number(values[14], 1),
             "total": _number(values[16]),
+            "attachment_face_price": values[23],
+            "material_difference": values[22],
             "remark": str(item.get("final_remark") or _scheme2_quote_remark(item)),
             # Confirmation hydrates catalogue rows again on the server. Keep
             # the exact UI attachment values separately so a manual amount
@@ -2273,6 +2364,12 @@ def _quote_export_items_snapshot(window):
             if quick.get(source) is not None:
                 display[target] = _number(quick.get(source))
         item["quote_display"] = display
+        preview = getattr(window, "scheme2_quote_preview", None) if items is None else None
+        if isinstance(preview, QTableWidget) and preview.rowCount() >= 10 + len(exported):
+            for column, field in ((5, "unit_price"), (6, "total")):
+                cell = preview.item(9 + number, column)
+                if cell is not None and cell.text().strip() and money(cell.text().replace(",", "")) != display[field]:
+                    raise ValueError(f"第{number}行报价金额与界面不一致，请重新确认：{field}")
     return exported
 
 
@@ -3410,12 +3507,12 @@ def _cost_cell_changed(window, row, column):
             window.refresh_summary()
         return
     value = _number(cell.text(), -1)
-    if value < 0:
+    if not math.isfinite(value) or value < 0:
         window.refresh_summary()
         return
     item = items[row]
-    if column == 18:
-        item["freight_fee"] = value
+    if column == 19:
+        item["freight_fee"] = money(value)
     elif column == 4:
         item["quantity"] = max(1, int(value))
         drawing_ref = getattr(window, "_draft_drawing_refs", {}).get(id(item))
@@ -3423,6 +3520,7 @@ def _cost_cell_changed(window, row, column):
             drawing_ref[0]["quantity"] = item["quantity"]
     else:
         item["quick_discount"] = value
+    item["pricing_basis"] = PRICING_BASIS
     record_event(window, "cost_cell_changed", row=row + 1, column=HEADERS[column], value=value)
     window.refresh_summary()
 
@@ -3442,7 +3540,7 @@ def _cost_cell_clicked(window, row, column):
     elif column == 5:
         record_event(window, "attachment_editor_opened", row=row + 1)
         AttachmentEditor(window, item).exec()
-    elif column == 22:
+    elif column == 23:
         _show_detail(window, item)
 
 
@@ -3528,7 +3626,7 @@ def _refresh_cost_table(window):
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if column == 1:
                     cell.setToolTip("双击修改名称，点击其他单元格确认；名称不能为空")
-                if column in (2, 5, 22):
+                if column in (2, 5, 23):
                     cell.setForeground(QColor("#185FA5"))
                     font = cell.font()
                     font.setUnderline(True)
@@ -3536,13 +3634,13 @@ def _refresh_cost_table(window):
                 if column in MONEY_COLUMNS:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
-                if column == 20:
+                if column == 21:
                     cell.setForeground(QColor("#D97706"))
                 table.setItem(row, column, cell)
         total_row = len(items)
         quantity_total = sum(max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
-        quote_total = sum(_row_values(item)[16] for item in items)
-        cost_total = sum(_row_values(item)[18] for item in items)
+        quote_total = money_sum(_row_values(item)[16] for item in items)
+        cost_total = money_sum(_row_values(item)[18] for item in items)
         weight_total = sum(
             _number(_row_values(item)[20]) * max(1, int(_number(item.get("quantity", 1), 1)))
             for item in items
@@ -3557,13 +3655,13 @@ def _refresh_cost_table(window):
                 attachment_count = sum(sum(isinstance(source, dict) for source in item.get("attachments", []))
                                        for item in items)
                 text = f"{attachment_count} 项 ›"
-            elif column == 10:
+            elif column == 11:
                 text = _money(quote_total)
-            elif column == 19:
-                text = _money(cost_total)
             elif column == 20:
-                text = f"{gross_margin:.2%}"
+                text = _money(cost_total)
             elif column == 21:
+                text = f"{gross_margin:.2%}"
+            elif column == 22:
                 text = _money(weight_total)
             else:
                 text = "—"
@@ -3577,7 +3675,7 @@ def _refresh_cost_table(window):
                 cell.setToolTip("累计所有产品行（含复制行）的附件项数；点击查看汇总，同名同规格合并并累计数量、成本和金额")
             cell.setFont(font)
             cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
-            if column == 20:
+            if column == 21:
                 cell.setForeground(QColor("#D97706"))
             table.setItem(total_row, column, cell)
         if 0 <= selected < len(items):
@@ -3610,7 +3708,15 @@ def _configure_navigation(window):
         visible = [button for button in getattr(window, "nav_buttons", []) if isinstance(button, QPushButton)]
         wanted.setdefault(OPTION_ROUTE, visible[0])
         wanted.setdefault(COST_ROUTE, visible[-1])
-    wanted[QUOTE_ROUTE] = spare[0] if spare else QPushButton(nav)
+    wanted[QUOTE_ROUTE] = spare.pop(0) if spare else QPushButton(nav)
+    # Do not leave the retired recognition/cabinet-summary navigation controls
+    # hidden in the live sidebar.  Keeping those buttons around made it easy
+    # for a later compatibility pass to reveal the removed workbench again.
+    for retired_button in spare:
+        if nav is not None and nav.layout() is not None:
+            nav.layout().removeWidget(retired_button)
+        retired_button.setParent(None)
+        retired_button.deleteLater()
     labels = {OPTION_ROUTE: "选型配置", COST_ROUTE: "成本计算", QUOTE_ROUTE: "报价单"}
     for route, button in wanted.items():
         button.show()
@@ -3783,6 +3889,7 @@ def _order_workspace_payload(window):
         if isinstance(page, dict):
             pages.append({key: deepcopy(value) for key, value in page.items() if key not in {"item", "pixmap"}})
     return _json_order_value({
+        "pricing_basis": PRICING_BASIS,
         "option_state": _capture_scheme2_page_state(window),
         "drawing_pages": pages,
         "drawing_page_index": int(getattr(window, "_scheme2_drawing_page_index", -1)),
@@ -6318,6 +6425,7 @@ def _finish_add(window):
     if source_route == OPTION_ROUTE and window.stack.currentIndex() != OPTION_ROUTE:
         window.show_section(OPTION_ROUTE)
     item = window.draft_items[-1]
+    item["pricing_basis"] = PRICING_BASIS
     _stamp_selected_product(window, item)
     if editing_index is not None:
         window.draft_items.pop()
@@ -7013,6 +7121,7 @@ def install_scheme2_ui(namespace):
                     else str(payload.get("coating_type") or "").strip()
                 )
                 updates = {
+                    "pricing_basis": PRICING_BASIS,
                     "galvanized_sheet_unit_price_override": values["galvanized_price"],
                     "carbon_steel_unit_price_override": values["carbon_price"],
                     "surface_treatment_unit_price_override": (
@@ -7035,6 +7144,8 @@ def install_scheme2_ui(namespace):
                         "page_count": int(page["page_count"]),
                     }
                 payload.update(updates)
+                if isinstance(payload.get("attachment"), dict):
+                    payload["attachment"]["pricing_basis"] = PRICING_BASIS
             return original_worker_run(worker)
 
         api_worker.run = worker_run
@@ -7157,8 +7268,13 @@ def install_scheme2_ui(namespace):
         for route in (0, 4):
             retired = window.stack.widget(route)
             placeholder = QWidget()
+            placeholder.setObjectName("retiredWorkbenchRoute")
             window.stack.removeWidget(retired)
             retired.setParent(window)
+            retired.setObjectName("retiredWorkbenchControllerHost")
+            retired.setAccessibleName("")
+            retired.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            retired.setMaximumSize(0, 0)
             retired.hide()
             window._scheme2_retired_pages.append(retired)
             window.stack.insertWidget(route, placeholder)
@@ -7248,7 +7364,7 @@ def install_scheme2_ui(namespace):
         original_close(window, event)
 
     def section(window, index):
-        if index == 0:
+        if index in (0, 4):
             index = OPTION_ROUTE
         previous_index = window.stack.currentIndex()
         if previous_index != index:

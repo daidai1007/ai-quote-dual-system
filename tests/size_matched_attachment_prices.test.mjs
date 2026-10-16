@@ -18,8 +18,12 @@ const items=names.map((name,index)=>({attachment_price_id:index+1,data_version:'
   rules:bundle.rules.filter(rule=>rule.item_name===name&&rule.category_level1!== '控制箱附件')}));
 
 function target(item,environment=env,manual=manuals) {
-  return [environment.width_mm,item.item_name.includes('底座')?manual.底座高度:
-    item.item_name==='通风顶罩'?manual.通风顶罩高度:environment.height_mm,environment.depth_mm];
+  return [item.item_name==='玻璃门'?manual.玻璃门宽度:environment.width_mm,
+    item.item_name.includes('底座')?manual.底座高度:
+    item.item_name==='通风顶罩'?manual.通风顶罩高度:
+    item.item_name==='玻璃门'?manual.玻璃门高度:
+    item.item_name==='分段板'?manual.分段板高度:environment.height_mm,
+    environment.depth_mm];
 }
 
 test('ten families: exact catalogue price, nearest-size scaled amount, quantity, and actual-dimension costs',()=>{
@@ -27,7 +31,15 @@ test('ten families: exact catalogue price, nearest-size scaled amount, quantity,
     const selection={quantity:3,manual_inputs:manuals,unit_price_override:1,size_match_ratio:999};
     const row=calculateAttachment(selection,item,item.rules,env);
     const dimensions=target(item);
-    const ratio=dimensions.reduce((a,b)=>a+b,0)/(item.width_mm+item.height_mm+item.depth_mm);
+    const ratio=item.item_name.includes('侧板')
+      ? (dimensions[1]+dimensions[2])/(item.height_mm+item.depth_mm)
+      : item.item_name==='固定立柱'
+      ? dimensions[1]/item.height_mm
+      : ['内门','玻璃门','分段板'].includes(item.item_name)
+      ? (dimensions[0]+dimensions[1])/(item.width_mm+item.height_mm)
+      : item.item_name==='防雨顶'
+      ? (dimensions[0]+dimensions[2])/(item.width_mm+item.depth_mm)
+      : dimensions.reduce((a,b)=>a+b,0)/(item.width_mm+item.height_mm+item.depth_mm);
     assert.equal(row.status,'CALCULATED',item.item_name+': '+row.error);
     assert.equal(row.unit_price_override,round(100*ratio,6),item.item_name);
     assert.equal(row.quick_amount,round(row.unit_price_override*3));
@@ -41,11 +53,56 @@ test('ten families: exact catalogue price, nearest-size scaled amount, quantity,
   }
 });
 
+test('inner/glass/segment use W+H, while both rain-cover catalogue layouts use W+D',()=>{
+  const target={...env,width_mm:700,height_mm:1700,depth_mm:420};
+  for (const name of ['内门','玻璃门','分段板']) {
+    const item={...items.find(value=>value.item_name===name),width_mm:600,height_mm:1600,depth_mm:9999,price:100};
+    const first=calculateAttachment({quantity:2,manual_inputs:manuals},item,item.rules,target);
+    const otherDepth=calculateAttachment({quantity:2,manual_inputs:manuals},item,item.rules,{...target,depth_mm:800});
+    const expectedTarget=name==='玻璃门'?manuals.玻璃门宽度+manuals.玻璃门高度:
+      name==='分段板'?target.width_mm+manuals.分段板高度:2400;
+    assert.equal(first.size_match_target_perimeter,expectedTarget,name);
+    assert.equal(first.size_match_perimeter,2200,name);
+    assert.equal(first.quick_amount,round(2*round(100*expectedTarget/2200,6)),name);
+    assert.equal(otherDepth.quick_amount,first.quick_amount,name);
+    if (name!=='内门') {
+      const otherCabinetHeight=calculateAttachment({quantity:2,manual_inputs:manuals},item,item.rules,
+        {...target,height_mm:2200});
+      assert.equal(otherCabinetHeight.quick_amount,first.quick_amount,name);
+    }
+  }
+  for (const storedDepth of [{height_mm:null,depth_mm:400},{height_mm:400,depth_mm:null}]) {
+    const item={...items.find(value=>value.item_name==='防雨顶'),width_mm:600,...storedDepth,price:100};
+    const first=calculateAttachment({quantity:2},item,item.rules,target);
+    const otherHeight=calculateAttachment({quantity:2},item,item.rules,{...target,height_mm:2200});
+    assert.equal(first.size_match_target_perimeter,1120);
+    assert.equal(first.size_match_perimeter,1000);
+    assert.equal(first.size_match_depth_mm,400);
+    assert.equal(first.quick_amount,224);
+    assert.equal(otherHeight.quick_amount,224);
+  }
+});
+
+test('fixed column chooses and prices by height only',()=>{
+  const column={...items[6],width_mm:9999,height_mm:1600,depth_mm:9999,price:100};
+  const first=calculateAttachment({quantity:2},column,column.rules,env);
+  const otherWidthDepth=calculateAttachment({quantity:2},column,column.rules,
+    {...env,width_mm:1400,depth_mm:400});
+  assert.equal(first.size_match_target_perimeter,1800);
+  assert.equal(first.size_match_perimeter,1600);
+  assert.equal(first.unit_price_override,112.5);
+  assert.equal(first.quick_amount,225);
+  assert.equal(otherWidthDepth.quick_amount,225);
+  const exact=calculateAttachment({quantity:2},{...column,height_mm:1800},column.rules,env);
+  assert.equal(exact.size_match_exact,true);
+  assert.equal(exact.quick_amount,200);
+});
+
 test('missing dimensions are completed for matching only; beam depth is decoded from its model',()=>{
   const side=calculateAttachment({quantity:2},{...items[4],width_mm:null},[],env);
   assert.equal(side.width_mm,null);
   assert.equal(side.size_match_width_mm,800);
-  assert.equal(side.unit_price_override,round(100*3300/2900,6));
+  assert.equal(side.unit_price_override,round(100*2500/2100,6));
   const beam=calculateAttachment({quantity:2},{...items[7],width_mm:null,height_mm:null,depth_mm:null,model_code:'JP760260'},[],env);
   assert.equal(beam.depth_mm,null);
   assert.equal(beam.size_match_depth_mm,600);
@@ -53,6 +110,22 @@ test('missing dimensions are completed for matching only; beam depth is decoded 
   assert.equal(beam.quick_amount,206.25);
   assert.equal(calculateAttachment({quantity:1},{...items[0],item_name:'风机',category_level1:'风机'},[],env).quick_amount,100);
   assert.equal(calculateAttachment({quantity:1,attachment_price_sign:-1},items[0],[],env).status,'ERROR');
+});
+
+test('JP side panel uses height and depth only, independently of cabinet/catalogue width',()=>{
+  const side={...items[4],price:524.593927,width_mm:9999,height_mm:1800,depth_mm:400};
+  const input={...env,width_mm:700,height_mm:1700,depth_mm:420};
+  const first=calculateAttachment({quantity:1},side,side.rules,input);
+  const wider=calculateAttachment({quantity:1},side,side.rules,{...input,width_mm:1400});
+  const expected=round(524.593927*(1700+420)/(1800+400));
+  assert.equal(first.size_match_target_perimeter,2120);
+  assert.equal(first.size_match_perimeter,2200);
+  assert.equal(first.quick_amount,expected);
+  assert.equal(wider.quick_amount,expected);
+  assert.equal(wider.formula_unit_cost,first.formula_unit_cost);
+  const exact=calculateAttachment({quantity:1},{...side,height_mm:1700,depth_mm:420},side.rules,input);
+  assert.equal(exact.size_match_exact,true);
+  assert.equal(exact.quick_amount,round(side.price));
 });
 
 test('real preview uses each child cabinet; snapshot and export keep effective prices without changing catalogue audit amounts',async()=>{

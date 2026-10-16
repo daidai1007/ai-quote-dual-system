@@ -3,6 +3,38 @@ const hasFiniteNumber = (value) => value !== null && value !== undefined && valu
 const asFiniteNumber = (value, fallback = 0) =>
   hasFiniteNumber(value) ? Number(value) : fallback;
 
+export const PRICING_BASIS = 'per_unit_set_v1';
+// Decimal coefficient + scale, without a dependency or binary half-cent rounding.
+const decimal = (value = 0) => {
+  const text = String(value == null || value === '' ? 0 : value).trim();
+  if (text.length > 128) throw new Error('金额精度超出范围');
+  if (!Number.isFinite(Number(text))) throw new Error('金额必须为有效数值');
+  const match = /^([+-]?)(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(text);
+  if (!match || !(match[2] || match[3])) throw new Error('金额必须为有效数值');
+  let coefficient = BigInt((match[2] || '0') + (match[3] || '')) * (match[1] === '-' ? -1n : 1n);
+  let scale = (match[3] || '').length - Number(match[4] || 0);
+  if (Math.abs(scale) > 400) throw new Error('金额精度超出范围');
+  if (scale < 0) { coefficient *= 10n ** BigInt(-scale); scale = 0; }
+  return [coefficient, scale];
+};
+const roundedCents = (coefficient, scale) => {
+  if (scale <= 2) return coefficient * 10n ** BigInt(2 - scale);
+  const divisor = 10n ** BigInt(scale - 2);
+  const sign = coefficient < 0n ? -1n : 1n;
+  const absolute = coefficient * sign;
+  return sign * (absolute / divisor + (absolute % divisor * 2n >= divisor ? 1n : 0n));
+};
+export const money = (value = 0) => Number(roundedCents(...decimal(value))) / 100;
+export const moneySum = (values) => Number(Array.from(values).reduce(
+  (sum, value) => sum + roundedCents(...decimal(value)), 0n)) / 100;
+export const moneyProduct = (...values) => {
+  const [coefficient, scale] = values.reduce(([coefficient, scale], value) => {
+    const [next, places] = decimal(value);
+    return [coefficient * next, scale + places];
+  }, [1n, 0]);
+  return Number(roundedCents(coefficient, scale)) / 100;
+};
+
 export const QUICK_DISCOUNT_ATTACHMENT_CATEGORIES = Object.freeze([
   "底座",
   "侧板",
@@ -70,11 +102,15 @@ export function formulaAttachmentExcluded(item = {}) {
 }
 
 export function quickAttachmentLineAmount(item = {}) {
-  if((item.catalog_version||item.custom===true) && item.quick_amount != null) return Number(item.quick_amount);
+  if (item.pending_manual_dimensions?.length) return 0;
+  const edited = item.custom_amount_edited === true || (!Object.hasOwn(item, 'custom_amount_edited')
+    && item.quick_amount_override != null && Number(item.quick_amount_override) !== 0);
+  if (edited && hasFiniteNumber(item.quick_amount_override)) return money(item.quick_amount_override);
+  if (hasFiniteNumber(item.quick_amount)) return money(item.quick_amount);
   const sign = Number(item.attachment_price_sign) === -1 ? -1 : 1;
   for (const key of ["total_price", "total_cost", "amount", "subtotal"]) {
     if (hasFiniteNumber(item[key])) {
-      return Math.abs(Number(item[key])) * sign;
+      return moneyProduct(Math.abs(Number(item[key])), sign);
     }
   }
   let unitPrice = 0;
@@ -85,7 +121,7 @@ export function quickAttachmentLineAmount(item = {}) {
     }
   }
   const quantity = asFiniteNumber(item.quantity, 1);
-  return Math.abs(unitPrice) * quantity * sign;
+  return moneyProduct(Math.abs(unitPrice), quantity, sign);
 }
 
 export function attachmentUsesCabinetQuantity(item = {}) {
@@ -107,15 +143,7 @@ export function effectiveAttachmentQuantity(
 ) {
   const selected = asFiniteNumber(item.quantity, 1);
   const cabinets = asFiniteNumber(cabinetQuantity, 1);
-  const splitCount = asFiniteNumber(gangedCabinetCount, 1);
-  // A manually entered cost-page quantity is per child cabinet. Automatic
-  // rows already contain a complete-set quantity; bases/doors are already
-  // expanded to one row per child cabinet.
-  if (manuallyQuantifiedAttachment(item)
-      && !item[GANGED_FIXED_BASE_MATCH_KEY] && !item.ganged_inner_door_match
-      && !item.ganged_glass_door_match) {
-    return selected * cabinets * Math.max(1, splitCount);
-  }
+  // The attachment editor already contains the entire ganged set, including manual rows.
   // Attachment rows stored on a quote are per-cabinet values.  Scale every
   // ordinary row by the order quantity; exempting fans/side panels/door
   // transformations made identical cabinet lines with quantities 1 and 10
@@ -156,15 +184,12 @@ export function effectiveFormulaAttachmentLineAmount(item={},cabinetQuantity=1,g
 
 /**
  * Compute the selective quick-quote discount without changing stored prices.
- * The database quick total remains authoritative; attachment rows determine
- * which part of that total is eligible for the selected factor.
+ * The cabinet base comes from the quote; current per-set attachment rows
+ * provide the only attachment total and its eligible/original-price split.
  */
 export function quickDiscountBreakdown({ quote = {}, attachments = [], discount = 1 } = {}) {
-  const rawTotal = asFiniteNumber(quote.total_cost);
-  const listedAttachmentTotal = attachments.reduce(
-    (sum, item) => sum + quickAttachmentLineAmount(item),
-    0,
-  );
+  const rawTotal = money(quote.total_cost);
+  const listedAttachmentTotal = moneySum(attachments.map(quickAttachmentLineAmount));
   // The attachment editor is the source of truth for the current draft.
   // Keep the API fee only long enough to recover the cabinet base when an
   // old snapshot still contains a different aggregate attachment fee.
@@ -172,18 +197,15 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
     ? Number(quote.attachment_fee)
     : listedAttachmentTotal;
   const attachmentFee = listedAttachmentTotal;
-  const basePrice = hasFiniteNumber(quote.base_price)
+  const basePrice = money(hasFiniteNumber(quote.base_price)
     ? Number(quote.base_price)
-    : rawTotal - storedAttachmentFee;
-  const listedEligible = attachments.reduce(
-    (sum, item) => sum + (quickDiscountCategory(item) ? quickAttachmentLineAmount(item) : 0),
-    0,
-  );
+    : rawTotal - storedAttachmentFee);
+  const listedEligible = moneySum(attachments.filter(quickDiscountCategory).map(quickAttachmentLineAmount));
   const eligibleAttachmentTotal = listedEligible;
-  const originalPriceAttachmentTotal = attachmentFee - eligibleAttachmentTotal;
+  const originalPriceAttachmentTotal = moneySum([attachmentFee, -eligibleAttachmentTotal]);
   const factor = hasFiniteNumber(discount) ? Number(discount) : 1;
-  const discountedTotal = (basePrice + eligibleAttachmentTotal) * factor
-    + originalPriceAttachmentTotal;
+  const discountedTotal = moneySum([moneyProduct(moneySum([basePrice, eligibleAttachmentTotal]), factor),
+    originalPriceAttachmentTotal]);
   return {
     rawTotal,
     basePrice,
@@ -199,7 +221,7 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
 /** Compute one complete quote-line total with attachment quantity exceptions. */
 export function quickOrderLineBreakdown({
   quote = {}, attachments = [], discount = 1, cabinetQuantity = 1,
-  gangedCabinetCount = 1, freightFee = 0,
+  gangedCabinetCount = 1, freightFee = 0, materialDifference = 0,
 } = {}) {
   const unit = quickDiscountBreakdown({ quote, attachments, discount });
   const cabinets = asFiniteNumber(cabinetQuantity, 1);
@@ -220,10 +242,10 @@ export function quickOrderLineBreakdown({
   const originalPriceAttachmentTotal = listedOriginalTotal
     + unlistedDifference * cabinets;
   const factor = asFiniteNumber(discount, 1);
-  const unitFreight = Math.max(0, asFiniteNumber(freightFee, 0));
-  const freightTotal = unitFreight * cabinets;
-  const lineTotal = (unit.basePrice * cabinets + eligibleAttachmentTotal) * factor
-    + originalPriceAttachmentTotal + freightTotal;
+  const unitFreight = money(Math.max(0, asFiniteNumber(freightFee, 0)));
+  const freightTotal = moneyProduct(unitFreight, cabinets);
+  const unitTotal = moneySum([unit.discountedTotal, unitFreight, materialDifference]);
+  const lineTotal = moneyProduct(unitTotal, cabinets);
   return {
     ...unit,
     cabinetQuantity: cabinets,
@@ -234,6 +256,41 @@ export function quickOrderLineBreakdown({
     freightFee: unitFreight,
     freightTotal,
     lineTotal,
-    equivalentUnitTotal: cabinets ? lineTotal / cabinets : lineTotal,
+    equivalentUnitTotal: unitTotal,
   };
+}
+
+/** Check the frozen customer-facing values against the canonical quote, not the screen formatter. */
+export function validateQuoteDisplay(item) {
+  if (item.pricing_basis == null) return; // Historical payloads keep their original contract.
+  if (item.pricing_basis !== PRICING_BASIS) throw new Error('不支持的报价金额口径，请更新客户端');
+  const display = item.quote_display;
+  if (!display || typeof display !== 'object' || Array.isArray(display)) throw new Error('缺少已确认的报价显示快照');
+  const quantity = Number(item.quantity);
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || Number(display.quantity) !== quantity)
+    throw new Error('报价显示快照的成批产品数量不一致');
+  if (!hasFiniteNumber(display.discount) || Number(display.discount) !== Number(item.quick_discount ?? 1))
+    throw new Error('报价显示快照的折扣系数不一致');
+  const materialDifference = materialDifferenceAmount(item);
+  const line = quickOrderLineBreakdown({quote: item.quick, attachments: item.attachments,
+    discount: item.quick_discount ?? 1, cabinetQuantity: quantity,
+    freightFee: item.freight_fee ?? item.freight ?? 0, materialDifference});
+  for (const [field, expected] of Object.entries({unit_price: line.equivalentUnitTotal,
+    total: line.lineTotal, attachment_face_price: line.attachmentFee,
+    material_difference: materialDifference, quick_base_price: line.basePrice,
+    quick_attachment_fee: line.attachmentFee, quick_total_cost: moneySum([line.basePrice, line.attachmentFee])})) {
+    if (!hasFiniteNumber(display[field]) || money(display[field]) !== Number(display[field])
+        || money(display[field]) !== money(expected))
+      throw new Error(`报价金额不一致（${field}）：显示 ${display[field]}，计算 ${expected}，请重新确认`);
+  }
+}
+
+export function materialDifferenceAmount(item = {}) {
+  if (String(item.material_code || '').trim().toUpperCase() !== 'SUS316') return 0;
+  const formula = item.formula || {};
+  const groups = formula.material_details?.length ? formula.material_details : (formula.cabinet_material_part_details || []);
+  const sgcc = groups.filter(row => String(row.material_code || '').trim().toUpperCase() === 'SGCC')
+    .reduce((sum, row) => sum + Math.max(0, asFiniteNumber(row.billable_weight_kg)), 0);
+  return moneyProduct(Math.max(0, asFiniteNumber(formula.corrected_material_weight_kg) - sgcc),
+    Math.max(0, asFiniteNumber(item.scheme2_cost_settings?.material_difference, 25)));
 }

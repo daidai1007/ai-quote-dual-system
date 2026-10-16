@@ -44,7 +44,7 @@ class AmountDoubleClick(unittest.TestCase):
         QTest.keyClicks(line, '99')
         self.assertTrue(line.isReadOnly())
         self.assertFalse(self.amount.property('schemeEditing'))
-        self.assertEqual(self.amount.value(), 360)
+        self.assertEqual(self.amount.value(), 120)
         self.begin_edit()
         self.assertFalse(line.isReadOnly())
         self.assertTrue(self.amount.property('schemeEditing'))
@@ -59,7 +59,7 @@ class AmountDoubleClick(unittest.TestCase):
         self.assertEqual(self.amount.value(), 210)
         self.dialog.accept()
         row = self.item['attachments'][0]
-        self.assertEqual(row['quick_amount_override'], 70)
+        self.assertEqual(row['quick_amount_override'], 210)
         self.assertEqual(row['formula_amount'], 62.96)
         reopened = ui.AttachmentEditor(self.owner, self.item)
         self.addCleanup(reopened.close)

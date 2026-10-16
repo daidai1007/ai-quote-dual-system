@@ -48,10 +48,15 @@ assert [editor.table.horizontalHeaderItem(column).text() for column in range(5)]
     "名称", "尺寸 / 规格", "数量", "成本", "金额",
 ]
 assert editor.table.item(0, 1).text() == "BASE-800"
-assert editor.table.item(1, 1).text() == "深 600 × 高 2000 mm"
+assert editor.table.item(1, 1).text() == "高 2000 × 深 600 mm"
 assert editor.table.item(2, 1).text() == "FU-9803A"
 assert editor.table.item(3, 1).text() == "BOARD-A"
 assert editor.table.item(4, 1).text() == ""
+assert scheme2_ui._attachment_dimension_or_model({
+    "item_name": "分段板", "width_mm": 600, "height_mm": 100,
+    "size_match_target_width_mm": 800,
+    "manual_inputs": {"分段板高度": 150},
+}) == "宽 800 × 高 150 mm"
 cost_editor = editor.table.cellWidget(0, 3)
 amount_editor = editor.table.cellWidget(0, 4)
 assert isinstance(cost_editor, QDoubleSpinBox)

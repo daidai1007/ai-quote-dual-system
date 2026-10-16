@@ -43,6 +43,10 @@ assert dialog.table.horizontalHeaderItem(5).text() == '单价'
 price = dialog.table.cellWidget(0, 5)
 assert isinstance(price, QDoubleSpinBox) and price.value() == 12
 price.setValue(20)
+# Different material/cost groups have independent manual pre-discount prices.
+assert window.draft_items[1] == before[1]
+second_price = dialog.table.cellWidget(2, 5)
+second_price.setValue(20)
 for index in (0, 1):
     current = window.draft_items[index]
     row = current['attachments'][0]
@@ -56,24 +60,26 @@ assert other == before[0]['attachments'][1]
 assert window.draft_items[2] == before[2]
 assert window.draft_items[0]['quick']['total_cost'] == 132
 assert window.draft_items[1]['quick']['total_cost'] == 240
-assert ui._row_values(window.draft_items[0])[16] == 201
+assert ui._row_values(window.draft_items[0])[16] == 198
 assert ui._row_values(window.draft_items[1])[16] == 240 * .8 * 2
-assert window.summary_table.item(0, 9).text() == '67.00'
-assert window.summary_table.item(1, 9).text() == '192.00'
-assert dialog.product_table.item(0, 5).text() == '67.00'
+assert window.summary_table.item(0, 10).text() == '66.00'
+assert window.summary_table.item(1, 10).text() == '192.00'
+assert dialog.product_table.item(0, 5).text() == '66.00'
 assert dialog.product_table.item(1, 5).text() == '192.00'
 assert dialog.table.item(0, 4).text() == '60.00'
-# Same catalogue/spec across a different product/material/cost is linked too.
+# Only explicitly edited groups change, even for the same catalogue/spec.
 assert dialog.table.cellWidget(2, 5).value() == 20
 assert dialog.table.item(2, 4).text() == '80.00'
-for index, expected in ((0, 60), (1, 80)):
+for index, expected in ((0, 20), (1, 40)):
     single = ui.AttachmentEditor(window, window.draft_items[index])
     assert single.table.cellWidget(0, single.COL_AMOUNT).value() == expected
     single.reject()
 price.setValue(25)
+second_price.setValue(25)
 assert window.draft_items[0]['quick']['total_cost'] == 137
 assert window.draft_items[1]['quick']['total_cost'] == 250
 price.setValue(0)
+second_price.setValue(0)
 assert window.draft_items[0]['quick']['total_cost'] == 112
 assert window.draft_items[1]['quick']['total_cost'] == 200
 assert dialog.table.item(0, 4).text() == '0.00'
@@ -98,6 +104,8 @@ window.refresh_summary()
 custom_before = copy.deepcopy(window.draft_items)
 custom_dialog = ui.AttachmentSummaryDialog(window)
 custom_dialog.table.cellWidget(0, 5).setValue(10)
+assert window.draft_items[1] == custom_before[1]
+custom_dialog.table.cellWidget(1, 5).setValue(10)
 assert custom_dialog.table.item(0, 4).text() == custom_dialog.table.item(1, 4).text() == '60.00'
 assert window.draft_items[0]['quick']['total_cost'] == 112
 assert window.draft_items[1]['quick']['total_cost'] == 204
@@ -106,8 +114,8 @@ assert window.draft_items[2] == custom_before[2]
 for index in (0, 1):
     assert window.draft_items[index]['formula'] == custom_before[index]['formula']
     single = ui.AttachmentEditor(window, window.draft_items[index])
-    assert single.table.cellWidget(0, single.COL_AMOUNT).value() == 60
+    assert single.table.cellWidget(0, single.COL_AMOUNT).value() == (30 if index == 0 else 20)
     single.reject()
 custom_dialog.accept()
 window.close()
-print('PASS: unit-price x quantity, linked products, quote/attachment dialogs, repeated edits and frozen costs')
+print('PASS: per-group unit-price x quantity, per-set popup, batch summary and frozen costs')

@@ -8,6 +8,27 @@ body and the approved attachment categories.
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
+from decimal import Decimal, ROUND_HALF_UP
+
+PRICING_BASIS = "per_unit_set_v1"
+
+
+def money(value=0):
+    number = Decimal(str(value if value not in (None, "") else 0))
+    if not number.is_finite():
+        raise ValueError("金额必须为有效数值")
+    return float(number.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def money_sum(values):
+    return money(sum((Decimal(str(money(value))) for value in values), Decimal(0)))
+
+
+def money_product(*values):
+    result = Decimal(1)
+    for value in values:
+        result *= Decimal(str(value))
+    return money(result)
 
 
 ATTACHMENT_QUANTITY_EXEMPT_CATEGORIES = ("侧板", "门变形", "风机滤网")
@@ -111,13 +132,20 @@ def effective_formula_attachment_line_amount(item, cabinet_quantity, ganged_cabi
 
 def quick_attachment_line_amount(item: Mapping[str, Any] | None) -> float:
     item = item or {}
-    if (item.get("catalog_version") or item.get("custom") is True) and item.get("quick_amount") is not None:
-        return float(item["quick_amount"])
+    if item.get("pending_manual_dimensions"):
+        return 0.0
+    override = item.get("quick_amount_override")
+    edited = item.get("custom_amount_edited") is True or (
+        "custom_amount_edited" not in item and override not in (None, 0))
+    if edited and override is not None:
+        return money(override)
+    if item.get("quick_amount") is not None:
+        return money(item["quick_amount"])
     sign = -1.0 if _number(item.get("attachment_price_sign"), 1.0) == -1.0 else 1.0
     for key in ("total_price", "total_cost", "amount", "subtotal"):
         if item.get(key) is not None:
             try:
-                return abs(float(item[key])) * sign
+                return money_product(abs(float(item[key])), sign)
             except (TypeError, ValueError):
                 pass
     unit_price = 0.0
@@ -128,7 +156,7 @@ def quick_attachment_line_amount(item: Mapping[str, Any] | None) -> float:
                 break
             except (TypeError, ValueError):
                 pass
-    return abs(unit_price) * _number(item.get("quantity"), 1.0) * sign
+    return money_product(abs(unit_price), _number(item.get("quantity"), 1.0), sign)
 
 
 def attachment_uses_cabinet_quantity(item: Mapping[str, Any] | None) -> bool:
@@ -161,15 +189,8 @@ def effective_attachment_quantity(
     item = item or {}
     selected = _number(item.get("quantity"), 1.0)
     cabinets = _number(cabinet_quantity, 1.0)
-    split_count = _number(ganged_cabinet_count, 1.0)
-    # A manually entered cost-page quantity is per child cabinet. Automatic
-    # rows already hold the complete set quantity; bases/doors are one row per
-    # child and therefore must not be multiplied by the split count again.
-    if _manually_quantified_attachment(item) and not (
-        item.get(GANGED_FIXED_BASE_MATCH_KEY) or item.get("ganged_inner_door_match")
-        or item.get("ganged_glass_door_match")
-    ):
-        return selected * cabinets * max(1.0, split_count)
+    # Every selected row already belongs to one complete cabinet/ganged set.
+    # Only the order quantity expands it; manual selection is not a child multiplier.
     # Attachment rows stored on a quote are per-cabinet values.  The order
     # quantity must therefore scale every ordinary row, including fans,
     # side panels and door transformations.  Those categories used to be
@@ -199,8 +220,8 @@ def quick_discount_breakdown(
 ) -> dict[str, float]:
     quote = quote or {}
     rows = list(attachments or [])
-    raw_total = _number(quote.get("total_cost"))
-    listed_attachment_total = sum(quick_attachment_line_amount(item) for item in rows)
+    raw_total = money(quote.get("total_cost"))
+    listed_attachment_total = money_sum(quick_attachment_line_amount(item) for item in rows)
     # The attachment editor is the source of truth for the current draft.
     # Keep the API fee only long enough to recover the cabinet base when an
     # old snapshot still contains a different aggregate attachment fee.
@@ -215,18 +236,17 @@ def quick_discount_breakdown(
         if quote.get("base_price") is not None
         else raw_total - stored_attachment_fee
     )
-    listed_eligible = sum(
+    base_price = money(base_price)
+    listed_eligible = money_sum(
         quick_attachment_line_amount(item)
         for item in rows
         if quick_discount_category(item)
     )
     eligible_attachment_total = listed_eligible
-    original_price_attachment_total = attachment_fee - eligible_attachment_total
+    original_price_attachment_total = money_sum((attachment_fee, -eligible_attachment_total))
     factor = _number(discount, 1.0)
-    discounted_total = (
-        (base_price + eligible_attachment_total) * factor
-        + original_price_attachment_total
-    )
+    discounted_total = money_sum((money_product(money_sum((base_price, eligible_attachment_total)), factor),
+                                  original_price_attachment_total))
     return {
         "raw_total": raw_total,
         "base_price": base_price,
@@ -246,6 +266,7 @@ def quick_order_line_breakdown(
     cabinet_quantity: Any,
     ganged_cabinet_count: Any = 1,
     freight_fee: Any = 0,
+    material_difference: Any = 0,
 ) -> dict[str, float]:
     rows = list(attachments or [])
     unit = quick_discount_breakdown(quote, rows, discount)
@@ -264,13 +285,10 @@ def quick_order_line_breakdown(
     unlisted_difference = 0.0
     original_total += unlisted_difference * cabinets
     factor = _number(discount, 1.0)
-    unit_freight = max(0.0, _number(freight_fee, 0.0))
-    freight_total = unit_freight * cabinets
-    line_total = (
-        (unit["base_price"] * cabinets + eligible_total) * factor
-        + original_total
-        + freight_total
-    )
+    unit_freight = money(max(0.0, _number(freight_fee, 0.0)))
+    freight_total = money_product(unit_freight, cabinets)
+    unit_total = money_sum((unit["discounted_total"], unit_freight, material_difference))
+    line_total = money_product(unit_total, cabinets)
     return {
         **unit,
         "cabinet_quantity": cabinets,
@@ -281,5 +299,5 @@ def quick_order_line_breakdown(
         "freight_fee": unit_freight,
         "freight_total": freight_total,
         "line_total": line_total,
-        "equivalent_unit_total": line_total / cabinets if cabinets else line_total,
+        "equivalent_unit_total": unit_total,
     }

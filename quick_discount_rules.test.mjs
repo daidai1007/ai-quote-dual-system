@@ -209,7 +209,7 @@ test("quick quote keeps non-approved attachments at original price", () => {
   assert.equal(result.basePrice, 4014.29);
   assert.equal(result.eligibleAttachmentTotal, 300);
   assert.equal(result.originalPriceAttachmentTotal, 92);
-  assert.ok(Math.abs(result.discountedTotal - 4190.5755) < 1e-9);
+  assert.equal(result.discountedTotal, 4190.58);
 });
 
 test("negative installation board remains in the discount base", () => {
@@ -276,16 +276,16 @@ test("ganged attachments use selected quantity times complete-set quantity only"
   }, 3, 4), 3);
 });
 
-test("manually selected ganged attachments multiply by child cabinet count", () => {
+test("manually selected ganged attachments already belong to the complete set", () => {
   assert.equal(effectiveAttachmentQuantity({
     item_name: "风机", quantity: 2, selection_source: "manual",
   }, 3), 6);
   assert.equal(effectiveAttachmentQuantity({
     item_name: "铜排", quantity: 2, selection_source: "manual",
-  }, 3, 4), 24);
+  }, 3, 4), 6);
   assert.equal(effectiveAttachmentQuantity({
     item_name: "人工附件", quantity: 2, selection_source: "QUOTE_LOCAL",
-  }, 3, 4), 24);
+  }, 3, 4), 6);
   assert.equal(effectiveAttachmentQuantity({
     item_name: "自动附件", quantity: 8, selection_source: "automatic",
   }, 3, 4), 24);

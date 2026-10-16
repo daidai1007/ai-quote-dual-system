@@ -120,6 +120,8 @@ def test_export_snapshot_freezes_exact_visible_quote_row_without_mutating_draft(
         "unit_price": 451.0,
         "discount": 0.8,
         "total": 902.0,
+        "attachment_face_price": 15.0,
+        "material_difference": 0.0,
         "remark": table.item(10, 7).text(),
         "attachments": [copper],
         "quick_total_cost": 560,

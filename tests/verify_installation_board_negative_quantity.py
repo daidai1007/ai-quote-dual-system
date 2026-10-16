@@ -31,9 +31,9 @@ class NegativeBoard(unittest.TestCase):
 
     def test_negative_quantity_is_visible_but_positive_quantity_and_deduction_are_saved(self):
         editor=self.editor()
-        editor.table.cellWidget(0,editor.COL_QUANTITY).setValue(-6)
-        self.assertEqual(editor.table.item(0,editor.COL_FORMULA_AMOUNT).text(),'-24.00')
-        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),-60)
+        editor.table.cellWidget(0,editor.COL_QUANTITY).setValue(-2)
+        self.assertEqual(editor.table.item(0,editor.COL_FORMULA_AMOUNT).text(),'-8.00')
+        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),-20)
         editor.accept()
         row=self.item['attachments'][0]
         self.assertEqual(row['quantity'],2)
@@ -45,7 +45,7 @@ class NegativeBoard(unittest.TestCase):
         self.assertTrue(self.item['attachment_snapshot_dirty'])
         self.assertEqual(v2.selected_input(row)['quantity'],2)
         reopened=self.editor()
-        self.assertEqual(reopened.table.cellWidget(0,reopened.COL_QUANTITY).value(),-6)
+        self.assertEqual(reopened.table.cellWidget(0,reopened.COL_QUANTITY).value(),-2)
         self.assertEqual(ui._all_attachment_rows([self.item])[0]['quantity'],-6)
         reopened.accept()
         self.assertEqual(self.item['attachments'][0]['formula_amount'],-8)
@@ -63,8 +63,8 @@ class NegativeBoard(unittest.TestCase):
         self.item['attachments']=[{**self.row,'quantity':2,'attachment_price_sign':-1,
             'formula_amount':-8,'quick_amount':-20}]
         editor=self.editor()
-        self.assertEqual(editor.table.cellWidget(0,editor.COL_QUANTITY).value(),-6)
-        editor.table.cellWidget(0,editor.COL_QUANTITY).setValue(6)
+        self.assertEqual(editor.table.cellWidget(0,editor.COL_QUANTITY).value(),-2)
+        editor.table.cellWidget(0,editor.COL_QUANTITY).setValue(2)
         editor.accept()
         row=self.item['attachments'][0]
         self.assertEqual(row['quantity'],2)

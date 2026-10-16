@@ -156,6 +156,30 @@ class DraftAttachmentRepriceId(unittest.TestCase):
             self.assertTrue(results)
             self.assertIn(results[0]["attachment_price_id"], [row["attachment_price_id"] for row in catalog])
 
+    def test_manual_glass_size_refreshes_catalogue_id_before_popup_preview(self):
+        glass_rows = [
+            dict(attachment_price_id=90, category_level1="控制柜附件", category_level2="玻璃门",
+                 item_name="玻璃门", width_mm=1000, height_mm=2100, price=100, face_price=100),
+            dict(attachment_price_id=91, category_level1="控制柜附件", category_level2="玻璃门",
+                 item_name="玻璃门", width_mm=400, height_mm=500, price=120, face_price=120),
+        ]
+        catalog.extend(glass_rows)
+        try:
+            source = {**glass_rows[0], "quantity": 1,
+                      "size_match_target_width_mm": 1000, "size_match_target_height_mm": 2100,
+                      "size_match_target_depth_mm": 600,
+                      "manual_inputs": {"玻璃门宽度": 400, "玻璃门高度": 500}}
+            results, errors = self.reprice(source)
+            self.assertEqual(errors, [])
+            self.assertEqual(results[0]["attachment_price_id"], 91)
+            self.assertEqual(results[0]["size_match_target_width_mm"], 400)
+            self.assertEqual(results[0]["size_match_target_height_mm"], 500)
+            self.assertIn("catalog?v=2", requests[0][0])
+            self.assertEqual(requests[-1][1]["attachments"][0]["attachment_price_id"], 91)
+        finally:
+            for row in glass_rows:
+                catalog.remove(row)
+
     def test_temporary_attachment_never_looks_up_catalogue_or_previews(self):
         source = dict(custom=True, item_name="临时木托", quantity=2,
                       formula_amount=10, quick_amount=17, unit_price_override=8.5)

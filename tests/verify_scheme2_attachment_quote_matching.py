@@ -5,7 +5,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
-from attachment_v2_client import match_quote_attachment
+from attachment_v2_client import _size_match_target_changed, match_quote_attachment
 
 
 class Value:
@@ -64,5 +64,65 @@ named_side_catalog = [
     {"attachment_price_id": 42, "category_level1": "侧板", "item_name": "JP控制柜侧板", "height_mm": 2000, "depth_mm": 600, "price": 20},
 ]
 assert match_quote_attachment(window, {"category_level1": "侧板", "item_name": "侧板"}, named_side_catalog)["attachment_price_id"] == 42
+side_selection = match_quote_attachment(window, {"category_level1": "侧板", "item_name": "侧板"}, named_side_catalog)
+assert not _size_match_target_changed(side_selection, (1200, 2000, 600))
+assert _size_match_target_changed(side_selection, (800, 2000, 700))
+column_selection = match_quote_attachment(window, {"category_level1": "安装附件", "item_name": "固定立柱"}, catalog)
+assert not _size_match_target_changed(column_selection, (1200, 2000, 700))
+assert _size_match_target_changed(column_selection, (800, 1900, 600))
+
+# Quote-time rematching must use the same physical axes as catalogue selection.
+for name, category in (("内门", "控制柜附件"), ("玻璃门", "控制箱附件"), ("分段板", "安装附件")):
+    rows = [
+        {"attachment_price_id": 51, "category_level1": category, "category_level2": name,
+         "item_name": name, "width_mm": 800, "height_mm": 2000, "depth_mm": 400, "price": 100},
+        {"attachment_price_id": 52, "category_level1": category, "category_level2": name,
+         "item_name": name, "width_mm": 700, "height_mm": 1900, "depth_mm": 600, "price": 100},
+    ]
+    selected = match_quote_attachment(window, rows[1], rows)
+    assert selected["attachment_price_id"] == 51, name
+    assert selected["size_match_ratio"] == 1, name
+    assert not _size_match_target_changed(selected, (800, 2000, 900)), name
+    assert _size_match_target_changed(selected, (900, 2000, 600)), name
+
+for category, stored in (("控制箱附件", (None, 600)), ("控制柜附件", (600, None))):
+    rows = [
+        {"attachment_price_id": 61, "category_level1": category, "category_level2": "防雨顶",
+         "item_name": "防雨顶", "width_mm": 800, "height_mm": stored[0],
+         "depth_mm": stored[1], "price": 100},
+        {"attachment_price_id": 62, "category_level1": category, "category_level2": "防雨顶",
+         "item_name": "防雨顶", "width_mm": 700, "height_mm": stored[0],
+         "depth_mm": stored[1], "price": 100},
+    ]
+    selected = match_quote_attachment(window, rows[1], rows)
+    assert selected["attachment_price_id"] == 61, category
+    assert selected["size_match_ratio"] == 1, category
+    assert not _size_match_target_changed(selected, (800, 2200, 600)), category
+    assert _size_match_target_changed(selected, (800, 2000, 650)), category
+
+glass_catalog = [
+    {"attachment_price_id": 71, "category_level1": "控制柜附件", "category_level2": "玻璃门",
+     "item_name": "玻璃门", "width_mm": 800, "height_mm": 2000, "price": 100},
+    {"attachment_price_id": 72, "category_level1": "控制柜附件", "category_level2": "玻璃门",
+     "item_name": "玻璃门", "width_mm": 400, "height_mm": 500, "price": 100},
+]
+glass_selection = {"category_level1": "控制柜附件", "item_name": "玻璃门",
+                   "manual_inputs": {"玻璃门宽度": 400, "玻璃门高度": 500}}
+glass_selected = match_quote_attachment(window, glass_selection, glass_catalog)
+assert glass_selected["attachment_price_id"] == 72
+assert not _size_match_target_changed({**glass_selected, **glass_selection}, (800, 2000, 900))
+assert _size_match_target_changed({**glass_selected, **glass_selection,
+                                   "manual_inputs": {"玻璃门宽度": 500, "玻璃门高度": 500}},
+                                  (800, 2000, 600))
+
+segment_catalog = [
+    {"attachment_price_id": 81, "category_level1": "安装附件", "category_level2": "分段板",
+     "item_name": "分段板", "width_mm": 800, "height_mm": 1800, "price": 100},
+    {"attachment_price_id": 82, "category_level1": "安装附件", "category_level2": "分段板",
+     "item_name": "分段板", "width_mm": 800, "height_mm": 150, "price": 100},
+]
+segment_selection = {"category_level1": "安装附件", "item_name": "分段板",
+                     "manual_inputs": {"分段板高度": 150}}
+assert match_quote_attachment(window, segment_selection, segment_catalog)["attachment_price_id"] == 82
 
 print("PASS: scheme attachment selections retain quick-size matching before database pricing")

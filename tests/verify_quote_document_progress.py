@@ -337,7 +337,7 @@ class DocumentProgress(unittest.TestCase):
         item['attachment_confirmation_inputs']=v2.confirmation_inputs([row])
         editor=ui.AttachmentEditor(self.window,item)
         self.addCleanup(editor.close)
-        editor.table.cellWidget(0,editor.COL_QUANTITY).setValue(-4)
+        editor.table.cellWidget(0,editor.COL_QUANTITY).setValue(-2)  # Per complete set, not a two-set batch.
         editor.accept()
         self.controller.generate()
         wait(lambda:not self.controller.busy)

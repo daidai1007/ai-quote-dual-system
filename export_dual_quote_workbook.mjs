@@ -32,6 +32,7 @@ import {
   quickDiscountBreakdown,
   quickDiscountCategory,
   quickOrderLineBreakdown,
+  money, moneySum, moneyProduct, PRICING_BASIS, validateQuoteDisplay,
 } from "./quick_discount_rules.mjs";
 
 const [inputPath, outputPath] = process.argv.slice(2);
@@ -170,15 +171,18 @@ const formulaAttachmentNames = [...new Set(
 // Every attachment fee is represented by a current popup row, so no
 // synthetic "other attachment/delta" column is needed.
 const hasQuickOtherColumn = false;
+const unitSetWorkbook = payload.items.some(item => item.pricing_basis === PRICING_BASIS);
+const hasMaterialDifference = payload.items.some(item => Number(item.quote_display?.material_difference || 0) !== 0);
 const quickCostHeaders = [
-  "原价单价", "折后单价", "柜体", ...quickAttachmentNames,
-  ...(hasQuickOtherColumn ? ["其他附件/差额"] : []), "运费", "折扣",
+  "原价单价", unitSetWorkbook ? "原价总价" : "折后单价", "柜体", ...quickAttachmentNames,
+  ...(hasQuickOtherColumn ? ["其他附件/差额"] : []), ...(hasMaterialDifference ? ["材料差价"] : []), "运费", "折扣",
 ];
 const quickNameColumnByName = new Map(
   quickAttachmentNames.map((name, index) => [name, 13 + index]),
 );
 const quickOtherColumnIndex = hasQuickOtherColumn ? 13 + quickAttachmentNames.length : null;
-const quickFreightColumnIndex = 13 + quickAttachmentNames.length + (hasQuickOtherColumn ? 1 : 0);
+const quickMaterialColumnIndex = hasMaterialDifference ? 13 + quickAttachmentNames.length : null;
+const quickFreightColumnIndex = 13 + quickAttachmentNames.length + (hasQuickOtherColumn ? 1 : 0) + (hasMaterialDifference ? 1 : 0);
 const quickDiscountColumnIndex = quickFreightColumnIndex + 1;
 const formulaAttachmentStartColumnIndex = 17; // Q, after L:P formula components
 const formulaNameColumnByName = new Map(
@@ -615,8 +619,13 @@ const formulaOrderLineBreakdown = (item = {}) => {
       ? effectiveFormulaAttachmentLineAmount(attachment, cabinetQuantity, gangedCount) : 0),
     0,
   );
-  const lineTotal = (basePrice * cabinetQuantity + discountedAttachmentTotal) * discount
-    + originalPriceAttachmentTotal + freightTotal;
+  const equivalentUnitTotal = moneySum([
+    moneyProduct(moneySum([basePrice, ...attachments.filter(row => !formulaAttachmentExcluded(row)
+      && !attachmentExcludedFromDiscount(row)).map(formulaAttachmentLineAmount)]), discount),
+    ...attachments.filter(row => !formulaAttachmentExcluded(row) && attachmentExcludedFromDiscount(row))
+      .map(formulaAttachmentLineAmount), freightFee,
+  ]);
+  const lineTotal = moneyProduct(equivalentUnitTotal, cabinetQuantity);
   return {
     basePrice,
     attachmentFee: formulaAttachmentFee,
@@ -631,7 +640,7 @@ const formulaOrderLineBreakdown = (item = {}) => {
     freightFee,
     freightTotal,
     lineTotal,
-    equivalentUnitTotal: cabinetQuantity ? lineTotal / cabinetQuantity : lineTotal,
+    equivalentUnitTotal,
   };
 };
 
@@ -644,29 +653,17 @@ const quickPublicLineBreakdown = (item = {}) => {
   const attachments = item.attachments || [];
   const cabinetQuantity = asNumber(item.quantity || 1);
   const gangedCount = gangedCabinetCount(item);
-  const discount = asNumber(item.quick_discount) || 1;
+  const discount = asNumber(item.quick_discount ?? 1);
   const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
-  if (gangedCount > 1) {
-    return quickOrderLineBreakdown({
+  return quickOrderLineBreakdown({
       quote,
       attachments,
       discount,
       cabinetQuantity,
       gangedCabinetCount: gangedCount,
       freightFee,
+      materialDifference: item.quote_display?.material_difference ?? 0,
     });
-  }
-  const unit = quickDiscountBreakdown({ quote, attachments, discount });
-  const freightTotal = freightFee * cabinetQuantity;
-  return {
-    ...unit,
-    cabinetQuantity,
-    gangedCabinetCount: gangedCount,
-    freightFee,
-    freightTotal,
-    lineTotal: unit.discountedTotal * cabinetQuantity + freightTotal,
-    equivalentUnitTotal: unit.discountedTotal + freightFee,
-  };
 };
 
 const quantityText = (value) => {
@@ -866,8 +863,9 @@ function fillSheet(sheet, method) {
   items.forEach((item, index) => {
     const row = firstRow + index;
     const display = quoteDisplay(item);
-    const discount = asNumber(method === "formula"
-      ? item.formula_discount : display?.discount ?? item.quick_discount) || 1;
+    validateQuoteDisplay(item);
+    const discount = asNumber((method === "formula"
+      ? item.formula_discount : display?.discount ?? item.quick_discount) ?? 1);
     const attachments = method === "quick" ? quickExportAttachments(item) : (item.attachments || []);
     const qty = asNumber(display?.quantity ?? item.quantity ?? 1);
     const quickAuditItem = method === "quick" ? {
@@ -880,8 +878,9 @@ function fillSheet(sheet, method) {
     const quote = method === "formula" ? item.formula : quickAuditItem.quick;
     const gangedCount = gangedCabinetCount(item);
     const isGanged = gangedCount > 1;
-    const auditCabinetQuantity = isGanged ? qty : 1;
-    const auditGangedCount = isGanged ? gangedCount : 1;
+    const unitSet = item.pricing_basis === PRICING_BASIS;
+    const auditCabinetQuantity = unitSet ? 1 : isGanged ? qty : 1;
+    const auditGangedCount = unitSet ? 1 : isGanged ? gangedCount : 1;
     const quickBreakdown = method === "quick"
       ? quickPublicLineBreakdown(quickAuditItem)
       : null;
@@ -897,7 +896,7 @@ function fillSheet(sheet, method) {
     const lineTotal = method === "quick" && hasFiniteNumber(display?.total)
       ? Number(display.total)
       : method === "quick" ? quickBreakdown.lineTotal : formulaBreakdown.lineTotal;
-    subtotal += lineTotal;
+    subtotal = moneySum([subtotal, lineTotal]);
     // final_remark is the operator-confirmed wording shown on the Remarks page.
     // Keep notes as a backward-compatible fallback for older saved drafts.
     const note = display && Object.hasOwn(display, "remark")
@@ -939,7 +938,7 @@ function fillSheet(sheet, method) {
       // Keep the five component columns reconcilable with the discounted
       // formula-method amount. Non-ganged rows show one-cabinet costs; ganged
       // rows show the complete order costs for the entered assembly quantity.
-      const componentMultiplier = isGanged ? qty : 1;
+      const componentMultiplier = unitSet ? 1 : isGanged ? qty : 1;
       values[11] = asNumber(quote?.material_cost) * discount * componentMultiplier;
       values[12] = asNumber(quote?.auxiliary_cost) * discount * componentMultiplier;
       values[13] = asNumber(quote?.labor_cost) * discount * componentMultiplier;
@@ -947,7 +946,7 @@ function fillSheet(sheet, method) {
       values[15] = asNumber(quote?.management_fee) * discount * componentMultiplier;
       // Freight is the final dynamic attachment-detail column and is never
       // discounted; the following column records the formula discount.
-      values[formulaFreightColumnIndex - 1] = formulaBreakdown.freightTotal || "";
+      values[formulaFreightColumnIndex - 1] = (unitSet ? formulaBreakdown.freightFee : formulaBreakdown.freightTotal) || "";
       values[formulaDiscountColumnIndex - 1] = discount;
     } else {
       const listedAmount = attachmentTotalFromItems(attachments);
@@ -959,7 +958,8 @@ function fillSheet(sheet, method) {
         values[quickOtherColumnIndex - 1] = Math.abs(difference) > 0.000001 ? difference : "";
       }
       values[11] = quickBreakdown.basePrice * auditCabinetQuantity;
-      values[quickFreightColumnIndex - 1] = quickBreakdown.freightTotal || "";
+      values[quickFreightColumnIndex - 1] = (unitSet ? quickBreakdown.freightFee : quickBreakdown.freightTotal) || "";
+      if (quickMaterialColumnIndex) values[quickMaterialColumnIndex - 1] = money(display?.material_difference || 0);
       values[quickDiscountColumnIndex - 1] = discount;
       const populatedCellReferences = (columns) => columns
         .filter(([, valueIndex]) => {
@@ -998,21 +998,26 @@ function fillSheet(sheet, method) {
       if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
       if (quickBreakdown.freightTotal) {
         const freightCell = `${col(quickFreightColumnIndex)}${row}`;
-        const freightExpression = isGanged ? freightCell : `${freightCell}/${qty || 1}`;
+        const freightExpression = unitSet || isGanged ? freightCell : `${freightCell}/${qty || 1}`;
         originalFormulaParts.push(freightExpression);
         formulaParts.push(freightExpression);
       }
+      if (quickMaterialColumnIndex) {
+        const materialCell = `${col(quickMaterialColumnIndex)}${row}`;
+        originalFormulaParts.push(materialCell);
+        formulaParts.push(materialCell);
+      }
       const originalFormula = originalFormulaParts.join("+") || "0";
       const formula = formulaParts.join("+") || "0";
-      const originalPriceFormula = isGanged ? `(${originalFormula})/D${row}` : originalFormula;
-      const discountedPriceFormula = isGanged ? `(${formula})/D${row}` : formula;
+      const originalPriceFormula = !unitSet && isGanged ? `(${originalFormula})/D${row}` : `ROUND(${originalFormula},2)`;
+      const discountedPriceFormula = !unitSet && isGanged ? `(${formula})/D${row}` : `ROUND(${formula},2)`;
       values[9] = {
         formula: originalPriceFormula,
         result: quickOriginalBreakdown.equivalentUnitTotal,
       };
       values[10] = {
-        formula: discountedPriceFormula,
-        result: quickBreakdown.equivalentUnitTotal,
+        formula: unitSetWorkbook ? `ROUND(J${row}*D${row},2)` : discountedPriceFormula,
+        result: unitSetWorkbook ? moneyProduct(quickOriginalBreakdown.equivalentUnitTotal, qty) : quickBreakdown.equivalentUnitTotal,
       };
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];
@@ -1546,8 +1551,8 @@ const verifyWorkbookContents = (candidateWorkbook) => {
       const row = 11 + index;
       const quote = method === "formula" ? item.formula : item.quick;
       const display = quoteDisplay(item);
-      const discount = asNumber(method === "formula"
-        ? item.formula_discount : display?.discount ?? item.quick_discount) || 1;
+      const discount = asNumber((method === "formula"
+        ? item.formula_discount : display?.discount ?? item.quick_discount) ?? 1);
       const quantity = asNumber(display?.quantity ?? item.quantity ?? 1);
       const lineBreakdown = method === "quick"
         ? quickPublicLineBreakdown(item)
@@ -1556,7 +1561,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
         ? Number(display.unit_price) : lineBreakdown.equivalentUnitTotal;
       const lineTotal = method === "quick" && hasFiniteNumber(display?.total)
         ? Number(display.total) : lineBreakdown.lineTotal;
-      subtotal += lineTotal;
+      subtotal = moneySum([subtotal, lineTotal]);
       const actual = rangePlainValues(sheet, `A${row}:H${row}`)[0];
       const expected = [
         index + 1,

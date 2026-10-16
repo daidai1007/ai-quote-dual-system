@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
 import { materialUnitPriceFromSidebar } from './material_price_override.mjs';
+import {PRICING_BASIS, money, moneySum, quickAttachmentLineAmount, validateQuoteDisplay} from '../quick_discount_rules.mjs';
 
 // SQL values are always UTF-8 hex literals; formulas are evaluated only by attachment_cost.
 export const sqlValue = value => value == null ? 'NULL' : typeof value === 'number'
@@ -139,6 +140,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     const environment={quote_line_id:randomUUID(),product_code:input.product_code,material_code:input.material_code,
       width_mm:Number(input.width_mm),height_mm:Number(input.height_mm),depth_mm:Number(input.depth_mm),
       coating_type:input.coating_type,quote_date:quoteDate,
+      ...(input.pricing_basis?{pricing_basis:input.pricing_basis}:{}),
       cabinet_body_thickness_mm:Number(input.cabinet_body_thickness_mm??1.5),
       waste_factor:Number(input.waste_factor??1.2),ganged_cabinet_count:gangedCount,
       ganged_cabinets:gangedCabinets,...prices,material_unit_price:materialUnitPriceFromSidebar(input,input.material_code)};
@@ -250,7 +252,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       formula.attachment_fee=0;
     }
     const children=environment.ganged_cabinets||[];
-    const replay={...environment,quote_id:base.quote_id,
+    const replay={...environment,...(input.pricing_basis?{pricing_basis:input.pricing_basis}:{}),quote_id:base.quote_id,
       material_unit_price_override:environment.material_unit_price,
       attachments:input.attachments,
       ganged_cabinet_inputs:children.map((child,index)=>{
@@ -300,10 +302,12 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     const snapshots=lineIds.length?await query(snapshotsSql(lineIds)):{};
     const items=[];
     for(const [itemIndex,item] of (input.items||[]).entries()){
+      try {
       if(item.attachment_contract!==2){
         if((item.attachments||[]).some(a=>a.catalog_version||a.rule_id||a.status)) throw new Error('附件V2报价缺少服务端报价行ID');
         const ids=(item.attachments||[]).filter(a=>a.attachment_price_id!=null).map(a=>id(a.attachment_price_id));
         if(ids.length && await query(`SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_price WHERE attachment_price_id IN (${ids.join(',')}) AND data_version IS NOT NULL));`)) throw new Error('附件V2报价缺少服务端报价行ID');
+        validateQuoteDisplay(item);
         items.push(item);continue;
       }
       const saved=structuredClone(snapshots[item.quote_line_id.toLowerCase()]);
@@ -343,10 +347,57 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       const customFormulaTotal=customAttachments.reduce((sum,row)=>sum+Number(row.formula_amount),0);
       const customQuickTotal=customAttachments.reduce((sum,row)=>sum+Number(row.quick_amount),0);
       formula=addCustomAmount(formula,customFormulaTotal);
-      const quick=addCustomAmount(result.quick_quote,customQuickTotal);
+      let quick=addCustomAmount(result.quick_quote,customQuickTotal);
+      let rows=[...saved.attachments,...customAttachments];
+      if(item.pricing_basis===PRICING_BASIS){
+        const display=item.quote_display;
+        const visible=display?.attachments;
+        if(!Array.isArray(visible)||visible.length!==rows.length) throw new Error(`第${itemIndex+1}行附件显示快照不完整`);
+        const visibleCatalog=visible.filter(row=>row?.custom!==true);
+        if(canonical(visibleCatalog.map(attachmentInput))!==canonical(saved.attachments.map(attachmentInput)))
+          throw new Error(`第${itemIndex+1}行附件显示快照与计算选择不一致`);
+        if(canonical(visible.filter(row=>row?.custom===true).map(customAttachmentInput))!==canonical(customAttachments))
+          throw new Error(`第${itemIndex+1}行人工附件显示快照不一致`);
+        const visibleRows=[...visibleCatalog,...visible.filter(row=>row?.custom===true)];
+        rows=rows.map((row,index)=>{
+          const shown=visibleRows[index];
+          if(row.custom!==shown.custom && Boolean(row.custom)!==Boolean(shown.custom)) throw new Error('附件显示快照顺序不一致');
+          const override=shown.quick_amount_override;
+          const edited=shown.custom_amount_edited===true || (!Object.hasOwn(shown,'custom_amount_edited')
+            && override!=null && Number(override)!==0);
+          let amount=quickAttachmentLineAmount(row);
+          if(edited){
+            const value=override??shown.quick_amount;
+            if(value==null||!Number.isFinite(Number(value))||Math.abs(Number(value))>1e8) throw new Error(`${row.item_name}：人工金额无效`);
+            amount=money(value);
+          } else if(quickAttachmentLineAmount(shown)!==amount){
+            throw Object.assign(new Error(`第${itemIndex+1}行附件“${row.item_name}”金额不一致，请重新计算附件`),
+              {attachment_name:row.item_name,attachment_price_id:row.attachment_price_id});
+          }
+          return {...row,formula_amount:money(row.formula_amount),quick_amount:amount,
+            ...(edited?{quick_amount_override:amount,custom_amount_edited:true}:{} )};
+        });
+        const oldQuickFee=Number(quick.attachment_fee||0);
+        const base=money(quick.base_price??(Number(quick.total_cost||0)-oldQuickFee));
+        const quickFee=moneySum(rows.map(quickAttachmentLineAmount));
+        quick={...quick,base_price:base,attachment_fee:quickFee,total_cost:moneySum([base,quickFee])};
+        const formulaFee=moneySum(rows.map(row=>row.status==='QUICK_ONLY'?0:row.formula_amount));
+        formula={...formula,total_cost:moneySum([Number(formula.total_cost||0),-Number(formula.attachment_fee||0),formulaFee]),attachment_fee:formulaFee};
+        validateQuoteDisplay({...item,attachments:rows,formula,quick});
+      }
       // A frozen service result remains independent of later catalog and price updates.
-      items.push({...item,attachments:[...saved.attachments,...customAttachments],formula_base:result.formula_cost,
+      items.push({...item,attachments:rows,
+        ...(item.pricing_basis===PRICING_BASIS?{quote_display:{...item.quote_display,attachments:rows}}:{}),formula_base:result.formula_cost,
         formula,quick});
+      } catch(error) {
+        if(item?.pricing_basis===PRICING_BASIS && !error.issues){
+          error.statusCode=422;
+          error.issues=[{line_number:itemIndex+1,product_name:item.name||item.product_code||'未命名',
+            attachment_name:error.attachment_name||'报价／附件金额校验',
+            ...(error.attachment_price_id?{attachment_price_id:error.attachment_price_id}:{}),reason:error.message}];
+        }
+        throw error;
+      }
     }
     return {...input,items};
   }

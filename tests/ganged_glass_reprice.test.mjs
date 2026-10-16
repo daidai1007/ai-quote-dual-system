@@ -28,6 +28,12 @@ test('glass popup previews accept saved child context and actual manual glass si
   assert.equal(second.attachments[0].environment.width_mm,600);
   assert.ok(first.attachments[0].quick_amount>0);
   assert.ok(second.attachments[0].quick_amount>0);
+  const cataloguePerimeter=Number(glass.width_mm)+Number(glass.height_mm);
+  assert.equal(first.attachments[0].size_match_target_perimeter,900);
+  assert.equal(second.attachments[0].size_match_target_perimeter,900);
+  assert.equal(first.attachments[0].quick_amount,
+    Math.round(Number(glass.price)*900/cataloguePerimeter*100)/100);
+  assert.equal(second.attachments[0].quick_amount,first.attachments[0].quick_amount);
 });
 
 test('missing child context must not be interpreted as a successful zero price', async () => {

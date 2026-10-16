@@ -45,10 +45,10 @@ class SizedPrices(unittest.TestCase):
                 fresh={**raw,'quick_amount':amount,'size_match_ratio':row['size_match_ratio'],
                        'unit_price_override':row['unit_price_override']}
                 self.assertEqual(merge_cost(row,fresh)['quick_amount'],amount)
-                manual={**row,'unit_price_override':123,'quick_amount_override':369}
+                manual={**row,'quantity':3,'unit_price_override':123,'quick_amount_override':369}
                 self.assertEqual(merge_cost(manual,fresh)['quick_amount'],369)
                 self.assertEqual(merge_cost(manual,fresh)['unit_price_override'],123)
-                unit_only={**row,'unit_price_override':123}
+                unit_only={**row,'quantity':3,'unit_price_override':123}
                 self.assertEqual(merge_cost(unit_only,fresh)['quick_amount'],369)
                 exact={**fresh,'quick_amount':300,'size_match_ratio':1,'size_match_exact':True}
                 exact.pop('unit_price_override')
@@ -84,7 +84,7 @@ class SizedPrices(unittest.TestCase):
                                  matched_experience={},match_method='exact'),risk_flags=[]))
             expected=money(window.attachments[0]['unit_price_override'],2)
             self.assertEqual(window.current_result['quick']['attachment_fee'],expected)
-            self.assertEqual(window.current_result['quick']['total_cost'],1000+expected)
+            self.assertAlmostEqual(window.current_result['quick']['total_cost'],1000+expected,places=2)
             self.assertEqual(ui.AttachmentEditor._display_amounts(window.attachments[0]),(14,expected))
 
 if __name__=='__main__':

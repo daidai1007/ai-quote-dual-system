@@ -180,7 +180,8 @@ class QuoteDocumentProgress:
                     reason = attachment.get("error") or ("缺少人工尺寸：" + missing if missing else "附件成本计算失败")
                     name = attachment.get("item_name") or "未命名附件"
                     raise ValueError(f"第{number}行报价（{item.get('name') or item.get('product_code') or '未命名'}）的“{name}”：{reason}")
-        return confirmation_payload({"items": items}, validate=True)["items"]
+        frozen = self.ui._quote_export_items_snapshot(self.window, items)
+        return confirmation_payload({"items": frozen}, validate=True)["items"]
 
     def prepare_snapshots(self, ready):
         try:
