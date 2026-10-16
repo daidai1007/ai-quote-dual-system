@@ -29,6 +29,7 @@ from recognition_repair import install_recognition_repair
 from drawing_workflow import install_drawing_workflow
 from freight_export import install_freight_export
 from scheme2_ui import install_scheme2_ui
+from quote_scheme_center import install_quote_scheme_center
 
 
 _DLL_DIRECTORY_HANDLES = []
@@ -457,6 +458,7 @@ def load_v3_namespace() -> dict:
     install_drawing_workflow(namespace)
     install_freight_export(namespace)
     install_scheme2_ui(namespace)
+    install_quote_scheme_center(namespace)
     return namespace
 
 

@@ -19,11 +19,15 @@ import { formulaTemplateSql } from './formula_template_query.mjs';
 import { createBatchReadExecutor, validateGangedBatch, calculateGangedBatch } from './ganged_quote_service.mjs';
 import { withQuoteRequest, withQuoteChild, timedQuotePhase, emitQuoteProgress, startQuoteStream, recordQuoteEvent, sqlTimingFields } from './quote_telemetry.mjs';
 import {MAX_DIAGNOSTIC_BYTES, diagnosticReportSql, validateDiagnosticSubmission} from './diagnostic_report.mjs';
+import {
+  apiKeyHash, createQuoteSchemeService, loadPrincipalMap, resolvePrincipal,
+} from './quote_scheme_service.mjs';
 
 const RUNTIME_CONFIG = resolveRuntimeConfig();
 const PORT = RUNTIME_CONFIG.port;
 const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
+const QUOTE_SCHEME_PRINCIPALS = loadPrincipalMap();
 const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
 const API_BUILD = '2026-09-11-complete-cost-catalogs-v5';
 const DEPLOYMENT_BUILD = '20260911-complete-cost-catalogs-v5';
@@ -1001,6 +1005,61 @@ const getDatabaseReadiness = async () => {
   return line ? JSON.parse(line) : {};
 };
 
+const quoteSchemeService = createQuoteSchemeService({ runPsql, sqlUnicodeText, sqlNumber });
+
+const quoteSchemeResponse = async (req, res, requestUrl) => {
+  const principal = resolvePrincipal(req, QUOTE_SCHEME_PRINCIPALS);
+  const pathname = requestUrl.pathname;
+  const parts = pathname.split('/').filter(Boolean);
+  const schemeNo = parts[2] ? decodeURIComponent(parts[2]) : '';
+  const action = parts[3] ? decodeURIComponent(parts[3]) : '';
+  if (pathname === '/api/quote-schemes' && req.method === 'GET') {
+    return json(res, 200, await quoteSchemeService.list(
+      principal, Object.fromEntries(requestUrl.searchParams.entries()),
+    ));
+  }
+  if (pathname === '/api/quote-schemes' && req.method === 'POST') {
+    return json(res, 201, await quoteSchemeService.create(principal, await readBody(req)));
+  }
+  if (!schemeNo) return json(res, 404, { error: 'not_found' });
+  if (!action && req.method === 'GET') {
+    const result = await quoteSchemeService.get(principal, schemeNo);
+    return json(res, result?.found ? 200 : 404, result?.found ? result : { error: 'quote_scheme_not_found' });
+  }
+  if (!action && req.method === 'PUT') {
+    return json(res, 200, await quoteSchemeService.save(principal, schemeNo, await readBody(req)));
+  }
+  if (!action && req.method === 'DELETE') {
+    return json(res, 200, await quoteSchemeService.removeDraft(
+      principal, schemeNo, requestUrl.searchParams.get('expected_version'),
+    ));
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
+  const input = await readBody(req);
+  if (action === 'copy') {
+    const source = await quoteSchemeService.get(principal, schemeNo);
+    if (!source?.found) return json(res, 404, { error: 'quote_scheme_not_found' });
+    if (Number(input.expected_version) !== Number(source.lock_version)) {
+      const error = new Error('源方案已更新，请刷新列表后再复制。'); error.statusCode = 409; throw error;
+    }
+    return json(res, 201, await quoteSchemeService.create(
+      principal, { snapshot: source.snapshot }, { sourceNo: schemeNo },
+    ));
+  }
+  if (action === 'revision') {
+    return json(res, 200, await quoteSchemeService.revision(principal, schemeNo, input.expected_version));
+  }
+  if (['archive', 'restore', 'void'].includes(action)) {
+    return json(res, 200, await quoteSchemeService.transition(
+      principal, schemeNo, action, input.expected_version,
+    ));
+  }
+  if (action === 'export-result') {
+    return json(res, 200, await quoteSchemeService.exportResult(principal, schemeNo, input));
+  }
+  return json(res, 404, { error: 'not_found' });
+};
+
 const server = http.createServer((req, res) => withQuoteRequest(req, res, async () => {
   if (req.method === 'GET' && req.url === '/health') {
     // Keep the public liveness check database-free. Render calls it frequently;
@@ -1017,8 +1076,20 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
       formula_template_version_ready: true,
     });
   }
-  if (API_KEY && req.url?.startsWith('/api/') && String(req.headers['x-ai-quote-key'] || '') !== API_KEY) {
+  if (API_KEY && req.url?.startsWith('/api/')
+      && String(req.headers['x-ai-quote-key'] || '') !== API_KEY
+      && !QUOTE_SCHEME_PRINCIPALS.has(apiKeyHash(req.headers['x-ai-quote-key'] || ''))) {
     return json(res, 401, { error: 'unauthorized', message: 'invalid client access key' });
+  }
+  const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');
+  if (requestUrl.pathname === '/api/quote-schemes' || requestUrl.pathname.startsWith('/api/quote-schemes/')) {
+    try {
+      return await quoteSchemeResponse(req, res, requestUrl);
+    } catch (error) {
+      return json(res, error.statusCode || clientErrorStatus(error), {
+        error: error.code || 'quote_scheme_request_failed', message: error.message,
+      });
+    }
   }
   if (req.method === 'POST' && req.url === '/api/diagnostics/reports') {
     try {
