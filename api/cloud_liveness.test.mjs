@@ -100,7 +100,7 @@ test('Docker-compatible server starts and serves a database-free health check', 
       assert.equal(match[1], health.build, `${file}: ${constant} must match GET /health build`);
     }
   });
-  assert.equal(health.deployment, '20260911-complete-cost-catalogs-v5');
+  assert.equal(health.deployment, '20261016-management6-v1');
   assert.equal(health.database_checked, false);
   assert.equal(health.attachment_ganged_ready, true);
 

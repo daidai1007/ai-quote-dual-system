@@ -7,29 +7,34 @@ export function addAttachmentSnapshotSheet(workbook, payload) {
     '面价（元/单位）','快速金额（元/选择行）','材料重量（kg/单位）','材料单价（元/kg）','材料成本（元/单位）',
     '喷塑面积（m²/单位）','喷塑单价（元/m²）','喷塑成本（元/单位）','辅材成本（元/单位）','辅材清单',
     '人工（元/单位）','公式单位成本（元/单位）','公式金额（元/选择行）','人工输入尺寸（mm）','状态','计算说明',
-    '材质','密度（g/cm³）','报价日期','规则ID','规则版本'];
+    '材质','密度（g/cm³）','报价日期','规则ID','规则版本','数据来源','附件价格库ID','子柜序号'];
   sheet.addRow(headers);
   for(const item of items){
     if(item.attachment_contract!==2) continue;
+    const popup=item.quote_display?.attachment_source==='popup_v1';
     for(const row of item.attachments||[]){
       if(row.custom===true){
         const values=[item.quote_line_id,null,item.name||item.model_code,'其他附件',null,row.item_name,null,row.unit,row.quantity,row.attachment_price_sign,
           row.unit_price_override,row.quick_amount,null,null,null,null,null,null,null,null,
           null,null,row.formula_amount,null,'人工新增','人工新增附件；无目录选择ID，金额由操作员输入并在确认时校验。',
-          item.material_code,null,item.quote_date,null,null];
+          item.material_code,null,item.quote_date,null,null,popup?'当前附件弹窗确认快照':'人工新增',null,
+          row.ganged_cabinet_index==null?null:Number(row.ganged_cabinet_index)+1];
         sheet.addRow(values.map(value=>value??null));
         continue;
       }
-      if(!item.quote_line_id||!row.attachment_selection_id||row.quote_line_id!==item.quote_line_id) throw new Error('附件导出缺少准确的报价行/选择ID关联');
+      if(!item.quote_line_id||(!popup&&(!row.attachment_selection_id||row.quote_line_id!==item.quote_line_id))) throw new Error('附件导出缺少准确的报价行/选择ID关联');
       if(row.status==='ERROR') throw new Error(`${row.item_name}：${row.error||'附件计算错误'}`);
       const env=row.environment||{};
       const explanation=[row.status==='FIXED'?'固定成本：组成项未拆分':row.calculation_notes,
+        popup?'采用当前附件弹窗已确认成本及金额；未重新匹配目录，未生成新的数据库附件选择ID。':'',
         '数量为所属产品的一次选择数量；单位组成未乘选择数量；金额已乘选择数量及符号；订单柜体数量按原有报价规则处理。',
         row.formulas?JSON.stringify(row.formulas):''].filter(Boolean).join('\n');
-      const values=[item.quote_line_id,row.attachment_selection_id,item.name||item.model_code,row.category_level1,row.category_level2,row.item_name,row.model_code,row.unit,row.quantity,row.attachment_price_sign,
+      const values=[item.quote_line_id,popup?null:row.attachment_selection_id,item.name||item.model_code,row.category_level1,row.category_level2,row.item_name,row.model_code,row.unit,row.quantity,row.attachment_price_sign,
         row.face_price,row.quick_amount,row.weight_kg,env.material_unit_price,row.material_cost,row.spray_area_m2,env.spray_unit_price,row.spray_cost,row.auxiliary_cost,row.auxiliary_list,
         row.labor_cost,row.formula_unit_cost,row.formula_amount,JSON.stringify(row.manual_inputs||{}),row.status==='QUICK_ONLY'?'仅快速报价':row.status_text,explanation,
-        env.material_code,env.density_g_cm3,env.quote_date,row.rule_id,row.rule_version];
+        env.material_code,env.density_g_cm3,env.quote_date,row.rule_id,row.rule_version,
+        popup?'当前附件弹窗确认快照':'数据库计算快照',row.attachment_price_id,
+        row.ganged_cabinet_index==null?null:Number(row.ganged_cabinet_index)+1];
       sheet.addRow(values.map(value=>value??null));
     }
   }

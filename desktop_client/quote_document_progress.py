@@ -184,6 +184,7 @@ class QuoteDocumentProgress:
         return confirmation_payload({"items": frozen}, validate=True)["items"]
 
     def prepare_snapshots(self, ready):
+        """Explicit legacy snapshot repair; current generate/export freeze popup rows."""
         try:
             pending = [(number, item) for number, item in enumerate(self.window.draft_items, 1)
                        if isinstance(item, dict) and attachment_snapshot_needs_refresh(item)]
@@ -287,7 +288,9 @@ class QuoteDocumentProgress:
                 worker.start()
             except Exception as error:
                 self.fail(error)
-        QTimer.singleShot(0, lambda:self.prepare_snapshots(check))
+        # Popup edits have already completed their preview calculation. Freeze
+        # those rows instead of writing another catalogue-priced snapshot.
+        QTimer.singleShot(0, check)
 
     def preview_done(self, body):
         if not body.get("valid") or body.get("persisted") is not False:
@@ -305,7 +308,7 @@ class QuoteDocumentProgress:
         if self.busy:
             return
         self.begin("export")
-        self.prepare_snapshots(self.start_export)
+        self.start_export()
 
     def start_export(self):
         try:

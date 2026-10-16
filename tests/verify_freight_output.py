@@ -28,7 +28,10 @@ class FreightOutputTests(unittest.TestCase):
     accept = base.DrawingWorkflowTests.accept
 
     def amounts(self, amount):
-        self.assertEqual(self.w.freight_spin.text().strip(), f'{amount:.2f} 元')
+        # Editing may retain "50 元" until focus changes; the numeric value
+        # and both read-only amount labels must still agree to the cent.
+        self.assertEqual(self.w.freight_spin.value(), amount)
+        self.assertEqual(self.w.freight_spin.suffix().strip(), '元')
         for labels in (self.w.formula_labels, self.w.quick_labels):
             self.assertEqual(labels['freight'].text(), f'{amount:.2f} 元')
 
@@ -47,7 +50,8 @@ class FreightOutputTests(unittest.TestCase):
         self.accept(base.response(66.1))
         self.amounts(66.1)
         self.assertEqual(self.w.freight_state.mode, 'AUTO')
-        self.assertEqual(self.w.formula_labels['total'].text(), '228.70 元')
+        self.assertEqual(self.w.formula_labels['total'].text(), '239.67 元')
+        self.assertEqual(self.w.formula_labels['management'].text(), '13.57 元')
         self.assertEqual(self.w.quick_labels['total'].text(), '266.10 元')
         self.w.freight_spin.setFocus()
         self.w.freight_spin.selectAll()
@@ -60,14 +64,14 @@ class FreightOutputTests(unittest.TestCase):
         self.amounts(50)
         for _ in range(3):
             self.w.refresh_discounted_totals()
-        self.assertEqual(self.w.formula_labels['total'].text(), '212.60 元')
+        self.assertEqual(self.w.formula_labels['total'].text(), '222.60 元')
         self.assertEqual(self.w.quick_labels['total'].text(), '250.00 元')
-        self.assertEqual(self.w.current_result['formula']['total_cost'], 162.6)
+        self.assertEqual(self.w.current_result['formula']['total_cost'], 172.6)
         self.assertEqual(self.w.current_result['quick']['total_cost'], 200)
         self.w.formula_discount.setValue(0.9)
         self.w.quick_discount.setValue(0.8)
         self.amounts(50)
-        self.assertEqual(self.w.formula_labels['total'].text(), '196.34 元')
+        self.assertEqual(self.w.formula_labels['total'].text(), '205.34 元')
         self.assertEqual(self.w.quick_labels['total'].text(), '210.00 元')
         self.w.reset_current_cabinet()
         self.amounts(0)
@@ -87,24 +91,24 @@ class FreightOutputTests(unittest.TestCase):
 
     def test_summary_saved_amount_no_layout_or_total_change(self):
         items = [self.item(66.1, 2), self.item(50), self.item(0)]
-        before = copy.deepcopy(items)
         table = self.w.summary_table
         headers = [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())]
         self.w.draft_items = items
         self.w.refresh_summary()
+        before = copy.deepcopy(items)  # Old drafts are migrated to the six-component fee once.
         heights = [table.rowHeight(r) for r in range(table.rowCount())]
         self.w.freight_spin.setValue(123)  # unrelated current cabinet
         self.w.refresh_summary()
         self.assertEqual(headers, [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())])
         self.assertEqual(heights, [table.rowHeight(r) for r in range(table.rowCount())])
-        column = next(c for c, h in enumerate(headers) if '备注' in h)
+        column = headers.index('运费')
         for row, amount in enumerate((66.1, 50, 0)):
-            self.assertTrue(table.item(row, column).text().startswith(f'运费：{amount:.2f} 元；'))
-            self.assertEqual(table.item(row, column).text().count('运费：'), 1)
-        self.assertIn('132.20 元', table.item(0, column).toolTip())
+            self.assertEqual(table.item(row, column).text(), f'{amount:.2f}')
+            self.assertEqual(items[row]['notes'], '保留原备注')
         self.assertEqual(items, before)
-        self.assertEqual(self.w.summary_formula_total.text(), '公式法：832.60 元')
-        self.assertEqual(self.w.summary_quick_total.text(), '快速报价：982.20 元')
+        total_row = len(items)
+        self.assertEqual(table.item(total_row, headers.index('成本总价')).text(), '871.54')
+        self.assertEqual(table.item(total_row, headers.index('报价总价')).text(), '982.20')
 
     def test_saved_draft_restore_keeps_freight(self):
         self.w.load_draft_item(self.item(50))

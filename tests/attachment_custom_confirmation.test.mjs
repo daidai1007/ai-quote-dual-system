@@ -30,7 +30,9 @@ test('确认与导出保留人工新增附件，仅对目录附件校验ID',asyn
   assert.equal(custom.custom,true);assert.equal(custom.attachment_price_id,undefined);
   assert.equal(custom.quick_amount,12);assert.equal(custom.formula_amount,7);
   assert.equal(hydrated.quick.attachment_fee,42);assert.equal(hydrated.quick.total_cost,212);
-  assert.equal(hydrated.formula.attachment_fee,27);assert.equal(hydrated.formula.total_cost,107);
+  assert.equal(hydrated.formula.attachment_fee,27);
+  assert.equal(hydrated.formula.management_fee,6.34);
+  assert.equal(hydrated.formula.total_cost,112.04);
   assert.equal(quickAttachmentLineAmount(custom),12);
   assert.equal(formulaAttachmentLineAmount(custom),7);
 });

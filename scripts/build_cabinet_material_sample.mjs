@@ -24,7 +24,7 @@ fixture.items=[
 ].map((sample,index)=>{
   const environment={data_version:bundle.data_version,product_code:'JS',width_mm:1000,height_mm:1800,depth_mm:600,
     single_door_count:1,double_door_count:0,cabinet_body_thickness_mm:1.5,materials,
-    coating_type:'平光',spray_unit_price:30,management_fee_rate:.13,...sample};
+    coating_type:'平光',spray_unit_price:30,...sample};
   const material=calculateCabinetMaterial(bundle.rules,environment);
   const spray=calculateCabinetSpray(sprayBundle.rules,{...environment,data_version:sprayBundle.data_version});
   const auxiliaryProfile=auxiliaryBundle.profiles.find(profile=>profile.product_code==='JS'&&profile.single_door_count===1&&profile.double_door_count===0);
@@ -35,7 +35,7 @@ fixture.items=[
   let result=applyCabinetMaterial({formula_cost:{...base.formula},quick_quote:{...base.quick}},material);
   result=applyCabinetSpray(result,spray);
   result=applyCabinetAuxiliary(result,auxiliary);
-  result=applyCabinetLabor(result,labor);
+  result=applyCabinetLabor(result,labor,base.freight_fee??base.freight??0);
   return {...structuredClone(base),...sample,source_pdf_name:`本地验证-${index+1}.pdf`,product_code:'JS',product_family:'JS',
     width_mm:1000,height_mm:1800,depth_mm:600,single_door_count:1,double_door_count:0,
     cabinet_body_thickness_mm:1.5,formula:result.formula_cost,quick:result.quick_quote,

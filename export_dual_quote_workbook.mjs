@@ -32,7 +32,7 @@ import {
   quickDiscountBreakdown,
   quickDiscountCategory,
   quickOrderLineBreakdown,
-  money, moneySum, moneyProduct, PRICING_BASIS, validateQuoteDisplay,
+  money, moneySum, moneyProduct, PRICING_BASIS, validateQuoteDisplay, MANAGEMENT_FEE_BASIS,
 } from "./quick_discount_rules.mjs";
 
 const [inputPath, outputPath] = process.argv.slice(2);
@@ -993,7 +993,11 @@ function fillSheet(sheet, method) {
         const discountedExpression = discountedCells.length === 1
           ? discountedCells[0]
           : `(${discountedCells.join("+")})`;
-        formulaParts.push(`${discountedExpression}*${col(quickDiscountColumnIndex)}${row}`);
+        const discountedFormula = `${discountedExpression}*${col(quickDiscountColumnIndex)}${row}`;
+        // Preserve the historical ganged compatibility formula unchanged.
+        // Current per-set rows round the discounted unit price before adding
+        // original-price attachments and freight, matching the desktop client.
+        formulaParts.push(!unitSet && isGanged ? discountedFormula : `ROUND(${discountedFormula},2)`);
       }
       if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
       if (quickBreakdown.freightTotal) {
@@ -1363,10 +1367,20 @@ function buildFormulaCostDetailSheet() {
 
     const managementCost = asNumber(quote.management_fee);
     const managementRate = asNumber(quote.management_fee_rate ?? 0.13);
+    const currentManagement = quote.management_fee_basis === MANAGEMENT_FEE_BASIS;
+    const managementBase = currentManagement ? asNumber(quote.management_fee_base) : laborCost;
+    const managementTerms = [materialCost, auxiliaryCost, laborCost, attachmentCost, sprayCost,
+      Math.max(0, asNumber(item.freight_fee ?? item.freight))];
+    const managementExpression = currentManagement
+      ? (['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost'].every(key=>hasFiniteNumber(quote[key]))
+        ? `(${managementTerms.map(value=>value.toFixed(2)).join(' + ')})` : managementBase.toFixed(2))
+      : laborCost.toFixed(2);
     addDetail(
-      itemIndex, item, "管理费用", "管理费用", "人工成本的 13%",
-      `${laborCost.toFixed(2)} × ${managementRate} = ${managementCost.toFixed(2)} 元`,
-      laborCost, "元", managementRate, managementCost, "系统统一公式", `管理费用＝人工成本×${managementRate}`,
+      itemIndex, item, "管理费用", "管理费用",
+      currentManagement ? "材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%" : `历史人工成本的 ${managementRate * 100}%`,
+      `${managementExpression} × ${managementRate} = ${managementCost.toFixed(2)} 元`,
+      managementBase, "元", managementRate, managementCost, "系统统一公式",
+      currentManagement ? "管理费用＝（材料＋辅材＋柜体人工＋附件＋喷涂＋运费）×0.06；不含管理费本身" : `历史管理费用＝人工成本×${managementRate}`,
     );
 
     const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));

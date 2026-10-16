@@ -118,7 +118,8 @@ aggregate = result[0]
 assert aggregate["quick_quote"]["base_price"] == 2200
 assert aggregate["quick_quote"]["total_cost"] == 2200
 assert aggregate["formula_cost"]["material_cost"] == 250
-assert aggregate["formula_cost"]["total_cost"] == 500
+assert aggregate["formula_cost"]["management_fee"] == 28.5
+assert aggregate["formula_cost"]["total_cost"] == 503.5
 assert aggregate["formula_cost"]["net_material_weight_kg"] == 85
 assert aggregate["formula_cost"]["corrected_material_weight_kg"] == 100
 assert aggregate["ganged_weight_kg"] == 100

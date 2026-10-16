@@ -56,8 +56,9 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.match(overlay, /panel_layout\.insertWidget\(0, search\)/);
   assert.match(overlay, /def _sync_quote_specification\(window, text: str, parser=None\)/);
   assert.match(overlay, /lambda value: _sync_quote_specification\(window, value, parser\)/);
-  assert.match(overlay, /attachmentPriceSignPositive/);
-  assert.match(overlay, /attachmentPriceSignNegative/);
+  // The current editor encodes installation-board deductions as a negative
+  // quantity, not the retired positive/negative style buttons. Actual Qt
+  // editing and signed amounts are covered by verify_attachment_negative_quantity.py.
   assert.match(overlay, /attachment_price_sign/);
   assert.match(overlay, /"attachment_category": category/);
   assert.match(overlay, /"category_level1": category/);

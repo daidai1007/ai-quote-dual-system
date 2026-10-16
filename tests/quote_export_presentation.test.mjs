@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import ExcelJS from "@excel.js/exceljs";
+import {money, moneyProduct, quickOrderLineBreakdown, PRICING_BASIS} from "../quick_discount_rules.mjs";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const fixturePath = path.join(projectRoot, "tests", "fixtures", "export_formula_cost_detail.json");
@@ -87,6 +88,98 @@ const closeTo = (actual, expected, label) => {
   assert.ok(Number.isFinite(Number(actual)), `${label} is not numeric: ${actual}`);
   assert.ok(Math.abs(Number(actual) - expected) < 0.01, `${label}: expected ${expected}, got ${actual}`);
 };
+
+// Recalculate the generated arithmetic formulas instead of trusting cached
+// XLSX results. Only cell references, arithmetic and ROUND are accepted.
+const recalculateQuoteFormula = (sheet, cell) => {
+  const value = sheet.getCell(cell).value;
+  if (typeof value !== "object" || !value?.formula) return Number(value || 0);
+  let expression = value.formula.replace(/\b[A-Z]+\d+\b/g,
+    reference => String(recalculateQuoteFormula(sheet, reference)));
+  assert.match(expression, /^[\d\s.eE+*/(),\-ROUND]+$/);
+  return Function("ROUND", `"use strict"; return (${expression});`)(
+    (number, places) => { assert.equal(places, 2); return money(number); },
+  );
+};
+
+for (const modern of [false, true]) {
+  test(modern ? "current ordinary and ganged UI snapshots keep cent-rounded unit times quantity in Excel"
+    : "legacy public amounts stay intact and ganged compatibility formulas retain their baseline", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-unit-rounding-"));
+    try {
+      const cases = JSON.parse(await fs.readFile(new URL("./fixtures/quote_unit_rounding.json", import.meta.url), "utf8"));
+      const payload = JSON.parse(await fs.readFile(doorMatrixFixturePath, "utf8"));
+      payload.items = cases.map(sample => {
+        const attachments = [];
+        if (sample.eligible) attachments.push({item_name:"安装板",category_level1:"安装板",quantity:1,
+          quick_amount:sample.eligible,formula_amount:sample.eligible});
+        if (sample.original) attachments.push({item_name:"其他附件",category_level1:"其他附件",quantity:1,
+          quick_amount:sample.original,formula_amount:sample.original});
+        const fee = money((sample.eligible || 0) + (sample.original || 0));
+        const item = {...structuredClone(payload.items[0]), name:sample.name,
+          quantity:sample.quantity, quick_discount:sample.discount, formula_discount:sample.discount,
+          freight_fee:sample.freight, attachments, ganged_cabinet_count:sample.ganged || 1,
+          quick:{base_price:sample.base,attachment_fee:fee,total_cost:money(sample.base+fee)},
+          formula:{material_cost:sample.base,auxiliary_cost:0,labor_cost:0,spray_cost:0,management_fee:0,
+            attachment_fee:fee,total_cost:money(sample.base+fee)},
+        };
+        const line = quickOrderLineBreakdown({quote:item.quick,attachments,discount:sample.discount,
+          cabinetQuantity:sample.quantity,gangedCabinetCount:sample.ganged || 1,freightFee:sample.freight});
+        assert.equal(line.equivalentUnitTotal, sample.unit, sample.name);
+        assert.equal(line.lineTotal, sample.total, sample.name);
+        if (modern) {
+          item.pricing_basis = PRICING_BASIS;
+          item.quote_display = {name:item.name,specification:"1000*600*2000",quantity:sample.quantity,unit:"台",
+            unit_price:sample.unit,total:sample.total,discount:sample.discount,attachments,
+            attachment_face_price:fee,material_difference:0,quick_base_price:sample.base,
+            quick_attachment_fee:fee,quick_total_cost:item.quick.total_cost};
+        }
+        return item;
+      });
+      const inputPath = path.join(tempDir,"rounding.json");
+      const outputPath = path.join(tempDir,"rounding.xlsx");
+      await fs.writeFile(inputPath,JSON.stringify(payload),"utf8");
+      await runExporter(outputPath,inputPath);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(outputPath);
+      for (const name of ["公式法报价单","快速报价单"]) {
+        const sheet = workbook.getWorksheet(name);
+        cases.forEach((sample,index) => {
+          const row = 11 + index;
+          assert.equal(sheet.getCell(`F${row}`).value,sample.unit,`${name} ${sample.name} unit`);
+          assert.equal(sheet.getCell(`G${row}`).value,sample.total,`${name} ${sample.name} total`);
+          assert.equal(moneyProduct(sheet.getCell(`F${row}`).value,sample.quantity),sample.total);
+          const freightColumn = sheet.getRow(10).values.indexOf("运费");
+          assert.ok(freightColumn > 0, `${name} freight column`);
+          assert.equal(money(sheet.getCell(row,freightColumn).value || 0),
+            moneyProduct(sample.freight,modern ? 1 : sample.quantity), `${sample.name} undiscounted freight`);
+          if (name === "快速报价单") {
+            if (!modern && sample.ganged > 1) {
+              // Frozen baseline from before the rounding task: this separate
+              // historical branch is not part of current per-set exports.
+              assert.equal(sheet.getCell(`J${row}`).value.formula,
+                sample.legacy_original_formula.replaceAll("{row}",String(row)));
+              assert.equal(sheet.getCell(`K${row}`).value.formula,
+                sample.legacy_discounted_formula.replaceAll("{row}",String(row)));
+              assert.equal(sheet.getCell(`K${row}`).value.result,sample.unit);
+            } else {
+              const expectedK = modern ? moneyProduct(sheet.getCell(`J${row}`).value.result,sample.quantity) : sample.unit;
+              assert.equal(recalculateQuoteFormula(sheet,`K${row}`),expectedK,`${sample.name} Excel recalculation`);
+              assert.equal(sheet.getCell(`K${row}`).value.result,expectedK);
+              if (modern) {
+                assert.doesNotMatch(sheet.getCell(`J${row}`).value.formula,/\/D\d+/);
+                assert.equal(sheet.getCell(`K${row}`).value.formula,`ROUND(J${row}*D${row},2)`);
+              }
+            }
+          }
+        });
+        assert.equal(sheet.getCell(`G${11+cases.length}`).value,money(cases.reduce((sum,sample)=>sum+sample.total,0)));
+      }
+    } finally {
+      await fs.rm(tempDir,{recursive:true,force:true});
+    }
+  });
+}
 
 const xlsxEntryNames = (buffer) => {
   const names = [];
@@ -370,7 +463,7 @@ test("formal workbook preserves the legacy desktop quotation format", async () =
     );
     assert.equal(
       quickFormulaCell.value.formula,
-      `L11*${quickSheet.getColumn(discountColumn).letter}11+M11+N11`,
+      `ROUND(ROUND(L11*${quickSheet.getColumn(discountColumn).letter}11,2)+M11+N11,2)`,
     );
     closeTo(quickFormulaCell.value.result, 3200, "quick Excel unit formula cached result");
 
@@ -478,7 +571,7 @@ test("quick workbook uses popup attachment rows and omits synthetic fee deltas",
     assert.equal(otherColumn, -1);
     assert.equal(headers.includes("配置变形说明"), false);
     assert.equal(headers.includes("配置变形"), false);
-    assert.equal(sheet.getCell(11, 11).value.formula, `(L11+M11)*${sheet.getColumn(discountColumn).letter}11`);
+    assert.equal(sheet.getCell(11, 11).value.formula, `ROUND(ROUND((L11+M11)*${sheet.getColumn(discountColumn).letter}11,2),2)`);
     closeTo(sheet.getCell(11, 6).value, 990, "popup attachment row total");
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -531,10 +624,8 @@ test("workbook uses final attachment quantities for every ordinary row", async (
     closeTo(quickSheet.getCell(11, headerIndex("JS、JP后背板改为单开门")).value, 150, "door-transform manual amount");
     closeTo(quickSheet.getCell(11, headerIndex("门安装条")).value, 20, "door strip original-price amount");
     closeTo(quickSheet.getCell(11, headerIndex("运费")).value, 150, "quick final freight");
-    assert.match(
-      quickSheet.getCell("K11").value.formula,
-      new RegExp(`${quickSheet.getColumn(headerIndex("运费")).letter}11/3`),
-    );
+    assert.equal(recalculateQuoteFormula(quickSheet,"K11"),1150,
+      "Excel recalculation preserves the rounded unit price with freight outside discount");
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     closeTo(formulaSheet.getCell("F11").value, 822.4, "formula unit scales ordinary attachment rows");

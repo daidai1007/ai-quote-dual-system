@@ -77,9 +77,11 @@ test('batch reuse keeps each row local attachment amounts and labor adjustments 
   const h=harness();
   const result=await h.service.hydrateDocument({items:[{...item(),labor_multiplier:2,attachments:[attachment,
     {custom:true,item_name:'临时附件',quantity:1,quick_amount:6,formula_amount:5}]},item()]});
-  assert.equal(result.items[0].formula.total_cost,116.3);
+  assert.equal(result.items[0].formula.management_fee,6.82);
+  assert.equal(result.items[0].formula.total_cost,120.52);
   assert.equal(result.items[0].quick.total_cost,206);
-  assert.equal(result.items[1].formula.total_cost,100);
+  assert.equal(result.items[1].formula.management_fee,5.92);
+  assert.equal(result.items[1].formula.total_cost,104.62);
   assert.equal(result.items[1].quick.total_cost,200);
   assert.equal(result.items[1].attachments.length,1);
 });

@@ -73,7 +73,9 @@ test('labor and management replace formula components without changing quick quo
   const labor={data_version:'labor-v1',labor_cost:300,management_fee:39,management_fee_rate:.13,
     match_method:'LINEAR_WEIGHT',labor_billable_weight_kg:10,excluded_part_names:[],matched_rule:{source_sheet:'JS',source_row_no:3,source_formula:'x'}};
   const result=applyCabinetLabor({formula_cost:{labor_cost:100,management_fee:13,total_cost:1000},quick_quote:quick},labor);
-  assert.equal(result.formula_cost.total_cost,1226);assert.deepEqual(result.quick_quote,quick);
+  assert.equal(result.formula_cost.management_fee,71.22);
+  assert.equal(result.formula_cost.management_fee_rate,.06);
+  assert.equal(result.formula_cost.total_cost,1258.22);assert.deepEqual(result.quick_quote,quick);
 });
 
 test('every imported labor rule is executable and JM stainless gap is explicit',()=>{

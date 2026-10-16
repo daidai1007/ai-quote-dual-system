@@ -1,4 +1,13 @@
 from types import SimpleNamespace
+import os
+from pathlib import Path
+import sys
+import unittest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "desktop_client"))
 
 from PySide6.QtWidgets import QApplication, QLineEdit, QTableWidget, QTableWidgetItem
 
@@ -123,6 +132,7 @@ def test_export_snapshot_freezes_exact_visible_quote_row_without_mutating_draft(
         "attachment_face_price": 15.0,
         "material_difference": 0.0,
         "remark": table.item(10, 7).text(),
+        "attachment_source": "popup_v1",
         "attachments": [copper],
         "quick_total_cost": 560,
         "quick_attachment_fee": 15,
@@ -169,3 +179,13 @@ def test_recovered_core_export_receives_frozen_snapshot_and_restores_live_draft(
     assert seen[0]["items"][0]["quote_display"]["attachments"][0]["quick_amount"] == 60
     assert window.draft_items is live_items
     assert live_items[0]["attachments"][0]["quick_amount"] == 51
+
+
+if __name__ == "__main__":
+    suite = unittest.TestSuite(
+        unittest.FunctionTestCase(fn)
+        for name, fn in list(globals().items())
+        if name.startswith("test_") and callable(fn)
+    )
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    sys.exit(0 if result.wasSuccessful() else 1)

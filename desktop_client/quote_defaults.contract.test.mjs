@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import {quickOrderLineBreakdown} from '../quick_discount_rules.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -58,15 +59,25 @@ test('door defaults use the strict 800 mm boundary and preserve manual state', a
 test('manual freight persists independently and remains outside both discounts', async () => {
   const main = await fs.readFile(path.join(projectRoot, 'desktop_client', 'main.py'), 'utf8');
   const layout = await fs.readFile(path.join(projectRoot, 'desktop_client', 'layout_refresh.py'), 'utf8');
-  const quickRules = await fs.readFile(path.join(projectRoot, 'quick_discount_rules.mjs'), 'utf8');
-  const exporter = await fs.readFile(path.join(projectRoot, 'export_dual_quote_workbook.mjs'), 'utf8');
 
   assert.match(main, /field\(7, "运费", self\.freight_spin\)/);
   assert.match(main, /"freight_fee": self\.freight_spin\.value\(\)/);
   assert.match(main, /self\.freight_spin\.setValue\(float\(item\.get\("freight_fee", 0\) or 0\)\)/);
-  assert.match(layout, /freight_total = freight_fee \* cabinets/);
   assert.match(layout, /item\["freight_fee"\] = freight_fee/);
-  assert.match(quickRules, /\+ originalPriceAttachmentTotal \+ freightTotal/);
-  assert.match(exporter, /"其他附件\/差额"\] : \[\]\), "运费", "折扣"/);
-  assert.match(exporter, /values\[27\] = formulaBreakdown\.freightTotal/);
+  for (const discount of [0.1, 0.75, 1]) {
+    for (const cabinetQuantity of [1, 3, 10]) {
+      for (const gangedCabinetCount of [1, 2]) {
+        const line = quickOrderLineBreakdown({
+          quote:{base_price:1000,attachment_fee:0,total_cost:1000},
+          discount,cabinetQuantity,gangedCabinetCount,freightFee:36.67,
+        });
+        const expectedUnitCents = Math.round(100000 * discount) + 3667;
+        assert.equal(line.equivalentUnitTotal, expectedUnitCents / 100);
+        assert.equal(line.lineTotal, expectedUnitCents * cabinetQuantity / 100);
+        assert.equal(line.freightTotal, 3667 * cabinetQuantity / 100);
+      }
+    }
+  }
+  // XLSX freight column positions and values are checked on generated
+  // workbooks in quote_export_presentation.test.mjs, not by source spelling.
 });

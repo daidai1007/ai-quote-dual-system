@@ -163,6 +163,7 @@ from quote_defaults import (
 )
 from quote_remark_rules import door_phrase_for_item, replace_door_configuration_phrase
 from quick_discount_rules import (
+    apply_management_fee,
     money_sum, money_product,
     attachment_excluded_from_discount,
     effective_attachment_line_amount,
@@ -247,8 +248,7 @@ from ganged_cabinet_rules import (
 
 
 WIDGET_MAX = 16_777_215
-# 管理费固定为人工成本的 13%（见运行规则：管理费 = 人工成本 × 0.13）。
-MANAGEMENT_FEE_RATE = 0.13
+# 管理费统一由 apply_management_fee 按六项成本及运费的 6% 计算。
 VALID_DOOR_COMBINATIONS = {(1, 0), (0, 1), (0, 2), (2, 0), (1, 1)}
 JA_JE_DOOR_COMBINATIONS = {(1, 0), (0, 1)}
 SINGLE_DOOR_ONLY_COMBINATIONS = {(1, 0)}
@@ -969,7 +969,7 @@ class _GangedQuoteWorker(QThread):
                 risks.extend(result.get("risk_flags") or [])
             aggregate = {
                 "quote_id": self.payloads[0].get("quote_id", "") if self.payloads else "",
-                "formula_cost": formula,
+                "formula_cost": apply_management_fee(formula, (self.attachment_payload or {}).get("freight_fee", 0)),
                 "quick_quote": quick,
                 "risk_flags": risks,
                 "ganged_cabinet_results": results,
@@ -2274,6 +2274,10 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
     if stored_attachment_fee is None:
         stored_attachment_fee = listed
     attachment_fee = listed
+    freight_fee = max(0.0, _safe_float(item.get("freight_fee", item.get("freight"))) or 0.0)
+    quote = apply_management_fee({**quote, "attachment_fee": listed,
+        "total_cost": (_safe_float(quote.get("total_cost")) or 0.0) - stored_attachment_fee + listed}, freight_fee)
+    stored_attachment_fee = listed
     base = (_safe_float(quote.get("total_cost")) or 0.0) - stored_attachment_fee
     original_price_attachment_total = sum(
         effective_formula_attachment_line_amount(row, cabinets, split_count)
@@ -2288,10 +2292,6 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
         and not attachment_excluded_from_discount(row)
     )
     effective = discounted_attachment_total + original_price_attachment_total
-    freight_fee = max(
-        0.0,
-        _safe_float(item.get("freight_fee", item.get("freight"))) or 0.0,
-    )
     freight_total = money_product(freight_fee, cabinets)
     unit_discounted = money_sum(formula_attachment_line_amount(row) for row in attachments
                                 if not formula_attachment_excluded(row) and not attachment_excluded_from_discount(row))
@@ -5337,14 +5337,22 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             return
 
         labor = base_labor * multiplier
-        management = labor * MANAGEMENT_FEE_RATE
         rendered = dict(base)
         rendered["labor_cost"] = labor
-        rendered["management_fee"] = management
-        rendered["total_cost"] = base_total - base_labor - base_management + labor + management
+        rendered["total_cost"] = base_total - base_labor + labor
+        if isinstance(getattr(self, "attachments", None), list):
+            popup_fee = money_sum(formula_attachment_line_amount(row) for row in self.attachments
+                                  if not formula_attachment_excluded(row))
+            rendered["total_cost"] += popup_fee - (_safe_float(rendered.get("attachment_fee")) or 0)
+            rendered["attachment_fee"] = popup_fee
+        freight = getattr(getattr(self, "freight_spin", None), "value", lambda: 0.0)()
+        rendered = apply_management_fee(rendered, freight)
 
         self.current_result["formula"] = rendered
         original_refresh(self)
+        self.current_result["formula"] = rendered
+        if "management" in labels:
+            labels["management"].setText(money(rendered.get("management_fee")))
         area_value = _safe_float(rendered.get("product_area_m2"))
         if area_value is not None and "area" in labels:
             labels["area"].setText(f"{area_value:,.1f} m²")

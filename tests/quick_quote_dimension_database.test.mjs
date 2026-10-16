@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import test, {after} from 'node:test';
+import test, {after, before} from 'node:test';
 import {fileURLToPath} from 'node:url';
+import {startLocalPostgres} from './helpers/local_postgres.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const psql=process.env.ATTACHMENT_TEST_PSQL||'G:/PostgreSQL/18/bin/psql.exe';
 const db=`quick_dimension_test_${Date.now()}`;
-const base=['-X','-w','-h','127.0.0.1','-p','55439','-U','attachment_test','-v','ON_ERROR_STOP=1','-A','-t','-q'];
-const sql=(source,database=db)=>execFileSync(psql,[...base,'-d',database],{input:source,encoding:'utf8',stdio:['pipe','pipe','pipe']}).trim();
+let cluster;
+before(async()=>{cluster=await startLocalPostgres();});
+const sql=(source,database=db)=>cluster.query(source,database);
 
 test('database quick matcher uses width first, then nearest perimeter, independent of door/model',()=>{
   sql(`CREATE DATABASE ${db};`,'postgres');
@@ -61,7 +61,4 @@ test('database quick matcher uses width first, then nearest perimeter, independe
   assert.doesNotMatch(rollbackDefinition,/width_distance/);
 });
 
-after(()=>{
-  try{sql(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${db}'; DROP DATABASE IF EXISTS ${db};`,'postgres');}
-  catch{}
-});
+after(async()=>{await cluster?.close();});

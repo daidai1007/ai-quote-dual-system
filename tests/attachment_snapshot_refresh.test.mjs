@@ -100,7 +100,8 @@ test('filled glass dimensions create a fresh valid snapshot; old ERROR remains u
   assert.notEqual(result.quote_line_id,oldId);
   assert.equal(result.attachments[0].status,'CALCULATED');
   assert.equal(result.attachments[0].formula_amount,8.8);
-  assert.equal(result.formula_cost.total_cost,158.8);
+  assert.equal(result.formula_cost.management_fee,9.23);
+  assert.equal(result.formula_cost.total_cost,163.03);
   assert.equal(result.risk_flags.some(risk=>risk.code==='attachment_error'),false);
   assert.deepEqual(h.old,unchanged);
   const item={...h.environment,quote_line_id:result.quote_line_id,attachment_contract:2,

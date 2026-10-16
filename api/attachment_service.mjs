@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
 import { materialUnitPriceFromSidebar } from './material_price_override.mjs';
-import {PRICING_BASIS, money, moneySum, quickAttachmentLineAmount, validateQuoteDisplay} from '../quick_discount_rules.mjs';
+import {PRICING_BASIS, money, moneySum, quickAttachmentLineAmount, validateQuoteDisplay, applyManagementFee} from '../quick_discount_rules.mjs';
 
 // SQL values are always UTF-8 hex literals; formulas are evaluated only by attachment_cost.
 export const sqlValue = value => value == null ? 'NULL' : typeof value === 'number'
@@ -80,13 +80,87 @@ const addCustomAmount=(quote,amount)=>{
   if(output.total_cost!=null) output.total_cost=round(Number(output.total_cost)+amount);
   return output;
 };
-export function applyAttachmentTotals(base,rows) {
+export function applyAttachmentTotals(base,rows,freightFee=0) {
   const totals=attachmentTotals(rows),formula={...(base.formula_cost||{})},quick={...(base.quick_quote||{})};
   formula.total_cost=formula.total_cost==null||totals.formula_attachment_fee==null?null:round(Number(formula.total_cost)-Number(formula.attachment_fee||0)+totals.formula_attachment_fee);
   quick.total_cost=quick.total_cost==null||totals.quick_attachment_fee==null?null:round(Number(quick.total_cost)-Number(quick.attachment_fee||0)+totals.quick_attachment_fee);
   formula.attachment_fee=totals.formula_attachment_fee;quick.attachment_fee=totals.quick_attachment_fee;
-  return {...base,formula_cost:formula,quick_quote:quick,attachments:rows,attachment_contract:2,
+  return {...base,formula_cost:applyManagementFee(formula,freightFee),quick_quote:quick,attachments:rows,attachment_contract:2,
     risk_flags:[...(base.risk_flags||[]),...totals.errors.map(r=>({code:'attachment_error',severity:'blocker',message:`${r.item_name}：${r.error}`}))]};
+}
+
+function popupDocumentSnapshot(item, saved) {
+  const visible=item.quote_display?.attachments;
+  if(!Array.isArray(visible)||visible.length>100) throw new Error('附件显示快照必须为不超过100项的数组');
+  const provided=item.attachments;
+  if(!Array.isArray(provided)||provided.length!==visible.length) throw new Error('附件显示快照与提交清单不一致');
+  const selection=row=>row?.custom===true?customAttachmentInput(row):attachmentInput(row);
+  if(canonical(provided.map(selection))!==canonical(visible.map(selection)))
+    throw new Error('附件显示快照与提交选择不一致');
+  const rows=visible.map(source=>{
+    const {attachment_selection_id,quote_line_id,...popupRow}=source;
+    if(source?.custom===true){
+      if(source.formula_amount==null||!Number.isFinite(Number(source.formula_amount)))
+        throw new Error(`${source.item_name||'人工附件'}：人工新增附件成本未完成`);
+      if(source.quick_amount==null||!Number.isFinite(Number(source.quick_amount)))
+        throw new Error(`${source.item_name||'人工附件'}：人工新增附件金额未完成`);
+      return {...popupRow,...customAttachmentInput(source)};
+    }
+    const selected=attachmentInput(source);
+    const label=String(source.item_name||source.model_code||'未命名附件');
+    const reject=reason=>{throw Object.assign(new Error(`${label}：${reason}`),
+      {attachment_name:label,attachment_price_id:selected.attachment_price_id});};
+    if(selected.quantity>10000) reject('附件数量超出范围');
+    if(selected.ganged_cabinet_index!=null&&selected.ganged_cabinet_index>=Number(saved.environment.ganged_cabinet_count||1))
+      reject('附件对应的子柜不存在');
+    if(!['FIXED','CALCULATED','QUICK_ONLY'].includes(source.status)||source.pending_manual_dimensions?.length)
+      reject(source.error||'附件成本或尺寸未完成，请先在附件弹窗完成计算');
+    if(selected.attachment_price_sign===-1&&(!label.includes('安装板')||label.includes('安装板单发')))
+      reject('该附件不允许扣减');
+    const rawQuick=source.quick_amount_override!=null&&source.custom_amount_edited===true
+      ?source.quick_amount_override:source.quick_amount;
+    if(rawQuick==null||!Number.isFinite(Number(rawQuick))||Math.abs(Number(rawQuick))>1e8)
+      reject('附件金额无效');
+    const quick=quickAttachmentLineAmount(source);
+    if(!Number.isFinite(quick)||Math.abs(quick)>1e8) reject('附件金额无效');
+    const cost=source.status==='QUICK_ONLY'?0:source.formula_amount;
+    if(cost==null||!Number.isFinite(Number(cost))||Math.abs(Number(cost))>1e8)
+      reject('附件成本无效');
+    if(quick*selected.attachment_price_sign<0||Number(cost)*selected.attachment_price_sign<0)
+      reject('附件金额或成本与加减符号不一致');
+    return {...popupRow,...selected,quick_amount:quick,formula_amount:money(cost)};
+  });
+  const result=saved.environment.quote_result;
+  if(!result?.formula_cost||!result?.quick_quote) throw new Error('柜体成本快照不完整，请重新计算整柜');
+  let formula={...result.formula_cost};
+  const quick={...result.quick_quote};
+  let baseCost;
+  if(formula.total_cost!=null) baseCost=moneySum([formula.total_cost,-Number(formula.attachment_fee||0)]);
+  else {
+    const components=['material_cost','auxiliary_cost','labor_cost','spray_cost','management_fee'];
+    if(components.some(key=>formula[key]==null||!Number.isFinite(Number(formula[key]))))
+      throw new Error('柜体成本快照不完整，请重新计算整柜');
+    baseCost=components.reduce((sum,key)=>sum+Number(formula[key]),0);
+  }
+  const multiplier=Number(item.labor_multiplier??1);
+  if(!Number.isFinite(multiplier)||multiplier<0.01||multiplier>10) throw new Error('人工倍率必须在0.01至10之间');
+  if(formula.labor_cost!=null&&formula.management_fee!=null){
+    const labor=Number(formula.labor_cost)*multiplier;
+    baseCost=baseCost-Number(formula.labor_cost)+labor;
+    formula.labor_cost=labor;
+  }
+  formula.attachment_fee=moneySum(rows.map(row=>row.formula_amount));
+  formula.total_cost=moneySum([baseCost,formula.attachment_fee]);
+  formula=applyManagementFee(formula,item.freight_fee??item.freight??0);
+  const basePrice=quick.base_price??(quick.total_cost==null?NaN:Number(quick.total_cost)-Number(quick.attachment_fee||0));
+  if(!Number.isFinite(Number(basePrice))) throw new Error('柜体面价快照不完整，请重新计算整柜');
+  quick.base_price=money(basePrice);
+  quick.attachment_fee=moneySum(rows.map(quickAttachmentLineAmount));
+  quick.total_cost=moneySum([quick.base_price,quick.attachment_fee]);
+  const hydrated={...item,attachments:rows,formula,quick,formula_base:result.formula_cost,
+    quote_display:{...item.quote_display,attachments:rows}};
+  validateQuoteDisplay(hydrated);
+  return hydrated;
 }
 
 export function createAttachmentService({runPsql,calculateBase,env=process.env,onProgress=()=>{},onTiming=()=>{}}) {
@@ -161,7 +235,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
   async function persistCalculated(input,previewed,base) {
     onProgress('snapshot');
     const lineId=previewed.environment.quote_line_id;
-    const result={...applyAttachmentTotals(base,previewed.attachments),quote_id:input.quote_id,quote_line_id:lineId};
+    const result={...applyAttachmentTotals(base,previewed.attachments,input.freight_fee??input.freight??0),quote_id:input.quote_id,quote_line_id:lineId};
     const environment={...previewed.environment,model_code:input.model_code||'',quote_result:{...result,attachments:undefined}};
     const rows=previewed.attachments;
     const commands=[`INSERT INTO calc.attachment_quote_line(quote_line_id,quote_id,product_code,environment_snapshot)
@@ -280,7 +354,12 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     'attachments',coalesce((SELECT jsonb_agg(s.cost_snapshot||jsonb_build_object('attachment_selection_id',s.attachment_selection_id,'quote_line_id',s.quote_line_id) ORDER BY s.attachment_selection_id)
       FROM calc.attachment_selection s WHERE s.quote_line_id=l.quote_line_id),'[]'))
     FROM calc.attachment_quote_line l WHERE quote_line_id=${sqlValue(uuid(lineId))}::uuid;`;}
-  function snapshotsSql(lineIds) {return `WITH selected_lines AS (
+  function snapshotsSql(lineIds, attachmentLineIds=lineIds) {
+    if(!attachmentLineIds.length) return `SELECT coalesce(jsonb_object_agg(l.quote_line_id::text,
+      jsonb_build_object('environment',l.environment_snapshot,'attachments','[]'::jsonb)),'{}'::jsonb)
+      FROM calc.attachment_quote_line l
+      WHERE l.quote_line_id IN (${lineIds.map(lineId=>`${sqlValue(lineId)}::uuid`).join(',')});`;
+    return `WITH selected_lines AS (
       SELECT l.quote_line_id,l.environment_snapshot FROM calc.attachment_quote_line l
       WHERE l.quote_line_id IN (${lineIds.map(lineId=>`${sqlValue(lineId)}::uuid`).join(',')})
     ), selection_snapshots AS (
@@ -288,6 +367,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         'attachment_selection_id',s.attachment_selection_id,'quote_line_id',s.quote_line_id)
         ORDER BY s.attachment_selection_id) AS attachments
       FROM calc.attachment_selection s JOIN selected_lines l USING(quote_line_id)
+      ${attachmentLineIds.length===lineIds.length?'':`WHERE s.quote_line_id IN (${attachmentLineIds.map(lineId=>`${sqlValue(lineId)}::uuid`).join(',')})`}
       GROUP BY s.quote_line_id
     )
     SELECT coalesce(jsonb_object_agg(l.quote_line_id::text,jsonb_build_object(
@@ -299,7 +379,10 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     // validation or mutable results. Every later request reads fresh data.
     const lineIds=[...new Set(input.items.filter(item=>item?.attachment_contract===2)
       .map(item=>uuid(item.quote_line_id).toLowerCase()))];
-    const snapshots=lineIds.length?await query(snapshotsSql(lineIds)):{};
+    const attachmentLineIds=[...new Set(input.items.filter(item=>item?.attachment_contract===2
+      &&!(item.pricing_basis===PRICING_BASIS&&item.quote_display?.attachment_source==='popup_v1'))
+      .map(item=>uuid(item.quote_line_id).toLowerCase()))];
+    const snapshots=lineIds.length?await query(snapshotsSql(lineIds,attachmentLineIds)):{};
     const items=[];
     for(const [itemIndex,item] of (input.items||[]).entries()){
       try {
@@ -319,6 +402,13 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       if(changedKey) throw new Error(`报价环境已变化（${changedKey}），请重新计算附件`);
       if(Number(item.ganged_cabinet_count||1)!==Number(saved.environment.ganged_cabinet_count||1)
         ||canonical(item.ganged_cabinets||[])!==canonical(saved.environment.ganged_cabinets||[])) throw new Error('并柜明细已变化，请重新计算附件');
+      if(item.pricing_basis===PRICING_BASIS&&item.quote_display?.attachment_source==='popup_v1'){
+        // Keep the cabinet calculation anchored to its original snapshot.
+        // Completed popup rows are the quote-local attachment source; document
+        // generation never looks up the catalogue or persists/reprices them.
+        items.push(popupDocumentSnapshot(item,saved));
+        continue;
+      }
       if(canonical(catalogAttachments.map(attachmentInput))!==canonical(saved.attachments.map(attachmentInput))) throw new Error('附件选择或人工参数已变化，请重新计算');
       const failedAttachments=saved.attachments.filter(a=>a.status==='ERROR');
       if(failedAttachments.length){
@@ -335,14 +425,13 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       }
       const result=saved.environment.quote_result;
       let formula={...result.formula_cost};
-      // Preserve the existing PRODUCT labor adjustment (13% management), never
-      // apply it to attachment labor or introduce an attachment surcharge.
+      // Adjust cabinet labor only; the final six-component base determines management.
       const multiplier=Number(item.labor_multiplier??1);
       if(!Number.isFinite(multiplier)||multiplier<0.01||multiplier>10) throw new Error('人工倍率必须在0.01至10之间');
       if(formula.total_cost!=null && formula.labor_cost!=null && formula.management_fee!=null){
-        const labor=Number(formula.labor_cost)*multiplier,management=labor*0.13;
-        formula.total_cost=Number(formula.total_cost)-Number(formula.labor_cost)-Number(formula.management_fee)+labor+management;
-        formula.labor_cost=labor;formula.management_fee=management;
+        const labor=Number(formula.labor_cost)*multiplier;
+        formula.total_cost=Number(formula.total_cost)-Number(formula.labor_cost)+labor;
+        formula.labor_cost=labor;
       }
       const customFormulaTotal=customAttachments.reduce((sum,row)=>sum+Number(row.formula_amount),0);
       const customQuickTotal=customAttachments.reduce((sum,row)=>sum+Number(row.quick_amount),0);
@@ -385,6 +474,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         formula={...formula,total_cost:moneySum([Number(formula.total_cost||0),-Number(formula.attachment_fee||0),formulaFee]),attachment_fee:formulaFee};
         validateQuoteDisplay({...item,attachments:rows,formula,quick});
       }
+      formula=applyManagementFee(formula,item.freight_fee??item.freight??0);
       // A frozen service result remains independent of later catalog and price updates.
       items.push({...item,attachments:rows,
         ...(item.pricing_basis===PRICING_BASIS?{quote_display:{...item.quote_display,attachments:rows}}:{}),formula_base:result.formula_cost,

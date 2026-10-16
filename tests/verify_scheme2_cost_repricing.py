@@ -50,13 +50,13 @@ assert formula["material_cost"] == 222.75
 scheme2_ui._apply_cost_control(window, "waste_factor", 1.5)
 assert formula["material_cost"] == 278.44
 scheme2_ui._apply_cost_control(window, "labor_discount", 0.8)
-assert formula["labor_cost"] == 64.0 and formula["management_fee"] == 8.0
+assert formula["labor_cost"] == 64.0 and formula["management_fee"] == 22.95
 scheme2_ui._apply_cost_control(window, "surface_price", 30.0)
 assert formula["spray_cost"] == 46.15
-assert formula["total_cost"] == 396.59
+assert formula["total_cost"] == 411.91
 scheme2_ui._apply_cost_control(window, "surface_price", 0.0)
 assert formula["spray_cost"] == 0.0
-assert formula["total_cost"] == 350.44
+assert formula["total_cost"] == 362.99
 assert scheme2_ui._current_material_unit_price(item) == 20.0
 
 # A workspace moved from another computer may contain an incomplete legacy

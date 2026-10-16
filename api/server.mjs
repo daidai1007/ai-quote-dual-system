@@ -30,7 +30,7 @@ const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const QUOTE_SCHEME_PRINCIPALS = loadPrincipalMap();
 const API_BUILD = '2026-09-11-complete-cost-catalogs-v5';
-const DEPLOYMENT_BUILD = '20260911-complete-cost-catalogs-v5';
+const DEPLOYMENT_BUILD = '20261016-management6-v1';
 const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -334,7 +334,7 @@ const createQuoteServices = (readExecutor = runPsql) => {
       : input;
     const output=await runPsql(`BEGIN;\n${buildSql(databaseInput)}\nROLLBACK;`);
     const result = JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).at(-1));
-    return applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(applyCabinetMaterial(result,material),spray),auxiliary),labor);
+    return applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(applyCabinetMaterial(result,material),spray),auxiliary),labor,input.freight_fee??input.freight??0);
   };
   for (const [name, service] of Object.entries({material: cabinetMaterialService, spray: cabinetSprayService,
     labor: cabinetLaborService, auxiliary: cabinetAuxiliaryService})) {
@@ -383,7 +383,7 @@ const calculateDualQuote = async (input, services = quoteServices) => {
   if (!output) throw new Error('database returned no quote result');
   const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
   const result = applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(
-    applyCabinetMaterial(JSON.parse(jsonLine),cabinetMaterial),cabinetSpray),cabinetAuxiliary),cabinetLabor);
+    applyCabinetMaterial(JSON.parse(jsonLine),cabinetMaterial),cabinetSpray),cabinetAuxiliary),cabinetLabor,input.freight_fee??input.freight??0);
   result.cost_details={
     version:1,
     material_parts:cabinetMaterial?.part_details||[],
@@ -391,8 +391,8 @@ const calculateDualQuote = async (input, services = quoteServices) => {
     auxiliary_parts:cabinetAuxiliary?.lines||[],
     spray_parts:cabinetSpray?.part_details||[],
     labor: cabinetLabor?{
-      labor_cost:cabinetLabor.labor_cost,management_fee:cabinetLabor.management_fee,
-      management_fee_rate:cabinetLabor.management_fee_rate,method:cabinetLabor.match_method,
+      labor_cost:cabinetLabor.labor_cost,management_fee:result.formula_cost.management_fee,
+      management_fee_rate:result.formula_cost.management_fee_rate,method:cabinetLabor.match_method,
       billable_weight_kg:cabinetLabor.labor_billable_weight_kg,matched_rule:cabinetLabor.matched_rule,
     }:null,
     quote_local_overrides:{

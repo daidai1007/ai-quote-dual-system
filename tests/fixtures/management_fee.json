@@ -1,0 +1,9 @@
+[
+  {"name":"six current costs", "quote":{"material_cost":100,"auxiliary_cost":20,"labor_cost":30,"attachment_fee":40,"spray_cost":10,"management_fee":3.9,"total_cost":203.9},"freight":50,"base":250,"fee":15,"total":215},
+  {"name":"manual attachment cost", "quote":{"material_cost":100,"auxiliary_cost":20,"labor_cost":30,"attachment_fee":60,"spray_cost":10,"management_fee":15,"total_cost":235},"freight":50,"base":270,"fee":16.2,"total":236.2},
+  {"name":"deducted installation board", "quote":{"material_cost":100,"auxiliary_cost":20,"labor_cost":30,"attachment_fee":-10,"spray_cost":10},"freight":50,"base":200,"fee":12,"total":162},
+  {"name":"all zero", "quote":{"material_cost":0,"auxiliary_cost":0,"labor_cost":0,"attachment_fee":0,"spray_cost":0},"freight":0,"base":0,"fee":0,"total":0},
+  {"name":"half up cent", "quote":{"material_cost":0.75,"auxiliary_cost":0,"labor_cost":0,"attachment_fee":0,"spray_cost":0},"freight":0,"base":0.75,"fee":0.05,"total":0.8},
+  {"name":"preserve incomplete historical base", "quote":{"total_cost":1000,"management_fee":13,"labor_cost":100,"attachment_fee":20},"freight":10,"base":997,"fee":59.82,"total":1046.82},
+  {"name":"pending quote remains incomplete", "quote":{"total_cost":null,"attachment_fee":null},"freight":10,"base":null,"fee":null,"total":null}
+]

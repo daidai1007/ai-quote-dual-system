@@ -4,6 +4,8 @@ const asFiniteNumber = (value, fallback = 0) =>
   hasFiniteNumber(value) ? Number(value) : fallback;
 
 export const PRICING_BASIS = 'per_unit_set_v1';
+export const MANAGEMENT_FEE_RATE = 0.06;
+export const MANAGEMENT_FEE_BASIS = 'pre_management_cost_with_freight_v1';
 // Decimal coefficient + scale, without a dependency or binary half-cent rounding.
 const decimal = (value = 0) => {
   const text = String(value == null || value === '' ? 0 : value).trim();
@@ -34,6 +36,20 @@ export const moneyProduct = (...values) => {
   }, [1n, 0]);
   return Number(roundedCents(coefficient, scale)) / 100;
 };
+
+// Formula totals exclude freight itself, but freight participates in the fee.
+// Historical partial snapshots retain their unlisted base costs via total_cost.
+export function applyManagementFee(quote = {}, freightFee = 0) {
+  const result={...quote,management_fee_rate:MANAGEMENT_FEE_RATE,management_fee_basis:MANAGEMENT_FEE_BASIS};
+  const keys=['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost'];
+  const base=keys.every(key=>hasFiniteNumber(quote[key]))?moneySum(keys.map(key=>quote[key]))
+    :hasFiniteNumber(quote.total_cost)?moneySum([quote.total_cost,-asFiniteNumber(quote.management_fee)]):null;
+  if(base===null) return {...result,management_fee_base:null,management_fee:null,total_cost:null};
+  result.management_fee_base=moneySum([base,Math.max(0,asFiniteNumber(freightFee))]);
+  result.management_fee=moneyProduct(result.management_fee_base,MANAGEMENT_FEE_RATE);
+  result.total_cost=moneySum([base,result.management_fee]);
+  return result;
+}
 
 export const QUICK_DISCOUNT_ATTACHMENT_CATEGORIES = Object.freeze([
   "底座",

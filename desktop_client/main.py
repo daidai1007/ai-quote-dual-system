@@ -60,9 +60,11 @@ from quote_defaults import (
 )
 from quote_remark_rules import door_phrase_for_item, replace_door_configuration_phrase
 from quick_discount_rules import (
+    apply_management_fee,
     attachment_excluded_from_discount,
     quick_attachment_line_amount,
     formula_attachment_line_amount,
+    formula_attachment_excluded,
     quick_discount_breakdown,
 )
 from attachment_category_browser import (
@@ -77,8 +79,7 @@ from attachment_category_browser import (
     valid_selection_prefix,
 )
 
-# 管理费固定为人工成本的 13%（见运行规则：管理费 = 人工成本 × 0.13）。
-MANAGEMENT_FEE_RATE = 0.13
+# 管理费按材料、辅材、柜体人工、附件、喷涂及运费合计的 6% 计算。
 DEFAULT_RENDER_API_URL = (
     "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual"
 )
@@ -3080,10 +3081,15 @@ class MainWindow(QMainWindow):
         if labor is not None and management is not None and total is not None:
             multiplier = float(self.labor_multiplier.value())
             new_labor = float(labor) * multiplier
-            new_management = new_labor * MANAGEMENT_FEE_RATE
             formula["labor_cost"] = new_labor
-            formula["management_fee"] = new_management
-            formula["total_cost"] = float(total) - float(labor) - float(management) + new_labor + new_management
+            formula["total_cost"] = float(total) - float(labor) + new_labor
+        if isinstance(getattr(self, "attachments", None), list):
+            popup_fee = sum(formula_attachment_line_amount(row) for row in self.attachments
+                            if not formula_attachment_excluded(row))
+            if formula.get("total_cost") is not None:
+                formula["total_cost"] += popup_fee - float(formula.get("attachment_fee") or 0)
+            formula["attachment_fee"] = popup_fee
+        formula = apply_management_fee(formula, freight)
         self.current_result["formula"] = formula
         quick = self.current_result["quick"]
         values = {"material": formula.get("material_cost"), "auxiliary": formula.get("auxiliary_cost"), "labor": formula.get("labor_cost"), "attachment": formula.get("attachment_fee"), "spray": formula.get("spray_cost"), "management": formula.get("management_fee")}

@@ -7,12 +7,12 @@ import sys
 import time
 import unittest
 from decimal import Decimal
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'desktop_client'))
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QImage, QPainter, QPdfWriter, QTabletEvent, QPointingDevice, QInputDevice
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QGraphicsView, QLabel, QMessageBox, QPushButton
@@ -28,6 +28,8 @@ ns = v3_launcher.load_v3_namespace()
 ns['MainWindow'].load_catalogs = lambda self: None
 # Any accidental API use fails closed instead of reaching production.
 ns['ApiWorker'].run = lambda self: self.failed.emit('offline test transport')
+import quote_scheme_center
+quote_scheme_center.QuoteSchemeWorker.run = lambda self: self.failed.emit('offline test transport')
 ns['install_application_font'](app)
 QMessageBox.warning = lambda *a, **k: QMessageBox.StandardButton.Ok
 QMessageBox.information = lambda *a, **k: QMessageBox.StandardButton.Ok
@@ -100,6 +102,7 @@ class DrawingWorkflowTests(unittest.TestCase):
 
     def setUp(self):
         self.w = ns['MainWindow']()
+        self.w.quote_scheme_operator_name.setText('离线测试员')
         self.w.resize(1519, 987)
         self.w.show()
         self.w.show_section(1)
@@ -169,133 +172,53 @@ class DrawingWorkflowTests(unittest.TestCase):
         self.assertEqual(len(c.strokes), 1)
 
     def test_navigation_and_shared_candidate(self):
-        self.assertEqual([b.text() for b in self.w.nav_buttons], ['图纸识别', '柜体汇总', '报价计算', '报价清单'])
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 0)
-        self.assertFalse(self.w.formula_box.isVisible())
-        self.assertFalse(self.w.history_price_card.isVisible())
-        preview = self.w.quote_drawing_preview
-        self.assertEqual(preview.back.text(), '返回图纸识别')
-        self.assertEqual(preview.back_to_quote.text(), '返回报价计算')
-        self.assertGreater(preview.back_to_quote.geometry().left(), preview.back.geometry().left())
-        preview.back_to_quote.click()
-        app.processEvents()
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 1)
-        self.assertIsNone(self.w.current_result)
-        self.assertEqual(self.w.return_to_drawing_button.text(), '返回当前柜体图纸')
-        self.assertTrue(self.w.return_to_drawing_button.isVisible())
-        state = self.w.quote_result_state
-        self.assertTrue(state.wordWrap())
-        self.assertEqual(state.parentWidget().layout().indexOf(state), 1)
-        state.setText('双报价计算失败：dual_quote_failure_with_a_long_service_message')
-        self.w.resize(1100, 800)
-        app.processEvents()
-        self.assertGreaterEqual(
-            state.mapTo(self.w, QPoint(0, 0)).y(),
-            self.w.return_to_drawing_button.mapTo(
-                self.w, QPoint(0, self.w.return_to_drawing_button.height())
-            ).y(),
-        )
-        self.assertGreater(state.width(), self.w.return_to_drawing_button.width())
-        self.w.return_to_drawing_button.click()
-        app.processEvents()
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 0)
-        self.w.calculate_button.setEnabled(True)
-        self.w.calculate_button.click()
-        app.processEvents()
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 1)
-        self.assertIsNone(self.w.current_result)
-        self.w.return_to_drawing_button.click()
-        app.processEvents()
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 0)
+        self.assertEqual([b.text() for b in self.w.nav_buttons],
+                         ['选型配置', '成本计算', '报价单', '报价方案'])
+        self.assertEqual(self.w.stack.currentWidget().objectName(), 'scheme2OptionPage')
+        self.assertTrue(self.w.quote_drawing_preview.isVisible())
         item = candidate('png')
         item['quantity'] = 3
-        self.w.recognized_drawings = [item]
-        self.w.show_section(workflow.CABINET_SUMMARY_ROUTE)
-        self.assertEqual(self.w.cabinet_summary_table.rowCount(), 1)
-        self.assertEqual(self.w.cabinet_summary_table.horizontalHeaderItem(3).text(), '数量')
-        self.assertEqual(self.w.cabinet_summary_table.item(0, 3).text(), '3')
-        self.w.cabinet_summary_table.selectRow(0)
-        workflow.open_cabinet(self.w, True)
-        pump(lambda: not self.w.quote_drawing_preview._workers)
+        self.bind(item)
         self.assertIs(self.w._quote_drawing, item)
         self.assertEqual(self.w.quantity_spin.value(), 3)
         self.w.quantity_spin.setValue(4)
-        self.w.show_section(workflow.CABINET_SUMMARY_ROUTE)
-        self.assertEqual(self.w.cabinet_summary_table.item(0, 3).text(), '4')
-        self.assertEqual(item['quantity'], 4)
         self.w.model_edit.setText('人工填写保持')
-        for route in (0, 4, 3, 1):
+        for route in (3, 2, 1):
             self.w.show_section(route)
+            app.processEvents()
         self.assertEqual(self.w.model_edit.text(), '人工填写保持')
+        self.assertEqual(self.w.quantity_spin.value(), 4)
         self.assertIs(self.w.active_drawing, item)
-        self.w.show_section(4)
+        self.assertTrue(self.w.quote_drawing_preview.isVisible())
 
-    def test_cabinet_summary_drag_reorders_shared_candidates(self):
-        first = candidate('png', name='柜体一', key='candidate-one')
-        second = candidate('jpg', name='柜体二', key='candidate-two')
-        third = candidate('jpeg', name='柜体三', key='candidate-three')
-        first['quantity'], second['quantity'], third['quantity'] = 2, 3, 4
-        self.w.recognized_drawings = [first, second, third]
-        self.w.recognized_documents = [first, second, third]
-        self.w.active_drawing = first
-        self.w._quote_drawing = second
-        self.w.show_section(workflow.CABINET_SUMMARY_ROUTE)
-        table = self.w.cabinet_summary_table
-        self.assertEqual(table.dragDropMode(), table.DragDropMode.InternalMove)
-        self.assertTrue(table.dragEnabled())
-        self.assertTrue(table.acceptDrops())
-        self.assertEqual([table.item(row, 1).text() for row in range(3)], ['柜体一', '柜体二', '柜体三'])
-
-        drop_point = QPoint()
-
-        class TestDrag:
-            def __init__(drag_self, source):
-                drag_self.source = source
-
-            def setMimeData(drag_self, mime_data):
-                drag_self.mime_data = mime_data
-
-            def exec(drag_self, *_args):
-                position = Mock()
-                position.toPoint.return_value = drop_point
-                event = Mock()
-                event.position.return_value = position
-                drag_self.source.dropEvent(event)
-                event.acceptProposedAction.assert_called_once()
-                return Qt.DropAction.MoveAction
-
-        real_drag = workflow.QDrag
-        workflow.QDrag = TestDrag
-        try:
-            def drag_row(source, target, lower_half=False):
-                nonlocal drop_point
-                table.selectRow(source)
-                rect = table.visualRect(table.model().index(target, 0))
-                y = rect.bottom() - 1 if lower_half else rect.top() + 1
-                drop_point = QPoint(rect.center().x(), y)
-                table.startDrag(Qt.DropAction.MoveAction)
-                app.processEvents()
-                self.assertEqual(table.rowCount(), 3)
-                self.assertTrue(all(table.item(row, column) is not None
-                                    for row in range(3) for column in range(6)))
-
-            # First to last, last to first, and a same-position drop must all
-            # retain every visible row and every shared candidate.
-            drag_row(0, 2, lower_half=True)
-            self.assertEqual(self.w.recognized_drawings, [second, third, first])
-            drag_row(2, 0)
-            self.assertEqual(self.w.recognized_drawings, [first, second, third])
-            drag_row(1, 1)
-            self.assertEqual(self.w.recognized_drawings, [first, second, third])
-        finally:
-            workflow.QDrag = real_drag
-
-        self.assertEqual([table.item(row, 0).text() for row in range(3)], ['1', '2', '3'])
-        self.assertEqual([table.item(row, 1).text() for row in range(3)], ['柜体一', '柜体二', '柜体三'])
-        self.assertEqual([table.item(row, 3).text() for row in range(3)], ['2', '3', '4'])
-        self.assertEqual(table.currentRow(), 1)
-        self.assertIs(self.w.active_drawing, first)
-        self.assertIs(self.w._quote_drawing, second)
+    def test_retired_summary_routes_preserve_candidates_without_opening_old_ui(self):
+        items = [candidate('png', name='柜体一', key='candidate-one'),
+                 candidate('jpg', name='柜体二', key='candidate-two'),
+                 candidate('jpeg', name='柜体三', key='candidate-three')]
+        for item, quantity in zip(items, (2, 3, 4)):
+            item['quantity'] = quantity
+        self.w.recognized_drawings = list(items)
+        self.w.recognized_documents = list(items)
+        self.w.active_drawing = items[0]
+        self.w._quote_drawing = items[1]
+        before = copy.deepcopy(items)
+        for retired_route in (0, 4):
+            self.assertEqual(self.w.stack.widget(retired_route).objectName(),
+                             'retiredWorkbenchRoute')
+            self.w.show_section(retired_route)
+            app.processEvents()
+            self.assertEqual(self.w.stack.currentIndex(), 1)
+            self.assertEqual(self.w.stack.currentWidget().objectName(), 'scheme2OptionPage')
+            self.assertEqual(self.w.recognized_drawings, before)
+            self.assertEqual(self.w.recognized_documents, before)
+            # Returning to options selects the already-bound current drawing.
+            self.assertIs(self.w.active_drawing, items[1])
+            self.assertIs(self.w._quote_drawing, items[1])
+        forbidden = {'图纸识别', '柜体汇总', '图纸识别工作台'}
+        visible = {widget.text().replace('&', '').strip()
+                   for kind in (QPushButton, QLabel)
+                   for widget in self.w.findChildren(kind) if widget.isVisibleTo(self.w)}
+        self.assertTrue(forbidden.isdisjoint(visible))
 
     def test_attachment_categories_are_vertical_and_show_category_with_name(self):
         dialog_class = ns['AttachmentDialog']
@@ -494,19 +417,43 @@ class DrawingWorkflowTests(unittest.TestCase):
 
     def test_quote_workspace_expands_with_window(self):
         page = self.w.stack.widget(1)
-        workspace = page.findChild(workflow.QSplitter, 'quoteWorkspace')
-        self.w.resize(1400, 820)
-        pump()
-        compact = (workspace.widget(0).width(), workspace.widget(1).width(),
-                   workspace.widget(0).height(), workspace.widget(1).height())
-        self.w.resize(2048, 1050)
-        pump()
-        expanded = (workspace.widget(0).width(), workspace.widget(1).width(),
-                    workspace.widget(0).height(), workspace.widget(1).height())
-        self.assertGreater(expanded[0], compact[0])
-        self.assertGreater(expanded[1], compact[1])
-        self.assertGreater(expanded[2], compact[2])
-        self.assertGreater(expanded[3], compact[3])
+        workspace = self.w.scheme2_option_splitter
+        self.assertEqual(workspace.objectName(), 'scheme2Workspace')
+        self.assertTrue(page.isAncestorOf(workspace))
+        drawing = self.w.scheme2_drawing_widget
+        form = self.w.scheme2_option_form_widget
+        self.assertTrue(drawing.isAncestorOf(self.w.quote_drawing_preview))
+        # Offscreen Qt reports only an 800px screen. Supply logical work-area
+        # geometry, not a different UI, so real screen-fit code allows resizing.
+        screen = Mock(wraps=self.w.screen())
+        screen.availableGeometry.return_value = QRect(0, 0, 4096, 2160)
+        with patch.object(self.w, 'screen', return_value=screen):
+            self.w.resize(1400, 820)
+            QTest.qWait(100)
+            self.assertEqual(self.w.size().width(), 1400)
+            self.assertEqual(workspace.orientation(), Qt.Orientation.Horizontal)
+            self.assertIs(workspace.widget(0), form)
+            self.assertIs(workspace.widget(1), drawing)
+            compact = (drawing.width(), drawing.height())
+            self.w.resize(2048, 1050)
+            QTest.qWait(100)
+            self.assertEqual(self.w.size().width(), 2048)
+            self.assertGreater(drawing.width(), compact[0])
+            self.assertGreater(drawing.height(), compact[1])
+            self.w.resize(800, 700)
+            QTest.qWait(100)
+            # Screen-fit minimum is 980 on a roomy desktop; use a small screen
+            # to exercise the current stacked, scrollable arrangement.
+            screen.availableGeometry.return_value = QRect(0, 0, 832, 768)
+            import layout_refresh
+            layout_refresh._fit_window_minimum_to_screen(self.w)
+            self.w.resize(800, 700)
+            QTest.qWait(100)
+            self.assertEqual(workspace.orientation(), Qt.Orientation.Vertical)
+            self.assertIs(workspace.widget(0), drawing)
+            self.assertIs(workspace.widget(1), form)
+            self.assertTrue(self.w.quote_drawing_preview.isVisible())
+            self.assertGreater(self.w.quote_drawing_preview.canvas.viewport().width(), 0)
 
     def test_pdf_pages_ink_alignment_and_result_round_trip(self):
         p = self.bind(candidate())
@@ -517,7 +464,8 @@ class DrawingWorkflowTests(unittest.TestCase):
         original_path = p.canvas._items[0].path()
         original_scene_point = QPointF(original_path.elementAt(0).x, original_path.elementAt(0).y)
         original_view_point = p.canvas.mapFromScene(original_scene_point)
-        p.rotate_left_button.click()
+        for _ in range(3):
+            p.rotate_button.click()
         self.assertEqual(p.canvas.rotation_degrees, 270)
         self.assertEqual(p.rotations[(p.document_key, 0)], 270)
         self.assertEqual(p.canvas.strokes, original)
@@ -530,13 +478,13 @@ class DrawingWorkflowTests(unittest.TestCase):
         pump(lambda: not p._workers)
         self.assertEqual(p.canvas.strokes, [])
         self.assertEqual(p.canvas.rotation_degrees, 0)
-        p.rotate_right_button.click()
+        p.rotate_button.click()
         self.assertEqual(p.canvas.rotation_degrees, 90)
         p.set_page(0)
         pump(lambda: not p._workers)
         self.assertEqual(p.canvas.strokes, original)
         self.assertEqual(p.canvas.rotation_degrees, 270)
-        p.rotate_right_button.click()
+        p.rotate_button.click()
         self.assertEqual(p.canvas.rotation_degrees, 0)
         logical_rect = p.canvas.scene().sceneRect()
         p.canvas.zoom(6)
@@ -555,23 +503,15 @@ class DrawingWorkflowTests(unittest.TestCase):
         self.assertTrue(pixmaps)
         self.assertGreater(max(max(pixmap.width(), pixmap.height()) for pixmap in pixmaps), 2400)
         self.accept(response())
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 1)
-        self.assertFalse(p.isVisible())
-        self.assertTrue(self.w.history_price_card.isVisible())
-        self.w.show_section(0)
-        self.w.active_drawing = self.w._quote_drawing
-        self.w.use_selected_drawing()
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 0)
+        self.assertEqual(self.w.stack.currentIndex(), 1)
+        self.assertTrue(p.isVisible())
         self.assertEqual(p.canvas.strokes, original)
         current_result = self.w.current_result
-        p.back_to_quote.click()
+        self.assertIsNotNone(current_result)
+        self.w.show_section(3)
+        self.w.show_section(1)
         app.processEvents()
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 1)
-        self.assertIs(self.w.current_result, current_result)
-        self.assertTrue(self.w.history_price_card.isVisible())
-        self.w.return_to_drawing_button.click()
-        app.processEvents()
-        self.assertEqual(self.w.quote_right_stack.currentIndex(), 0)
+        self.assertTrue(p.isVisible())
         self.assertIs(self.w.current_result, current_result)
         self.assertEqual(p.canvas.strokes, original)
         p.color_combo.setCurrentIndex(1)

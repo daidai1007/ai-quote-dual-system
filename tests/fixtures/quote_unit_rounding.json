@@ -1,0 +1,14 @@
+[
+  {"name":"half-cent-up","base":1234.55,"discount":0.1,"quantity":3,"freight":0,"unit":123.46,"total":370.38},
+  {"name":"one-unit","base":1234.55,"discount":0.1,"quantity":1,"freight":0,"unit":123.46,"total":123.46},
+  {"name":"ten-units","base":1234.55,"discount":0.1,"quantity":10,"freight":0,"unit":123.46,"total":1234.6},
+  {"name":"below-half-cent","base":1234.54,"discount":0.1,"quantity":3,"freight":0,"unit":123.45,"total":370.35},
+  {"name":"binary-half-cent","base":100.5,"discount":0.01,"quantity":7,"freight":0,"unit":1.01,"total":7.07},
+  {"name":"freight-outside-discount","base":1234.55,"discount":0.1,"quantity":3,"freight":36.67,"unit":160.13,"total":480.39},
+  {"name":"mixed-attachments","base":1234.55,"discount":0.1,"quantity":3,"freight":2.01,"eligible":10.05,"original":7.03,"unit":133.5,"total":400.5},
+  {"name":"deducted-attachment","base":1234.55,"discount":0.1,"quantity":3,"freight":2.01,"eligible":-10.05,"unit":124.46,"total":373.38},
+  {"name":"ganged-half-cent","base":1234.55,"discount":0.1,"quantity":3,"freight":36.67,"ganged":2,"unit":160.13,"total":480.39,
+    "legacy_original_formula":"(L{row}+O{row})/D{row}","legacy_discounted_formula":"(L{row}*P{row}+O{row})/D{row}"},
+  {"name":"ganged-mixed-attachments","base":1234.55,"discount":0.1,"quantity":3,"freight":2.01,"eligible":10.05,"original":7.03,"ganged":2,"unit":133.5,"total":400.5,
+    "legacy_original_formula":"(L{row}+M{row}+N{row}+O{row})/D{row}","legacy_discounted_formula":"((L{row}+M{row})*P{row}+N{row}+O{row})/D{row}"}
+]

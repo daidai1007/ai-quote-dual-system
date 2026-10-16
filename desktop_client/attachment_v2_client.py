@@ -982,11 +982,11 @@ def restore_confirmation_inputs(rows, frozen):
 
 
 def confirmation_attachments_for_item(item):
-    """Return the immutable catalogue selections used by quote confirmation.
+    """Use completed popup rows for new documents; keep the legacy contract.
 
     Priced attachment rows are later decorated for display (for example with
     final cabinet quantities and compatibility fields).  Those presentation
-    rows must never be used as the confirmation contract because the service
+    rows on historical documents must not replace their confirmation contract because the service
     compares them with the exact inputs frozen when the quote line was priced.
     Quote-local custom rows are intentionally appended from the live item: they
     are not part of the catalogue snapshot and are validated separately.
@@ -994,6 +994,8 @@ def confirmation_attachments_for_item(item):
 
     rows = item.get("attachments") if isinstance(item, dict) else None
     rows = rows if isinstance(rows, list) else []
+    if (item.get("quote_display") or {}).get("attachment_source") == "popup_v1":
+        return copy.deepcopy(rows)
     frozen = item.get("attachment_confirmation_inputs") if isinstance(item, dict) else None
     if not isinstance(frozen, list):
         return copy.deepcopy(rows)
@@ -1033,6 +1035,8 @@ def validate_confirmation_attachments(item, line_number):
     named_rows = [(index, row) for index, row in enumerate(rows, 1)
                   if not isinstance(row, dict) or row.get("custom") is not True]
     frozen = item.get("attachment_confirmation_inputs")
+    if (item.get("quote_display") or {}).get("attachment_source") == "popup_v1":
+        frozen = item["quote_display"].get("attachments")
 
     def fail(index, row, reason):
         name = (row.get("item_name") or row.get("name") or row.get("model_code")) if isinstance(row, dict) else None

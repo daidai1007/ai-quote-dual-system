@@ -223,7 +223,7 @@ class UnitSetPricing(unittest.TestCase):
 
     def test_actual_ui_snapshot_survives_server_hydration_and_excel_roundtrip(self):
         self.item.update(attachment_contract=2, quote_line_id='11111111-1111-4111-8111-111111111111')
-        self.item['attachments'][0].update(catalog_version='test', status='OK')
+        self.item['attachments'][0].update(catalog_version='test', status='CALCULATED')
         self.item['attachments'][0].update(quick_amount=15, quick_amount_override=15, custom_amount_edited=True)
         self.item['quick'].update(attachment_fee=15, total_cost=115)
         self.window.refresh_summary()

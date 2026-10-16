@@ -81,10 +81,10 @@ from PySide6.QtWidgets import (
 
 from layout_refresh import _fit_window_minimum_to_screen
 try:
-    from quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product,
+    from quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product, apply_management_fee,
                                      quick_attachment_line_amount, quick_discount_breakdown)
 except ModuleNotFoundError:
-    from .quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product,
+    from .quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product, apply_management_fee,
                                       quick_attachment_line_amount, quick_discount_breakdown)
 from pypdf import PdfReader, PdfWriter
 
@@ -557,6 +557,41 @@ def _material_difference_amount(item):
     return money_product(max(0.0, total_weight - sgcc_weight), unit_price)
 
 
+def _self_made_weight(item):
+    """One cabinet/set: cabinet billable material plus current popup weights.
+
+    Attachment weight_kg is per piece and already follows its own material
+    rule. Neither cabinet waste nor the ganged count is applied a second time.
+    Keep this display statistic separate from material pricing and freight.
+    """
+    cabinet = _number(_formula(item).get("corrected_material_weight_kg"))
+    weights = [cabinet if math.isfinite(cabinet) and cabinet >= 0 else 0.0]
+    for row in item.get("attachments", []) or []:
+        if not isinstance(row, dict) or row.get("status") in ("ERROR", "PENDING_MANUAL") or row.get("pending_manual_dimensions"):
+            continue
+        weight = _number(row.get("weight_kg"))
+        quantity = _number(row.get("quantity", 1), 1)
+        if not math.isfinite(weight) or weight < 0 or not math.isfinite(quantity):
+            continue
+        sign = -1 if quantity < 0 or _number(row.get("attachment_price_sign", 1), 1) == -1 else 1
+        weights.append(weight * abs(quantity) * sign)
+    return max(0.0, math.fsum(weights))
+
+
+def _recalculate_item_management(item):
+    formula, _ = _quote_with_popup_attachment_fee(
+        _formula(item), [row for row in item.get("attachments", []) if isinstance(row, dict)],
+        _popup_formula_amount,
+    )
+    updated = apply_management_fee(formula, max(0, _number(item.get("freight_fee", item.get("freight", 0)))))
+    if updated != _formula(item):
+        current = _formula(item)
+        current.update(updated)
+        item["formula"] = current
+        item.pop("cost_detail_rows", None)
+    return updated
+
+
 def _row_values(item):
     formula = _formula(item)
     attachments = [row for row in item.get("attachments", []) if isinstance(row, dict)]
@@ -578,6 +613,7 @@ def _row_values(item):
     formula["total_cost"] = formula_base_total + formula_current_fee
     quantity = max(1, int(_number(item.get("quantity", 1), 1)))
     freight = max(0.0, _number(item.get("freight_fee", item.get("freight", 0))))
+    formula = apply_management_fee(formula, freight)
     formula_unit = money_sum((_number(formula.get("total_cost")), freight))
     discount = _number(item.get("quick_discount", 1), 1)
     material_difference = _material_difference_amount(item)
@@ -608,7 +644,7 @@ def _row_values(item):
     quote_total = quick_line["line_total"]
     cost_total = money_product(formula_unit, quantity)
     gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0
-    billable_weight = _number(formula.get("corrected_material_weight_kg"))
+    billable_weight = _self_made_weight(item)
     specification = str(item.get("specification") or item.get("model_code") or "—")
     name = str(item.get("name") or item.get("model_code") or "未命名")
     product = _cost_product(item)
@@ -2424,7 +2460,7 @@ def _quote_export_items_snapshot(window, items=None):
             _formula(item), attachment_rows, _popup_formula_amount,
         )
         item["quick"] = quick_snapshot
-        item["formula"] = formula_snapshot
+        item["formula"] = apply_management_fee(formula_snapshot, _number(item.get("freight_fee", item.get("freight", 0))))
         values = _row_values(item)
         quick = _quick(item)
         display = {
@@ -2438,9 +2474,9 @@ def _quote_export_items_snapshot(window, items=None):
             "attachment_face_price": values[23],
             "material_difference": values[22],
             "remark": str(item.get("final_remark") or _scheme2_quote_remark(item)),
-            # Confirmation hydrates catalogue rows again on the server. Keep
-            # the exact UI attachment values separately so a manual amount
-            # edit (for example 铜排 50 -> 15) survives that refresh.
+            # Document creation consumes these completed popup rows. It must
+            # not reprice them from a later catalogue or an older quote line.
+            "attachment_source": "popup_v1",
             "attachments": deepcopy(item.get("attachments") or []),
         }
         for source, target in (
@@ -2594,6 +2630,7 @@ def _build_quote_page(window):
 
 
 def _detail_rows(item):
+    _recalculate_item_management(item)
     existing = item.get("cost_detail_rows")
     if isinstance(existing, list) and existing and all(row.get("_scheme2_version") == 3 for row in existing if isinstance(row, dict)):
         return existing
@@ -2617,7 +2654,7 @@ def _detail_rows(item):
             for child_row in _detail_rows(child_item):
                 # Attachments are priced once for the complete ganged cabinet,
                 # never once per split child cabinet.
-                if child_row.get("category") == "attachment_fee":
+                if child_row.get("category") in ("attachment_fee", "management_fee"):
                     continue
                 row = deepcopy(child_row)
                 row["type"] = f"柜体{cabinet_index}\n{row.get('type', '')}"
@@ -2640,6 +2677,13 @@ def _detail_rows(item):
                 quantity=1, unit="项", unit_price=attachment,
                 base_amount=attachment, note="附件仅计入整套并柜一次",
             )
+        management = _number(formula.get("management_fee"))
+        base = _number(formula.get("management_fee_base"))
+        add_row(category="management_fee", type="管理费用", name="整套并柜管理费用",
+                spec="整套材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
+                formula=f"{_money(base)} × 0.06 = {_money(management)} 元",
+                quantity=1, unit="项", unit_price=management, base_amount=management,
+                note="按整套成本计费一次；不重复汇总子柜管理费")
         item["cost_detail_rows"] = rows
         return rows
 
@@ -2728,14 +2772,20 @@ def _detail_rows(item):
 
     management = _number(formula.get("management_fee"))
     if management or formula.get("management_fee_rate") is not None:
-        rate = _number(formula.get("management_fee_rate"), .13)
-        labor = _number(formula.get("labor_cost"))
+        rate = .06
+        base = _number(formula.get("management_fee_base"))
+        terms = [_number(formula.get(key)) for key in
+                 ("material_cost", "auxiliary_cost", "labor_cost", "attachment_fee", "spray_cost")]
+        terms.append(_number(item.get("freight_fee", item.get("freight", 0))))
+        complete = all(formula.get(key) is not None for key in
+                       ("material_cost", "auxiliary_cost", "labor_cost", "attachment_fee", "spray_cost"))
+        expression = f"({' + '.join(_money(value) for value in terms)})" if complete else _money(base)
         add_row(
             category="management_fee", type="管理费用", name="管理费用",
-            spec=f"人工成本的 {rate * 100:g}%",
-            formula=f"{_money(labor)} × {rate:g} = {_money(management)} 元",
+            spec="材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
+            formula=f"{expression} × {rate:g} = {_money(management)} 元",
             quantity=1, unit="项", unit_price=management, base_amount=management,
-            note="人工成本 × 管理费率",
+            note=f"计费基数 {_money(base)} 元；管理费本身不参与基数" + ("" if complete else "；历史快照缺少分项，以原总成本扣除原管理费并加运费还原基数"),
         )
     else:
         add_row(category="management_fee", type="管理费用", name="管理费用", spec="报价快照汇总",
@@ -3299,8 +3349,6 @@ def _apply_cost_control(window, key, value):
         base = _number(item.get("formula_base", formula).get("labor_cost", formula.get("labor_cost")))
         item["labor_multiplier"] = value
         _replace_component(item, "labor_cost", base * value)
-        management_rate = _number(formula.get("management_fee_rate"), .13)
-        _replace_component(item, "management_fee", base * value * management_rate)
     elif key in ("carbon_price", "galvanized_price", *MATERIAL_PRICE_KEYS.values()):
         if not _reprice_material_details(item, state):
             selected_key = MATERIAL_PRICE_KEYS.get(str(item.get("material_code") or "").upper(), "carbon_price")
@@ -3315,6 +3363,7 @@ def _apply_cost_control(window, key, value):
         base = _number(base_state.setdefault("spray_cost", formula.get("spray_cost")))
         original_price = _number(base_state.setdefault(key, old), old)
         _replace_component(item, "spray_cost", base * value / max(original_price, .01))
+    _recalculate_item_management(item)
     record_event(window, "cost_coefficient_changed", field=key, value=value)
     window.refresh_summary()
 
@@ -3715,6 +3764,7 @@ def _refresh_cost_table(window):
         table.setRowCount(len(items) + 1)
         for row, item in enumerate(items):
             _repair_missing_material_prices(item, getattr(window, "scheme2_defaults", None))
+            _recalculate_item_management(item)
             canonical = list(_row_values(item))
             canonical[0] = row + 1
             values = [canonical[index] for index in COST_DISPLAY_ORDER]
@@ -3738,13 +3788,15 @@ def _refresh_cost_table(window):
                 cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
                 if column == 21:
                     cell.setForeground(QColor("#D97706"))
+                if column == 22:
+                    cell.setToolTip("单台／单套重量（kg）=柜体含损耗计价重量＋当前附件单件重量×附件自身数量；扣减安装板按减项统计。\n无有效重量数据的附件不计入；底部汇总再乘订单数量。")
                 table.setItem(row, column, cell)
         total_row = len(items)
         quantity_total = sum(max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
         quote_total = money_sum(_row_values(item)[16] for item in items)
         cost_total = money_sum(_row_values(item)[18] for item in items)
         weight_total = sum(
-            _number(_row_values(item)[20]) * max(1, int(_number(item.get("quantity", 1), 1)))
+            _self_made_weight(item) * max(1, int(_number(item.get("quantity", 1), 1)))
             for item in items
         )
         gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0

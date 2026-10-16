@@ -63,7 +63,8 @@ test('batch result matches individual sums and keeps input order even when secon
   assert.equal(peak, 2);
   assert.equal(result.ganged_batch_contract, 1);
   assert.equal(result.formula_cost.material_cost, 1800);
-  assert.equal(result.formula_cost.total_cost, cabinets.reduce((total, child) => total + childResult(child).formula_cost.total_cost, 0));
+  assert.equal(result.formula_cost.management_fee,118.8);
+  assert.equal(result.formula_cost.total_cost,2098.8);
   assert.equal(result.formula_cost.net_material_weight_kg, 180);
   assert.equal(result.formula_cost.corrected_material_weight_kg, 216);
   assert.deepEqual(result.formula_cost.ganged_cabinet_costs.map(row => row.width_mm), [1000, 800]);

@@ -1,3 +1,5 @@
+import {applyManagementFee} from '../quick_discount_rules.mjs';
+
 // Deliberately request-scoped: new quotations always read current rules/prices.
 // Share identical reads (and in-flight reads) between children, never writes or
 // the SELECT which calls the mutating dual-quotation database function.
@@ -86,7 +88,7 @@ export async function calculateGangedBatch(input, {calculateChild, snapshotGange
   }));
   const quickBase = sum(results, 'quick_quote', 'base_price');
   const aggregate = {
-    quote_id: cabinets[0].quote_id, formula_cost: formula,
+    quote_id: cabinets[0].quote_id, formula_cost: applyManagementFee(formula,attachment?.freight_fee??input.freight_fee??0),
     quick_quote: {base_price: quickBase, attachment_fee: attachmentTotal,
       total_cost: quickBase == null ? null : quickBase + attachmentTotal,
       match_method: 'ganged_cabinet_sum',

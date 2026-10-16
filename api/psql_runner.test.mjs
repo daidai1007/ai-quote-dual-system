@@ -44,6 +44,19 @@ test('stdin EPIPE remains visible when psql provides no diagnostic', async () =>
   await assert.rejects(runPsqlCommand('SELECT 1', 'UTF8', config, spawn), /write EPIPE/);
 });
 
+test('known attachment guard error is preserved without its SQL context', async () => {
+  const spawn = fakeSpawn(child => {
+    child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    child.stderr.emit('data', 'psql:<stdin>:8: ERROR:  所选成本规则不是当前产品适用规则\n');
+    child.stderr.emit('data', 'LINE 8: INSERT INTO calc.attachment_selection ...\n');
+    child.emit('close', 3);
+  });
+  await assert.rejects(runPsqlCommand('INSERT secret', 'UTF8', config, spawn), error => {
+    assert.equal(error.message, 'PostgreSQL ERROR: 所选成本规则不是当前产品适用规则');
+    return true;
+  });
+});
+
 test('successful command still returns trimmed stdout', async () => {
   const spawn = fakeSpawn(child => {
     child.stdout.emit('data', '  {"ok":true}\n');

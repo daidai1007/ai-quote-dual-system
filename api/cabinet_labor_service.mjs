@@ -1,4 +1,5 @@
 import {round} from './attachment_formula.mjs';
+import {applyManagementFee, MANAGEMENT_FEE_RATE} from '../quick_discount_rules.mjs';
 
 const valueSql=value=>value==null?'NULL':typeof value==='number'?String(value):
   `convert_from(decode('${Buffer.from(String(value)).toString('hex')}','hex'),'UTF8')`;
@@ -54,9 +55,8 @@ export function calculateCabinetLabor(rules,environment,material){
     if(candidates.length!==1)throw new Error(candidates.length?`${family} ${environment.material_code} 人工公式存在同级冲突`:`${family} ${environment.material_code} 没有适用人工公式`);
     calculated=linearLabor(candidates[0],material);
   }else calculated=fixedLabor(rules,environment,product);
-  const managementRate=finite(environment.management_fee_rate,'管理费率',{zero:true});
   return {data_version:environment.data_version,product_code:product,material_code:environment.material_code,
-    management_fee_rate:managementRate,management_fee:round(calculated.labor_cost*managementRate,2),...calculated};
+    management_fee_rate:MANAGEMENT_FEE_RATE,...calculated};
 }
 
 export function createCabinetLaborService({runPsql}){
@@ -72,7 +72,9 @@ export function createCabinetLaborService({runPsql}){
     return calculateCabinetLabor(data.rules,{...input,data_version:data.data_version,management_fee_rate:data.management_fee_rate},material);
   },async persist(quoteId,result,labor){
     if(!labor)return;
-    const formula=result.formula_cost||{},snapshot={...labor,matched_rule:labor.matched_rule};
+    const formula=result.formula_cost||{},snapshot={...labor,matched_rule:labor.matched_rule,
+      management_fee:formula.management_fee,management_fee_rate:formula.management_fee_rate,
+      management_fee_base:formula.management_fee_base,management_fee_basis:formula.management_fee_basis};
     const quick=result.quick_quote||{};
     const difference=Number.isFinite(Number(quick.total_cost))&&Number.isFinite(Number(formula.total_cost))?round(Number(quick.total_cost)-Number(formula.total_cost),2):null;
     const output=await runPsql(`UPDATE calc.dual_quote_result SET formula_labor_cost=${valueSql(formula.labor_cost)},
@@ -83,16 +85,16 @@ export function createCabinetLaborService({runPsql}){
   }};
 }
 
-export function applyCabinetLabor(result,labor){
-  if(!labor)return result;
+export function applyCabinetLabor(result,labor,freightFee=0){
+  if(!labor)return {...result,formula_cost:applyManagementFee(result.formula_cost||{},freightFee)};
   const formula={...(result.formula_cost||{})},oldLabor=Number(formula.labor_cost),oldManagement=Number(formula.management_fee);
   if(!Number.isFinite(oldLabor)||!Number.isFinite(oldManagement)||!Number.isFinite(Number(formula.total_cost)))throw new Error('数据库基础公式人工或管理费缺失，不能应用最新人工规则');
-  formula.labor_cost=labor.labor_cost;formula.management_fee=labor.management_fee;
-  formula.total_cost=round(Number(formula.total_cost)-oldLabor-oldManagement+labor.labor_cost+labor.management_fee,2);
+  formula.labor_cost=labor.labor_cost;
+  formula.total_cost=round(Number(formula.total_cost)-oldLabor+labor.labor_cost,2);
   Object.assign(formula,{cabinet_labor_version:labor.data_version,labor_method:labor.match_method,
     labor_billable_weight_kg:labor.labor_billable_weight_kg,labor_excluded_part_names:labor.excluded_part_names,
     labor_source_sheet:labor.matched_rule.source_sheet,labor_source_row_no:labor.matched_rule.source_row_no,
     labor_source_formula:labor.matched_rule.source_formula,management_fee_rate:labor.management_fee_rate,
     labor_perimeter_ratio:labor.perimeter_ratio??null});
-  return {...result,formula_cost:formula};
+  return {...result,formula_cost:applyManagementFee(formula,freightFee)};
 }

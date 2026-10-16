@@ -111,7 +111,7 @@ qt_gui = types.ModuleType("PySide6.QtGui")
 qt_gui.QColor = type("QColor", (), {})
 qt_widgets = types.ModuleType("PySide6.QtWidgets")
 for name in (
-    "QAbstractButton", "QCompleter", "QDialog", "QDialogButtonBox", "QFormLayout",
+    "QApplication", "QAbstractButton", "QCompleter", "QDialog", "QDialogButtonBox", "QFormLayout",
     "QFrame", "QGridLayout", "QHeaderView", "QHBoxLayout", "QMessageBox", "QPushButton",
     "QScrollArea", "QSizePolicy", "QSplitter", "QTableWidget", "QTableWidgetItem", "QVBoxLayout", "QWidget",
 ):
@@ -960,7 +960,7 @@ quick_breakdown = quick_discount_breakdown(
 assert math.isclose(quick_breakdown["base_price"], 4014.29)
 assert math.isclose(quick_breakdown["eligible_attachment_total"], 300)
 assert math.isclose(quick_breakdown["original_price_attachment_total"], 92)
-assert math.isclose(quick_breakdown["discounted_total"], 4190.5755)
+assert quick_breakdown["discounted_total"] == 4190.58  # Unit prices are rounded to cents before quantity.
 
 support_plate_breakdown = quick_discount_breakdown(
     {"total_cost": 1300, "base_price": 1000, "attachment_fee": 300},

@@ -118,6 +118,36 @@ class DocumentProgress(unittest.TestCase):
         self.assertEqual(bar.value(),4)
         self.assertIn('秒',bar.format())
 
+    def test_single_and_ganged_popup_snapshots_match_the_visible_quote(self):
+        for count in (1,2):
+            with self.subTest(ganged_count=count):
+                self.requests.clear()
+                item=copy.deepcopy(good)
+                item.update(name='并柜快照验证' if count==2 else '单柜快照验证',quantity=3,
+                    quick_discount=0.5,ganged_cabinet_count=count,
+                    ganged_cabinets=[{'width_mm':800,'depth_mm':600,'height_mm':1800}]*count if count>1 else [],
+                    attachments=[dict(attachment_price_id=9,item_name='风机SG22060HA2/220V（国产）',
+                        category_level1='风机',quantity=4,status='FIXED',formula_amount=280,
+                        quick_amount=480,quick_amount_override=480,custom_amount_edited=True)],
+                    quick={'base_price':500,'attachment_fee':480,'total_cost':980},
+                    formula={'attachment_fee':280,'total_cost':360},attachment_snapshot_dirty=True)
+                self.window.draft_items=[item]
+                self.window.refresh_summary()
+                self.controller.generate()
+                wait(lambda:not self.controller.busy)
+                self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],['preview-check'])
+                display=self.requests[0][1]['items'][0]['quote_display']
+                self.assertEqual(display['attachment_source'],'popup_v1')
+                self.assertEqual(display['attachments'][0]['formula_amount'],280)
+                self.assertEqual(display['attachments'][0]['quick_amount'],480)
+                self.assertEqual(display['unit_price'],730)
+                self.assertEqual(display['total'],2190)
+                self.assertEqual(float(self.window.scheme2_quote_preview.item(10,5).text().replace(',','')),730)
+                self.window.resize(1560,900)
+                self.window.show()
+                app.processEvents()
+                self.assertTrue(self.window.grab().save(str(ROOT/f'outputs/popup-snapshot-{count}-cabinet.png')))
+
     def snapshot_queue(self, count=5):
         self.window.draft_items = [dict(copy.deepcopy(good), name=f'柜{index+1}',
             attachment_snapshot_dirty=True) for index in range(count)]
@@ -175,7 +205,7 @@ class DocumentProgress(unittest.TestCase):
         self.assertEqual(self.controller.reason, '')
         self.controller.end()
 
-    def test_parallel_real_refresh_preserves_each_copy_manual_price_and_custom_rows(self):
+    def test_copied_rows_freeze_each_popup_without_repricing(self):
         item,row=self.edited_glass()
         self.window.draft_items=[dict(copy.deepcopy(item),name=f'复制柜{i+1}',quantity=i+1) for i in range(4)]
         first=self.window.draft_items[0]
@@ -195,13 +225,16 @@ class DocumentProgress(unittest.TestCase):
         with patch.object(Worker,'start',track):
             self.controller.generate()
             wait(lambda:not self.controller.busy)
-        self.assertEqual(len(started),4)
+        self.assertEqual(len(started),0)
         self.assertEqual(self.requests[-1][0].rsplit('/',1)[-1],'preview-check')
         self.assertEqual(first['attachments'][0]['quick_amount'],0)
         self.assertEqual(first['attachments'][1],temporary)
         self.assertEqual(first['quick']['total_cost'],506)
         self.assertEqual([copy['quantity'] for copy in self.window.draft_items],[1,2,3,4])
-        self.assertTrue(all(not v2.attachment_snapshot_needs_refresh(copy) for copy in self.window.draft_items))
+        checked=self.requests[-1][1]['items']
+        self.assertEqual(checked[0]['quote_display']['attachments'][0]['quick_amount'],0)
+        self.assertEqual(checked[0]['quote_display']['attachments'][1],temporary)
+        self.assertTrue(all(row['quote_display']['attachment_source']=='popup_v1' for row in checked))
         self.assertEqual(self.controller.reason,'')
 
     def test_unchanged_rows_retain_snapshots_without_extra_requests(self):
@@ -233,21 +266,23 @@ class DocumentProgress(unittest.TestCase):
         item['attachment_confirmation_inputs']=v2.confirmation_inputs([{**row,'manual_inputs':{}}])
         item['formula']={'total_cost':158.8,'attachment_fee':8.8}
         item['quick']={'total_cost':750.26,'attachment_fee':250.26}
+        self.window.refresh_summary()
         return item,row
 
-    def test_generate_replaces_stale_glass_snapshot_before_precheck(self):
+    def test_generate_freezes_current_glass_without_replacing_old_snapshot(self):
         item,row=self.edited_glass()
+        old_line=item['quote_line_id']
         self.controller.generate()
         wait(lambda:not self.controller.busy)
         self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],
-                         ['recalculate-line','preview-check'])
-        self.assertEqual(self.requests[0][1]['attachments'][0]['manual_inputs'],row['manual_inputs'])
-        self.assertEqual(item['quote_line_id'],'22222222-2222-4222-8222-222222222222')
-        checked=self.requests[1][1]['items'][0]
-        self.assertEqual(checked['quote_line_id'],item['quote_line_id'])
+                         ['preview-check'])
+        checked=self.requests[0][1]['items'][0]
+        self.assertEqual(item['quote_line_id'],old_line)
+        self.assertEqual(checked['quote_line_id'],old_line)
         self.assertEqual(checked['attachments'][0]['manual_inputs'],row['manual_inputs'])
+        self.assertEqual(checked['quote_display']['attachments'][0]['formula_amount'],8.8)
         self.assertEqual(self.window.stack.currentIndex(),ui.QUOTE_ROUTE)
-        self.assertFalse(v2.attachment_snapshot_needs_refresh(item))
+        self.assertTrue(v2.attachment_snapshot_needs_refresh(item))
 
     def test_snapshot_refresh_preserves_manual_zero_and_temporary_attachment(self):
         item,row=self.edited_glass()
@@ -261,30 +296,31 @@ class DocumentProgress(unittest.TestCase):
         wait(lambda:not self.controller.busy)
         self.assertEqual(item['attachments'][0]['quick_amount'],0)
         self.assertEqual(item['attachments'][1],temporary)
-        self.assertEqual(len(self.requests[0][1]['attachments']),1)
+        self.assertEqual(len(self.requests[0][1]['items'][0]['attachments']),2)
         self.assertEqual(item['quick']['total_cost'],506)
         self.assertEqual(item['formula']['total_cost'],163.8)
         self.assertEqual(item['quantity'],2)
 
-    def test_export_refreshes_snapshot_before_preflight_and_commit(self):
+    def test_export_uses_popup_snapshot_for_preflight_and_commit(self):
         item,row=self.edited_glass()
         self.controller.export()
         wait(lambda:not self.controller.busy)
         self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],
-                         ['recalculate-line','confirm-check','confirm'])
+                         ['confirm-check','confirm'])
         self.assertTrue((Path(self.folder.name)/'result.xlsx').is_file())
-        for _url,payload in self.requests[1:]:
+        for _url,payload in self.requests:
             self.assertEqual(payload['items'][0]['quote_line_id'],item['quote_line_id'])
+            self.assertEqual(payload['items'][0]['quote_display']['attachments'][0]['manual_inputs'],row['manual_inputs'])
         self.assertEqual(self.messages,[])
 
     def test_refresh_error_preserves_old_snapshot_and_attachment_locator(self):
         item,row=self.edited_glass()
         old=copy.deepcopy(item)
         self.response_error={'message':'玻璃门尺寸无效','issues':[
-            {'attachment_name':'玻璃门','attachment_price_id':1192,'reason':'高度必须是正数'}]}
+            {'line_number':1,'product_name':item['name'],'attachment_name':'玻璃门','attachment_price_id':1192,'reason':'高度必须是正数'}]}
         self.controller.generate()
         wait(lambda:not self.controller.busy)
-        self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],['recalculate-line'])
+        self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],['preview-check'])
         self.assertEqual(item,old)
         self.assertEqual(self.controller.issues[0]['line_number'],1)
         self.assertEqual(self.controller.issues[0]['attachment_price_id'],1192)
@@ -299,10 +335,10 @@ class DocumentProgress(unittest.TestCase):
         self.assertTrue(v2.attachment_snapshot_needs_refresh(item))
         self.controller.generate()
         wait(lambda:not self.controller.busy)
-        self.assertEqual(self.requests[0][1]['attachments'][0]['attachment_price_id'],1178)
-        self.assertEqual(item['attachment_confirmation_inputs'][0]['attachment_price_id'],1178)
+        self.assertEqual(self.requests[0][1]['items'][0]['attachments'][0]['attachment_price_id'],1178)
+        self.assertEqual(item['attachment_confirmation_inputs'][0]['attachment_price_id'],1192)
 
-    def test_segment_board_popup_height_edit_refreshes_snapshot_before_generate(self):
+    def test_segment_board_popup_height_edit_is_frozen_without_second_calculation(self):
         item=self.window.draft_items[0]
         row=dict(item_name='分段板',category_level1='安装附件',attachment_price_id=29,
                  quantity=1,status='PENDING_MANUAL',manual_inputs={},
@@ -323,11 +359,11 @@ class DocumentProgress(unittest.TestCase):
         self.controller.generate()
         wait(lambda:not self.controller.busy)
         self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],
-                         ['preview','recalculate-line','preview-check'])
+                         ['preview','preview-check'])
         checked=self.requests[-1][1]['items'][0]
         self.assertEqual(checked['attachments'][0]['manual_inputs'],{'分段板高度':150})
-        self.assertEqual(checked['quote_line_id'],'22222222-2222-4222-8222-222222222222')
-        self.assertFalse(v2.attachment_snapshot_needs_refresh(item))
+        self.assertEqual(checked['quote_line_id'],item['quote_line_id'])
+        self.assertTrue(v2.attachment_snapshot_needs_refresh(item))
 
     def test_negative_board_quantity_recalculates_and_generates_with_deduction_contract(self):
         item,row=self.edited_glass()
@@ -342,8 +378,8 @@ class DocumentProgress(unittest.TestCase):
         self.controller.generate()
         wait(lambda:not self.controller.busy)
         self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],
-                         ['recalculate-line','preview-check'])
-        for payload in (self.requests[0][1],self.requests[1][1]['items'][0]):
+                         ['preview-check'])
+        for payload in (self.requests[0][1]['items'][0],):
             selected=payload['attachments'][0]
             self.assertEqual(selected['quantity'],2)
             self.assertEqual(selected['attachment_price_sign'],-1)
@@ -351,7 +387,7 @@ class DocumentProgress(unittest.TestCase):
         self.assertEqual(item['attachments'][0]['quick_amount'],-500.52)
         self.assertEqual(item['quick']['total_cost'],499.48)
         self.assertEqual(self.window.stack.currentIndex(),ui.QUOTE_ROUTE)
-        self.assertFalse(v2.attachment_snapshot_needs_refresh(item))
+        self.assertTrue(v2.attachment_snapshot_needs_refresh(item))
 
     def test_server_failure_locator_and_successful_retry(self):
         self.response_error={'message':'附件成本存在错误，不能确认或导出',
