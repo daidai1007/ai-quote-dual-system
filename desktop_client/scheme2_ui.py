@@ -841,6 +841,10 @@ class _DoubleClickEditGuard(QObject):
 
     def _refresh_edit_frame(self, editing):
         self.spin.setProperty("schemeEditing", editing)
+        if self.spin.property("schemeUnderlineIdle"):
+            font = self.line_edit.font()
+            font.setUnderline(not editing)
+            self.line_edit.setFont(font)
         self.spin.style().unpolish(self.spin)
         self.spin.style().polish(self.spin)
         self.spin.update()
@@ -976,6 +980,11 @@ class _SchemeDimensionEditor(QDialog):
 
 def _attachment_dimension_or_model(source):
     """Show only attachment catalogue dimensions, never cabinet target size."""
+    item_name = str(source.get("item_name") or "").strip()
+    if item_name in LIGHT_SWITCH_OPTIONS:
+        return item_name
+    if str(source.get("category_level1") or "").strip() == "照明灯/行程开关":
+        return str(source.get("specification") or source.get("model_code") or item_name).strip()
     manual = source.get("manual_inputs") or {}
     if "玻璃门" in str(source.get("item_name") or ""):
         width, height = (_number(manual.get(key)) for key in ("玻璃门宽度", "玻璃门高度"))
@@ -1056,7 +1065,7 @@ class AttachmentEditor(QDialog):
             QTableWidget#scheme2AttachmentEditorTable QHeaderView::section { background:#2563EB; color:#FFFFFF; border:0; padding:7px 8px; font-size:12px; font-weight:600; }
             QSpinBox#scheme2AttachmentEditorQuantity, QDoubleSpinBox#scheme2AttachmentEditorCost, QDoubleSpinBox#scheme2AttachmentEditorAmount, QComboBox#scheme2AttachmentModelCombo { font-size:12px; min-height:24px; max-height:30px; }
             QDoubleSpinBox#scheme2AttachmentEditorAmount[schemeEditing="false"] {
-                border:0; border-bottom:1px solid #5F5E5A; border-radius:0; padding:2px;
+                background:transparent; border:0; border-radius:0; padding:2px 8px;
             }
             QDoubleSpinBox#scheme2AttachmentEditorAmount[schemeEditing="true"] {
                 background:#FFFFFF; border:2px solid #2563EB; border-radius:6px; padding:0;
@@ -1098,7 +1107,7 @@ class AttachmentEditor(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(False)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.setToolTip("金额和成本需左键双击后修改；右键可添加或删除临时附件；按 Esc 取消修改")
+        self.table.setToolTip("金额和成本需左键双击后修改；三排安装梁、电脑托盘型号双击后选择；右键可添加或删除临时附件")
         self.table.customContextMenuRequested.connect(self._show_table_menu)
         table_header = self.table.horizontalHeader()
         table_header.setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeMode.Stretch)
@@ -1110,6 +1119,7 @@ class AttachmentEditor(QDialog):
         self.table.setColumnWidth(self.COL_AMOUNT, 82)
         self.table.setColumnWidth(self.COL_FORMULA_AMOUNT, 88)
         self.table.cellClicked.connect(self.edit_missing_dimensions)
+        self.table.cellDoubleClicked.connect(self._begin_model_edit)
         layout.addWidget(self.table, 1)
         for attachment in item.get("attachments", []):
             if isinstance(attachment, dict):
@@ -1151,31 +1161,15 @@ class AttachmentEditor(QDialog):
             name = "照明灯/行程开关"
         spec = _attachment_dimension_or_model(source)
         self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
-        model_options = LIGHT_SWITCH_OPTIONS if is_light_switch else {
-            "三排安装梁": THREE_ROW_BEAM_MODELS,
-            "电脑托盘": None if source.get("custom") else COMPUTER_TRAY_MODELS,
-        }.get(name)
-        if model_options:
-            model = str(
-                source.get("item_name") if is_light_switch and source.get("item_name") in LIGHT_SWITCH_OPTIONS
-                else source.get("model_code") or source.get("specification") or ""
-            ).strip()
-            selector = QComboBox()
-            selector.setObjectName("scheme2AttachmentModelCombo")
-            selector.view().setObjectName("scheme2AttachmentModelDropdown")
-            selector.addItem("未选择", "")
-            for option in model_options:
-                selector.addItem(option, option)
-            selector.setCurrentIndex(max(0, selector.findData(model)))
-            self.table.setCellWidget(row, self.COL_SPECIFICATION, selector)
-            selector.currentIndexChanged.connect(
-                lambda _index, target_row=row, combo=selector, light=is_light_switch:
-                    self._attachment_option_changed(target_row, combo.currentData(), light)
-            )
-        else:
-            specification_item = QTableWidgetItem(spec)
-            specification_item.setData(ROLE_DERIVED_SPEC, spec)
-            self.table.setItem(row, self.COL_SPECIFICATION, specification_item)
+        if name in {"三排安装梁", "电脑托盘"} and not source.get("custom"):
+            spec = str(source.get("model_code") or source.get("specification") or "").strip()
+        specification_item = QTableWidgetItem(spec)
+        specification_item.setData(ROLE_DERIVED_SPEC, spec)
+        if is_light_switch or (name in {"三排安装梁", "电脑托盘"} and not source.get("custom")):
+            specification_item.setFlags(specification_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if is_light_switch:
+            specification_item.setFlags(specification_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        self.table.setItem(row, self.COL_SPECIFICATION, specification_item)
         quantity = QSpinBox()
         quantity.setObjectName("scheme2AttachmentEditorQuantity")
         from attachment_v2_client import allows_negative_attachment_quantity
@@ -1197,14 +1191,87 @@ class AttachmentEditor(QDialog):
         self._render_amounts(row, source)
         quantity.valueChanged.connect(lambda value, target_row=row: self._quantity_changed(target_row, value))
 
+    def _begin_model_edit(self, row, column):
+        if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
+            return
+        source_item = self.table.item(row, self.COL_NAME)
+        source = source_item.data(ROLE_ROW) if source_item is not None else None
+        if not isinstance(source, dict) or source.get("custom"):
+            return
+        options = {
+            "三排安装梁": THREE_ROW_BEAM_MODELS,
+            "电脑托盘": COMPUTER_TRAY_MODELS,
+        }.get(str(source.get("item_name") or "").strip())
+        if not options or row in getattr(self, "_pending_reprices", {}):
+            return
+        existing = self.table.cellWidget(row, column)
+        if isinstance(existing, QComboBox):
+            existing.setFocus(Qt.FocusReason.MouseFocusReason)
+            return
+        selector = QComboBox()
+        selector.setObjectName("scheme2AttachmentModelCombo")
+        selector.view().setObjectName("scheme2AttachmentModelDropdown")
+        selector.addItem("未选择", "")
+        for option in options:
+            selector.addItem(option, option)
+        model = str(source.get("model_code") or source.get("specification") or "").strip()
+        selector.setCurrentIndex(max(0, selector.findData(model)))
+        self.table.setCellWidget(row, column, selector)
+        selector.installEventFilter(self)
+        selector.currentIndexChanged.connect(
+            lambda _index, target_row=row, combo=selector:
+                self._attachment_option_changed(target_row, combo.currentData())
+        )
+        selector.setFocus(Qt.FocusReason.MouseFocusReason)
+
+    def _end_model_edit(self, row, selector=None):
+        if row in getattr(self, "_pending_reprices", {}):
+            return
+        current = self.table.cellWidget(row, self.COL_SPECIFICATION)
+        if not isinstance(current, QComboBox) or (selector is not None and current is not selector):
+            return
+        self.table.removeCellWidget(row, self.COL_SPECIFICATION)
+        source_item = self.table.item(row, self.COL_NAME)
+        specification = self.table.item(row, self.COL_SPECIFICATION)
+        if source_item is not None and specification is not None:
+            source = source_item.data(ROLE_ROW) or {}
+            displayed = str(source.get("model_code") or source.get("specification") or "").strip()
+            specification.setText(displayed)
+            specification.setData(ROLE_DERIVED_SPEC, displayed)
+
+    def _end_model_edit_if_idle(self, row, selector):
+        if self.table.cellWidget(row, self.COL_SPECIFICATION) is selector:
+            if not selector.view().isVisible():
+                self._end_model_edit(row, selector)
+
+    def eventFilter(self, watched, event):
+        if isinstance(watched, QComboBox) and watched.objectName() == "scheme2AttachmentModelCombo":
+            if event.type() == QEvent.Type.FocusOut:
+                for row in range(self.table.rowCount()):
+                    if self.table.cellWidget(row, self.COL_SPECIFICATION) is watched:
+                        QTimer.singleShot(
+                            0, lambda target_row=row, selector=watched:
+                                self._end_model_edit_if_idle(target_row, selector)
+                        )
+                        break
+            elif event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+                for row in range(self.table.rowCount()):
+                    if self.table.cellWidget(row, self.COL_SPECIFICATION) is watched:
+                        QTimer.singleShot(0, lambda target_row=row, selector=watched:
+                                          self._end_model_edit(target_row, selector))
+                        break
+        return super().eventFilter(watched, event)
+
     def _attachment_option_changed(self, row, model, is_light_switch=False):
         model = str(model or "").strip()
         if not model:
+            self._end_model_edit(row)
             return
         source_item = self.table.item(row, self.COL_NAME)
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         current = source.get("item_name") if is_light_switch else source.get("model_code")
         if str(current or "").strip() == model:
+            self._end_model_edit(row)
             return
         record_event(self.window, "attachment_model_changed", row=row + 1, model=model)
         if is_light_switch:
@@ -1213,6 +1280,8 @@ class AttachmentEditor(QDialog):
             source.pop("matched_specification", None)
         else:
             source.update({"model_code": model.upper(), "specification": model.upper(), "matched_specification": model.upper()})
+            if source.get("item_name") == "三排安装梁":
+                source["beam_model_manually_selected"] = True
             if source.get("item_name") == "电脑托盘":
                 source["computer_tray_auto_match"] = False
                 source.pop("quick_amount_override", None)
@@ -1278,6 +1347,10 @@ class AttachmentEditor(QDialog):
             amount_editor.setValue(quick_amount)
         from attachment_v2_client import manual_attachment_amount_edited
         amount_editor.setProperty("schemeEdited", manual_attachment_amount_edited(source))
+        amount_editor.setProperty("schemeUnderlineIdle", True)
+        amount_editor._double_click_edit_guard._refresh_edit_frame(
+            bool(amount_editor.property("schemeEditing"))
+        )
         amount_editor.setProperty("unitAmount", None)
         amount_editor.setProperty("pending", pending)
         amount_editor.setEnabled(not pending)
@@ -1461,6 +1534,8 @@ class AttachmentEditor(QDialog):
             if isinstance(specification_editor, QComboBox):
                 specification_editor.setEnabled(True)
             self._render_amounts(row, calculated)
+            if isinstance(specification_editor, QComboBox):
+                QTimer.singleShot(0, lambda editor=specification_editor: self._end_model_edit(row, editor))
 
         def failed(message):
             if not current():
@@ -1478,6 +1553,8 @@ class AttachmentEditor(QDialog):
             if formula_item is not None:
                 formula_item.setText(_money(0))
                 formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
+            if isinstance(specification_editor, QComboBox):
+                QTimer.singleShot(0, lambda editor=specification_editor: self._end_model_edit(row, editor))
             QMessageBox.warning(self, "附件计算失败", str(message))
 
         if not callable(reprice):
@@ -2196,8 +2273,9 @@ class FaceDiscountEditor(QDialog):
 
 def _printable_quote_html(window, font_step=0) -> str:
     company = html.escape(str(getattr(window, "scheme2_company", None).currentText() if getattr(window, "scheme2_company", None) is not None else ""))
-    order_number = html.escape(str(getattr(window, "scheme2_order_number", None).text() if getattr(window, "scheme2_order_number", None) is not None else ""))
-    quote_date = date.today().isoformat()
+    scheme_number = str(getattr(window, "_quote_scheme_id", "") or "").strip()
+    order_number = html.escape(scheme_number or str(getattr(window, "scheme2_order_number", None).text() if getattr(window, "scheme2_order_number", None) is not None else ""))
+    quote_date = str(getattr(window, "_quote_scheme_quote_date", "") or date.today().isoformat())
     rows = []
     total = 0.0
     for index, item in enumerate(getattr(window, "draft_items", []), 1):
@@ -2238,9 +2316,15 @@ def _print_quote(window):
     document = QTextDocument(window)
     document.setHtml(_printable_quote_html(window))
     document.print_(printer)
+    callback = getattr(window, "quote_scheme_print_succeeded", None)
+    if callable(callback):
+        callback()
 
 
 def _quote_unit_price_changed(window, row, column):
+    if getattr(window, "_quote_scheme_read_only", False):
+        _refresh_quote_page(window)
+        return
     if getattr(window, "_scheme2_refreshing_quote", False) or column != 5 or row < 10:
         return
     items = getattr(window, "draft_items", [])
@@ -2291,6 +2375,9 @@ def _update_quote_item_name(window, item, text):
 
 
 def _quote_name_changed(window, row, column):
+    if getattr(window, "_quote_scheme_read_only", False):
+        _refresh_quote_page(window)
+        return
     if getattr(window, "_scheme2_refreshing_quote", False) or column != 1 or row < 10:
         return
     items = getattr(window, "draft_items", [])
@@ -2403,13 +2490,16 @@ def _refresh_quote_page(window):
     if isinstance(preview, QTableWidget):
         items = getattr(window, "draft_items", [])
         company = window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else ""
-        order_number = window.scheme2_order_number.text() if hasattr(window, "scheme2_order_number") else ""
+        order_number = str(getattr(window, "_quote_scheme_id", "") or "") or (
+            window.scheme2_order_number.text() if hasattr(window, "scheme2_order_number") else ""
+        )
+        quote_date = str(getattr(window, "_quote_scheme_quote_date", "") or date.today().isoformat())
         window._scheme2_refreshing_quote = True
         try:
             preview.clearSpans()
             preview.setRowCount(11 + len(items))
             meta = (
-                (0, "报价单", order_number, "", ""), (1, "日期", date.today().isoformat(), "", ""),
+                (0, "报价单", order_number, "", ""), (1, "日期", quote_date, "", ""),
                 (3, "买方", company, "卖方", "浙江京能电力设备有限公司"),
                 (4, "地址", "", "地址", "杭州临安横畈工业功能区桑园路18号"),
                 (5, "电话", "", "电话", "0571-88520091"),
@@ -2436,8 +2526,9 @@ def _refresh_quote_page(window):
                 data = (index + 1, values[1], values[3], values[11], "台", _money(values[15]), _money(amount), remark)
                 for column, value in enumerate(data):
                     preview.item(row, column).setText(str(value))
-                preview.item(row, 1).setFlags(preview.item(row, 1).flags() | Qt.ItemFlag.ItemIsEditable)
-                preview.item(row, 5).setFlags(preview.item(row, 5).flags() | Qt.ItemFlag.ItemIsEditable)
+                if not getattr(window, "_quote_scheme_read_only", False):
+                    preview.item(row, 1).setFlags(preview.item(row, 1).flags() | Qt.ItemFlag.ItemIsEditable)
+                    preview.item(row, 5).setFlags(preview.item(row, 5).flags() | Qt.ItemFlag.ItemIsEditable)
             total_row = 10 + len(items)
             preview.item(total_row, 1).setText("合计")
             preview.item(total_row, 6).setText(_money(total))
@@ -3396,6 +3487,8 @@ def _apply_compact_control(window):
 
 
 def _delete_selected(window):
+    if getattr(window, "_quote_scheme_read_only", False):
+        return
     row = _selected_row(window)
     items = getattr(window, "draft_items", [])
     if not 0 <= row < len(items):
@@ -3420,6 +3513,8 @@ def _undo_delete(window):
 
 
 def _duplicate_selected(window):
+    if getattr(window, "_quote_scheme_read_only", False):
+        return
     row = _selected_row(window)
     items = getattr(window, "draft_items", [])
     if not 0 <= row < len(items):
@@ -3474,6 +3569,8 @@ def _layout_cost_actions(window, compact):
 
 
 def _edit_selected(window):
+    if getattr(window, "_quote_scheme_read_only", False):
+        return
     item = _selected_item(window)
     if item is None:
         return
@@ -3494,6 +3591,9 @@ def _edit_selected(window):
 
 
 def _cost_cell_changed(window, row, column):
+    if getattr(window, "_quote_scheme_read_only", False):
+        window.refresh_summary()
+        return
     if getattr(window, "_scheme2_refreshing", False) or column not in EDITABLE_COLUMNS:
         return
     items = getattr(window, "draft_items", [])
@@ -3526,6 +3626,8 @@ def _cost_cell_changed(window, row, column):
 
 
 def _cost_cell_clicked(window, row, column):
+    if getattr(window, "_quote_scheme_read_only", False) and column in (2, 5):
+        return
     items = getattr(window, "draft_items", [])
     if items and row == len(items) and column == 5:
         AttachmentSummaryDialog(window).exec()
@@ -5581,6 +5683,8 @@ def _attachment_chip_text(item):
 
 
 def _remove_scheme2_attachment(window, index):
+    if getattr(window, "_quote_scheme_read_only", False):
+        return
     attachments = getattr(window, "attachments", [])
     if not 0 <= index < len(attachments):
         return
@@ -6527,7 +6631,7 @@ def _install_shortcuts(window):
         shortcuts.append(shortcut)
 
     def submit():
-        if window.stack.currentIndex() != OPTION_ROUTE:
+        if window.stack.currentIndex() != OPTION_ROUTE or getattr(window, "_quote_scheme_read_only", False):
             return
         focus = window.focusWidget()
         if focus is getattr(window, "scheme2_order_number", None):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import date
 import json
 import urllib.error
 import urllib.parse
@@ -12,7 +13,7 @@ from PySide6.QtCore import QDateTime, QTimer, Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox, QTableWidget,
+    QInputDialog, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox, QTableWidget,
     QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -72,12 +73,56 @@ def _headers(window):
 
 
 def _snapshot(window):
-    from scheme2_ui import _order_workspace_payload
+    from scheme2_ui import _order_workspace_payload, _row_values
     payload = _order_workspace_payload(window)
+    items = list(payload.get("draft_items") or [])
+    products = []
+    quoted_amount = 0.0
+    for item in items:
+        values = _row_values(item)
+        quoted_amount += float(values[16] or 0)
+        product = str(item.get("product_name") or item.get("product_code") or item.get("name") or "").strip()
+        specification = str(item.get("specification") or item.get("model_code") or "").strip()
+        label = " ".join(value for value in (product, specification) if value)
+        if label and label not in products:
+            products.append(label)
+    quote_date = str(getattr(window, "_quote_scheme_quote_date", "") or date.today().isoformat())
     payload["quote_scheme_schema_version"] = 1
     payload["client_version"] = CLIENT_VERSION
     payload["active_route"] = int(window.stack.currentIndex())
+    payload["scheme_summary"] = {
+        "company": str(payload.get("company") or "").strip(),
+        "product_summary": "；".join(products[:3]),
+        "quoted_amount": round(quoted_amount, 2),
+    }
+    payload["document"] = {
+        "scheme_no": str(getattr(window, "_quote_scheme_id", "") or ""),
+        "version_no": int(getattr(window, "_quote_scheme_business_version", 1) or 1),
+        "quote_date": quote_date,
+        "client_version": CLIENT_VERSION,
+    }
     return payload
+
+
+def _operator_name(window, prompt=False):
+    editor = getattr(window, "quote_scheme_operator_name", None)
+    value = editor.text().strip() if isinstance(editor, QLineEdit) else ""
+    if not value and prompt:
+        value, accepted = QInputDialog.getText(
+            window, "填写创建人", "请输入当前操作人员姓名：", QLineEdit.EchoMode.Normal,
+        )
+        value = value.strip() if accepted else ""
+        if value and isinstance(editor, QLineEdit):
+            editor.setText(value)
+    return value[:100]
+
+
+def _require_operator(window, prompt=False):
+    value = _operator_name(window, prompt)
+    if value:
+        return value
+    _set_state(window, "请先在报价方案中心填写当前操作人姓名。", "error")
+    return ""
 
 
 def _set_state(window, text, kind="normal"):
@@ -130,6 +175,12 @@ def _build_page(window):
     heading.addSpacing(10)
     heading.addWidget(server)
     heading.addStretch(1)
+    heading.addWidget(QLabel("当前操作人"))
+    operator_name = _field("填写姓名", "quoteSchemeOperatorName")
+    operator_name.setMaximumWidth(180)
+    operator_name.setToolTip("该姓名由操作人员自填，用于方案显示、审计和搜索；当前阶段不作为登录身份。")
+    heading.addWidget(operator_name)
+    window.quote_scheme_operator_name = operator_name
     root.addLayout(heading)
 
     filters = QFrame()
@@ -294,8 +345,8 @@ def _row_actions(window, scheme):
     if status == "ARCHIVED": menu.addAction("恢复", lambda: _confirm_transition(window, scheme, "restore"))
     if status not in ("VOID",): menu.addAction("作废", lambda: _confirm_transition(window, scheme, "void"))
     if status in ("QUOTED", "ARCHIVED"):
-        menu.addAction("打印", lambda: _open_scheme(window, scheme["scheme_no"], 2))
-        menu.addAction("导出", lambda: _open_scheme(window, scheme["scheme_no"], 2))
+        menu.addAction("打印", lambda: _open_scheme(window, scheme["scheme_no"], 2, "print"))
+        menu.addAction("导出", lambda: _open_scheme(window, scheme["scheme_no"], 2, "export"))
     if status == "DRAFT": menu.addAction("删除未使用草稿", lambda: _confirm_delete(window, scheme))
     more.setMenu(menu); layout.addWidget(opened); layout.addWidget(more)
     return host
@@ -311,10 +362,14 @@ def _open_selected_row(window):
     if scheme: _open_scheme(window, scheme["scheme_no"])
 
 
-def _open_scheme(window, scheme_no, route=3):
+def _open_scheme(window, scheme_no, route=3, after_open=None):
+    busy = getattr(window, "_quote_scheme_save_worker", None)
+    if busy is not None and busy.isRunning():
+        QMessageBox.information(window, "方案保存中", "请等待当前方案保存完成后再打开其他方案。")
+        return
     _set_state(window, "正在从服务器恢复方案…", "busy")
     _run(window, "GET", "/api/quote-schemes/" + urllib.parse.quote(scheme_no), None,
-         lambda result: _apply_opened_scheme(window, result, route),
+         lambda result: _apply_opened_scheme(window, result, route, after_open),
          lambda message: _set_state(window, f"打开失败：{message}", "error"))
 
 
@@ -322,32 +377,72 @@ def _apply_read_only(window, read_only):
     window._quote_scheme_read_only = bool(read_only)
     if hasattr(window, "summary_table"):
         window.summary_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers if read_only else QAbstractItemView.EditTrigger.DoubleClicked)
+    if hasattr(window, "scheme2_quote_preview"):
+        window.scheme2_quote_preview.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers if read_only
+            else QAbstractItemView.EditTrigger.DoubleClicked
+        )
     for control in getattr(window, "scheme2_cost_controls", {}).values(): control.setEnabled(not read_only)
     for button in getattr(window, "scheme2_cost_action_buttons", []):
         if button.text() not in ("返回", "生成报价单"): button.setEnabled(not read_only)
     if hasattr(window, "scheme2_add_button"): window.scheme2_add_button.setEnabled(not read_only)
     if hasattr(window, "scheme2_company"): window.scheme2_company.setEnabled(not read_only)
+    for name in (
+        "scheme2_name_edit", "quote_spec_edit", "product_combo", "quantity_spin",
+        "cabinet_body_thickness_spin", "material_combo", "coating_combo",
+        "scheme2_color_combo", "single_door_combo", "double_door_combo", "notes_text",
+    ):
+        control = getattr(window, name, None)
+        if control is not None:
+            control.setEnabled(not read_only)
+    for name in ("scheme2_attachment_field", "scheme2_attachment_button"):
+        attachment_host = getattr(window, name, None)
+        if attachment_host is not None:
+            attachment_host.setEnabled(not read_only)
 
 
-def _apply_opened_scheme(window, result, route=3):
+def _apply_opened_scheme(window, result, route=3, after_open=None):
     from scheme2_ui import _apply_order_workspace_payload
     snapshot = deepcopy(result.get("snapshot") or {})
-    window._quote_scheme_id = str(result.get("scheme_no") or "")
-    window._quote_scheme_version = int(result.get("lock_version") or 1)
-    window._quote_scheme_status = str(result.get("status") or "DRAFT")
-    _apply_order_workspace_payload(window, snapshot, f"已从服务器恢复：{window._quote_scheme_id}")
-    _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID"))
-    window.show_section(route)
+    window._quote_scheme_loading = True
+    try:
+        window._quote_scheme_id = str(result.get("scheme_no") or "")
+        window._quote_scheme_version = int(result.get("lock_version") or 1)
+        window._quote_scheme_business_version = int(result.get("version_no") or 1)
+        window._quote_scheme_status = str(result.get("status") or "DRAFT")
+        document = snapshot.get("document") if isinstance(snapshot.get("document"), dict) else {}
+        window._quote_scheme_quote_date = str(document.get("quote_date") or str(result.get("created_at") or "")[:10] or date.today().isoformat())
+        _apply_order_workspace_payload(window, snapshot, f"已从服务器恢复：{window._quote_scheme_id}")
+        _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID"))
+        window.show_section(route)
+        window._quote_scheme_dirty_seq = 0
+        window._quote_scheme_saved_seq = 0
+        window._quote_scheme_save_pending = False
+        window._quote_scheme_last_save_failed = False
+    finally:
+        window._quote_scheme_loading = False
     _set_state(window, f"{window._quote_scheme_id} · 已保存 {str(result.get('updated_at') or '')[:19]}", "ok")
+    if after_open == "print":
+        QTimer.singleShot(0, lambda: window.scheme2_quote_print.click())
+    elif after_open == "export":
+        QTimer.singleShot(0, lambda: window.scheme2_quote_export.click())
 
 
 def _new_scheme(window):
+    busy = getattr(window, "_quote_scheme_save_worker", None) or getattr(window, "_quote_scheme_create_worker", None)
+    if busy is not None and busy.isRunning():
+        QMessageBox.information(window, "方案保存中", "请等待当前方案保存完成后再新建方案。")
+        return
     if window._quote_scheme_id or getattr(window, "draft_items", []):
         answer = QMessageBox.question(window, "新建方案", "将清空当前工作区并开始新方案。是否继续？",
                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                       QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes: return
     window._quote_scheme_id = ""; window._quote_scheme_version = 0; window._quote_scheme_status = ""
+    window._quote_scheme_business_version = 1
+    window._quote_scheme_quote_date = date.today().isoformat()
+    window._quote_scheme_dirty_seq = 0; window._quote_scheme_saved_seq = 0
+    window._quote_scheme_save_pending = False; window._quote_scheme_last_save_failed = False
     window.draft_items = []
     _apply_read_only(window, False)
     window.refresh_summary(); window.show_section(1)
@@ -356,8 +451,12 @@ def _new_scheme(window):
 
 def _ensure_created(window):
     if window._quote_scheme_id or window._quote_scheme_create_worker is not None or not getattr(window, "draft_items", []): return
+    operator_name = _require_operator(window, True)
+    if not operator_name:
+        window._quote_scheme_last_save_failed = True
+        return
     _set_state(window, "正在创建草稿并生成方案编号…", "busy")
-    worker = _run(window, "POST", "/api/quote-schemes", {"snapshot": _snapshot(window)},
+    worker = _run(window, "POST", "/api/quote-schemes", {"snapshot": _snapshot(window), "operator_name": operator_name},
                   lambda result: _created(window, result),
                   lambda message: _create_failed(window, message))
     window._quote_scheme_create_worker = worker
@@ -367,7 +466,10 @@ def _ensure_created(window):
 def _created(window, result):
     window._quote_scheme_id = str(result.get("scheme_no") or "")
     window._quote_scheme_version = int(result.get("lock_version") or 1)
+    window._quote_scheme_business_version = int(result.get("version_no") or 1)
     window._quote_scheme_status = str(result.get("status") or "DRAFT")
+    window._quote_scheme_quote_date = str(result.get("created_at") or date.today().isoformat())[:10]
+    window._quote_scheme_last_save_failed = False
     _set_state(window, f"{window._quote_scheme_id} · 已保存", "ok")
     _schedule_save(window)
 
@@ -380,36 +482,72 @@ def _create_failed(window, message):
 def _schedule_save(window):
     if getattr(window, "_quote_scheme_loading", False) or getattr(window, "_quote_scheme_read_only", False): return
     if not window._quote_scheme_id: return
+    window._quote_scheme_dirty_seq += 1
+    if window._quote_scheme_save_worker is not None:
+        window._quote_scheme_save_pending = True
     window._quote_scheme_save_timer.start(500)
     _set_state(window, f"{window._quote_scheme_id} · 等待自动保存", "busy")
 
 
 def _save(window):
-    if not window._quote_scheme_id or window._quote_scheme_save_worker is not None: return
+    if not window._quote_scheme_id: return
+    if window._quote_scheme_save_worker is not None:
+        window._quote_scheme_save_pending = True
+        return
+    operator_name = _require_operator(window, False)
+    if not operator_name:
+        window._quote_scheme_last_save_failed = True
+        return
+    scheme_no = window._quote_scheme_id
+    sequence = window._quote_scheme_dirty_seq
     _set_state(window, f"{window._quote_scheme_id} · 保存中…", "busy")
-    payload = {"expected_version": window._quote_scheme_version, "snapshot": _snapshot(window)}
+    payload = {"expected_version": window._quote_scheme_version, "snapshot": _snapshot(window),
+               "operator_name": operator_name}
     worker = _run(window, "PUT", "/api/quote-schemes/" + urllib.parse.quote(window._quote_scheme_id), payload,
-                  lambda result: _saved(window, result), lambda message: _save_failed(window, message))
+                  lambda result: _saved(window, result, scheme_no, sequence),
+                  lambda message: _save_failed(window, message, scheme_no))
     window._quote_scheme_save_worker = worker
-    worker.finished.connect(lambda: setattr(window, "_quote_scheme_save_worker", None))
+    worker.finished.connect(lambda: _save_finished(window, worker, scheme_no, sequence))
 
 
-def _saved(window, result):
+def _saved(window, result, scheme_no=None, sequence=None):
+    if scheme_no is not None and window._quote_scheme_id != scheme_no:
+        return
     window._quote_scheme_version = int(result.get("lock_version") or window._quote_scheme_version)
+    if sequence is not None:
+        window._quote_scheme_saved_seq = max(window._quote_scheme_saved_seq, int(sequence))
     window._quote_scheme_last_save_failed = False
     stamp = str(result.get("updated_at") or QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss"))[:19].replace("T", " ")
     _set_state(window, f"{window._quote_scheme_id} · 已保存 {stamp}", "ok")
 
 
-def _save_failed(window, message):
+def _save_failed(window, message, scheme_no=None):
+    if scheme_no is not None and window._quote_scheme_id != scheme_no:
+        return
     window._quote_scheme_last_save_failed = True
     _set_state(window, f"保存失败：{message}。请重试，关闭前不会把本地状态冒充为已保存。", "error")
 
 
+def _save_finished(window, worker, scheme_no, sequence):
+    if window._quote_scheme_save_worker is worker:
+        window._quote_scheme_save_worker = None
+    if window._quote_scheme_id != scheme_no:
+        return
+    needs_save = window._quote_scheme_save_pending or window._quote_scheme_dirty_seq > max(
+        window._quote_scheme_saved_seq, int(sequence),
+    )
+    window._quote_scheme_save_pending = False
+    if needs_save and not window._quote_scheme_last_save_failed:
+        QTimer.singleShot(0, lambda: _save(window))
+
+
 def _scheme_action(window, scheme, action):
+    operator_name = _require_operator(window, True)
+    if not operator_name:
+        return
     _set_state(window, "正在创建新方案…", "busy")
     path = f"/api/quote-schemes/{urllib.parse.quote(scheme['scheme_no'])}/{action}"
-    payload = {"expected_version": scheme["lock_version"]}
+    payload = {"expected_version": scheme["lock_version"], "operator_name": operator_name}
     _run(window, "POST", path, payload, lambda result: _open_scheme(window, result["scheme_no"], 1 if action == "copy" else 3),
          lambda message: _set_state(window, f"操作失败：{message}", "error"))
 
@@ -421,8 +559,12 @@ def _confirm_transition(window, scheme, action):
                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                   QMessageBox.StandardButton.No)
     if answer != QMessageBox.StandardButton.Yes: return
+    operator_name = _require_operator(window, True)
+    if not operator_name:
+        return
     path = f"/api/quote-schemes/{urllib.parse.quote(scheme['scheme_no'])}/{action}"
-    _run(window, "POST", path, {"expected_version": scheme["lock_version"]}, lambda _r: _load_list(window, window._quote_scheme_page))
+    _run(window, "POST", path, {"expected_version": scheme["lock_version"], "operator_name": operator_name},
+         lambda _r: _load_list(window, window._quote_scheme_page))
 
 
 def _confirm_delete(window, scheme):
@@ -430,15 +572,24 @@ def _confirm_delete(window, scheme):
                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                   QMessageBox.StandardButton.No)
     if answer != QMessageBox.StandardButton.Yes: return
-    path = f"/api/quote-schemes/{urllib.parse.quote(scheme['scheme_no'])}?expected_version={scheme['lock_version']}"
+    operator_name = _require_operator(window, True)
+    if not operator_name:
+        return
+    path = f"/api/quote-schemes/{urllib.parse.quote(scheme['scheme_no'])}?" + urllib.parse.urlencode({
+        "expected_version": scheme["lock_version"], "operator_name": operator_name,
+    })
     _run(window, "DELETE", path, None, lambda _r: _load_list(window, window._quote_scheme_page))
 
 
 def _record_export(window, succeeded, kind="XLSX"):
     if not window._quote_scheme_id: return
+    operator_name = _require_operator(window, False)
+    if not operator_name:
+        window._quote_scheme_last_save_failed = True
+        return
     path = f"/api/quote-schemes/{urllib.parse.quote(window._quote_scheme_id)}/export-result"
     payload = {"kind":kind, "succeeded":bool(succeeded), "expected_version":window._quote_scheme_version,
-               "detail":{"client_version":CLIENT_VERSION}}
+               "operator_name":operator_name, "detail":{"client_version":CLIENT_VERSION}}
     if succeeded: payload["snapshot"] = _snapshot(window)
     _run(window, "POST", path, payload,
          lambda result: _export_recorded(window, result) if succeeded else None,
@@ -464,9 +615,12 @@ def install_quote_scheme_center(namespace):
         window.setWindowTitle(f"AI 双报价系统 · {CLIENT_VERSION}")
         window._quote_scheme_headers_factory = namespace.get("api_headers")
         window._quote_scheme_id = ""; window._quote_scheme_version = 0; window._quote_scheme_status = ""
+        window._quote_scheme_business_version = 1; window._quote_scheme_quote_date = date.today().isoformat()
         window._quote_scheme_workers = set(); window._quote_scheme_list_worker = None
         window._quote_scheme_create_worker = None; window._quote_scheme_save_worker = None
         window._quote_scheme_last_save_failed = False; window._quote_scheme_loading = False
+        window._quote_scheme_dirty_seq = 0; window._quote_scheme_saved_seq = 0
+        window._quote_scheme_save_pending = False
         window._quote_scheme_page = 1; window._quote_scheme_read_only = False
         window._quote_scheme_save_timer = QTimer(window); window._quote_scheme_save_timer.setSingleShot(True)
         window._quote_scheme_save_timer.timeout.connect(lambda: _save(window))
@@ -474,15 +628,17 @@ def install_quote_scheme_center(namespace):
         nav = window.scheme2_nav; layout = nav.layout()
         button = QPushButton("报价方案"); button.setObjectName("navButton"); button.setCheckable(True); button.setFixedHeight(28)
         button.clicked.connect(lambda: window.show_section(SCHEME_ROUTE))
-        insert_at = max(1, layout.indexOf(window.nav_buttons[1]))
+        # Keep the established workflow order from the approved V0 sidebar:
+        # selection -> cost -> quote sheet -> quote schemes.
+        insert_at = max(1, layout.indexOf(window.nav_buttons[-1]) + 1)
         layout.insertWidget(insert_at, button)
         window.quote_scheme_nav_button = button
-        window.nav_buttons.insert(1, button)
+        window.nav_buttons.append(button)
         window.nav_routes = (
             (1, "选型配置", "", None),
-            (SCHEME_ROUTE, "报价方案", "", None),
             (3, "成本计算", "", None),
             (2, "报价单", "", None),
+            (SCHEME_ROUTE, "报价方案", "", None),
         )
         window.quote_scheme_save_status = QLabel("未打开报价方案")
         window.quote_scheme_save_status.setWordWrap(True)
@@ -505,12 +661,20 @@ def install_quote_scheme_center(namespace):
             _record_export(window, True)
             return result
         window.export_succeeded = export_succeeded.__get__(window, type(window))
+        window.quote_scheme_print_succeeded = lambda: _record_export(window, True, "PRINT")
         for name in ("export_failed", "persistence_failed", "finalization_failed"):
             prior = getattr(window, name, None)
             if callable(prior):
                 def failed(owner, message, callback=prior):
                     result = callback(message); _record_export(window, False); return result
                 setattr(window, name, failed.__get__(window, type(window)))
+        prior_move = getattr(window, "move_selected_item", None)
+        if callable(prior_move):
+            def guarded_move(delta):
+                if not window._quote_scheme_read_only:
+                    return prior_move(delta)
+                return None
+            window.move_selected_item = guarded_move
 
     def section(window, index):
         if index == SCHEME_ROUTE:
@@ -545,6 +709,9 @@ def install_quote_scheme_center(namespace):
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                          QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes: event.ignore(); return
+        if window._quote_scheme_id and window._quote_scheme_dirty_seq > window._quote_scheme_saved_seq:
+            QMessageBox.warning(window, "报价方案尚未保存", "仍有修改尚未保存到服务器，请等待保存完成后再关闭。")
+            event.ignore(); return
         return original_close(window, event)
 
     cls.__init__, cls.show_section = init, section

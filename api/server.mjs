@@ -8,7 +8,8 @@ import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
 import { attachmentCatalogSql, decodeAttachmentCatalog } from './attachment_catalog_query.mjs';
 import { normalizeDoorVariantInput, normalizeQuickDoorVariantInput } from './door_variant_rules.mjs';
 import { historyPriceMatchSql } from './history_price_query.mjs';
-import { buildPsqlArgs, resolveRuntimeConfig } from './runtime_config.mjs';
+import { resolveRuntimeConfig } from './runtime_config.mjs';
+import { runPsqlCommand } from './psql_runner.mjs';
 import { createAttachmentService } from './attachment_service.mjs';
 import { applyCabinetMaterial, createCabinetMaterialService } from './cabinet_material_service.mjs';
 import { applyCabinetSpray, createCabinetSprayService } from './cabinet_spray_service.mjs';
@@ -20,7 +21,7 @@ import { createBatchReadExecutor, validateGangedBatch, calculateGangedBatch } fr
 import { withQuoteRequest, withQuoteChild, timedQuotePhase, emitQuoteProgress, startQuoteStream, recordQuoteEvent, sqlTimingFields } from './quote_telemetry.mjs';
 import {MAX_DIAGNOSTIC_BYTES, diagnosticReportSql, validateDiagnosticSubmission} from './diagnostic_report.mjs';
 import {
-  apiKeyHash, createQuoteSchemeService, loadPrincipalMap, resolvePrincipal,
+  apiKeyHash, createQuoteSchemeService, loadPrincipalMap, resolveQuoteSchemePrincipal,
 } from './quote_scheme_service.mjs';
 
 const RUNTIME_CONFIG = resolveRuntimeConfig();
@@ -28,7 +29,6 @@ const PORT = RUNTIME_CONFIG.port;
 const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const QUOTE_SCHEME_PRINCIPALS = loadPrincipalMap();
-const PSQL_PATH = RUNTIME_CONFIG.psqlPath;
 const API_BUILD = '2026-09-11-complete-cost-catalogs-v5';
 const DEPLOYMENT_BUILD = '20260911-complete-cost-catalogs-v5';
 const DEFAULT_COATING_TYPE = '橘纹';
@@ -316,45 +316,8 @@ LEFT JOIN LATERAL (
 ) q ON TRUE;`;
 };
 
-const runPsql = (sql, clientEncoding = 'UTF8') => timedQuotePhase('database', () => new Promise((resolve, reject) => {
-  const child = spawn(PSQL_PATH, buildPsqlArgs(RUNTIME_CONFIG), {
-    env: { ...process.env, PGCLIENTENCODING: clientEncoding },
-    windowsHide: true,
-  });
-  let stdout = '';
-  let stderr = '';
-  let settled = false;
-  const timeout = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    if (!child.killed) child.kill();
-    reject(new Error(`database command timed out after ${RUNTIME_CONFIG.psqlTimeoutMs} ms`));
-  }, RUNTIME_CONFIG.psqlTimeoutMs);
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const fail = (error) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timeout);
-    reject(error);
-  };
-  child.on('error', fail);
-  child.stdin.on('error', fail);
-  child.on('close', (code) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timeout);
-    if (code !== 0) reject(new Error(stderr.trim() || `psql exited with code ${code}`));
-    else resolve(stdout.trim());
-  });
-  // Send SQL through stdin instead of the Windows command line.  Confirmed
-  // quotations can contain long OCR remarks and many cabinet snapshots;
-  // passing that SQL with `-c` eventually exceeds CreateProcess' command-line
-  // limit and makes spawn fail with ENAMETOOLONG.
-  child.stdin.end(`${sql}\n`, 'utf8');
-}), sqlTimingFields(sql));
+const runPsql = (sql, clientEncoding = 'UTF8') => timedQuotePhase('database',
+  () => runPsqlCommand(sql, clientEncoding, RUNTIME_CONFIG), sqlTimingFields(sql));
 
 const createQuoteServices = (readExecutor = runPsql) => {
   const cabinetMaterialService = createCabinetMaterialService({runPsql: readExecutor});
@@ -1008,7 +971,7 @@ const getDatabaseReadiness = async () => {
 const quoteSchemeService = createQuoteSchemeService({ runPsql, sqlUnicodeText, sqlNumber });
 
 const quoteSchemeResponse = async (req, res, requestUrl) => {
-  const principal = resolvePrincipal(req, QUOTE_SCHEME_PRINCIPALS);
+  const principal = resolveQuoteSchemePrincipal(req, QUOTE_SCHEME_PRINCIPALS, API_KEY);
   const pathname = requestUrl.pathname;
   const parts = pathname.split('/').filter(Boolean);
   const schemeNo = parts[2] ? decodeURIComponent(parts[2]) : '';
@@ -1032,6 +995,7 @@ const quoteSchemeResponse = async (req, res, requestUrl) => {
   if (!action && req.method === 'DELETE') {
     return json(res, 200, await quoteSchemeService.removeDraft(
       principal, schemeNo, requestUrl.searchParams.get('expected_version'),
+      requestUrl.searchParams.get('operator_name'),
     ));
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
@@ -1043,15 +1007,17 @@ const quoteSchemeResponse = async (req, res, requestUrl) => {
       const error = new Error('源方案已更新，请刷新列表后再复制。'); error.statusCode = 409; throw error;
     }
     return json(res, 201, await quoteSchemeService.create(
-      principal, { snapshot: source.snapshot }, { sourceNo: schemeNo },
+      principal, { snapshot: source.snapshot, operator_name: input.operator_name }, { sourceNo: schemeNo },
     ));
   }
   if (action === 'revision') {
-    return json(res, 200, await quoteSchemeService.revision(principal, schemeNo, input.expected_version));
+    return json(res, 200, await quoteSchemeService.revision(
+      principal, schemeNo, input.expected_version, input.operator_name,
+    ));
   }
   if (['archive', 'restore', 'void'].includes(action)) {
     return json(res, 200, await quoteSchemeService.transition(
-      principal, schemeNo, action, input.expected_version,
+      principal, schemeNo, action, input.expected_version, input.operator_name,
     ));
   }
   if (action === 'export-result') {

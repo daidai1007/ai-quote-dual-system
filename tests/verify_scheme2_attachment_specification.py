@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QFrame, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox, QFrame, QWidget  # noqa: E402
 
 import scheme2_ui  # noqa: E402
 
@@ -103,4 +103,18 @@ assert editor.pos() == QPoint(200, 150)
 header._drag_offset = None
 editor.accept()
 assert item["attachments"][4]["specification"] == "普通附件"
+beam_editor = scheme2_ui.AttachmentEditor(parent, {"attachments": [
+    {"category_level1": "安装附件", "item_name": "三排安装梁", "model_code": "JP760260", "quantity": 1}
+], "formula": {}, "quick": {}})
+beam_editor._reprice_row = lambda *_args: None
+assert beam_editor.table.cellWidget(0, beam_editor.COL_SPECIFICATION) is None
+assert beam_editor.table.item(0, beam_editor.COL_SPECIFICATION).text() == "JP760260"
+beam_editor._begin_model_edit(0, beam_editor.COL_SPECIFICATION)
+beam_selector = beam_editor.table.cellWidget(0, beam_editor.COL_SPECIFICATION)
+assert isinstance(beam_selector, QComboBox)
+beam_selector.setCurrentIndex(beam_selector.findData("JP760280"))
+beam_row = beam_editor.table.item(0, beam_editor.COL_NAME).data(scheme2_ui.ROLE_ROW)
+assert beam_row["model_code"] == "JP760280"
+assert beam_row["beam_model_manually_selected"] is True
+beam_editor.close()
 print("scheme2 attachment specification contract passed")

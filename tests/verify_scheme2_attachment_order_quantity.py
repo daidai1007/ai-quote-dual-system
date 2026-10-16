@@ -1,4 +1,4 @@
-"""Cost-page cabinet quantities project to attachment order totals only once."""
+"""Attachment popup keeps single-cabinet amounts while order totals scale separately."""
 
 import copy
 import os
@@ -58,7 +58,7 @@ def check_editor(quantity, cost, amount):
 
 for cabinets in (3, 2, 1, 3):
     set_cabinet_quantity(cabinets)
-    editor = check_editor(2 * cabinets, 8 * cabinets, 20 * cabinets)
+    editor = check_editor(2, 8, 20)
     editor.accept()
     # Closing/reopening never converts stored per-cabinet data to order totals.
     assert item["attachments"][0]["quantity"] == 2
@@ -66,29 +66,29 @@ for cabinets in (3, 2, 1, 3):
     assert item["quick"]["total_cost"] == 220
     assert item["attachment_confirmation_inputs"] == frozen
 
-# Editing total quantity recomputes both money columns immediately and stores
-# per-cabinet values, including after repeated edits and manual price changes.
-editor = check_editor(6, 24, 60)
+# Editing the attachment count recomputes single-cabinet amounts immediately,
+# including after repeated edits and manual price changes.
+editor = check_editor(2, 8, 20)
 quantity_editor = editor.table.cellWidget(0, editor.COL_QUANTITY)
 amount_editor = editor.table.cellWidget(0, editor.COL_AMOUNT)
-quantity_editor.setValue(9)
-assert amount_editor.value() == 90
-assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "36.00"
+quantity_editor.setValue(3)
+assert amount_editor.value() == 30
+assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "12.00"
 amount_editor.setValue(108)
-quantity_editor.setValue(12)
+quantity_editor.setValue(4)
 assert amount_editor.value() == 144
-assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "48.00"
+assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "16.00"
 editor.accept()
 assert item["attachments"][0]["quantity"] == 4
-assert item["attachments"][0]["quick_amount"] == 48
+assert item["attachments"][0]["quick_amount"] == 144
 assert item["formula"]["total_cost"] == 116
-assert item["quick"]["total_cost"] == 248
+assert item["quick"]["total_cost"] == 344
 assert scheme2_ui._row_values(item)[18] == 348
 set_cabinet_quantity(2)
-check_editor(8, 32, 96).reject()
+check_editor(4, 16, 144).reject()
 
-# Each independently matched ganged base scales by order quantity once, even
-# when two differently sized bases are present. Custom costs scale as well.
+# Each independently matched ganged base stays per set in the popup, even
+# when two differently sized bases are present. Custom costs behave likewise.
 item = {
     "quantity": 3,
     "ganged_cabinet_count": 2,
@@ -111,20 +111,20 @@ item = {
 }
 editor = scheme2_ui.AttachmentEditor(window, item)
 for row in (0, 1):
-    assert editor.table.cellWidget(row, editor.COL_QUANTITY).value() == 3
-    assert editor.table.item(row, editor.COL_FORMULA_AMOUNT).text() == "12.00"
-    assert editor.table.cellWidget(row, editor.COL_AMOUNT).value() == 30
-assert editor.table.cellWidget(2, editor.COL_QUANTITY).value() == 6
-assert editor.table.cellWidget(2, editor.COL_FORMULA_AMOUNT).value() == 60
-assert editor.table.cellWidget(2, editor.COL_AMOUNT).value() == 72
-editor.table.cellWidget(2, editor.COL_QUANTITY).setValue(9)
-editor.table.cellWidget(2, editor.COL_QUANTITY).setValue(12)
-assert editor.table.cellWidget(2, editor.COL_FORMULA_AMOUNT).value() == 120
-assert editor.table.cellWidget(2, editor.COL_AMOUNT).value() == 144
+    assert editor.table.cellWidget(row, editor.COL_QUANTITY).value() == 1
+    assert editor.table.item(row, editor.COL_FORMULA_AMOUNT).text() == "4.00"
+    assert editor.table.cellWidget(row, editor.COL_AMOUNT).value() == 10
+assert editor.table.cellWidget(2, editor.COL_QUANTITY).value() == 2
+assert editor.table.cellWidget(2, editor.COL_FORMULA_AMOUNT).value() == 20
+assert editor.table.cellWidget(2, editor.COL_AMOUNT).value() == 24
+editor.table.cellWidget(2, editor.COL_QUANTITY).setValue(3)
+editor.table.cellWidget(2, editor.COL_QUANTITY).setValue(4)
+assert editor.table.cellWidget(2, editor.COL_FORMULA_AMOUNT).value() == 40
+assert editor.table.cellWidget(2, editor.COL_AMOUNT).value() == 48
 editor.accept()
 assert item["attachments"][2]["quantity"] == 4
 assert item["attachments"][2]["formula_amount"] == 40
 assert item["attachments"][2]["quick_amount"] == 48
 assert item["formula"]["total_cost"] == 148
 
-print("PASS: cost-page quantities update attachment quantities, costs and amounts without repeated multiplication")
+print("PASS: popup keeps per-cabinet quantities, costs and amounts without order multiplication")

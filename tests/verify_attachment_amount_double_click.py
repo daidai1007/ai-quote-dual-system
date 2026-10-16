@@ -40,6 +40,7 @@ class AmountDoubleClick(unittest.TestCase):
 
     def test_single_click_keeps_display_double_click_shows_edit_box_and_enter_saves(self):
         line = self.amount.lineEdit()
+        self.assertTrue(line.font().underline())
         QTest.mouseClick(line, Qt.MouseButton.LeftButton)
         QTest.keyClicks(line, '99')
         self.assertTrue(line.isReadOnly())
@@ -48,6 +49,7 @@ class AmountDoubleClick(unittest.TestCase):
         self.begin_edit()
         self.assertFalse(line.isReadOnly())
         self.assertTrue(self.amount.property('schemeEditing'))
+        self.assertFalse(line.font().underline())
         self.assertEqual(line.selectedText(), line.text())
         self.assertIn('[schemeEditing="true"]', self.dialog.styleSheet())
         self.assertTrue(self.dialog.grab().save(str(ROOT/'outputs/attachment-amount-double-click.png')))
@@ -56,6 +58,7 @@ class AmountDoubleClick(unittest.TestCase):
         app.processEvents()
         self.assertTrue(line.isReadOnly())
         self.assertFalse(self.amount.property('schemeEditing'))
+        self.assertTrue(line.font().underline())
         self.assertEqual(self.amount.value(), 210)
         self.dialog.accept()
         row = self.item['attachments'][0]

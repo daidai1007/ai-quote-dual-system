@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS calc.quote_scheme (
   quoted_amount NUMERIC(18,2),
   creator_user_id TEXT NOT NULL,
   creator_name_snapshot TEXT NOT NULL,
+  creator_name_entered TEXT NOT NULL,
+  creator_identity_mode TEXT NOT NULL DEFAULT 'SELF_REPORTED'
+    CHECK (creator_identity_mode IN ('AUTHENTICATED', 'SELF_REPORTED')),
   creator_department_id TEXT,
   last_editor_user_id TEXT NOT NULL,
   last_editor_name_snapshot TEXT NOT NULL,
@@ -53,6 +56,33 @@ CREATE TABLE IF NOT EXISTS calc.quote_scheme (
   archived_at TIMESTAMPTZ,
   voided_at TIMESTAMPTZ
 );
+
+-- 兼容曾在测试库执行过本迁移早期草案的情况；不会修改任何线上数据，
+-- 只有部署人员显式执行本文件时才生效。
+ALTER TABLE calc.quote_scheme ADD COLUMN IF NOT EXISTS creator_name_entered TEXT;
+ALTER TABLE calc.quote_scheme ADD COLUMN IF NOT EXISTS creator_identity_mode TEXT;
+UPDATE calc.quote_scheme
+SET creator_name_entered = creator_name_snapshot
+WHERE creator_name_entered IS NULL OR btrim(creator_name_entered) = '';
+UPDATE calc.quote_scheme
+SET creator_identity_mode = 'SELF_REPORTED'
+WHERE creator_identity_mode IS NULL OR creator_identity_mode NOT IN ('AUTHENTICATED', 'SELF_REPORTED');
+ALTER TABLE calc.quote_scheme ALTER COLUMN creator_name_entered SET NOT NULL;
+ALTER TABLE calc.quote_scheme ALTER COLUMN creator_identity_mode SET DEFAULT 'SELF_REPORTED';
+ALTER TABLE calc.quote_scheme ALTER COLUMN creator_identity_mode SET NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'calc.quote_scheme'::regclass
+      AND conname = 'quote_scheme_creator_identity_mode_check'
+  ) THEN
+    ALTER TABLE calc.quote_scheme
+      ADD CONSTRAINT quote_scheme_creator_identity_mode_check
+      CHECK (creator_identity_mode IN ('AUTHENTICATED', 'SELF_REPORTED'));
+  END IF;
+END;
+$$;
 
 CREATE INDEX IF NOT EXISTS idx_quote_scheme_creator_updated
   ON calc.quote_scheme (creator_user_id, updated_at DESC);
@@ -126,6 +156,9 @@ RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.creator_user_id IS DISTINCT FROM OLD.creator_user_id
      OR NEW.creator_name_snapshot IS DISTINCT FROM OLD.creator_name_snapshot
+     OR NEW.creator_name_entered IS DISTINCT FROM OLD.creator_name_entered
+     OR NEW.creator_identity_mode IS DISTINCT FROM OLD.creator_identity_mode
+     OR NEW.creator_department_id IS DISTINCT FROM OLD.creator_department_id
      OR NEW.created_at IS DISTINCT FROM OLD.created_at
      OR NEW.scheme_no IS DISTINCT FROM OLD.scheme_no THEN
     RAISE EXCEPTION 'quote scheme creator and number are immutable';
@@ -139,8 +172,23 @@ CREATE TRIGGER trg_quote_scheme_creator_immutable
 BEFORE UPDATE ON calc.quote_scheme
 FOR EACH ROW EXECUTE FUNCTION calc.quote_scheme_creator_immutable();
 
+CREATE OR REPLACE FUNCTION calc.quote_scheme_delete_guard()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.status <> 'DRAFT' OR OLD.has_successful_export THEN
+    RAISE EXCEPTION 'only an unused draft quote scheme can be deleted';
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_quote_scheme_delete_guard ON calc.quote_scheme;
+CREATE TRIGGER trg_quote_scheme_delete_guard
+BEFORE DELETE ON calc.quote_scheme
+FOR EACH ROW EXECUTE FUNCTION calc.quote_scheme_delete_guard();
+
 COMMENT ON TABLE calc.quote_scheme IS
-  '报价方案主记录；创建人由 API 的受信身份映射写入且不可修改。';
+  '报价方案主记录；creator_user_id 为服务端身份，creator_name_entered 为当前兼容阶段操作人自填姓名，二者创建后均不可修改。';
 COMMENT ON TABLE calc.quote_scheme_snapshot IS
   '当前完整报价快照；历史打开、打印和导出必须读取此快照，不重新按现价计算。';
 COMMENT ON TABLE calc.quote_scheme_version IS

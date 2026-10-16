@@ -92,27 +92,23 @@ class DraftAttachmentRepriceId(unittest.TestCase):
         requests.clear()
         self.addCleanup(self.window.close)
 
-    def test_real_popup_option_changes_resolve_every_light_switch(self):
+    def test_light_switch_specifications_are_fixed_in_popup(self):
         for name in ui.LIGHT_SWITCH_OPTIONS:
             with self.subTest(name=name):
-                initial = catalog[0] if name != catalog[0]["item_name"] else catalog[1]
+                initial = next(row for row in catalog if row["item_name"] == name)
                 self.item["attachments"] = [{**initial, "quantity": 2, "formula_amount": 10,
                                               "quick_amount": 40, "manual_inputs": {"长度": 120}}]
                 editor = ui.AttachmentEditor(self.window, self.item)
-                selector = editor.table.cellWidget(0, editor.COL_SPECIFICATION)
-                selector.setCurrentIndex(selector.findData(name))
-                wait_for(lambda: selector.isEnabled() or bool(warnings))
+                specification = editor.table.item(0, editor.COL_SPECIFICATION)
+                self.assertIsNone(editor.table.cellWidget(0, editor.COL_SPECIFICATION))
+                self.assertEqual(specification.text(), name)
+                editor._begin_model_edit(0, editor.COL_SPECIFICATION)
+                self.assertIsNone(editor.table.cellWidget(0, editor.COL_SPECIFICATION))
                 self.assertEqual(warnings, [])
-                source = editor.table.item(0, editor.COL_NAME).data(ui.ROLE_ROW)
-                chosen = next(row for row in catalog if row["item_name"] == name)
-                self.assertEqual(source["attachment_price_id"], chosen["attachment_price_id"])
-                payload = requests[-1][1]["attachments"][0]
-                self.assertEqual(payload["quantity"], 2)
-                self.assertEqual(payload["manual_inputs"], {"长度": 120})
-                self.assertEqual(editor.table.cellWidget(0, editor.COL_AMOUNT).value(), chosen["face_price"] * 2 * 3)
-                self.assertEqual(editor.table.item(0, editor.COL_FORMULA_AMOUNT).text(), "30.00")
+                self.assertEqual(requests, [])
                 editor.accept()
-                self.assertEqual(self.item["attachments"][0]["attachment_price_id"], chosen["attachment_price_id"])
+                self.assertEqual(self.item["attachments"][0]["item_name"], name)
+                self.assertEqual(self.item["attachments"][0]["attachment_price_id"], initial["attachment_price_id"])
                 editor.close()
 
     def reprice(self, source):
@@ -203,9 +199,9 @@ class DraftAttachmentRepriceId(unittest.TestCase):
         editor.accept()
         source = self.item["attachments"][0]
         self.assertEqual(source["attachment_price_id"], catalog[1]["attachment_price_id"])
-        self.assertEqual(source["quick_amount"], 50)
+        self.assertEqual(source["quick_amount"], 150)
         self.assertEqual(source["formula_amount"], 10)
-        self.assertEqual(source["quick_amount_override"], 50)
+        self.assertEqual(source["quick_amount_override"], 150)
         self.assertEqual(self.item["attachment_confirmation_inputs"], frozen)
         self.assertEqual(catalog, before_catalog)
         self.assertEqual(requests, [])
@@ -266,20 +262,25 @@ class DraftAttachmentRepriceId(unittest.TestCase):
             "quick_amount":0, "quick_amount_override":0, "computer_tray_auto_match":True}]
         editor = ui.AttachmentEditor(self.window, self.item)
         self.addCleanup(editor.close)
-        selector = editor.table.cellWidget(0, editor.COL_SPECIFICATION)
         self.assertEqual(editor.table.columnCount(), 5)
         self.assertEqual(editor.table.item(0, editor.COL_NAME).text(), "电脑托盘")
-        self.assertEqual([selector.itemData(index) for index in range(1,selector.count())], list(ui.COMPUTER_TRAY_MODELS))
+        self.assertIsNone(editor.table.cellWidget(0, editor.COL_SPECIFICATION))
         for tray in trays:
+            editor._begin_model_edit(0, editor.COL_SPECIFICATION)
+            selector = editor.table.cellWidget(0, editor.COL_SPECIFICATION)
+            self.assertEqual([selector.itemData(index) for index in range(1,selector.count())], list(ui.COMPUTER_TRAY_MODELS))
             selector.setCurrentIndex(selector.findData(tray["model_code"]))
-            wait_for(lambda: selector.isEnabled() or bool(warnings))
+            wait_for(lambda: bool(warnings) or (
+                editor.table.item(0, editor.COL_NAME).data(ui.ROLE_ROW).get("attachment_price_id") == tray["attachment_price_id"]
+                and editor.table.cellWidget(0, editor.COL_SPECIFICATION) is None
+            ))
             self.assertEqual(warnings, [])
             source = editor.table.item(0, editor.COL_NAME).data(ui.ROLE_ROW)
             self.assertEqual(source["attachment_price_id"], tray["attachment_price_id"])
             self.assertFalse(source["computer_tray_auto_match"])
             self.assertNotIn("quick_amount_override", source)
-            self.assertEqual(editor.table.cellWidget(0, editor.COL_AMOUNT).value(), tray["face_price"] * 2 * 3)
-            self.assertEqual(editor.table.item(0, editor.COL_FORMULA_AMOUNT).text(), "30.00")
+            self.assertEqual(editor.table.cellWidget(0, editor.COL_AMOUNT).value(), tray["face_price"] * 2)
+            self.assertEqual(editor.table.item(0, editor.COL_FORMULA_AMOUNT).text(), "10.00")
             self.assertEqual(requests[-1][1]["attachments"][0]["attachment_price_id"], tray["attachment_price_id"])
         editor.accept()
         saved = self.item["attachments"][0]

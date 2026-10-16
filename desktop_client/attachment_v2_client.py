@@ -296,9 +296,12 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
     # operator-pinned choice: when the cabinet dimensions changed, the size
     # matcher must be allowed to choose a new catalogue row first.
     size_aware_target_changed = _size_match_target_changed(selection, target_dimensions)
-    if wanted_model and not (
-        target_dimensions is not None
-        and (installation_board(selection) or is_base_attachment(selection) or size_aware_target_changed)
+    if wanted_model and (
+        (name == "三排安装梁" and selection.get("beam_model_manually_selected"))
+        or not (
+            target_dimensions is not None
+            and (installation_board(selection) or is_base_attachment(selection) or size_aware_target_changed)
+        )
     ):
         exact_models = [
             item for item in (category_matches or candidates)
@@ -537,6 +540,7 @@ def _size_match_target_changed(source, dimensions):
     # cabinet's ordinary height/depth tuple here.
     if (
         source.get("custom")
+        or (size_match_attachment_name(source) == "三排安装梁" and source.get("beam_model_manually_selected"))
         or size_match_attachment_name(source) is None
         or installation_board(source)
         or is_base_attachment(source)

@@ -70,18 +70,18 @@ class ApiAmounts(unittest.TestCase):
                     self.assertEqual(merged["formula_amount"],20)
                     self.assertEqual(merged["quick_amount_override"],amount)
 
-    def test_ui_manual_edit_scales_to_single_cabinet_and_reopens(self):
+    def test_ui_manual_edit_stays_single_cabinet_and_reopens(self):
         source = dict(item_name="并柜件",category_level1="安装附件",attachment_price_id=1101,
                       quantity=2,quick_amount=120,formula_amount=62.96,matched_price=60)
         item, editor = self.editor([source], quantity=3)
-        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),360)
+        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),120)
         editor.table.cellWidget(0,editor.COL_AMOUNT).setValue(210)
         editor.accept()
         row = item["attachments"][0]
-        self.assertEqual(row["quick_amount_override"],70)
+        self.assertEqual(row["quick_amount_override"],210)
         self.assertTrue(row["custom_amount_edited"])
         row = v2.merge_cost(row,{**source,"quick_amount":120})
-        self.assertEqual(row["quick_amount"],70)
+        self.assertEqual(row["quick_amount"],210)
         reopened_item = {**item,"attachments":[row]}
         reopened = ui.AttachmentEditor(self.window,reopened_item)
         self.addCleanup(reopened.close)
