@@ -19,6 +19,8 @@ from PySide6.QtWidgets import QApplication, QGraphicsView, QLabel, QMessageBox, 
 import v3_launcher
 import drawing_workflow as workflow
 from freight_state import FreightState, billable_weight
+from quote_request_context import bind_quote_request, stamp_quote_response
+from types import SimpleNamespace
 from quote_drawing_preview import PDF_MAX_RENDER_EDGE, resolve_document
 
 OUT = ROOT / 'outputs' / 'drawing-workflow-20260915'
@@ -158,8 +160,11 @@ class DrawingWorkflowTests(unittest.TestCase):
         self.assertLessEqual(cad_preview.current_render_edge, PDF_MAX_RENDER_EDGE)
 
     def accept(self, payload):
-        self.w.pending_quote_signature = self.w.quote_input_signature()
-        self.w.show_result(payload)
+        # Simulate a fresh dispatch as well as its response. An old failed
+        # worker must not own the guard for this new offline calculation.
+        worker = SimpleNamespace()
+        bind_quote_request(self.w, worker, payload.get('quote_id'), payload.get('attachment_contract') == 2)
+        self.w.show_result(stamp_quote_response(worker, payload))
         pump()
 
     def stroke(self, preview):

@@ -56,7 +56,8 @@ class FreightOutputTests(unittest.TestCase):
         self.w.freight_spin.setFocus()
         self.w.freight_spin.selectAll()
         base.QTest.keyClicks(self.w.freight_spin, '50')
-        base.QTest.keyClick(self.w.freight_spin, base.Qt.Key.Key_Return)
+        # Commit this field without invoking the window-wide Enter-to-add action.
+        base.QTest.keyClick(self.w.freight_spin, base.Qt.Key.Key_Tab)
         self.amounts(50)
         self.assertEqual(self.w.freight_state.mode, 'MANUAL')
         self.w.width_spin.setValue(750)

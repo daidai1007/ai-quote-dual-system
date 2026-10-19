@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from material_prices import material_unit_price
 from wheel_edit_guard import install_wheel_edit_guard
+from quote_request_context import bind_quote_request, quote_request_is_current, stamp_quote_response
 
 from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor
@@ -352,7 +353,7 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
             self._calculation_epoch = getattr(owner, "_scheme2_calculation_epoch", None)
             if owner is not None:
                 self.progress.connect(lambda event: _update_calculation_progress(owner, event)
-                    if not _quote_worker_cancelled(self) and (self._calculation_epoch is None
+                    if not _quote_worker_cancelled(self) and quote_request_is_current(owner, self) and (self._calculation_epoch is None
                         or self._calculation_epoch == getattr(owner, "_scheme2_calculation_epoch", 0)) else None)
 
     worker_class = ProgressApiWorker
@@ -477,6 +478,7 @@ def _install_quote_api_worker_diagnostics(namespace: dict) -> None:
                 return
             if getattr(self, "_calculation_epoch", None) is not None:
                 result["_client_calculation_epoch"] = self._calculation_epoch
+            stamp_quote_response(self, result)
             LOGGER.info(
                 "dual quote request succeeded product=%s quote_id=%s elapsed=%.3fs",
                 payload.get("product_code"),
@@ -855,6 +857,7 @@ class _GangedQuoteWorker(QThread):
                     return
                 if self._calculation_epoch is not None:
                     aggregate["_client_calculation_epoch"] = self._calculation_epoch
+                stamp_quote_response(self, aggregate)
                 self.succeeded.emit(aggregate)
                 return
             except urllib.error.HTTPError as error:
@@ -998,6 +1001,7 @@ class _GangedQuoteWorker(QThread):
                 return
             if self._calculation_epoch is not None:
                 aggregate["_client_calculation_epoch"] = self._calculation_epoch
+            stamp_quote_response(self, aggregate)
             self.succeeded.emit(aggregate)
         except urllib.error.HTTPError as exc:
             if _quote_worker_cancelled(self):
@@ -3151,6 +3155,7 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         # this guard; the ganged path must participate in the same stale-
         # result protection or every successful aggregate is discarded.
         window.pending_quote_signature = signature_builder()
+    bind_quote_request(window, worker, (attachment_payload or payloads[0]).get("quote_id"), bool(attachment_payload))
     calculate_button = getattr(window, "calculate_button", None)
     idle_text = (
         calculate_button.text()
@@ -3164,6 +3169,7 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         calculate_button.setText(f"正在计算 {len(payloads)} 个子柜…")
         calculate_button.setEnabled(False)
     window.worker = worker
+    window.quote_calculation_in_progress = True
     epoch = getattr(window, "_scheme2_calculation_epoch", 0)
     outcome = {"settled": False}
     _set_ganged_calculation_state(
@@ -3173,7 +3179,7 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
     )
 
     def show_ganged_result(result):
-        if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+        if _quote_worker_cancelled(worker) or not quote_request_is_current(window, worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
             return
         outcome["settled"] = True
         weight_blocked = window.weight_edit.blockSignals(True)
@@ -3189,16 +3195,24 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         else:
             window.area_edit.setText(_formula_workbook_value(result_area))
         window.area_edit.blockSignals(area_blocked)
-        window.show_result(result)
-
-        _set_ganged_calculation_state(
-            window,
-            f"并柜双报价计算完成：已合并 {len(payloads)} 个子柜。",
-            "success",
-        )
+        previous = getattr(window, "current_result", None)
+        try:
+            window.show_result(result)
+        except Exception:
+            LOGGER.exception("ganged quote result could not be applied")
+            show_ganged_error("报价结果未能应用，请重试。")
+            return
+        if getattr(window, "current_result", None) is previous or not isinstance(getattr(window, "current_result", None), dict):
+            show_ganged_error("报价结果未采用，请检查当前配置后重新加入报价。")
+        else:
+            _set_ganged_calculation_state(
+                window,
+                f"并柜双报价计算完成：已合并 {len(payloads)} 个子柜。",
+                "success",
+            )
 
     def show_ganged_error(message):
-        if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
+        if _quote_worker_cancelled(worker) or not quote_request_is_current(window, worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
             return
         outcome["settled"] = True
         detail = _ganged_error_text(message)
@@ -3211,6 +3225,13 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
     def finish_ganged_calculation():
         if _quote_worker_cancelled(worker) or epoch != getattr(window, "_scheme2_calculation_epoch", 0):
             return
+        if not quote_request_is_current(window, worker):
+            if getattr(window, "worker", None) is worker:
+                window.worker = None
+                window.quote_calculation_in_progress = False
+            worker.deleteLater()
+            return
+        window.quote_calculation_in_progress = False
         if isinstance(calculate_button, QPushButton):
             calculate_button.setText(
                 str(calculate_button.property("gangedIdleText") or "计算双报价")
@@ -3223,7 +3244,9 @@ def _start_ganged_calculation(window, headers_factory) -> bool:
         worker.deleteLater()
 
     worker.succeeded.connect(show_ganged_result)
-    worker.progress.connect(lambda event: _update_calculation_progress(window, event))
+    worker.progress.connect(lambda event: _update_calculation_progress(window, event)
+                            if not _quote_worker_cancelled(worker) and quote_request_is_current(window, worker)
+                            and epoch == getattr(window, "_scheme2_calculation_epoch", 0) else None)
     worker.failed.connect(show_ganged_error)
     worker.finished.connect(finish_ganged_calculation)
     worker.start()
@@ -3918,7 +3941,30 @@ def _configure_quote_header(window, mode: str) -> None:
             label.setWordWrap(mode == "stacked")
 
 
+def _retire_quote_action_dock(window) -> None:
+    """Scheme 2 owns the footer; queued legacy callbacks must stay inert."""
+    window._quote_action_dock_retired = True
+    for signal, callback in getattr(window, "_quote_action_dock_connections", ()):
+        try:
+            signal.disconnect(callback)
+        except (RuntimeError, TypeError):
+            # The old page/splitter may already have been detached/deleted.
+            pass
+    window._quote_action_dock_connections = []
+    dock = getattr(window, "quote_action_dock", None)
+    if dock is not None:
+        dock.hide()
+        parent = dock.parentWidget()
+        if parent is not None and parent.layout() is not None:
+            parent.layout().removeWidget(dock)
+        # setMaximumHeight(0) alone leaves the previous fixed minimum of 62.
+        # Keep core button objects alive without reserving/painting any space.
+        dock.setFixedHeight(0)
+
+
 def _position_quote_action_dock(window) -> None:
+    if getattr(window, "_quote_action_dock_retired", False):
+        return
     dock = getattr(window, "quote_action_dock", None)
     main_scroll = _find(window, QScrollArea, "mainScroll")
     stack = getattr(window, "stack", None)
@@ -3933,24 +3979,14 @@ def _position_quote_action_dock(window) -> None:
     _configure_quote_action_dock_density(window, max(240, dock.width()))
 
 
-def _ensure_quote_action_dock(window) -> None:
-    if getattr(window, "quote_action_dock", None) is not None:
-        _position_quote_action_dock(window)
-        return
-
+def _ensure_quote_action_dock_host(window):
+    """Shared layout slot; scheme 2 must not need a legacy footer to create it."""
+    host = getattr(window, "quote_action_dock_host", None)
+    if host is not None:
+        return host
     main_scroll = _find(window, QScrollArea, "mainScroll")
     if main_scroll is None:
-        return
-
-    page = window.stack.widget(1)
-    buttons = [
-        _find(window, QPushButton, "primaryQuoteAction"),
-        _find(window, QPushButton, "secondaryQuoteAction"),
-        _find(window, QPushButton, "quietQuoteAction"),
-    ]
-    if any(button is None for button in buttons):
-        return
-
+        return None
     # Make the action dock a normal sibling below the scroll area.  A floating
     # child painted over QScrollArea can look correct while the native Windows
     # viewport still receives the physical mouse click.  A real layout slot
@@ -3966,8 +4002,31 @@ def _ensure_quote_action_dock(window) -> None:
         if current_central is not None:
             window.setCentralWidget(current_central)
         host.deleteLater()
-        return
+        return None
     host_layout.addWidget(main_scroll, 1)
+    window.setCentralWidget(host)
+    window.quote_action_dock_host = host
+    return host
+
+
+def _ensure_quote_action_dock(window) -> None:
+    if getattr(window, "_quote_action_dock_retired", False):
+        return
+    if getattr(window, "quote_action_dock", None) is not None:
+        _position_quote_action_dock(window)
+        return
+    page = window.stack.widget(1)
+    buttons = [
+        _find(window, QPushButton, "primaryQuoteAction"),
+        _find(window, QPushButton, "secondaryQuoteAction"),
+        _find(window, QPushButton, "quietQuoteAction"),
+    ]
+    if any(button is None for button in buttons):
+        return
+    host = _ensure_quote_action_dock_host(window)
+    if host is None:
+        return
+    main_scroll = _find(window, QScrollArea, "mainScroll")
 
     dock = QFrame(host)
     dock.setObjectName("quoteActionDock")
@@ -3997,22 +4056,27 @@ def _ensure_quote_action_dock(window) -> None:
         button.setMaximumWidth(maximum)
         layout.addWidget(button)
 
-    host_layout.addWidget(dock, 0)
-    window.setCentralWidget(host)
+    host.layout().addWidget(dock, 0)
 
-    window.quote_action_dock_host = host
     window.quote_action_dock = dock
     window.quote_action_dock_label = label
+    connections = []
+
+    def bind(signal, callback):
+        signal.connect(callback)
+        connections.append((signal, callback))
+
+    window._quote_action_dock_connections = connections
     workspace = _find(page, QSplitter, "quoteWorkspace")
     if workspace is not None:
-        workspace.splitterMoved.connect(lambda *_args: _position_quote_action_dock(window))
-    main_scroll.verticalScrollBar().valueChanged.connect(
+        bind(workspace.splitterMoved, lambda *_args: _position_quote_action_dock(window))
+    bind(main_scroll.verticalScrollBar().valueChanged,
         lambda *_args: _position_quote_action_dock(window)
     )
-    main_scroll.horizontalScrollBar().valueChanged.connect(
+    bind(main_scroll.horizontalScrollBar().valueChanged,
         lambda *_args: _position_quote_action_dock(window)
     )
-    window.stack.currentChanged.connect(
+    bind(window.stack.currentChanged,
         lambda *_args: QTimer.singleShot(
             0,
             lambda: (
@@ -8781,6 +8845,13 @@ def install_layout_refresh(namespace: dict) -> None:
             def finalize_quote_request():
                 if _quote_worker_cancelled(worker) or epoch != getattr(self, "_scheme2_calculation_epoch", 0):
                     return
+                if not quote_request_is_current(self, worker):
+                    timer.stop()
+                    if getattr(self, "worker", None) is worker:
+                        self.worker = None
+                        self.quote_calculation_in_progress = False
+                    worker.deleteLater()
+                    return
                 if outcome["finalized"]:
                     return
                 outcome["finalized"] = True
@@ -8813,6 +8884,7 @@ def install_layout_refresh(namespace: dict) -> None:
                         show_error(rendered)
                     _set_ganged_calculation_state(self, rendered, "error")
                 elif getattr(self, "current_result", None) is previous_result:
+                    self.show_error("报价已返回，但结果未采用；请检查当前配置后重新加入报价。")
                     _set_ganged_calculation_state(
                         self,
                         "报价已返回，但计算期间输入发生变化，结果未采用；请重新计算。",

@@ -24,6 +24,7 @@ import time
 from types import MethodType
 import zipfile
 from decimal import Decimal
+from quote_request_context import check_quote_response, quote_request_is_current, retire_quote_request, settle_quote_request
 
 LOGGER = logging.getLogger("ai_quote.client")
 ADD_PROGRESS_COMPACT_THRESHOLD = 650
@@ -78,7 +79,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from layout_refresh import _fit_window_minimum_to_screen
+from layout_refresh import (_fit_window_minimum_to_screen, _retire_quote_action_dock,
+                            _ensure_quote_action_dock_host)
 from wheel_edit_guard import install_wheel_edit_guard
 try:
     from quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product, apply_management_fee,
@@ -104,6 +106,9 @@ NAV_EXPANDED_WIDTH = 128
 COST_SIDEBAR_WIDTH = 130
 COMPANY_COMBO_HEIGHT = 56
 SCHEME2_ACTION_DOCK_HEIGHT = 48
+SCHEME2_ACTION_BUTTON_MIN_HEIGHT = 28
+SCHEME2_ACTION_BUTTON_TEXT_PADDING = 8
+SCHEME2_ACTION_DOCK_VERTICAL_MARGIN = 6
 QUOTE_COMPANY_FIELD_WIDTH = 420
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
@@ -3515,12 +3520,29 @@ def _edit_selected(window):
     if item is None:
         return
     window._scheme2_edit_item = item
-    window._scheme2_active_settings = dict(
-        item.get("scheme2_cost_settings", window.scheme2_defaults)
-    )
-    preserved_attachments = deepcopy(item.get("attachments", []))
+    # Every edit is a new quotation; the old row remains untouched until the
+    # new database-backed calculation succeeds and replaces that exact row.
+    window._scheme2_new_quote_required = True
+    window._scheme2_active_settings = None
+    from attachment_v2_client import new_quote_attachment_selection
+    preserved_attachments = [new_quote_attachment_selection(row) for row in item.get("attachments", [])]
     window.load_draft_item(item)
     window.attachments = preserved_attachments
+    window._scheme2_new_quote_required = True
+    window._scheme2_active_settings = None
+    window.quote_date.setDate(QDate.currentDate())
+    retire_quote_request(window)
+    window.current_result = None
+    window._formula_base_result = None
+    window.pending_quote_signature = None
+    window._attachment_v2_line_id = None
+    window._v2_confirmation_inputs = []
+    window.weight_edit.clear()
+    window.area_edit.clear()
+    for labels in (window.formula_labels, window.quick_labels):
+        for label in labels.values():
+            label.setText("—")
+    window.risk_label.setText("编辑订单将重新取价，完成后替换原订单；请修改配置后加入报价。")
     window._scheme2_attachments_manual = True
     refresh = getattr(window, "update_attachment_view", None)
     if callable(refresh):
@@ -6116,10 +6138,7 @@ def _configure_option_page(window, namespace):
         button = window.findChild(QPushButton, name)
         if button is not None and button is not attachment_button:
             button.hide()
-    legacy_dock = window.findChild(QFrame, "quoteActionDock")
-    if legacy_dock is not None:
-        legacy_dock.hide()
-        legacy_dock.setMaximumHeight(0)
+    _retire_quote_action_dock(window)
     window.stack.removeWidget(old_page)
     old_page.setParent(window)
     old_page.hide()
@@ -6151,7 +6170,6 @@ def _monitor_formula_calculation(window):
             timer.stop()
             return
         if getattr(window, "quote_calculation_in_progress", False) or running(getattr(window, "worker", None)):
-            timer.stop()
             return
         debounce = getattr(window, "_formula_template_debounce_timer", None)
         if (
@@ -6160,9 +6178,6 @@ def _monitor_formula_calculation(window):
             or running(getattr(window, "ganged_template_worker", None))
             or (isinstance(debounce, QTimer) and debounce.isActive())
         ):
-            return
-        if isinstance(getattr(window, "current_result", None), dict):
-            timer.stop()
             return
         timer.stop()
         risk = getattr(window, "risk_label", None)
@@ -6191,6 +6206,7 @@ def _pause_quote_calculation(window):
     window.template_serial = getattr(window, "template_serial", 0) + 1
     window.current_result = None
     window.pending_quote_signature = None
+    retire_quote_request(window)
     for name in ("_scheme2_formula_monitor", "_scheme2_add_elapsed_timer", "_quote_progress_timer", "_formula_template_debounce_timer"):
         timer = getattr(window, name, None)
         if isinstance(timer, QTimer):
@@ -6245,7 +6261,8 @@ def _calculate_and_add(window):
         elapsed_timer.start()
     pending_attachments = [
         item for item in getattr(window, "attachments", [])
-        if isinstance(item, dict) and not item.get("custom") and item.get("attachment_price_id") is None
+        if isinstance(item, dict) and not item.get("custom") and (
+            item.get("attachment_price_id") is None or item.get("quote_catalog_refresh_required"))
     ]
     from attachment_v2_client import (
         needs_base_height_resolution,
@@ -6258,7 +6275,12 @@ def _calculate_and_add(window):
                      or needs_computer_tray_resolution(window) or needs_base_height_resolution(window)
                      or needs_size_match_resolution(window))
     current = getattr(window, "current_result", None)
-    valid = not pending_attachments and not pending_doors and isinstance(current, dict) and current.get("input_signature") == window.quote_input_signature()
+    valid = (
+        not getattr(window, "_scheme2_new_quote_required", False)
+        and not pending_attachments and not pending_doors
+        and isinstance(current, dict)
+        and current.get("input_signature") == window.quote_input_signature()
+    )
     if valid:
         _set_add_progress(window, 5, "保存快照并生成行")
         _finish_add(window)
@@ -6456,9 +6478,10 @@ def _finish_add(window):
     source_route = window.stack.currentIndex()
     before = len(getattr(window, "draft_items", []))
     editing = getattr(window, "_scheme2_edit_item", None)
-    editing_index = window.draft_items.index(editing) if editing in window.draft_items else None
+    editing_index = next((index for index, row in enumerate(window.draft_items) if row is editing), None)
     window.add_current_to_summary()
     if len(getattr(window, "draft_items", [])) != before + 1:
+        window.show_error("报价结果未能加入清单，请检查当前配置后重试。")
         return
     if source_route == OPTION_ROUTE and window.stack.currentIndex() != OPTION_ROUTE:
         window.show_section(OPTION_ROUTE)
@@ -6469,6 +6492,7 @@ def _finish_add(window):
         window.draft_items.pop()
         window.draft_items[editing_index] = item
     window._scheme2_edit_item = None
+    window._scheme2_new_quote_required = False
     item["name"] = window.scheme2_name_edit.text().strip() or item.get("model_code") or "未命名"
     item["scheme2_selected_material"] = window.material_combo.currentText().strip()
     item["scheme2_selected_surface"] = window.coating_combo.currentText().strip()
@@ -6677,12 +6701,14 @@ def _ensure_scheme2_action_dock(window):
     """
 
     dock = getattr(window, "scheme2_action_dock", None)
-    host = getattr(window, "quote_action_dock_host", None)
+    host = _ensure_quote_action_dock_host(window)
     if dock is not None:
         _position_scheme2_action_dock(window)
         return dock
     if host is None or host.layout() is None:
         return None
+
+    _retire_quote_action_dock(window)
 
     actions = [
         (getattr(window, "scheme2_add_button", None), {OPTION_ROUTE}),
@@ -6698,7 +6724,8 @@ def _ensure_scheme2_action_dock(window):
     dock.setObjectName("scheme2ActionDock")
     dock.setFixedHeight(SCHEME2_ACTION_DOCK_HEIGHT)
     dock_layout = QHBoxLayout(dock)
-    dock_layout.setContentsMargins(8, 6, 8, 6)
+    dock_layout.setContentsMargins(8, SCHEME2_ACTION_DOCK_VERTICAL_MARGIN,
+                                  8, SCHEME2_ACTION_DOCK_VERTICAL_MARGIN)
     dock_layout.setSpacing(6)
     label = QLabel("当前操作", dock)
     label.setObjectName("scheme2ActionDockLabel")
@@ -6711,8 +6738,7 @@ def _ensure_scheme2_action_dock(window):
         if parent_layout is not None:
             parent_layout.removeWidget(button)
         button.setParent(dock)
-        button.setMinimumHeight(28)
-        button.setMaximumHeight(32)
+        button.setMinimumHeight(SCHEME2_ACTION_BUTTON_MIN_HEIGHT)
         button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         dock_layout.addWidget(button)
         entries.append((button, routes))
@@ -6731,11 +6757,17 @@ def _position_scheme2_action_dock(window):
     route = getattr(window, "stack", None).currentIndex() if getattr(window, "stack", None) is not None else -1
     visible = route in {OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE}
     dock.setVisible(visible)
-    for button, routes in getattr(window, "_scheme2_action_dock_entries", ()):
-        # Style-sheet metric scaling is allowed for content controls, but the
-        # fixed action row must retain a reliable hit target at every logical
-        # DPI/size.  Reassert the row height after each responsive pass.
-        button.setFixedHeight(28)
+    entries = getattr(window, "_scheme2_action_dock_entries", ())
+    button_height = max([SCHEME2_ACTION_BUTTON_MIN_HEIGHT, *(
+        button.fontMetrics().height() + SCHEME2_ACTION_BUTTON_TEXT_PADDING
+        for button, routes in entries if route in routes
+    )])
+    dock.setFixedHeight(max(SCHEME2_ACTION_DOCK_HEIGHT,
+                           button_height + SCHEME2_ACTION_DOCK_VERTICAL_MARGIN * 2))
+    for button, routes in entries:
+        # QSS/fonts can scale with both the desktop DPI and window size.
+        # Derive one common hit target instead of clipping text to 28px.
+        button.setFixedHeight(button_height)
         button.setVisible(visible and route in routes)
     width = max(1, dock.width())
     label = getattr(window, "scheme2_action_dock_label", None)
@@ -6852,10 +6884,7 @@ def _apply_responsive(window):
     empty = getattr(window, "scheme2_cost_empty", None)
     if empty is not None:
         empty.setGeometry(window.summary_table.viewport().rect())
-    legacy_dock = getattr(window, "quote_action_dock", None)
-    if legacy_dock is not None:
-        legacy_dock.hide()
-        legacy_dock.setMaximumHeight(0)
+    _retire_quote_action_dock(window)
     drawing = getattr(window, "scheme2_drawing_widget", None)
     preview = getattr(window, "quote_drawing_preview", None)
     canvas = getattr(preview, "canvas", None)
@@ -7204,6 +7233,7 @@ def install_scheme2_ui(namespace):
     def init(window, *args, **kwargs):
         window._scheme2_add_after_calculate = False
         window._scheme2_edit_item = None
+        window._scheme2_new_quote_required = False
         window._scheme2_detail_item = None
         window._scheme2_active_settings = None
         window._scheme2_attachments_manual = False
@@ -7400,7 +7430,27 @@ def install_scheme2_ui(namespace):
                 and payload.get("_client_calculation_epoch", getattr(window, "_scheme2_calculation_epoch", 0))
                 != getattr(window, "_scheme2_calculation_epoch", 0)):
             return
-        result = original_show_result(window, payload, *args, **kwargs)
+        current, rejection = check_quote_response(window, payload)
+        if not current:
+            return
+        if rejection:
+            settle_quote_request(window, "rejected")
+            window.show_error(rejection)
+            return
+        previous = getattr(window, "current_result", None)
+        try:
+            result = original_show_result(window, payload, *args, **kwargs)
+        except Exception:
+            LOGGER.exception("quote result could not be applied")
+            settle_quote_request(window, "rejected")
+            window.show_error("报价结果未能应用，请重试。")
+            return
+        if getattr(window, "current_result", None) is previous or not isinstance(getattr(window, "current_result", None), dict):
+            settle_quote_request(window, "rejected")
+            if getattr(window, "_scheme2_add_after_calculate", False):
+                window.show_error("报价结果未采用，请检查当前配置后重新加入报价。")
+            return result
+        settle_quote_request(window, "accepted")
         _stamp_quote_result_signature(window)
         if hasattr(window, "quote_right_stack"):
             window.quote_right_stack.setCurrentIndex(0)
@@ -7416,8 +7466,10 @@ def install_scheme2_ui(namespace):
 
     def show_error(window, message):
         sender = window.sender()
-        if getattr(window, "_scheme2_calculation_paused", False) or getattr(sender, "_client_cancelled", False):
+        if (getattr(window, "_scheme2_calculation_paused", False) or getattr(sender, "_client_cancelled", False)
+                or not quote_request_is_current(window, sender)):
             return
+        settle_quote_request(window, "failed")
         window._scheme2_add_after_calculate = False
         if hasattr(window, "scheme2_add_button"):
             window.scheme2_add_button.setEnabled(True)

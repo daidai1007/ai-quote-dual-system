@@ -11,7 +11,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
-from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtCore import QPoint, QRect, QThread, Signal, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
@@ -208,7 +208,14 @@ class PauseManualRetry(unittest.TestCase):
             footer.setFixedWidth(width)
             ui._refresh_add_progress_display(self.window)
             app.processEvents()
-            self.assertFalse(self.window.scheme2_add_progress.geometry().intersects(self.window.scheme2_add_button.geometry()))
+            # Progress lives in the drawing footer, while Pause/Retry now
+            # belongs to the single fixed action dock. Compare in window
+            # coordinates, not unrelated parent-relative rectangles.
+            progress_rect = QRect(self.window.scheme2_add_progress.mapTo(self.window, QPoint()),
+                                  self.window.scheme2_add_progress.size())
+            button_rect = QRect(self.window.scheme2_add_button.mapTo(self.window, QPoint()),
+                                self.window.scheme2_add_button.size())
+            self.assertFalse(progress_rect.intersects(button_rect))
         footer.grab().save(str(ROOT / ".codex-tmp" / "quote-paused-preview.png"))
 
 

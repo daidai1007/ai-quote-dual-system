@@ -22,9 +22,12 @@ if "--source" in sys.argv:
 else:
     import v3_launcher
     ns = v3_launcher.load_v3_namespace()
+    import quote_scheme_center
+    quote_scheme_center.QuoteSchemeWorker.run = lambda self: self.failed.emit("offline test transport")
     mode = "v3"
 
 from attachment_v2_client import selected_input, environment
+from quote_request_context import stamp_quote_response
 fixture = json.loads((ROOT / "test-output/attachment-cost-v2/api-client-fixtures.json").read_text(encoding="utf-8"))
 app = QApplication.instance() or QApplication([])
 if "install_application_font" in ns:
@@ -78,7 +81,7 @@ def start(self):
             body = {"attachments": rows, "errors": [r for r in rows if r["status"] == "ERROR"]}
         else:
             body = {**fixture["result"], "quote_id": self.test_payload.get("quote_id")}
-        self.succeeded.emit(body)
+        self.succeeded.emit(stamp_quote_response(self, body))
         self.finished.emit()
     QTimer.singleShot(15, respond)
 Worker.start = start
@@ -93,6 +96,8 @@ def spin_until(predicate, message):
 
 window = Window()
 window.api_url.setText("http://127.0.0.1:1/api/quotes/calculate-dual")
+if hasattr(window, "quote_scheme_operator_name"):
+    window.quote_scheme_operator_name.setText("离线回归测试员")
 window.selected_product_code = lambda: "JP"
 window.product_catalog = {"JP": {"method": "quick", "codes": {"DEFAULT": "JP"}}}
 window.product_combo.blockSignals(True)
@@ -218,7 +223,7 @@ assert window._attachment_v2_line_id == item["quote_line_id"]
 assert window.attachments[0]["attachment_selection_id"] == fixture["result"]["attachments"][0]["attachment_selection_id"]
 window.width_spin.setValue(801)
 assert window.current_result is None and window._attachment_v2_line_id is None
-window.show_result({**fixture["result"], "quote_id": sent["quote_id"]})
+window.show_result({**fixture["result"], "quote_id": sent["quote_id"], "_client_request_token":"retired-request"})
 assert window.current_result is None, "old response was accepted after the dimensions changed"
 spin_until(lambda: getattr(window, "_v2_environment_worker", None) is None and not window._v2_environment_timer.isActive(), "environment preview did not finish")
 
@@ -249,6 +254,7 @@ assert ganged_dialog._v2_mode
 assert selected_input(ganged_selection)["ganged_cabinet_index"] == 1
 assert environment(window, [selected_input(ganged_selection)])["ganged_cabinet_count"] == 2
 ganged_dialog.close()
+window._scheme2_dirty = False  # This test has no operator to answer the discard dialog.
 window.close()
 app.processEvents()
 print(f"PASS {mode}: V2 catalog, exact IDs, manual dimensions, dual amounts, snapshot reopen, invalidation, ERROR and ganged selection")

@@ -84,7 +84,13 @@ class ExportSnapshotTests(unittest.TestCase):
                                         dict(payload=expected, snapshots=snapshots)))
         self.assertEqual(hydrated['items'][0]['attachments'][-1]['custom'], True)
         self.assertEqual(hydrated['items'][0]['attachments'][-1]['formula_amount'], 5)
-        self.assertEqual(hydrated['items'][0]['formula']['total_cost'], expected['items'][0]['formula']['total_cost'] + 5)
+        # The legacy fixture contains management=39. Confirmation must replace
+        # it using the current 6% rule after adding the custom attachment cost:
+        # (200 material + 100 auxiliary + 300 labor + 55 attachments + 150 spray)
+        # * 6% = 48.30; total = 805 + 48.30. Never carry the stale fee forward.
+        self.assertEqual(hydrated['items'][0]['formula']['attachment_fee'], 55)
+        self.assertEqual(hydrated['items'][0]['formula']['management_fee'], 48.3)
+        self.assertEqual(hydrated['items'][0]['formula']['total_cost'], 853.3)
         self.assertEqual(hydrated['items'][0]['quick']['total_cost'], expected['items'][0]['quick']['total_cost'] + 10)
         self.assertEqual([r['ganged_cabinet_index'] for r in hydrated['items'][0]['attachments'][:2]], [0, 1])
         with tempfile.TemporaryDirectory(dir=ROOT / 'outputs', prefix='export-snapshot-') as directory:

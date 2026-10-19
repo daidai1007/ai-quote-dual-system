@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from quote_request_context import stamp_quote_response
 
 from PySide6.QtCore import QDate, QThread, Signal, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QImage
@@ -732,7 +733,7 @@ class ApiWorker(QThread):
             )
             with urllib.request.urlopen(request, timeout=30) as response:
                 result = json.loads(response.read().decode("utf-8"))
-            self.succeeded.emit(result)
+            self.succeeded.emit(stamp_quote_response(self, result))
         except urllib.error.HTTPError as exc:
             try:
                 detail = exc.read().decode("utf-8")

@@ -113,10 +113,14 @@ export function calculateAttachment(selection, catalog, rules, environment) {
     const identity = [catalog.category_level1, catalog.category_level2, catalog.item_name, catalog.model_code].join(' ');
     if (sign === -1 && (!identity.includes('安装板') || identity.includes('安装板单发'))) throw new Error('只有安装板允许扣减');
     const facePrice = number(catalog.price, '面价');
-    Object.assign(result, { quantity, attachment_price_sign: sign, face_price: facePrice, matched_price: facePrice, quick_amount: round(quantity * facePrice * sign) });
+    Object.assign(result, { quantity, attachment_price_sign: sign,
+      // Immutable catalogue provenance is distinct from popup/display money.
+      // Never round the price used by the DB's exact catalogue-price guard.
+      catalogue_face_price: facePrice, catalogue_quick_amount: moneyProduct(quantity,facePrice,sign),
+      face_price: facePrice, matched_price: facePrice, quick_amount: round(quantity * facePrice * sign) });
     const sizedPrice = sizeMatchedQuickPrice(catalog,selection,environment,facePrice);
     if (sizedPrice) {
-      Object.assign(result,sizedPrice,{catalogue_quick_amount:result.quick_amount});
+      Object.assign(result,sizedPrice);
       result.quick_amount = round(quantity*(result.unit_price_override??facePrice)*sign);
     }
     if(environment.pricing_basis===PRICING_BASIS){

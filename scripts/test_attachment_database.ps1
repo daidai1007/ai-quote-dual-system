@@ -29,7 +29,7 @@ try {
   $expectedIdentifier = (($controlInfo | Where-Object { $_ -match '^Database system identifier:' }) -split ':',2)[1].Trim()
   if ($actualIdentifier.Trim() -ne $expectedIdentifier) { throw 'Port 55439 is not the expected isolated test cluster' }
   $env:ATTACHMENT_TEST_PSQL = $attachmentPsql
-  & $attachmentNode --test --test-concurrency=1 (Join-Path $attachmentRepo 'tests/attachment_cost_v2.test.mjs') (Join-Path $attachmentRepo 'tests/attachment_v2_database.test.mjs') (Join-Path $attachmentRepo 'tests/cabinet_material_service.test.mjs') (Join-Path $attachmentRepo 'tests/cabinet_material_database.test.mjs') 2>&1 | Tee-Object -FilePath (Join-Path $attachmentWork 'validation.log')
+  & $attachmentNode --test --test-concurrency=1 (Join-Path $attachmentRepo 'tests/attachment_cost_v2.test.mjs') (Join-Path $attachmentRepo 'tests/fixed_base_rule_products.test.mjs') (Join-Path $attachmentRepo 'tests/attachment_v2_database.test.mjs') (Join-Path $attachmentRepo 'tests/cabinet_material_service.test.mjs') (Join-Path $attachmentRepo 'tests/cabinet_material_database.test.mjs') 2>&1 | Tee-Object -FilePath (Join-Path $attachmentWork 'validation.log')
   if ($LASTEXITCODE -ne 0) { throw 'Attachment tests failed; see validation.log' }
 } finally {
   if ($attachmentStarted) {

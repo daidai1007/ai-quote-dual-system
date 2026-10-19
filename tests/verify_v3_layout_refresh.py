@@ -1486,7 +1486,7 @@ try:
     ]
     assert window.quote_scheme_nav_button is window.nav_buttons[-1]
     assert window.quote_scheme_operator_name is not window.quote_scheme_filters["creator"]
-    assert window.findChild(QLabel, "quoteSchemeServerNotice").text() == "● 数据保存于服务器"
+    assert window.findChild(QLabel, "quoteSchemeServerNotice").text() == "数据保存于服务器"
     assert window.quote_scheme_table.columnCount() == 9
     # Superseded widgets may remain as internal core dependencies, but must
     # never reappear in the visible navigation or active quotation pages.

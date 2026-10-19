@@ -76,6 +76,7 @@ for compact in (False, True):
     grid = window.scheme2_cost_action_grid
     assert [grid.itemAtPosition(0, column).widget().text() for column in range(5)] == [
         '× 删除', '↑ 上移', '↓ 下移', '复制', '编辑']
-    assert all(grid.indexOf(button) >= 0 for button in buttons)
+    assert all(grid.indexOf(button) >= 0 for button in buttons[:-1])
+    assert grid.indexOf(buttons[-1]) >= 0 or buttons[-1].parentWidget() is window.scheme2_action_dock
 window.close()
 print('PASS: copy position, full independent snapshot/drawing data, insertion, numbering and invalid selection')

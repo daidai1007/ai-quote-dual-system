@@ -17,6 +17,7 @@ from shiboken6 import isValid
 from material_prices import material_unit_price
 from quick_discount_rules import money_sum, quick_attachment_line_amount
 from ganged_cabinet_rules import parse_ganged_specification
+from quote_request_context import attachment_inputs, bind_quote_request, check_quote_response, retire_quote_request, settle_quote_request
 
 from attachment_category_browser import (
     match_computer_tray_depth,
@@ -33,6 +34,24 @@ PREVIEW_DELAY_MS = 350
 DEFAULT_BASE_HEIGHT_MM = 100.0
 EXTRA_HEADERS = ("快速金额", "公式状态", "公式单位成本", "公式金额", "人工尺寸")
 COST_KEYS = ("error", "rule_id", "rule_version", "rule_materials", "rule_source_row", "formulas", "calculation_notes", "weight_kg", "material_cost", "spray_area_m2", "spray_cost", "auxiliary_cost", "auxiliary_list", "labor_cost", "attachment_selection_id", "quote_line_id", "environment", "pending_manual_dimensions", "pending_manual_error")
+
+
+def new_quote_attachment_selection(source):
+    """Copy configuration, never a previous order's catalogue prices/snapshot."""
+    row = copy.deepcopy(source)
+    if row.get("custom"):
+        return row  # Quote-local items have no database price to retrieve.
+    inherited = {
+        *COST_KEYS, "price", "face_price", "matched_price", "quick_amount",
+        "quick_amount_override", "unit_price_override", "formula_amount", "formula_unit_cost",
+        "custom_amount_edited", "catalog_version", "data_version", "status", "status_text",
+        "catalogue_face_price", "catalogue_quick_amount", "quick_face_price",
+    }
+    for key in list(row):
+        if key in inherited or key.startswith("size_match_"):
+            row.pop(key, None)
+    row["quote_catalog_refresh_required"] = True
+    return row
 
 
 def attachment_image_match_key(value):
@@ -1430,7 +1449,8 @@ def install_attachment_v2(namespace):
                 failed(str(error))
                 return
         window.attachments = rows
-        pending = [item for item in rows if not item.get("custom") and item.get("attachment_price_id") is None]
+        pending = [item for item in rows if not item.get("custom") and (
+            item.get("attachment_price_id") is None or item.get("quote_catalog_refresh_required"))]
         needs_ganged_base_catalog = any(is_base_attachment(item) for item in rows)
         needs_size_match = needs_size_match_resolution(window)
         if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window) and not needs_installation_board_resolution(window) and not needs_computer_tray_resolution(window) and not needs_size_match:
@@ -1468,8 +1488,9 @@ def install_attachment_v2(namespace):
                 if source.get("custom"):
                     resolved.append(source)
                     continue
+                refresh_catalog = bool(source.get("quote_catalog_refresh_required"))
                 rematch_size = _size_match_target_changed(source, target_dimensions)
-                if source.get("attachment_price_id") is not None and not installation_board(source) and not is_base_attachment(source) and not (
+                if not refresh_catalog and source.get("attachment_price_id") is not None and not installation_board(source) and not is_base_attachment(source) and not (
                         _is_computer_tray(source) and source.get("computer_tray_auto_match")) and not rematch_size:
                     resolved.append(source)
                     continue
@@ -1495,6 +1516,8 @@ def install_attachment_v2(namespace):
             if missing:
                 failed("价格库中未找到唯一匹配项：" + "、".join(missing))
                 return
+            for row in resolved:
+                row.pop("quote_catalog_refresh_required", None)
             window.attachments = resolved
             window._attachment_v2_line_id = None
             window.current_result = None
@@ -1746,31 +1769,24 @@ def install_attachment_v2(namespace):
             payload = confirmation_payload(payload)
         all_attachments = list(payload.get("attachments", []))
         request_attachments = [row for row in all_attachments if not row.get("custom")]
-        if parent is not None:
-            parent._v2_custom_attachments = [copy.deepcopy(row) for row in all_attachments if row.get("custom")]
         if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent) and (payload.get("attachment_contract") == 2 or all_attachments):
             automatic_base = base_height(parent)
             payload = {**payload, "attachment_contract": 2, "attachments": [selected_input(x, automatic_base) for x in request_attachments]}
-            parent._v2_request_quote_id = payload.get("quote_id")
-            parent._v2_request_environment = json.dumps(environment(parent, payload["attachments"]), sort_keys=True)
-        elif str(url).endswith("/api/quotes/calculate-dual") and parent is not None:
-            parent._v2_request_environment = None
         worker_init(worker, url, payload, parent, *args, **kwargs)
+        if endpoint.endswith("/api/quotes/calculate-dual") and parent is not None:
+            bind_quote_request(parent, worker, payload.get("quote_id"), payload.get("attachment_contract") == 2)
     worker_class.__init__ = init_worker
 
     show = window_class.show_result
     def show_result(window, result, *args, **kwargs):
         result = provisionalize_manual_dimension_result(result)
-        if getattr(window, "_v2_request_environment", None) and result.get("attachment_contract") != 2:
-            window.current_result = None
-            window._attachment_v2_line_id = None
-            window.risk_label.setText("当前API尚未返回附件V2结果，请更新API后重新计算。")
+        current, rejection = check_quote_response(window, result)
+        if not current:
             return
-        if result.get("attachment_contract") == 2 and getattr(window, "_v2_request_environment", None):
-            automatic_base = base_height(window)
-            latest = json.dumps(environment(window, [selected_input(x, automatic_base) for x in window.attachments if not x.get("custom")]), sort_keys=True)
-            if latest != window._v2_request_environment or result.get("quote_id") != window._v2_request_quote_id:
-                return
+        if rejection:
+            settle_quote_request(window, "rejected")
+            window.show_error(rejection)
+            return
         previous = getattr(window, "current_result", None)
         original_rows = getattr(window, "attachments", [])
         if result.get("attachment_contract") == 2:
@@ -1797,13 +1813,14 @@ def install_attachment_v2(namespace):
             automatic_base = base_height(window)
             priced_rows = [row for row in original_rows if not row.get("custom")]
             window.attachments = [merge_cost(priced_rows[i] if i < len(priced_rows) else {}, row, automatic_base) for i, row in enumerate(result.get("attachments", []))]
-            window.attachments.extend(copy.deepcopy(getattr(window, "_v2_custom_attachments", [])))
+            window.attachments.extend(copy.deepcopy([row for row in original_rows if row.get("custom")]))
             window._attachment_v2_line_id = result.get("quote_line_id")
             window._v2_confirmation_inputs = confirmation_inputs(result.get("attachments", []))
             window.update_attachment_view()
             window.refresh_discounted_totals()
         elif result.get("attachment_contract") == 2:
             window.attachments = original_rows
+        settle_quote_request(window, "accepted" if getattr(window, "current_result", None) is not previous else "rejected")
         return rendered
     window_class.show_result = show_result
 
@@ -1866,6 +1883,7 @@ def install_attachment_v2(namespace):
     window_class.add_current_to_summary = add_to_summary
     load_item, reset, update = window_class.load_draft_item, window_class.reset_current_cabinet, window_class.update_attachment_view
     def load_item_v2(window, item):
+        retire_quote_request(window)
         window._attachment_v2_restoring = True
         try:
             if item.get("attachment_contract") == 2 and item.get("quote_date"):
@@ -1878,6 +1896,8 @@ def install_attachment_v2(namespace):
         finally:
             window._attachment_v2_restoring = False
     def reset_v2(window, *args, **kwargs):
+        retire_quote_request(window)
+        window._scheme2_new_quote_required = False
         window._attachment_v2_line_id = None
         window._v2_confirmation_inputs = []
         return reset(window, *args, **kwargs)
@@ -1901,6 +1921,7 @@ def install_attachment_v2(namespace):
         def changed(*_):
             if getattr(window, "_attachment_v2_restoring", False) or not any(row.get("catalog_version") for row in getattr(window, "attachments", [])):
                 return
+            window._v2_preview_generation = getattr(window, "_v2_preview_generation", 0) + 1
             window._attachment_v2_line_id = None
             window.current_result = None
             window.risk_label.setText("附件环境已变化，正在重新计算成本；整柜报价请重新计算。")
@@ -1908,6 +1929,9 @@ def install_attachment_v2(namespace):
                 labels["total"].setText("—")
             timer.start()
         def recalculate():
+            context = getattr(window, "_quote_request_context", None)
+            if context and context.get("state") == "pending":
+                return
             rows = getattr(window, "attachments", [])
             if not any(row.get("catalog_version") for row in rows):
                 return
@@ -1916,21 +1940,29 @@ def install_attachment_v2(namespace):
                 timer.start()
                 return
             automatic_base = base_height(window)
-            payload = environment(window, [selected_input(x, automatic_base) for x in rows])
+            priced_rows = [row for row in rows if not row.get("custom")]
+            payload = environment(window, [selected_input(x, automatic_base) for x in priced_rows])
             signature = json.dumps(payload, sort_keys=True)
+            generation = getattr(window, "_v2_preview_generation", 0)
+            source_inputs = attachment_inputs(window)
+            custom_rows = copy.deepcopy([row for row in rows if row.get("custom")])
             worker = worker_class(window.base_url() + "/api/attachments/preview", payload, window)
             window._v2_environment_worker = worker
             def received(body):
-                if not isValid(window):
+                if (not isValid(window) or generation != getattr(window, "_v2_preview_generation", 0)
+                        or source_inputs != attachment_inputs(window)):
                     return
-                now = environment(window, [selected_input(x, base_height(window)) for x in window.attachments])
+                now = environment(window, [selected_input(x, base_height(window)) for x in window.attachments if not x.get("custom")])
                 if json.dumps(now, sort_keys=True) != signature:
                     return
-                window.attachments = [merge_cost(rows[i], cost, base_height(window)) for i, cost in enumerate(body.get("attachments", []))]
+                window.attachments = [merge_cost(priced_rows[i], cost, base_height(window)) for i, cost in enumerate(body.get("attachments", []))]
+                window.attachments.extend(custom_rows)
                 window.update_attachment_view()
                 window.risk_label.setText("；".join(x.get("error", "") for x in body.get("errors", [])) or "附件成本已更新；请重新计算整柜报价。")
             worker.succeeded.connect(received)
-            worker.failed.connect(lambda text: window.risk_label.setText(f"附件重新计算失败：{text}") if isValid(window) else None)
+            worker.failed.connect(lambda text: window.risk_label.setText(f"附件重新计算失败：{text}")
+                                  if isValid(window) and generation == getattr(window, "_v2_preview_generation", 0)
+                                  and source_inputs == attachment_inputs(window) else None)
             def finished():
                 if isValid(window) and getattr(window, "_v2_environment_worker", None) is worker:
                     window._v2_environment_worker = None

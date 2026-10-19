@@ -32,6 +32,11 @@ foreach ($requiredCoreFile in @("main.raw", "original.pyz")) {
 }
 
 $testFiles = @(
+    "tests/verify_copied_quote_reprice.py",
+    "tests/verify_scheme2_cost_copy.py",
+    "tests/verify_quote_request_lifecycle.py",
+    "tests/verify_quote_pause_manual_retry.py",
+    "tests/verify_single_action_dock.py",
     "tests/verify_wheel_edit_guard.py",
     "tests/verify_removed_diagnostic_report.py",
     "tests/verify_management_fee.py",
@@ -40,6 +45,7 @@ $testFiles = @(
     "tests/verify_scheme2_formal_quote.py",
     "tests/verify_attachment_negative_quantity.py",
     "tests/verify_quote_scheme_center.py",
+    "tests/verify_quote_scheme_reference_ui.py",
     "tests/verify_scheme2_material_price_sidebar.py",
     "tests/verify_scheme2_cost_repricing.py",
     "tests/verify_scheme2_stainless_pricing.py",

@@ -33,11 +33,12 @@ def verify(directory):
         pyz = ZlibArchiveReader(str(pyz_path))
         for name in ('drawing_workflow', 'quote_drawing_preview', 'freight_state', 'freight_export', 'layout_refresh',
                      'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules', 'scheme2_ui',
-                     'quote_scheme_center', 'material_prices', 'wheel_edit_guard'):
+                     'quote_scheme_center', 'quote_document_progress', 'material_prices', 'wheel_edit_guard'):
             expected = compile((ROOT / 'desktop_client' / f'{name}.py').read_text(encoding='utf-8'), '', 'exec')
             actual = pyz.extract(name)
             assert normalized(expected) == normalized(actual), f'Packaged source differs: {name}'
             checked.append(name)
+        assert 'quote_diagnostics' not in pyz.toc, 'Removed diagnostic submission module is still packaged'
         for name in ('ezdxf.addons.drawing.svg', 'PIL.Image', 'fontTools.ttLib', 'pypdf'):
             assert name in pyz.toc, f'Missing renderer module: {name}'
         actual = marshal.loads(reader.extract('v3_launcher'))

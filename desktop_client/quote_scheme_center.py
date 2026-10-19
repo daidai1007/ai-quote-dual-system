@@ -5,16 +5,22 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import date
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from PySide6.QtCore import QDateTime, QTimer, Qt, QThread, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QDate, QDateTime, QTimer, Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QInputDialog, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox, QTableWidget,
-    QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QAbstractSpinBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
+    QInputDialog, QLineEdit, QMessageBox, QPushButton,
+    QTableWidgetItem, QVBoxLayout, QSizePolicy, QWidget,
+)
+
+from quote_scheme_widgets import (
+    DateFilter, METRICS, PAGE_SIZES, PageJump, QueryLineEdit, RowActions,
+    SchemeComboBox, SchemePage, SchemeTable, ServerNotice, StatusBadgeDelegate,
+    filter_field, page_style_sheet,
 )
 
 
@@ -29,6 +35,24 @@ STATUS_COLORS = {
     "REVISING": ("#FFF4E5", "#B45309"), "ARCHIVED": ("#EAF2FF", "#185FA5"),
     "VOID": ("#FDECEC", "#B42318"),
 }
+
+# Existing server summaries join product + dimensions with a space, and
+# separate quote lines with semicolons. Strip only a trailing dimension
+# expression, never split product names on spaces or remove model digits.
+_PRODUCT_DIMENSIONS = re.compile(
+    r"\s+\d+(?:\.\d+)?\s*(?:mm|cm|m|毫米|厘米|米)?"
+    r"(?:\s*[×xX*＊]\s*\d+(?:\.\d+)?\s*(?:mm|cm|m|毫米|厘米|米)?)+\s*$",
+    re.IGNORECASE,
+)
+
+
+def _display_products(summary):
+    products = []
+    for label in re.split(r"[；;]", str(summary or "")):
+        product = _PRODUCT_DIMENSIONS.sub("", label.strip()).strip()
+        if product and product not in products:
+            products.append(product)
+    return "；".join(products)
 
 
 class QuoteSchemeWorker(QThread):
@@ -134,6 +158,13 @@ def _set_state(window, text, kind="normal"):
     colors = {"normal": "#4B5563", "busy": "#185FA5", "ok": "#237804", "error": "#B42318"}
     label.setStyleSheet(f"color:{colors[kind]};font-size:12px;padding:4px 2px;")
     window.quote_scheme_page_status.setText(text)
+    window.quote_scheme_page_status.setVisible(
+        kind == "error" and window.quote_scheme_table.rowCount() == 0
+    )
+    operation_status = getattr(window, "quote_scheme_operation_status", None)
+    if operation_status is not None:
+        operation_status.setText(text)
+        operation_status.setVisible(kind == "error" and window.quote_scheme_table.rowCount() > 0)
 
 
 def _run(window, method, path, payload, success, failure=None):
@@ -152,7 +183,7 @@ def _run(window, method, path, payload, success, failure=None):
 
 
 def _field(placeholder, name):
-    editor = QLineEdit()
+    editor = QueryLineEdit()
     editor.setObjectName(name)
     editor.setPlaceholderText(placeholder)
     editor.setClearButtonEnabled(True)
@@ -174,111 +205,254 @@ class _FilterActionButton(QPushButton):
         return self.sizeHint()
 
 
+def _edit_operator(window):
+    value, accepted = QInputDialog.getText(
+        window, "当前操作人", "请输入当前操作人员姓名（自填）：",
+        QLineEdit.EchoMode.Normal, window.quote_scheme_operator_name.text(),
+    )
+    if accepted:
+        window.quote_scheme_operator_name.setText(value.strip()[:100])
+
+
+def _update_operator_button(window):
+    value = window.quote_scheme_operator_name.text().strip()
+    button = window.quote_scheme_operator_button
+    button.setText("操作人：" + (value if len(value) <= 8 else value[:7] + "…") if value else "填写操作人")
+    button.setToolTip("当前操作人（自填）：" + (value or "未填写") + "；用于创建和修改记录，不作为登录身份。")
+
+
+def _layout_footer(window):
+    compact = window.quote_scheme_page.width() < METRICS["footer_breakpoint"]
+    if getattr(window, "_quote_scheme_footer_compact", None) == compact:
+        return
+    window._quote_scheme_footer_compact = compact
+    grid = window.quote_scheme_footer_grid
+    left, right = window.quote_scheme_footer_info, window.quote_scheme_footer_pages
+    grid.removeWidget(left)
+    grid.removeWidget(right)
+    if compact:
+        grid.addWidget(left, 0, 0, 1, 2)
+        grid.addWidget(right, 1, 0, 1, 2, Qt.AlignmentFlag.AlignRight)
+    else:
+        grid.addWidget(left, 0, 0)
+        grid.addWidget(right, 0, 1, Qt.AlignmentFlag.AlignRight)
+
+
+def _page_jump(window):
+    _load_list(window, window.quote_scheme_page_jump.value())
+
+
+def _update_page_buttons(window, page, pages):
+    layout = window.quote_scheme_number_layout
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget() is not None:
+            item.widget().deleteLater()
+    first = max(1, min(page - 2, pages - 4))
+    for number in range(first, min(pages, first + 4) + 1):
+        button = QPushButton(str(number))
+        button.setObjectName("quoteSchemePageButton")
+        button.setCheckable(True)
+        button.setChecked(number == page)
+        button.setAccessibleName(f"第 {number} 页")
+        button.clicked.connect(lambda _checked=False, target=number: _load_list(window, target))
+        layout.addWidget(button)
+    window.quote_scheme_page_jump.setRange(1, pages)
+    window.quote_scheme_page_jump.setValue(page)
+
+
 def _build_page(window):
-    page = QWidget()
+    page = SchemePage()
     page.setObjectName("quoteSchemeCenterPage")
+    page.setStyleSheet(page_style_sheet())
+    window.quote_scheme_page = page
     root = QVBoxLayout(page)
-    root.setContentsMargins(18, 14, 18, 14)
-    root.setSpacing(10)
+    margin = METRICS["page_margin"]
+    root.setContentsMargins(margin, margin, margin, margin)
+    root.setSpacing(METRICS["section_gap"])
 
     heading = QHBoxLayout()
     title = QLabel("报价方案中心")
     title.setObjectName("quoteSchemeTitle")
-    title.setStyleSheet("color:#123A6D;font-size:20px;font-weight:700;")
-    server = QLabel("● 数据保存于服务器")
+    server = ServerNotice()
     server.setObjectName("quoteSchemeServerNotice")
-    server.setStyleSheet("color:#237804;background:#EAF3DE;border-radius:10px;padding:4px 10px;")
     heading.addWidget(title)
-    heading.addSpacing(10)
-    heading.addWidget(server)
     heading.addStretch(1)
-    heading.addWidget(QLabel("当前操作人"))
-    operator_name = _field("填写姓名", "quoteSchemeOperatorName")
-    operator_name.setMaximumWidth(180)
-    operator_name.setToolTip("该姓名由操作人员自填，用于方案显示、审计和搜索；当前阶段不作为登录身份。")
-    heading.addWidget(operator_name)
-    window.quote_scheme_operator_name = operator_name
+    heading.addWidget(server)
     root.addLayout(heading)
+
+    # Keep one session-scoped operator value; entry moves to a quiet footer
+    # control instead of competing with the reference title/server notice.
+    operator_name = _field("填写姓名", "quoteSchemeOperatorName")
+    operator_name.setParent(page)
+    operator_name.setToolTip("该姓名由操作人员自填，用于方案显示、审计和搜索；当前阶段不作为登录身份。")
+    operator_name.hide()
+    window.quote_scheme_operator_name = operator_name
 
     filters = QFrame()
     filters.setObjectName("quoteSchemeFilters")
     grid = QGridLayout(filters)
-    grid.setContentsMargins(12, 10, 12, 10)
-    grid.setHorizontalSpacing(9)
-    grid.setVerticalSpacing(8)
+    grid.setContentsMargins(16, 14, 16, 16)
+    grid.setHorizontalSpacing(METRICS["filter_gap"])
+    grid.setVerticalSpacing(16)
     window.quote_scheme_filters = {
         "scheme_no": _field("请输入方案编号", "quoteSchemeNumberFilter"),
         "company": _field("请输入下单公司", "quoteSchemeCompanyFilter"),
-        "product": _field("请输入产品或规格", "quoteSchemeProductFilter"),
+        "product": _field("请输入产品名称", "quoteSchemeProductFilter"),
         "creator": _field("请输入创建人", "quoteSchemeCreatorFilter"),
-        "updated_from": _field("开始日期 YYYY-MM-DD", "quoteSchemeUpdatedFrom"),
-        "updated_to": _field("结束日期 YYYY-MM-DD", "quoteSchemeUpdatedTo"),
+        "updated_from": DateFilter("quoteSchemeUpdatedFrom", "更新时间开始日期"),
+        "updated_to": DateFilter("quoteSchemeUpdatedTo", "更新时间结束日期"),
     }
-    status = QComboBox()
+    for key, editor in window.quote_scheme_filters.items():
+        editor.setMinimumWidth(0 if key not in ("updated_from", "updated_to") else 96)
+        editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        editor.returnPressed.connect(lambda: _load_list(window, 1))
+    status = SchemeComboBox()
     status.setObjectName("quoteSchemeStatusFilter")
-    status.addItem("全部状态", "")
-    for code, label in STATUS_TEXT.items(): status.addItem(label, code)
-    status.setMinimumHeight(34)
+    status.addItem("全部", "")
+    for code, label in STATUS_TEXT.items():
+        status.addItem(label, code)
     window.quote_scheme_status_filter = status
-    top = [("方案编号", "scheme_no"), ("下单公司", "company"), ("产品", "product")]
-    for column, (label, key) in enumerate(top):
-        grid.addWidget(QLabel(label), 0, column * 2)
-        grid.addWidget(window.quote_scheme_filters[key], 0, column * 2 + 1)
-    grid.addWidget(QLabel("状态"), 0, 6); grid.addWidget(status, 0, 7)
-    grid.addWidget(QLabel("创建人"), 1, 0); grid.addWidget(window.quote_scheme_filters["creator"], 1, 1)
-    grid.addWidget(QLabel("更新时间"), 1, 2)
-    dates = QHBoxLayout(); dates.setSpacing(5)
-    dates.addWidget(window.quote_scheme_filters["updated_from"]); dates.addWidget(QLabel("至")); dates.addWidget(window.quote_scheme_filters["updated_to"])
-    grid.addLayout(dates, 1, 3, 1, 3)
+    for column, (label, key) in enumerate((
+        ("方案编号", "scheme_no"), ("下单公司", "company"), ("产品", "product"),
+    )):
+        field = filter_field(label, window.quote_scheme_filters[key], "quoteSchemeField_" + key)
+        grid.addWidget(field, 0, column)
+    grid.addWidget(filter_field("状态", status, "quoteSchemeField_status"), 1, 0)
+    grid.addWidget(filter_field("创建人", window.quote_scheme_filters["creator"],
+                               "quoteSchemeField_creator"), 1, 1)
+    dates = QHBoxLayout()
+    dates.setContentsMargins(0, 0, 0, 0)
+    dates.setSpacing(8)
+    dates.addWidget(window.quote_scheme_filters["updated_from"], 1)
+    dates.addWidget(QLabel("-"))
+    dates.addWidget(window.quote_scheme_filters["updated_to"], 1)
+    grid.addWidget(filter_field("更新时间", dates, "quoteSchemeField_updated"), 1, 2)
     query, reset, create = (_FilterActionButton(text) for text in _FilterActionButton.LABELS)
-    filter_actions = (query, reset, create)
+    window.quote_scheme_query, window.quote_scheme_reset = query, reset
+    window.quote_scheme_create = create
     actions = QHBoxLayout()
-    actions.setSpacing(grid.horizontalSpacing())
-    for button in filter_actions:
+    actions.setContentsMargins(0, 0, 0, 0)
+    actions.setSpacing(METRICS["action_gap"])
+    for button in (query, reset, create):
         button.setObjectName("scheme2PrimaryAction")
         actions.addWidget(button, 1)
-    grid.addLayout(actions, 1, 6, 1, 2)
-    for column in (1, 3, 5, 7): grid.setColumnStretch(column, 1)
+    grid.addLayout(actions, 1, 3, Qt.AlignmentFlag.AlignBottom)
+    for column, stretch in enumerate((10, 10, 16, 12)):
+        grid.setColumnStretch(column, stretch)
+    window.quote_scheme_filter_grid = grid
     root.addWidget(filters)
 
-    table = QTableWidget(0, 9)
+    table = SchemeTable()
     table.setObjectName("quoteSchemeTable")
     table.setHorizontalHeaderLabels([
-        "方案编号", "下单公司", "产品/规格摘要", "状态", "报价金额",
+        "方案编号", "下单公司", "产品", "状态", "报价金额",
         "创建人", "最后修改人", "更新时间", "操作",
     ])
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    table.setAlternatingRowColors(True)
+    table.setAlternatingRowColors(False)
+    table.setWordWrap(False)
+    table.setTextElideMode(Qt.TextElideMode.ElideRight)
     table.verticalHeader().hide()
-    table.horizontalHeader().setStretchLastSection(False)
-    table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-    table.setColumnWidth(0, 178); table.setColumnWidth(1, 160); table.setColumnWidth(3, 86)
-    table.setColumnWidth(4, 110); table.setColumnWidth(5, 100); table.setColumnWidth(6, 100)
-    table.setColumnWidth(7, 150); table.setColumnWidth(8, 150)
+    table.verticalHeader().setDefaultSectionSize(METRICS["row_height"])
+    table.verticalHeader().setMinimumSectionSize(METRICS["row_height"])
+    header = table.horizontalHeader()
+    header.setStretchLastSection(False)
+    header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+    header.setMinimumSectionSize(60)
+    header.setFixedHeight(METRICS["header_height"])
+    table.setItemDelegateForColumn(3, StatusBadgeDelegate(STATUS_TEXT, STATUS_COLORS, table))
     root.addWidget(table, 1)
     window.quote_scheme_table = table
 
-    status_line = QLabel("正在准备报价方案列表…")
+    status_line = QLabel("正在准备报价方案列表…", table.viewport())
     status_line.setObjectName("quoteSchemePageStatus")
     status_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    status_line.setStyleSheet("color:#667085;padding:8px;")
-    root.addWidget(status_line)
+    status_line.setWordWrap(True)
+    status_line.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    table.state_label = status_line
     window.quote_scheme_page_status = status_line
 
-    footer = QHBoxLayout()
-    count = QLabel("共 0 条")
-    selected = QLabel("已选 0 条")
-    page_size = QComboBox(); page_size.addItems(["20 条/页", "50 条/页", "100 条/页"])
-    previous = QPushButton("上一页"); following = QPushButton("下一页")
-    page_label = QLabel("第 1 / 1 页")
-    footer.addWidget(count); footer.addSpacing(14); footer.addWidget(selected); footer.addStretch(1)
-    footer.addWidget(page_size); footer.addWidget(previous); footer.addWidget(page_label); footer.addWidget(following)
-    root.addLayout(footer)
+    operation_status = QLabel()
+    operation_status.setObjectName("quoteSchemeOperationStatus")
+    operation_status.setWordWrap(True)
+    operation_status.hide()
+    root.addWidget(operation_status)
+    window.quote_scheme_operation_status = operation_status
+
+    footer_info = QWidget()
+    info_layout = QHBoxLayout(footer_info)
+    info_layout.setContentsMargins(0, 0, 0, 0)
+    info_layout.setSpacing(16)
+    count = QLabel("共 0 条记录")
+    selected = QLabel("已选择 0 条")
+    info_layout.addWidget(count)
+    info_layout.addWidget(selected)
+    operator_button = QPushButton("填写操作人")
+    operator_button.setObjectName("quoteSchemeOperatorButton")
+    operator_button.clicked.connect(lambda: _edit_operator(window))
+    info_layout.addWidget(operator_button)
+    info_layout.addStretch(1)
+    window.quote_scheme_operator_button = operator_button
+    operator_name.textChanged.connect(lambda _text: _update_operator_button(window))
+    _update_operator_button(window)
+
+    footer_pages = QWidget()
+    pagination = QHBoxLayout(footer_pages)
+    pagination.setContentsMargins(0, 0, 0, 0)
+    pagination.setSpacing(8)
+    page_size = SchemeComboBox()
+    page_size.setObjectName("quoteSchemePageSize")
+    page_size.setAccessibleName("每页条数")
+    for size in PAGE_SIZES:
+        page_size.addItem(f"{size} 条/页", size)
+    previous, following = QPushButton("‹"), QPushButton("›")
+    for button, label in ((previous, "上一页"), (following, "下一页")):
+        button.setObjectName("quoteSchemePageButton")
+        button.setAccessibleName(label)
+        button.setToolTip(label)
+        button.setEnabled(False)
+    number_host = QWidget()
+    number_layout = QHBoxLayout(number_host)
+    number_layout.setContentsMargins(0, 0, 0, 0)
+    number_layout.setSpacing(8)
+    page_label = QLabel("第 1 / 1 页", page)
+    page_label.hide()  # Accessible/internal text retained beside numbered controls.
+    jump = PageJump()
+    jump.setObjectName("quoteSchemePageJump")
+    jump.setAccessibleName("前往页码")
+    jump.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+    jump.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    jump.setRange(1, 1)
+    jump.setFixedWidth(58)
+    pagination.addWidget(page_size)
+    pagination.addSpacing(8)
+    pagination.addWidget(previous)
+    pagination.addWidget(number_host)
+    pagination.addWidget(following)
+    pagination.addSpacing(12)
+    pagination.addWidget(QLabel("前往"))
+    pagination.addWidget(jump)
+    pagination.addWidget(QLabel("页"))
+    footer_grid = QGridLayout()
+    footer_grid.setContentsMargins(0, 0, 0, 0)
+    footer_grid.setHorizontalSpacing(16)
+    footer_grid.setVerticalSpacing(10)
+    footer_grid.setColumnStretch(0, 1)
+    root.addLayout(footer_grid)
     window.quote_scheme_count, window.quote_scheme_selected = count, selected
     window.quote_scheme_page_size, window.quote_scheme_prev = page_size, previous
     window.quote_scheme_next, window.quote_scheme_page_label = following, page_label
+    window.quote_scheme_page_jump = jump
+    window.quote_scheme_number_layout = number_layout
+    window.quote_scheme_footer_grid = footer_grid
+    window.quote_scheme_footer_info, window.quote_scheme_footer_pages = footer_info, footer_pages
+    page.resized.connect(lambda: _layout_footer(window))
+    _layout_footer(window)
+    _update_page_buttons(window, 1, 1)
 
     query.clicked.connect(lambda: _load_list(window, 1))
     reset.clicked.connect(lambda: _reset_filters(window))
@@ -286,7 +460,10 @@ def _build_page(window):
     previous.clicked.connect(lambda: _load_list(window, max(1, window._quote_scheme_page - 1)))
     following.clicked.connect(lambda: _load_list(window, window._quote_scheme_page + 1))
     page_size.currentIndexChanged.connect(lambda _index: _load_list(window, 1))
-    table.itemSelectionChanged.connect(lambda: selected.setText(f"已选 {len(table.selectionModel().selectedRows())} 条"))
+    jump.submitted.connect(lambda: _page_jump(window))
+    table.itemSelectionChanged.connect(
+        lambda: selected.setText(f"已选择 {len(table.selectionModel().selectedRows())} 条")
+    )
     table.itemDoubleClicked.connect(lambda *_: _open_selected_row(window))
     return page
 
@@ -299,15 +476,49 @@ def _reset_filters(window):
 
 def _filters(window, page):
     values = {key: editor.text().strip() for key, editor in window.quote_scheme_filters.items()}
+    for key in ("updated_from", "updated_to"):
+        if values[key] and (not QDate.fromString(values[key], "yyyy-MM-dd").isValid()
+                            or len(values[key]) != 10):
+            raise ValueError("更新时间请输入 YYYY-MM-DD 格式的有效日期，或通过日历选择。")
+    if values["updated_from"] and values["updated_to"] and values["updated_from"] > values["updated_to"]:
+        raise ValueError("开始日期不能晚于结束日期，请重新选择更新时间范围。")
     values.update(status=str(window.quote_scheme_status_filter.currentData() or ""), page=page,
-                  page_size=(20, 50, 100)[window.quote_scheme_page_size.currentIndex()])
+                  page_size=int(window.quote_scheme_page_size.currentData() or PAGE_SIZES[0]))
     return {key: value for key, value in values.items() if value not in ("", None)}
 
 
+def _list_state(window, text="", kind="normal"):
+    label = window.quote_scheme_page_status
+    label.setText(text)
+    label.setProperty("state", kind)
+    label.style().unpolish(label)
+    label.style().polish(label)
+    label.setVisible(bool(text))
+    window.quote_scheme_table.fit_columns()
+
+
+def _set_list_busy(window, busy):
+    window.quote_scheme_query.setEnabled(not busy)
+    window.quote_scheme_reset.setEnabled(not busy)
+    window.quote_scheme_footer_pages.setEnabled(not busy)
+
+
 def _load_list(window, page=1):
-    if getattr(window, "_quote_scheme_list_worker", None) is not None: return
-    window.quote_scheme_page_status.setText("正在加载服务器数据…")
-    path = "/api/quote-schemes?" + urllib.parse.urlencode(_filters(window, page))
+    if getattr(window, "_quote_scheme_list_worker", None) is not None:
+        return
+    try:
+        params = _filters(window, page)
+    except ValueError as error:
+        window.quote_scheme_table.setRowCount(0)
+        window.quote_scheme_count.setText("记录数：未查询")
+        window.quote_scheme_prev.setEnabled(False)
+        window.quote_scheme_next.setEnabled(False)
+        _list_state(window, str(error), "error")
+        return
+    _set_list_busy(window, True)
+    window.quote_scheme_table.setRowCount(0)
+    _list_state(window, "正在加载报价方案…", "busy")
+    path = "/api/quote-schemes?" + urllib.parse.urlencode(params)
     worker = _run(window, "GET", path, None, lambda result: _list_loaded(window, result),
                   lambda message: _list_failed(window, message))
     window._quote_scheme_list_worker = worker
@@ -316,14 +527,26 @@ def _load_list(window, page=1):
 
 def _list_failed(window, message):
     window.quote_scheme_table.setRowCount(0)
-    window.quote_scheme_page_status.setText(f"加载失败：{message}。请检查 API、迁移和账号身份映射后重试。")
-    window.quote_scheme_page_status.setStyleSheet("color:#B42318;padding:8px;")
+    _set_list_busy(window, False)
+    _list_state(window, "报价方案加载失败，请点击“查询”重试；仍失败请联系管理员。", "error")
+    window.quote_scheme_page_status.setToolTip(str(message))
+    window.quote_scheme_count.setText("记录数：加载失败")
+    window.quote_scheme_prev.setEnabled(False)
+    window.quote_scheme_next.setEnabled(False)
 
 
 def _item(text, align=None):
-    value = QTableWidgetItem(str(text or "—"))
-    if align is not None: value.setTextAlignment(align)
+    value = QTableWidgetItem(str(text if text not in (None, "") else "—"))
+    value.setToolTip(value.text())
+    if align is not None:
+        value.setTextAlignment(align)
     return value
+
+
+def _display_updated_at(value):
+    # Keep the existing server-time semantics (also used by API date filters).
+    # The reference layout omits seconds; the full value stays in the tooltip.
+    return str(value or "").replace("T", " ")[:16]
 
 
 def _list_loaded(window, result):
@@ -332,44 +555,72 @@ def _list_loaded(window, result):
     table.setRowCount(len(rows))
     for row, scheme in enumerate(rows):
         scheme_no = str(scheme.get("scheme_no") or "")
-        values = [scheme_no, scheme.get("company_name"), scheme.get("product_summary"), "",
-                  f"¥ {float(scheme.get('quoted_amount') or 0):,.2f}", scheme.get("creator_name"),
-                  scheme.get("last_editor_name"), str(scheme.get("updated_at") or "").replace("T", " ")[:19]]
-        for column, value in enumerate(values): table.setItem(row, column, _item(value))
         status = str(scheme.get("status") or "DRAFT")
-        badge = _item(STATUS_TEXT.get(status, status), Qt.AlignmentFlag.AlignCenter)
-        background, foreground = STATUS_COLORS.get(status, ("#F3F4F6", "#4B5563"))
-        badge.setBackground(QColor(background)); badge.setForeground(QColor(foreground))
-        table.setItem(row, 3, badge)
+        amount = scheme.get("quoted_amount")
+        values = [
+            scheme_no, scheme.get("company_name"), _display_products(scheme.get("product_summary")),
+            STATUS_TEXT.get(status, status),
+            "—" if amount is None else f"¥ {float(amount):,.2f}",
+            scheme.get("creator_name"), scheme.get("last_editor_name"),
+            _display_updated_at(scheme.get("updated_at")),
+        ]
+        for column, value in enumerate(values):
+            alignment = Qt.AlignmentFlag.AlignVCenter | (
+                Qt.AlignmentFlag.AlignRight if column == 4 else Qt.AlignmentFlag.AlignLeft
+            )
+            table.setItem(row, column, _item(value, alignment))
+        table.item(row, 7).setToolTip(str(scheme.get("updated_at") or "—"))
+        table.item(row, 3).setData(Qt.ItemDataRole.UserRole, status)
         table.setCellWidget(row, 8, _row_actions(window, scheme))
         table.item(row, 0).setData(Qt.ItemDataRole.UserRole, deepcopy(scheme))
-    total = int(result.get("total") or 0); page = int(result.get("page") or 1); size = int(result.get("page_size") or 20)
+    total = int(result.get("total") or 0)
+    page = int(result.get("page") or 1)
+    size = int(result.get("page_size") or window.quote_scheme_page_size.currentData() or PAGE_SIZES[0])
     pages = max(1, (total + size - 1) // size)
     window._quote_scheme_page = page
-    window.quote_scheme_count.setText(f"共 {total} 条")
+    window._quote_scheme_pages = pages
+    window.quote_scheme_count.setText(f"共 {total} 条记录")
     window.quote_scheme_page_label.setText(f"第 {page} / {pages} 页")
-    window.quote_scheme_prev.setEnabled(page > 1); window.quote_scheme_next.setEnabled(page < pages)
-    window.quote_scheme_page_status.setStyleSheet("color:#667085;padding:8px;")
-    window.quote_scheme_page_status.setText("暂无报价方案。点击“新建方案”开始。" if not rows else "数据已从服务器加载")
+    size_index = window.quote_scheme_page_size.findData(size)
+    if size_index >= 0:
+        window.quote_scheme_page_size.blockSignals(True)
+        window.quote_scheme_page_size.setCurrentIndex(size_index)
+        window.quote_scheme_page_size.blockSignals(False)
+    _update_page_buttons(window, page, pages)
+    window.quote_scheme_prev.setEnabled(page > 1)
+    window.quote_scheme_next.setEnabled(page < pages)
+    _set_list_busy(window, False)
+    window.quote_scheme_page_status.setToolTip("")
+    _list_state(window, "" if rows else "暂无报价方案\n可调整查询条件，或点击“新建方案”开始。")
+    table.fit_columns()
 
 
 def _row_actions(window, scheme):
-    host = QWidget(); layout = QHBoxLayout(host); layout.setContentsMargins(0, 2, 0, 2); layout.setSpacing(5)
-    opened = QPushButton("打开"); opened.setObjectName("scheme2SecondaryAction")
-    opened.clicked.connect(lambda: _open_scheme(window, scheme["scheme_no"]))
-    more = QToolButton(); more.setText("更多"); more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-    menu = QMenu(more); status = scheme.get("status")
-    for label, action in [("复制", "copy")]: menu.addAction(label, lambda _checked=False, a=action: _scheme_action(window, scheme, a))
-    if status == "QUOTED": menu.addAction("创建修订版", lambda: _scheme_action(window, scheme, "revision"))
-    if status == "QUOTED": menu.addAction("归档", lambda: _confirm_transition(window, scheme, "archive"))
-    if status == "ARCHIVED": menu.addAction("恢复", lambda: _confirm_transition(window, scheme, "restore"))
-    if status not in ("VOID",): menu.addAction("作废", lambda: _confirm_transition(window, scheme, "void"))
+    status = str(scheme.get("status") or "DRAFT")
+    scheme_no = scheme["scheme_no"]
+    actions = [("打开", lambda _checked=False: _open_scheme(window, scheme_no))]
     if status in ("QUOTED", "ARCHIVED"):
-        menu.addAction("打印", lambda: _open_scheme(window, scheme["scheme_no"], 2, "print"))
-        menu.addAction("导出", lambda: _open_scheme(window, scheme["scheme_no"], 2, "export"))
-    if status == "DRAFT": menu.addAction("删除未使用草稿", lambda: _confirm_delete(window, scheme))
-    more.setMenu(menu); layout.addWidget(opened); layout.addWidget(more)
-    return host
+        actions.extend([
+            ("打印", lambda _checked=False: _open_scheme(window, scheme_no, 2, "print")),
+            ("导出", lambda _checked=False: _open_scheme(window, scheme_no, 2, "export")),
+        ])
+    actions.append(("复制", lambda _checked=False: _scheme_action(window, scheme, "copy")))
+    if status == "QUOTED":
+        actions.append(("修订", lambda _checked=False: _scheme_action(window, scheme, "revision")))
+        actions.append(("归档", lambda _checked=False: _confirm_transition(window, scheme, "archive")))
+    elif status == "REVISING":
+        actions.append(("修订", lambda _checked=False: _open_scheme(window, scheme_no)))
+    elif status == "ARCHIVED":
+        actions.append(("恢复", lambda _checked=False: _confirm_transition(window, scheme, "restore")))
+    if status != "VOID":
+        actions.append(("作废", lambda _checked=False: _confirm_transition(window, scheme, "void")))
+    if status == "DRAFT" and not scheme.get("has_successful_export"):
+        actions.append(("删除未使用草稿", lambda _checked=False: _confirm_delete(window, scheme)))
+    primary = {
+        "DRAFT": ("打开", "复制"), "QUOTED": ("打开", "打印", "导出"),
+        "REVISING": ("打开", "修订"), "ARCHIVED": ("打开", "导出"), "VOID": ("打开",),
+    }.get(status, ("打开",))
+    return RowActions(actions, primary)
 
 
 def _selected_scheme(window):
@@ -701,6 +952,11 @@ def install_quote_scheme_center(namespace):
         if index == SCHEME_ROUTE:
             window.stack.setCurrentIndex(SCHEME_ROUTE)
             for button in window.nav_buttons: button.setChecked(button is window.quote_scheme_nav_button)
+            # This route previously skipped the current workbench layout pass,
+            # leaving the selection page's "加入报价清单" dock visible here.
+            from scheme2_ui import _apply_responsive
+            _apply_responsive(window)
+            QTimer.singleShot(0, lambda: _apply_responsive(window))
             _load_list(window, window._quote_scheme_page)
             return
         result = original_section(window, index)

@@ -242,13 +242,14 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       VALUES(${sqlValue(lineId)}::uuid,${sqlValue(input.quote_id)},${sqlValue(input.product_code)},${sqlJson(environment)});`];
     for(const row of rows){
       const values={quote_line_id:lineId,quote_id:input.quote_id,product_code:input.product_code,attachment_price_id:row.attachment_price_id,
-        quantity:row.quantity,price_sign:row.attachment_price_sign,unit_price:row.face_price,
+        quantity:row.quantity,price_sign:row.attachment_price_sign,unit_price:row.catalogue_face_price,
         item_name:row.item_name,model_code:row.model_code,calculation_status:row.status,
         cost_rule_id:row.rule_id??null,rule_version:row.rule_version??null,catalog_version:row.catalog_version,
-        // Retain the immutable catalogue-price extension for existing DB
-        // guards; the effective perimeter amount is frozen in cost_snapshot
-        // and quote_result, which drive responses, confirmation and export.
-        manual_inputs:row.manual_inputs,environment_snapshot:environment,quick_face_price:row.face_price,quick_amount:row.catalogue_quick_amount??row.quick_amount,
+        // Audit columns retain the full catalogue price and its raw extension,
+        // even for non-sized rows and unit-first rounding. Popup-effective
+        // amounts stay in cost_snapshot/quote_result for confirmation/export.
+        manual_inputs:row.manual_inputs,environment_snapshot:environment,
+        quick_face_price:row.catalogue_face_price,quick_amount:row.catalogue_quick_amount,
         formula_unit_cost:row.formula_unit_cost,formula_amount:row.formula_amount,error_message:row.error??null,
         cost_snapshot:{...row,category_level2:row.category_level2||'',unit:row.unit||'',auxiliary_list:row.auxiliary_list||''}};
       commands.push(`INSERT INTO calc.attachment_selection(${Object.keys(values).join(',')}) VALUES(${Object.entries(values).map(([key,value])=>key==='quote_line_id'?`${sqlValue(value)}::uuid`:typeof value==='object'&&value!==null?sqlJson(value):sqlValue(value)).join(',')});`);
