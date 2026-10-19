@@ -63,6 +63,7 @@ from quote_remark_rules import door_phrase_for_item, replace_door_configuration_
 from wheel_edit_guard import install_wheel_edit_guard
 from dropdown_style import install_combo_popup_style
 from dialog_style import install_dialog_style
+from progress_style import install_progress_style
 from quick_discount_rules import (
     apply_management_fee,
     attachment_excluded_from_discount,
@@ -2336,6 +2337,7 @@ class MainWindow(QMainWindow):
         install_wheel_edit_guard()
         install_combo_popup_style()
         install_dialog_style()
+        install_progress_style()
         super().__init__()
         self.setWindowTitle("AI 智能报价 - 双报价录入")
         # Use the desktop work area in logical pixels.  The V3 launcher may

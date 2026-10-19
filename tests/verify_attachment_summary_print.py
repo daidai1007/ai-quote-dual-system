@@ -33,7 +33,10 @@ class SummaryPrintTests(unittest.TestCase):
                                 attachment_price_sign=-1, formula_amount=-30, quick_amount=-40))
         item = dict(name='产品<测试>&', product_code='JP', specification='(800+600)*600*(1800+100)',
                     quantity=1, attachments=attachments,
-                    quick={'attachment_fee': 600, 'total_cost': 1000},
+                    quick={'attachment_fee': 600, 'total_cost': 1000,
+                           'matched_experience': {'items': [
+                               {'reference_width_mm': 800, 'reference_depth_mm': 600, 'reference_height_mm': 1800},
+                               {'reference_width_mm': 600, 'reference_depth_mm': 500, 'reference_height_mm': 1800}]}},
                     formula={'total_cost': 500}, quick_discount=.5)
         self.window.draft_items = [copy.deepcopy(item) for _ in range(40)]
         self.window.draft_items[-1]['name'] = '末行产品'
@@ -78,6 +81,9 @@ class SummaryPrintTests(unittest.TestCase):
             plain = document.toPlainText()
             self.assertIn('产品<测试>&', plain)
             self.assertIn('末行产品', plain)
+            self.assertIn('匹配尺寸', plain)
+            self.assertIn('柜体1：800*600*1800', plain)
+            self.assertIn('柜体2：600*500*1800', plain)
             self.assertIn('合计', plain)
             self.assertIn('附件明细', plain)
             self.assertIn('37.25', plain)
@@ -153,7 +159,7 @@ if __name__ == '__main__':
         assert len(pdf.pages) == document.pageCount()
         pages = [page.extract_text() for page in pdf.pages]
         assert all('产品报价' in page or '附件明细' in page for page in pages)
-        assert sum(page.count('末行产品') for page in pages) == 7
+        assert sum(page.count('末行产品') for page in pages) == document.toPlainText().count('末行产品')
         assert all(f'附件{i:02d}' in ''.join(pages) for i in range(32))
         case.tearDown()
         print(output)

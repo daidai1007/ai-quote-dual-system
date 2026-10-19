@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import verify_quote_document_progress as base
 import quote_document_progress as progress
+from progress_style import PROGRESS_COLORS
 
 app, ui, wait = base.app, base.ui, base.wait
 QTest = base.QTest
@@ -31,7 +32,7 @@ class DocumentFeedback(unittest.TestCase):
         host = self.controller.widgets[kind or self.controller.feedback_kind][0]
         self.assertTrue(host.grab().save(str(folder / f'{name}.png')))
 
-    def test_idle_delay_blue_thin_track_and_cancel_restores_layout(self):
+    def test_idle_delay_green_thin_track_and_cancel_restores_layout(self):
         self.show_cost()
         c = self.controller
         for host, _bar, _locate in c.widgets.values():
@@ -47,7 +48,7 @@ class DocumentFeedback(unittest.TestCase):
         self.assertTrue(host.isVisible())
         self.assertLessEqual(bar.height(), 4)
         self.assertFalse(bar.isTextVisible())
-        self.assertIn('#2563EB', bar.styleSheet())
+        self.assertIn(PROGRESS_COLORS['fill'], bar.styleSheet())
         self.assertLess(self.window.summary_table.height(), initial_height)
         self.capture('running')
         c.end(cancelled=True)

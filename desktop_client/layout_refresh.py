@@ -26,6 +26,7 @@ from material_prices import material_unit_price
 from wheel_edit_guard import install_wheel_edit_guard
 from dropdown_style import install_combo_popup_style
 from dialog_style import install_dialog_style
+from progress_style import PROGRESS_COLORS, install_progress_style
 from quote_request_context import bind_quote_request, quote_request_is_current, stamp_quote_response
 
 from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
@@ -5122,7 +5123,7 @@ QProgressBar#drawingProgress {{
     min-height: 0; max-height: 0; border: 0; margin: 0; padding: 0;
     background: transparent; color: transparent;
 }}
-QProgressBar#drawingProgress::chunk {{ border: 0; background: transparent; }}
+QProgressBar#drawingProgress::chunk {{ border: 0; background: {PROGRESS_COLORS['fill']}; }}
 QFrame#laborMultiplierRow {{
     background: #F7F9FA; border: 1px solid {STEEL_LINE}; border-radius: 6px;
 }}
@@ -8059,6 +8060,7 @@ def install_layout_refresh(namespace: dict) -> None:
         install_wheel_edit_guard()
         install_combo_popup_style()
         install_dialog_style()
+        install_progress_style()
         original_build_ui(self)
         summary_table = getattr(self, "summary_table", None)
         self._summary_core_has_door_column = False

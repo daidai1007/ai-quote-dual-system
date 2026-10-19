@@ -11,6 +11,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QSizePolicy, QStyle, QVBoxLayout, QWidget
 
 from attachment_v2_client import confirmation_payload, attachment_snapshot_needs_refresh
+from progress_style import PROGRESS_COLORS
 
 LOGGER = logging.getLogger("ai_quote.client")
 UPDATE_INTERVAL_MS = 100
@@ -19,7 +20,8 @@ FEEDBACK_SHOW_DELAY_MS = 300
 FEEDBACK_SUCCESS_VISIBLE_MS = 2000
 FEEDBACK_METRICS = dict(max_width=760, line_height=26, track_height=4, track_radius=2,
                         spacing=6, font_px=12, icon_size=16)
-FEEDBACK_COLORS = dict(text='#1F3A6A', primary='#2563EB', track='#EEF0F3', success='#3B6D11', error='#B91C1C')
+FEEDBACK_COLORS = dict(text=PROGRESS_COLORS['text'], primary=PROGRESS_COLORS['fill'],
+                       track=PROGRESS_COLORS['track'], success='#3B6D11', error='#B91C1C')
 
 
 class _FeedbackLabel(QLabel):

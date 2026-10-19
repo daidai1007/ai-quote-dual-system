@@ -19,6 +19,7 @@ sys.path.insert(0, str(CLIENT_ROOT))
 # deliberately minimal legacy overlay stubs below replace PySide6 modules.
 import wheel_edit_guard
 import dropdown_style
+import dialog_style
 
 
 class Widget:

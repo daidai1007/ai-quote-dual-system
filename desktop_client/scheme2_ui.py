@@ -25,6 +25,8 @@ import time
 from types import MethodType
 import zipfile
 from decimal import Decimal
+from progress_style import progress_color_style
+from cost_detail_export import write_cost_detail_xlsx
 from quote_request_context import check_quote_response, quote_request_is_current, retire_quote_request, settle_quote_request
 
 LOGGER = logging.getLogger("ai_quote.client")
@@ -1692,6 +1694,33 @@ def _attachment_summary_columns(items):
     return tuple(name for name in names if name in selected_names), material_difference, attachment_difference
 
 
+def _attachment_summary_matched_size(item):
+    """Read the price lookup snapshot, never infer a match from input dimensions."""
+    def dimensions(match):
+        if not isinstance(match, dict):
+            return "—"
+        parts = []
+        for key in ("reference_width_mm", "reference_depth_mm", "reference_height_mm"):
+            try:
+                value = Decimal(str(match.get(key)))
+            except (ValueError, TypeError, ArithmeticError):
+                return "—"
+            if not value.is_finite() or value <= 0:
+                return "—"
+            text = format(value, "f")
+            parts.append(text.rstrip("0").rstrip(".") if "." in text else text)
+        return "*".join(parts)
+
+    matched = _quick(item).get("matched_experience")
+    if not isinstance(matched, dict):
+        return "—"
+    children = matched.get("items")
+    if isinstance(children, list) and children:
+        return "\n".join(f"柜体{index}：{dimensions(child)}"
+                         for index, child in enumerate(children, 1))
+    return dimensions(matched)
+
+
 def _attachment_summary_product_values(item, sequence, columns=None):
     """Audit the same per-cabinet/set quotation shown on the cost page."""
     values = _row_values(item)
@@ -1731,15 +1760,17 @@ def _attachment_summary_product_values(item, sequence, columns=None):
     if show_difference:
         cabinet -= residual
     return (sequence, values[1], values[3], values[11], "台", values[15], values[16],
-            values[13], values[13] * values[11], cabinet, *attachments, *extra, freight, discount)
+            values[13], values[13] * values[11], _attachment_summary_matched_size(item),
+            cabinet, *attachments, *extra, freight, discount)
 
 
 class AttachmentSummaryDialog(AttachmentEditor):
     DEFAULT_SIZE = QSize(1560, 720)
     MINIMUM_SIZE = QSize(760, 460)
     PRODUCT_BASE_HEADERS = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价",
-                           "原价单价", "原价总价", "柜体")
-    PRODUCT_BASE_COLUMN_WIDTHS = (50, 100, 170, 60, 50, 95, 95, 95, 95, 100)
+                           "原价单价", "原价总价", "匹配尺寸", "柜体")
+    MATCHED_SIZE_COLUMN = 9
+    PRODUCT_BASE_COLUMN_WIDTHS = (50, 100, 170, 60, 50, 95, 95, 95, 95, 180, 100)
     PRODUCT_TAIL_HEADERS = ("运费", "折扣")
     PRODUCT_TAIL_COLUMN_WIDTHS = (80, 60)
     ATTACHMENT_COLUMN_MIN_WIDTH = 90
@@ -1805,6 +1836,8 @@ class AttachmentSummaryDialog(AttachmentEditor):
         self.product_table = QTableWidget(0, len(self.product_headers))
         self.product_table.setObjectName("scheme2AttachmentSummaryProducts")
         self.product_table.setHorizontalHeaderLabels(self.product_headers)
+        self.product_table.horizontalHeaderItem(self.MATCHED_SIZE_COLUMN).setToolTip(
+            "本次柜体面价实际采用的数据库尺寸（宽*深*高，mm）；并柜按子柜分别列出；未保存匹配记录时显示—。")
         self.product_table.verticalHeader().hide()
         self.product_table.setShowGrid(True)
         self.product_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1881,7 +1914,8 @@ class AttachmentSummaryDialog(AttachmentEditor):
         self.product_table.ensurePolished()
         self._refresh_product_table()
         self.product_table.horizontalHeader().sectionResized.connect(
-            lambda column, _old, _new: self._refresh_product_table() if column == 2 else None)
+            lambda column, _old, _new: self._refresh_product_table()
+            if column in (2, self.MATCHED_SIZE_COLUMN) else None)
         available = self.screen().availableGeometry()
         self.resize(max(self.MINIMUM_SIZE.width(), min(self.DEFAULT_SIZE.width(), available.width() - 32)),
                     max(self.MINIMUM_SIZE.height(), min(self.DEFAULT_SIZE.height(), available.height() - 32)))
@@ -1898,7 +1932,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
                 total_original_amount = money_sum((total_original_amount, values[8]))
                 self.product_table.setRowHeight(index, self.PRODUCT_ROW_HEIGHT)
                 for column, value in enumerate(values):
-                    text = _money(value) if 5 <= column < len(values) - 1 else (
+                    text = _money(value) if 5 <= column < len(values) - 1 and column != self.MATCHED_SIZE_COLUMN else (
                         f"{value:.2f}" if column == len(values) - 1 else f"{value:g}" if column == 3 else str(value))
                     tooltip = text
                     if column == 2 and self.product_table.fontMetrics().horizontalAdvance(text) > (
@@ -1910,10 +1944,12 @@ class AttachmentSummaryDialog(AttachmentEditor):
                     cell = QTableWidgetItem(text)
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     cell.setToolTip(tooltip)
-                    cell.setTextAlignment((Qt.AlignmentFlag.AlignLeft if column in (1, 2)
+                    cell.setTextAlignment((Qt.AlignmentFlag.AlignLeft if column in (1, 2, self.MATCHED_SIZE_COLUMN)
                                            else Qt.AlignmentFlag.AlignRight if column >= 5
                                            else Qt.AlignmentFlag.AlignCenter) | Qt.AlignmentFlag.AlignVCenter)
                     self.product_table.setItem(index, column, cell)
+                self.product_table.resizeRowToContents(index)
+                self.product_table.setRowHeight(index, max(self.PRODUCT_ROW_HEIGHT, self.product_table.rowHeight(index)))
             footer = len(items)
             self.product_table.setRowHeight(footer, self.PRODUCT_ROW_HEIGHT)
             for column in range(len(self.product_headers)):
@@ -2691,6 +2727,65 @@ def _detail_rows(item):
     return rows
 
 
+def _cost_detail_export_snapshot(window):
+    """Freeze the rendered table, including off-screen rows and live factors."""
+    table = window.scheme2_detail_table
+    for row in range(table.rowCount()):
+        for column in range(table.columnCount()):
+            widget = table.cellWidget(row, column)
+            if isinstance(widget, QDoubleSpinBox) and widget.lineEdit().isModified():
+                widget.interpretText()
+    header = table.horizontalHeader()
+    columns = [header.logicalIndex(index) for index in range(table.columnCount())]
+    return {
+        "title": "成本明细",
+        "meta": window.scheme2_detail_meta.text(),
+        "headers": [table.horizontalHeaderItem(column).text() for column in columns],
+        "numeric_columns": [index for index, column in enumerate(columns) if column in (4, 6, 7, 8, 9)],
+        "unit_column": columns.index(5),
+        "widths": [max(8, min(80, round(max(table.columnWidth(column),
+                    DETAIL_COLUMN_WIDTHS[column] * max(.1, getattr(window, "_scheme2_scale", 1))) /
+                    max(1, table.fontMetrics().averageCharWidth()), 2))) for column in columns],
+        "rows": [[table.cellWidget(row, column).text()
+                  if isinstance(table.cellWidget(row, column), QDoubleSpinBox)
+                  else table.item(row, column).text() if table.item(row, column) is not None else ""
+                  for column in columns] for row in range(table.rowCount())],
+    }
+
+
+def _export_cost_detail(window):
+    item = getattr(window, "_scheme2_detail_item", None)
+    table = window.scheme2_detail_table
+    if not isinstance(item, dict) or not table.rowCount():
+        QMessageBox.warning(window, "导出成本明细", "请先打开需要导出的成本明细。")
+        return
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(item.get("name") or "未命名"))[:80].strip(" .") or "未命名"
+    directory = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+    filename, _ = QFileDialog.getSaveFileName(window, "导出成本明细", str(Path(directory) / f"成本明细_{name}.xlsx"),
+                                            "Excel 工作簿 (*.xlsx)")
+    if not filename:
+        return
+    target = Path(filename)
+    if target.suffix.lower() != ".xlsx":
+        target = Path(str(target) + ".xlsx")
+        if target.exists() and QMessageBox.question(window, "覆盖文件", f"文件已存在，是否覆盖？\n{target}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+    button = window.scheme2_detail_export
+    button.setEnabled(False)
+    try:
+        snapshot = _cost_detail_export_snapshot(window)
+        write_cost_detail_xlsx(target, snapshot)
+    except Exception as exc:
+        LOGGER.exception("Cost detail Excel export failed")
+        QMessageBox.warning(window, "成本明细导出失败", f"未能保存 Excel 文件，请检查保存位置，并关闭正在打开的同名文件后重试。\n{exc}")
+    else:
+        QMessageBox.information(window, "导出完成", f"成本明细已导出：\n{target}")
+    finally:
+        button.setEnabled(isinstance(getattr(window, "_scheme2_detail_item", None), dict) and bool(table.rowCount()))
+
+
 def _build_detail_page(window):
     page = QWidget()
     page.setObjectName("scheme2DetailPage")
@@ -2708,7 +2803,16 @@ def _build_detail_page(window):
     header.addStretch(1)
     meta = QLabel()
     meta.setObjectName("scheme2DetailMeta")
-    header.addWidget(meta)
+    meta.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    header.addWidget(meta, 1)
+    export = QPushButton("导出 Excel")
+    export.setObjectName("scheme2PrimaryGhost")
+    export.setAccessibleName("导出当前成本明细为 Excel")
+    export.setToolTip("导出当前产品的全部成本明细、系数及合计，与当前表格一致")
+    export.setAutoDefault(False)
+    export.setEnabled(False)
+    export.clicked.connect(lambda: _export_cost_detail(window))
+    header.addWidget(export)
     layout.addLayout(header)
     table = QTableWidget(0, 11)
     table.setObjectName("scheme2DetailTable")
@@ -2734,6 +2838,7 @@ def _build_detail_page(window):
     window.scheme2_detail_page = page
     window.scheme2_detail_table = table
     window.scheme2_detail_meta = meta
+    window.scheme2_detail_export = export
 
     def close_detail():
         item = getattr(window, "_scheme2_detail_item", None)
@@ -2745,6 +2850,7 @@ def _build_detail_page(window):
             for key, value in totals.items():
                 _replace_component(item, key, value)
         window._scheme2_detail_item = None
+        export.setEnabled(False)
         window.stack.setCurrentIndex(COST_ROUTE)
         window.refresh_summary()
         _apply_responsive(window)
@@ -2767,6 +2873,7 @@ def _show_detail(window, item):
         product = _cost_product(item)
         specification = str(item.get("specification") or "—")
         meta.setText(f"名称 {name} · 产品 {product} · 规格 {specification}")
+        meta.setToolTip(meta.text())
 
     def rendered_total():
         return sum(
@@ -2835,6 +2942,7 @@ def _show_detail(window, item):
             cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         table.setItem(summary_index, column, cell)
     table.setRowHeight(summary_index, 46)
+    window.scheme2_detail_export.setEnabled(True)
     window.stack.setCurrentIndex(DETAIL_ROUTE)
     _apply_responsive(window)
     _schedule_order_workspace_save(window)
@@ -6322,6 +6430,8 @@ def _reset_scheme2_workspace(window):
         window.scheme2_cost_undo.hide()
         window.scheme2_detail_table.setRowCount(0)
         window.scheme2_detail_meta.clear()
+        window.scheme2_detail_meta.setToolTip("")
+        window.scheme2_detail_export.setEnabled(False)
         window.scheme2_save_button.setToolTip("保存当前页面、图纸、报价、成本明细及报价单")
         window.statusBar().clearMessage()
         _sync_scheme2_page_navigation(window)
@@ -7232,10 +7342,10 @@ QComboBox[scheme2Multiline="true"] { padding:4px 5px; }
 QAbstractItemView#scheme2CompanyDropdown { min-width:320px; background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; outline:0; padding:0; }
 QAbstractItemView#scheme2CompanyDropdown::item { min-height:40px; padding:0; border:0; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color:#2563EB; }
-QProgressBar#scheme2AddProgress { background:#EEF0F3; border:0; border-radius:5px; text-align:center; color:#1F3A6A; min-height:20px; }
-QProgressBar#scheme2AddProgress::chunk { background:#97C459; border-radius:5px; }
-QProgressBar#scheme2AddProgress[failed="true"]::chunk { background:#E24A4A; }
+QProgressBar#scheme2AddProgress { border:0; border-radius:5px; text-align:center; min-height:20px; }
+QProgressBar#scheme2AddProgress::chunk { border-radius:5px; }
 """
+    scheme_style += progress_color_style('QProgressBar#scheme2AddProgress')
     window.setStyleSheet(_increase_font_sizes(window.styleSheet() + scheme_style))
     tabular_tag = QFont.Tag.fromString("tnum")
     for control_type in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTableWidget):
