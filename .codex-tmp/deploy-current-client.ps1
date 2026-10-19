@@ -1,12 +1,19 @@
-param([Parameter(Mandatory=$true)][string]$Version, [switch]$ResumeVerifiedBackup)
+param([Parameter(Mandatory=$true)][string]$Version, [switch]$ResumeVerifiedBackup,
+    [string]$BuildRoot = '', [string]$BackupName = '')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d{4}\.\d{2}\.\d{2}\.\d+$') { throw 'Invalid version.' }
 $taskRepo = Split-Path -Parent $PSScriptRoot
 $taskWorkspace = Split-Path -Parent $taskRepo
 $taskLive = Join-Path $taskWorkspace 'AIQuoteDualSystem'
 $taskReview = Join-Path $taskRepo "outputs\review-client-$Version"
+if ($BuildRoot) { $taskReview = [IO.Path]::GetFullPath($BuildRoot) }
+if (-not $taskReview.StartsWith($taskRepo + '\outputs\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Build path must be inside repository outputs.' }
 $taskBuilt = Join-Path $taskReview 'dist\AIQuoteDualSystem_layout_v0'
 $taskBackup = Join-Path $taskWorkspace ".client-backups\before-$Version"
+if ($BackupName) {
+    if ($BackupName -notmatch '^[a-zA-Z0-9._-]+$') { throw 'Invalid backup name.' }
+    $taskBackup = Join-Path $taskWorkspace ('.client-backups\' + $BackupName)
+}
 $taskEntry = Join-Path $taskLive 'AIQuoteDualSystem_layout_v0.exe'
 $taskSourceEntry = Join-Path $taskReview 'AIQuoteDualSystem\AIQuoteDualSystem_layout_v0.exe'
 $taskConfig = Join-Path $taskLive 'client_config.json'

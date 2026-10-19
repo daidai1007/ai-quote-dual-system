@@ -1,6 +1,7 @@
 """Real Qt summary -> manual match -> cost page -> frozen quote/export snapshot."""
 import copy
 import json
+import io
 import os
 from pathlib import Path
 import sys
@@ -18,6 +19,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QToolButton
 import scheme2_ui as ui
 import v3_launcher
+import quote_scheme_center
 
 app = QApplication.instance() or QApplication([])
 ns = v3_launcher.load_v3_namespace()
@@ -25,6 +27,7 @@ QFontDatabase.addApplicationFont('C:/Windows/Fonts/msyh.ttc')
 ns['install_application_font'](app)
 ns['MainWindow'].load_catalogs = lambda self: None
 ns['MainWindow'].refresh_formula_inputs = lambda self, *args: None
+REAL_WORKER_RUN = ns['ApiWorker'].run
 ns['ApiWorker'].run = lambda self: self.failed.emit('offline manual match test')
 OLD = '11111111-1111-4111-8111-111111111111'
 NEW = '22222222-2222-4222-8222-222222222222'
@@ -76,6 +79,11 @@ def response(sizes=None, price=600):
 class ManualMatchTests(unittest.TestCase):
     def setUp(self):
         Worker.instances = []
+        # Adding a real quote schedules scheme creation; this suite verifies
+        # pricing, not the operator-name dialog or cloud scheme persistence.
+        scheme_patch = patch.object(quote_scheme_center, '_ensure_created', return_value=None)
+        scheme_patch.start()
+        self.addCleanup(scheme_patch.stop)
         self.save_patch = patch.object(ui, '_schedule_order_workspace_save', return_value=None)
         self.save_patch.start()
         self.addCleanup(self.save_patch.stop)
@@ -263,8 +271,173 @@ class ManualMatchTests(unittest.TestCase):
         self.assertIs(self.item['attachments'][0],attachment)
         refresh()
 
-    def test_legacy_order_and_busy_document_have_safe_guidance(self):
+    def recover(self, editor):
+        bootstrap = Worker.instances[-1]
+        payload = bootstrap.payload.get('attachment_payload', bootstrap.payload)
+        result = dict(quote_id=payload['quote_id'], quote_line_id=OLD, attachment_contract=2,
+                      formula_cost=dict(material_cost=100,auxiliary_cost=10,labor_cost=20,spray_cost=30,
+                                        attachment_fee=0,total_cost=169.6),
+                      quick_quote=dict(base_price=500,attachment_fee=0,total_cost=500))
+        bootstrap.complete(result)
+        return Worker.instances[-1]
+
+    def test_legacy_order_automatically_recovers_snapshot_without_repricing_popup(self):
         self.item.pop('quote_line_id')
+        self.item.pop('attachment_contract')
+        self.item.update(coating_type='橘纹',cabinet_body_thickness_mm=1.5,waste_factor=1.2,
+                         scheme2_cost_settings=dict(carbon_price=4.33,galvanized_price=4.66,surface_price=28))
+        before=copy.deepcopy(self.item)
+        attachment=self.item['attachments'][0]
+        editor=self.editor();editor.start_reprice()
+        bootstrap=Worker.instances[-1]
+        self.assertTrue(bootstrap.url.endswith('/api/quotes/calculate-dual'))
+        self.assertIs(bootstrap.parent(),editor)  # Not the live selection/configuration page.
+        self.assertEqual(bootstrap.payload['attachments'],[])
+        self.assertEqual(bootstrap.payload['attachment_contract'],2)
+        self.assertEqual(bootstrap.payload['width_mm'],590)
+        self.assertEqual(bootstrap.payload['material_unit_price_override'],4.33)
+        self.assertEqual(bootstrap.payload['surface_treatment_unit_price_override'],28)
+        rematch=self.recover(editor)
+        self.assertEqual(self.item,before)  # Recovery and rematch commit together, never half an order.
+        self.assertTrue(rematch.url.endswith('/api/quotes/rematch-quick'))
+        rematch.complete(response())
+        self.assertEqual(self.item['quote_line_id'],NEW)
+        self.assertEqual(self.item['attachment_contract'],2)
+        self.assertIs(self.item['attachments'][0],attachment)
+        self.assertEqual(self.item['attachments'],before['attachments'])
+        self.assertEqual(self.item['quick']['attachment_fee'],85)
+        self.assertEqual(self.checked_items()[0]['quote_line_id'],NEW)
+        self.assertEqual(ui._quote_export_items_snapshot(self.window)[0]['quick']['base_price'],600)
+        for key in ('quantity','quick_discount','freight_fee','width_mm','depth_mm','height_mm','scheme2_cost_settings'):
+            self.assertEqual(self.item[key],before[key])
+
+    def test_legacy_ganged_without_attachments_recovers_each_child_and_matches_each_size(self):
+        self.item.pop('quote_line_id')
+        self.item.update(attachments=[],ganged_cabinet_count=2,ganged_cabinets=[
+            dict(width_mm=590,depth_mm=230,height_mm=600,single_door_count=1,double_door_count=0),
+            dict(width_mm=800,depth_mm=600,height_mm=2000,single_door_count=0,double_door_count=1)])
+        self.item['quick']['matched_experience']=dict(items=[match(),match(800,600,2000)])
+        editor=self.editor();editor.start_reprice()
+        bootstrap=Worker.instances[-1]
+        self.assertTrue(bootstrap.url.endswith('/api/quotes/calculate-ganged'))
+        self.assertEqual(len(bootstrap.payload['cabinets']),2)
+        self.assertEqual([row['width_mm'] for row in bootstrap.payload['cabinets']],[590,800])
+        self.assertEqual([row['single_door_count'] for row in bootstrap.payload['cabinets']],[1,0])
+        self.assertEqual(bootstrap.payload['attachment_payload']['attachments'],[])
+        self.assertTrue(all('attachment_contract' not in row for row in bootstrap.payload['cabinets']))
+        rematch=self.recover(editor)
+        rematch.complete(response(sizes=[(600,250,600),(800,600,2000)],price=1200))
+        self.assertEqual(self.item['quick']['base_price'],1200)
+        self.assertEqual(self.item['quick']['attachment_fee'],0)
+        self.assertEqual(self.checked_items()[0]['quote_line_id'],NEW)
+
+    def test_legacy_failed_rematch_or_cancel_never_partially_changes_order(self):
+        self.item.pop('quote_line_id')
+        before=copy.deepcopy(self.item)
+        editor=self.editor();editor.start_reprice()
+        self.recover(editor).error('指定尺寸没有对应价格')
+        self.assertEqual(self.item,before)
+        self.assertTrue(editor.confirm.isEnabled())
+        editor.start_reprice()
+        editor.reject()
+        count=len(Worker.instances)
+        self.recover(editor)
+        self.assertEqual(len(Worker.instances),count)
+        self.assertEqual(self.item,before)
+
+    def test_legacy_changed_order_rejects_snapshot_and_missing_cost_is_retryable(self):
+        self.item.pop('quote_line_id')
+        editor=self.editor();editor.start_reprice()
+        self.item['quantity']=4
+        self.recover(editor)
+        self.assertEqual(len(Worker.instances),1)
+        self.assertIn('已变化',editor.status.text())
+        self.assertNotIn('quote_line_id',self.item)
+        editor.start_reprice()
+        Worker.instances[-1].complete(dict(attachment_contract=2,quote_line_id=OLD,formula_cost={}))
+        self.assertIn('补全失败',editor.status.text())
+        self.assertTrue(editor.confirm.isEnabled())
+        self.assertNotIn('quote_line_id',self.item)
+
+    def test_no_attachment_ordinary_request_always_requires_server_snapshot(self):
+        worker=ns['ApiWorker'](self.window.base_url()+'/api/quotes/calculate-dual',
+                               dict(quote_id='test-empty',attachments=[]),self.window)
+        self.assertEqual(worker.payload['attachment_contract'],2)
+        self.assertEqual(worker.payload['attachments'],[])
+        self.assertTrue(self.window._quote_request_context['expects_v2'])
+        worker.deleteLater()
+
+    def test_new_empty_quote_keeps_snapshot_when_added_to_cost_table(self):
+        from quote_request_context import retire_quote_request, stamp_quote_response
+        retire_quote_request(self.window)
+        self.window.attachments=[]
+        self.window.current_result=None
+        self.window.weight_edit.setText('10')
+        self.window.area_edit.setText('2')
+        self.window.width_spin.setValue(590)
+        self.window.depth_spin.setValue(230)
+        self.window.height_spin.setValue(600)
+        self.window.quote_spec_edit.setText('590*230*600')
+        worker=ns['ApiWorker'](self.window.base_url()+'/api/quotes/calculate-dual',
+                               dict(quote_id='fresh-empty',attachments=[]),self.window)
+        self.window.show_result(stamp_quote_response(worker,dict(quote_id='fresh-empty',attachment_contract=2,quote_line_id=OLD,
+            attachments=[],risk_flags=[],
+            formula_cost=dict(material_cost=100,auxiliary_cost=10,labor_cost=20,spray_cost=30,
+                              attachment_fee=0,corrected_material_weight_kg=10,product_area_m2=2),
+            quick_quote=dict(base_price=500,attachment_fee=0,total_cost=500))))
+        worker.deleteLater()
+        self.assertEqual(self.window._attachment_v2_line_id,OLD)
+        with patch.object(ui.QMessageBox,'warning') as warning:
+            self.window.add_current_to_summary()
+            self.assertFalse(warning.called,str(warning.call_args))
+        added=self.window.draft_items[-1]
+        self.assertIsNot(added,self.item)
+        self.assertEqual(added['quote_line_id'],OLD)
+        self.assertEqual(added['attachment_contract'],2)
+        self.assertEqual(added['attachments'],[])
+
+    def test_real_runtime_transport_recovers_old_order_without_using_live_controls(self):
+        self.item.pop('quote_line_id')
+        self.item.update(coating_type='橘纹',cabinet_body_thickness_mm=1.5,waste_factor=1.2,
+                         scheme2_cost_settings=dict(carbon_price=4.33,galvanized_price=4.66,surface_price=28))
+        self.window.scheme2_defaults.update(carbon_price=99,galvanized_price=99,surface_price=99)
+        self.window._quote_request_context={'state':'accepted','token':'live-selection'}
+        original_context=copy.deepcopy(self.window._quote_request_context)
+        self.window._scheme2_api_worker_class=ns['ApiWorker']
+        requests=[]
+        def transport(request, **kwargs):
+            payload=json.loads(request.data)
+            requests.append((request.full_url,payload))
+            if request.full_url.endswith('/api/quotes/calculate-dual'):
+                result=dict(attachment_contract=2,quote_id=payload['quote_id'],quote_line_id=OLD,
+                            formula_cost=dict(material_cost=100,auxiliary_cost=10,labor_cost=20,
+                                              spray_cost=30,attachment_fee=0),quick_quote=dict(base_price=500))
+            elif request.full_url.endswith('/api/quotes/rematch-quick'):
+                result=response()
+            else:
+                raise AssertionError('unexpected offline URL: '+request.full_url)
+            stream=io.BytesIO(json.dumps(result).encode('utf-8'))
+            stream.headers={'Content-Type':'application/json'}
+            return stream
+        editor=self.editor()
+        with patch.object(ns['ApiWorker'],'run',REAL_WORKER_RUN), patch('urllib.request.urlopen',side_effect=transport):
+            editor.start_reprice()
+            for _ in range(500):
+                app.processEvents()
+                if not getattr(self.window,'_scheme2_match_workers',[]):
+                    break
+                QTest.qWait(10)
+        self.assertEqual(len(requests),2,editor.status.text())
+        self.assertEqual(requests[0][1]['material_unit_price_override'],4.33)
+        self.assertEqual(requests[0][1]['surface_treatment_unit_price_override'],28)
+        self.assertEqual(requests[0][1]['attachments'],[])
+        self.assertEqual(self.window._quote_request_context,original_context)
+        self.assertEqual(self.item['quote_line_id'],NEW,editor.status.text())
+        self.assertEqual(self.item['attachments'][0]['quick_amount_override'],85)
+
+    def test_missing_actual_dimensions_and_busy_document_have_safe_guidance(self):
+        self.item.pop('quote_line_id')
+        self.item.pop('width_mm')
         editor=self.editor();editor.start_reprice()
         self.assertEqual(Worker.instances,[])
         self.assertIn('重新计算',editor.status.text())

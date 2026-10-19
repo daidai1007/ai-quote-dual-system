@@ -67,7 +67,7 @@ for button in buttons:
     assert button.height() == 28, (button.text(), button.size())
 assert all(button.height() == 28 for button in window.nav_buttons)
 for button in window.nav_buttons:
-    pixel_size(button, 14)
+    pixel_size(button, 18)
 
 assert 'font-family:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI"' in window.styleSheet()
 assert "QHeaderView::section { background:#2563EB; color:#FFFFFF;" in window.styleSheet()

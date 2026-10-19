@@ -1765,7 +1765,9 @@ def install_attachment_v2(namespace):
             payload = confirmation_payload(payload)
         all_attachments = list(payload.get("attachments", []))
         request_attachments = [row for row in all_attachments if not row.get("custom")]
-        if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent) and (payload.get("attachment_contract") == 2 or all_attachments):
+        # A cabinet without catalogue attachments still needs an immutable
+        # server line for manual size matching and later document validation.
+        if str(url).endswith("/api/quotes/calculate-dual") and parent is not None and not ganged(parent):
             automatic_base = base_height(parent)
             payload = {**payload, "attachment_contract": 2, "attachments": [selected_input(x, automatic_base) for x in request_attachments]}
         worker_init(worker, url, payload, parent, *args, **kwargs)

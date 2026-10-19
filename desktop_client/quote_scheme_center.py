@@ -9,6 +9,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from uuid import uuid4
 
 from PySide6.QtCore import QDate, QDateTime, QSignalBlocker, QTimer, Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -25,7 +26,7 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.19.02"
+CLIENT_VERSION = "2026.10.19.03"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
@@ -156,7 +157,7 @@ def _operator_name(window, prompt=False):
     value = editor.text().strip() if isinstance(editor, QLineEdit) else ""
     if not value and prompt:
         value, accepted = QInputDialog.getText(
-            window, "填写创建人", "请输入当前操作人员姓名：", QLineEdit.EchoMode.Normal,
+            window, "填写当前操作人", "请输入当前操作人员姓名（用于方案保存及导出登记）：", QLineEdit.EchoMode.Normal,
         )
         value = value.strip() if accepted else ""
         if value and isinstance(editor, QLineEdit):
@@ -187,6 +188,7 @@ def _set_state(window, text, kind="normal"):
     operation_status = getattr(window, "quote_scheme_operation_status", None)
     if operation_status is not None:
         operation_status.setText(text)
+        operation_status.setStyleSheet(label.styleSheet())
         operation_status.setVisible(kind == "error" and window.quote_scheme_table.rowCount() > 0)
 
 
@@ -466,6 +468,12 @@ def _build_page(window):
     operator_button.setObjectName("quoteSchemeOperatorButton")
     operator_button.clicked.connect(lambda: _edit_operator(window))
     info_layout.addWidget(operator_button)
+    retry_registration = QPushButton("重试方案登记")
+    retry_registration.setObjectName("scheme2PrimaryGhost")
+    retry_registration.clicked.connect(lambda: _retry_export_registration(window))
+    retry_registration.hide()
+    info_layout.addWidget(retry_registration)
+    window.quote_scheme_registration_retry = retry_registration
     info_layout.addStretch(1)
     window.quote_scheme_operator_button = operator_button
     operator_name.textChanged.connect(lambda _text: _update_operator_button(window))
@@ -599,7 +607,14 @@ def _load_list(window, page=1):
     worker = _run(window, "GET", path, None, lambda result: _list_loaded(window, result),
                   lambda message: _list_failed(window, message))
     window._quote_scheme_list_worker = worker
-    worker.finished.connect(lambda: setattr(window, "_quote_scheme_list_worker", None))
+    worker.finished.connect(lambda: _list_finished(window))
+
+
+def _list_finished(window):
+    window._quote_scheme_list_worker = None
+    if getattr(window, "_quote_scheme_reload_after_registration", False):
+        window._quote_scheme_reload_after_registration = False
+        QTimer.singleShot(0, lambda: _load_list(window, window._quote_scheme_page))
 
 
 def _list_failed(window, message):
@@ -669,6 +684,7 @@ def _list_loaded(window, result):
     _set_list_busy(window, False)
     window.quote_scheme_page_status.setToolTip("")
     _list_state(window, "" if rows else "暂无报价方案\n可调整查询条件，或点击“新建方案”开始。")
+    _registration_notice(window)
     table.fit_columns()
 
 
@@ -711,6 +727,7 @@ def _open_selected_row(window):
 
 
 def _open_scheme(window, scheme_no, route=3, after_open=None):
+    if _registration_guard(window): return
     busy = getattr(window, "_quote_scheme_save_worker", None)
     if busy is not None and busy.isRunning():
         QMessageBox.information(window, "方案保存中", "请等待当前方案保存完成后再打开其他方案。")
@@ -718,7 +735,8 @@ def _open_scheme(window, scheme_no, route=3, after_open=None):
     _set_state(window, "正在从服务器恢复方案…", "busy")
     epoch = getattr(window, "_scheme2_workspace_epoch", 0)
     def current():
-        return epoch == getattr(window, "_scheme2_workspace_epoch", 0)
+        return (epoch == getattr(window, "_scheme2_workspace_epoch", 0)
+                and not window._quote_scheme_export_context)
     _run(window, "GET", "/api/quote-schemes/" + urllib.parse.quote(scheme_no), None,
          lambda result: _apply_opened_scheme(window, result, route, after_open) if current() else None,
          lambda message: _set_state(window, f"打开失败：{message}", "error") if current() else None)
@@ -780,6 +798,7 @@ def _apply_opened_scheme(window, result, route=3, after_open=None):
 
 
 def _new_scheme(window):
+    if _registration_guard(window): return
     for name in ("_quote_scheme_save_worker", "_quote_scheme_create_worker"):
         busy = getattr(window, name, None)
         if busy is not None and busy.isRunning():
@@ -847,6 +866,7 @@ def _schedule_save(window):
     if getattr(window, "_quote_scheme_loading", False) or getattr(window, "_quote_scheme_read_only", False): return
     if not window._quote_scheme_id: return
     window._quote_scheme_dirty_seq += 1
+    if getattr(window, "_quote_scheme_export_context", None): return
     if window._quote_scheme_save_worker is not None:
         window._quote_scheme_save_pending = True
     window._quote_scheme_save_timer.start(500)
@@ -855,6 +875,7 @@ def _schedule_save(window):
 
 def _save(window):
     if not window._quote_scheme_id: return
+    if getattr(window, "_quote_scheme_export_context", None) or window._quote_scheme_read_only: return
     if window._quote_scheme_save_worker is not None:
         window._quote_scheme_save_pending = True
         return
@@ -906,6 +927,7 @@ def _save_finished(window, worker, scheme_no, sequence):
 
 
 def _scheme_action(window, scheme, action):
+    if _registration_guard(window): return
     operator_name = _require_operator(window, True)
     if not operator_name:
         return
@@ -917,6 +939,7 @@ def _scheme_action(window, scheme, action):
 
 
 def _confirm_transition(window, scheme, action):
+    if _registration_guard(window): return
     labels = {"archive":"归档", "restore":"恢复", "void":"作废"}
     label = labels[action]
     answer = QMessageBox.question(window, label, f"确认{label}方案 {scheme['scheme_no']}？该操作将记录审计信息。",
@@ -933,6 +956,7 @@ def _confirm_transition(window, scheme, action):
 
 
 def _confirm_delete(window, scheme):
+    if _registration_guard(window): return
     answer = QMessageBox.question(window, "删除未使用草稿", f"仅未导出过的草稿允许删除。确认删除 {scheme['scheme_no']}？",
                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                   QMessageBox.StandardButton.No)
@@ -946,7 +970,144 @@ def _confirm_delete(window, scheme):
     _run(window, "DELETE", path, None, lambda _r: _load_list(window, window._quote_scheme_page))
 
 
+def _registration_guard(window):
+    if not getattr(window, "_quote_scheme_export_context", None): return False
+    QMessageBox.information(window, "报价方案处理中", "请先完成当前导出或方案登记；登记失败可点击“重试方案登记”，无需重新导出文件。")
+    return True
+
+
+def _prepare_export(window):
+    if window._quote_scheme_pending_export:
+        _retry_export_registration(window)
+        return False
+    if window._quote_scheme_export_context: return False
+    # A create/save request may still own the server's next lock version.
+    for name in ("_quote_scheme_save_worker", "_quote_scheme_create_worker"):
+        if getattr(window, name, None) is not None:
+            QMessageBox.information(window, "方案保存中", "请等待当前方案保存完成后再导出报价单。")
+            return False
+    operator = _require_operator(window, True)
+    if not operator: return False
+    if not window._quote_scheme_id: return True  # Legacy unregistered workspace.
+    window._quote_scheme_save_timer.stop()
+    snapshot = deepcopy(_snapshot(window))
+    snapshot["document"]["export_registration_id"] = uuid4().hex
+    window._quote_scheme_export_context = dict(
+        scheme_no=window._quote_scheme_id, status=window._quote_scheme_status,
+        sequence=window._quote_scheme_dirty_seq, read_only=window._quote_scheme_read_only,
+        print_enabled=window.scheme2_quote_print.isEnabled(),
+        payload=dict(kind="XLSX", succeeded=True, expected_version=window._quote_scheme_version,
+                     operator_name=operator, snapshot=snapshot, detail={"client_version": CLIENT_VERSION}),
+    )
+    # Freeze the exported contents until acknowledgement, including edits on
+    # other routes. Cancellation restores the previous editability/autosave.
+    _apply_read_only(window, True)
+    window.scheme2_quote_print.setEnabled(False)
+    return True
+
+
+def _release_export(window):
+    context = window._quote_scheme_export_context
+    if context is None or window._quote_scheme_pending_export: return
+    window._quote_scheme_export_context = None
+    _apply_read_only(window, context["read_only"])
+    window.scheme2_quote_print.setEnabled(context["print_enabled"])
+    if not context["read_only"] and window._quote_scheme_dirty_seq > window._quote_scheme_saved_seq:
+        window._quote_scheme_save_timer.start(500)
+
+
+def _registration_notice(window):
+    receipt = getattr(window, "_quote_scheme_pending_export", None)
+    if receipt is None: return
+    label = window.quote_scheme_operation_status
+    label.setText("文件已导出，正在登记报价方案…" if window._quote_scheme_registration_busy else
+                  "文件已导出，方案登记失败。请重试方案登记，无需重新导出文件。")
+    label.setStyleSheet(window.quote_scheme_save_status.styleSheet())
+    label.setToolTip(receipt.get("error") or f"文件已导出：{receipt['path']}")
+    label.show()
+
+
+def _registration_failed(window, receipt, message):
+    if window._quote_scheme_pending_export is not receipt: return
+    window._quote_scheme_registration_busy = False
+    window.quote_scheme_registration_retry.setEnabled(True)
+    detail = f"文件已导出：{receipt['path']}\n方案登记失败：{message}\n请重试登记，无需重新导出文件。"
+    receipt["error"] = detail
+    _set_state(window, "文件已导出，方案登记失败。请重试登记，无需重新导出文件。", "error")
+    _registration_notice(window)
+    window._scheme2_document_controller.registration_failed(detail)
+    _apply_read_only(window, True)
+
+
+def _register_export(window, receipt, retry=False):
+    if window._quote_scheme_registration_busy or window._quote_scheme_pending_export is not receipt: return
+    window._quote_scheme_registration_busy = True
+    window.quote_scheme_registration_retry.setEnabled(False)
+    controller = window._scheme2_document_controller
+    controller.registration_started(lambda: _retry_export_registration(window))
+    _set_state(window, "文件已导出，正在登记报价方案…", "busy")
+    _registration_notice(window)
+    path = "/api/quote-schemes/" + urllib.parse.quote(receipt["scheme_no"])
+
+    def failed(message):
+        _registration_failed(window, receipt, message)
+
+    def post():
+        _run(window, "POST", path + "/export-result", deepcopy(receipt["payload"]),
+             lambda result: _export_recorded(window, result, receipt), failed)
+
+    def checked(result):
+        if window._quote_scheme_pending_export is not receipt: return
+        if not isinstance(result, dict):
+            failed("服务端未返回有效的方案查询结果，请重试。")
+            return
+        payload = receipt["payload"]
+        frozen = payload["snapshot"]
+        snapshot = result.get("snapshot")
+        snapshot = snapshot if isinstance(snapshot, dict) else {}
+        # A unique token preserved by the existing snapshot API proves that a
+        # previous finalisation committed even if its HTTP response was lost.
+        document = snapshot.get("document")
+        token = document.get("export_registration_id") if isinstance(document, dict) else None
+        if (result.get("scheme_no") == receipt["scheme_no"] and result.get("status") == "QUOTED"
+                and token == frozen["document"]["export_registration_id"]
+                and result.get("lock_version") == payload["expected_version"] + 1
+                and snapshot == frozen):
+            _export_recorded(window, dict(recorded=True, formal_success=True, status="QUOTED",
+                                         lock_version=result["lock_version"]), receipt)
+        elif (result.get("scheme_no") == receipt["scheme_no"]
+              and result.get("lock_version") == payload["expected_version"]
+              and result.get("status") == receipt["status"]):
+            post()
+        else:
+            failed("服务器方案版本或状态已变化，不能覆盖其他人的修改。请保留已导出的文件，核对最新方案后处理。")
+
+    if retry:
+        _run(window, "GET", path, None, checked, failed)
+    else:
+        post()
+
+
+def _retry_export_registration(window):
+    receipt = window._quote_scheme_pending_export
+    if receipt is not None: _register_export(window, receipt, retry=True)
+
+
+def _file_exported(window, exported_path):
+    context = window._quote_scheme_export_context
+    if context is None: return
+    receipt = deepcopy(context)
+    receipt["path"] = str(exported_path)
+    window._quote_scheme_pending_export = receipt
+    window.pending_export_path = None
+    window.set_export_busy(False, "文件已导出，正在登记报价方案…")
+    window.quote_scheme_registration_retry.show()
+    window.quote_scheme_registration_retry.setToolTip(f"文件已导出：{exported_path}；重试不会重新生成文件。")
+    _register_export(window, receipt)
+
+
 def _record_export(window, succeeded, kind="XLSX"):
+    if _registration_guard(window): return
     if not window._quote_scheme_id: return
     operator_name = _require_operator(window, False)
     if not operator_name:
@@ -961,11 +1122,34 @@ def _record_export(window, succeeded, kind="XLSX"):
          lambda message: _set_state(window, f"导出结果登记失败：{message}", "error"))
 
 
-def _export_recorded(window, result):
+def _export_recorded(window, result, receipt=None):
+    if receipt is not None:
+        if window._quote_scheme_pending_export is not receipt: return
+        editable = receipt["status"] in ("DRAFT", "REVISING")
+        expected_status = "QUOTED" if editable else receipt["status"]
+        expected_version = receipt["payload"]["expected_version"] + int(editable)
+        if (not isinstance(result, dict) or result.get("recorded") is not True or result.get("formal_success") is not True
+                or result.get("status") != expected_status or result.get("lock_version") != expected_version):
+            _registration_failed(window, receipt, "服务端未确认正式方案登记成功，不能将本地状态标记为已报价。")
+            return
+        window._quote_scheme_registration_busy = False
+        window._quote_scheme_pending_export = None
+        window._quote_scheme_export_context = None
+        window.quote_scheme_registration_retry.hide()
+        window._quote_scheme_saved_seq = max(window._quote_scheme_saved_seq, receipt["sequence"])
+        window._quote_scheme_save_pending = False
+        window._quote_scheme_last_save_failed = False
+        window._scheme2_document_controller.registration_completed(STATUS_TEXT[expected_status])
+        window.scheme2_quote_print.setEnabled(receipt["print_enabled"])
     window._quote_scheme_status = str(result.get("status") or window._quote_scheme_status)
     window._quote_scheme_version = int(result.get("lock_version") or window._quote_scheme_version)
     _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID"))
-    _set_state(window, f"{window._quote_scheme_id} · 已报价并保存导出记录", "ok")
+    operation = "文件已导出，方案已登记" if receipt is not None else "打印结果已登记"
+    _set_state(window, f"{window._quote_scheme_id} · {operation}（{STATUS_TEXT.get(window._quote_scheme_status, window._quote_scheme_status)}）", "ok")
+    if window._quote_scheme_list_worker is not None:
+        window._quote_scheme_reload_after_registration = True
+    else:
+        _load_list(window, window._quote_scheme_page)
 
 
 def install_quote_scheme_center(namespace):
@@ -986,6 +1170,12 @@ def install_quote_scheme_center(namespace):
         window._quote_scheme_last_save_failed = False; window._quote_scheme_loading = False
         window._quote_scheme_dirty_seq = 0; window._quote_scheme_saved_seq = 0
         window._quote_scheme_save_pending = False
+        window._quote_scheme_export_context = None
+        window._quote_scheme_pending_export = None
+        window._quote_scheme_registration_busy = False
+        window._quote_scheme_reload_after_registration = False
+        window.quote_scheme_prepare_export = lambda: _prepare_export(window)
+        window.quote_scheme_export_finished = lambda: _release_export(window)
         window._quote_scheme_page = 1; window._quote_scheme_read_only = False
         window._quote_scheme_save_timer = QTimer(window); window._quote_scheme_save_timer.setSingleShot(True)
         window._quote_scheme_save_timer.timeout.connect(lambda: _save(window))
@@ -1023,16 +1213,17 @@ def install_quote_scheme_center(namespace):
             if signal is not None: signal.connect(lambda *_: _schedule_save(window))
         success = window.export_succeeded
         def export_succeeded(owner, *items, **named):
-            result = success(*items, **named)
-            _record_export(window, True)
-            return result
+            if window._quote_scheme_export_context is not None:
+                _file_exported(window, items[0] if items else named.get("exported_path", ""))
+                return
+            return success(*items, **named)
         window.export_succeeded = export_succeeded.__get__(window, type(window))
         window.quote_scheme_print_succeeded = lambda: _record_export(window, True, "PRINT")
         for name in ("export_failed", "persistence_failed", "finalization_failed"):
             prior = getattr(window, name, None)
             if callable(prior):
                 def failed(owner, message, callback=prior):
-                    result = callback(message); _record_export(window, False); return result
+                    result = callback(message); _release_export(window); return result
                 setattr(window, name, failed.__get__(window, type(window)))
         prior_move = getattr(window, "move_selected_item", None)
         if callable(prior_move):
@@ -1069,6 +1260,16 @@ def install_quote_scheme_center(namespace):
         return result
 
     def close(window, event):
+        if window._quote_scheme_registration_busy or (
+                window._quote_scheme_export_context and not window._quote_scheme_pending_export):
+            QMessageBox.information(window, "报价方案处理中", "请等待当前导出或方案登记请求完成后再关闭客户端。")
+            event.ignore(); return
+        if window._quote_scheme_pending_export:
+            answer = QMessageBox.warning(window, "文件已导出，方案尚未登记", "关闭将丢失本次登记的重试入口，服务器方案可能仍为草稿。建议先重试登记。仍要关闭吗？",
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                         QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes: event.ignore(); return
+            return original_close(window, event)
         if window._quote_scheme_save_timer.isActive() and window._quote_scheme_id:
             window._quote_scheme_save_timer.stop(); _save(window)
         busy = window._quote_scheme_save_worker or window._quote_scheme_create_worker

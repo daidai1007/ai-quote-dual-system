@@ -79,6 +79,9 @@ class QuoteDocumentProgress:
         self.busy = False
         self.kind = "generate"
         self.reason, self.issues = "", []
+        self.registration_retry = None
+        self.file_exported = False
+        self.success_text = ''
         self.widgets = {}
         self.feedback = {}
         self.state = 'idle'
@@ -152,6 +155,9 @@ class QuoteDocumentProgress:
         self.kind, self.busy = kind, True
         self.feedback_kind, self.state = kind, 'busy'
         self.reason, self.issues = "", []
+        self.registration_retry = None
+        self.file_exported = False
+        self.success_text = ''
         self.trace = uuid4().hex
         self.started = self.phase_started = time.monotonic()
         self.finished_at = None
@@ -219,7 +225,31 @@ class QuoteDocumentProgress:
 
     def retry(self):
         if self.reason and not self.busy:
-            self.generate() if self.kind == 'generate' else self.export()
+            if self.registration_retry is not None:
+                self.registration_retry()
+            else:
+                self.generate() if self.kind == 'generate' else self.export()
+
+    def registration_started(self, retry):
+        """The workbook exists; from here recovery must never export it again."""
+        if not self.busy:
+            self.begin('export')
+        self.file_exported = True
+        self.registration_retry = retry
+        self.reason, self.issues = '', []
+        self.widgets['export'][1].setMaximum(6)
+        self.set_stage(6, '文件已导出，正在登记方案')
+        self.widgets['export'][0].show()
+        self.sync_buttons()
+
+    def registration_failed(self, message):
+        self.fail(message)
+
+    def registration_completed(self, status_text):
+        self.success_text = f'✓ 文件已导出，方案已登记（{status_text}）'
+        self.reason, self.issues = '', []
+        self.registration_retry = None
+        self.end()
 
     def set_stage(self, step, label):
         if step != self.step:
@@ -252,10 +282,12 @@ class QuoteDocumentProgress:
             operation = '生成' if self.kind == 'generate' else '导出'
             attachment = str(self.issues[0].get('attachment_name') or '') if self.issues else ''
             message = f'{operation}失败：{attachment}校验未通过' if attachment else f'{operation}失败，请查看详情后重试。'
+            if self.file_exported:
+                message = '文件已导出，方案登记失败，请重试登记。'
         elif self.state == 'success':
-            message = '✓ 报价单已生成' if self.kind == 'generate' else '✓ 报价单已导出'
+            message = self.success_text or ('✓ 报价单已生成' if self.kind == 'generate' else '✓ 报价单已导出')
         else:
-            stage = self.label if self.label.startswith('正在') else '正在' + self.label
+            stage = self.label if self.label.startswith(('正在', '文件已导出')) else '正在' + self.label
             message = f'{stage}… · 已用时 {total:.1f} 秒'
         feedback['label'].set_feedback(message)
         color = FEEDBACK_COLORS['error' if failed else 'success' if self.state == 'success' else 'text']
@@ -264,6 +296,7 @@ class QuoteDocumentProgress:
             feedback['label'].setStyleSheet(style)
         feedback['label'].setToolTip(bar.toolTip())
         feedback['retry'].setVisible(failed)
+        feedback['retry'].setText('重试登记' if self.file_exported else '重试')
         feedback['details'].setVisible(failed)
         feedback['success_icon'].setVisible(self.state == 'success')
         locate.setVisible(failed and bool(self.issues))
@@ -274,7 +307,9 @@ class QuoteDocumentProgress:
         self.window.scheme2_quote_export.setEnabled(not self.busy and bool(self.window.draft_items))
         self.window.scheme2_cost_generate.setText("生成中…" if self.busy and self.kind == "generate" else
                                                 "重试生成" if self.reason and self.kind == "generate" else "生成报价单")
-        self.window.scheme2_quote_export.setText("正在导出…" if self.busy and self.kind == "export" else
+        self.window.scheme2_quote_export.setText("登记中…" if self.busy and self.file_exported else
+                                                "重试登记" if self.reason and self.file_exported else
+                                                "正在导出…" if self.busy and self.kind == "export" else
                                                 "重试导出" if self.reason and self.kind == "export" else "导出报价单")
 
     def end(self, cancelled=False):
@@ -284,6 +319,9 @@ class QuoteDocumentProgress:
         self.timer.stop()
         self._stop_feedback_timers()
         self._restore_controls()
+        finished = getattr(self.window, 'quote_scheme_export_finished', None)
+        if self.kind == 'export' and callable(finished):
+            finished()
         self.state = 'failed' if self.reason else 'idle' if cancelled else 'success'
         if self.state == 'success' and self.kind == 'generate' and self.window.stack.currentIndex() == self.ui.QUOTE_ROUTE:
             # Generation navigates away from cost calculation. Put the small
@@ -310,6 +348,9 @@ class QuoteDocumentProgress:
         self.timer.stop()
         self._restore_controls()
         self.reason, self.issues = "", []
+        self.registration_retry = None
+        self.file_exported = False
+        self.success_text = ''
         self.step, self.label, self.snapshot = 0, "", ""
         for name in ("started", "phase_started"):
             if hasattr(self, name):
@@ -456,6 +497,9 @@ class QuoteDocumentProgress:
     def generate(self):
         if self.busy:
             return
+        if getattr(self.window, '_quote_scheme_pending_export', None):
+            QMessageBox.information(self.window, '方案待登记', '文件已导出，请先重试方案登记，无需重新生成报价单。')
+            return
         self.begin("generate")
         trace = self.trace
         def current():
@@ -496,6 +540,9 @@ class QuoteDocumentProgress:
 
     def export(self):
         if self.busy:
+            return
+        prepare = getattr(self.window, 'quote_scheme_prepare_export', None)
+        if callable(prepare) and not prepare():
             return
         self.begin("export")
         self.start_export()
@@ -575,7 +622,7 @@ class QuoteDocumentProgress:
         if locate is not None and box.clickedButton() is locate:
             self.locate()
         elif box.clickedButton() is retry:
-            self.generate() if self.kind == "generate" else self.export()
+            self.retry()
 
     def locate(self):
         if not self.issues:

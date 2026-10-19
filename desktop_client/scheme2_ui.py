@@ -22,6 +22,7 @@ import shutil
 import sys
 import tempfile
 import time
+from uuid import uuid4
 from types import MethodType
 import zipfile
 from decimal import Decimal
@@ -143,7 +144,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.19.02"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.19.03"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -1800,12 +1801,70 @@ def _parse_manual_matched_size(text):
     return dict(zip(("width_mm", "depth_mm", "height_mm"), values))
 
 
-def _apply_manual_quick_match(window, item, result, source_line_id, sizes):
+def _manual_match_snapshot_request(item):
+    """Recover a missing cabinet snapshot from this order, never live controls.
+
+    Popup attachments are deliberately not repriced/reinserted. Document-time
+    hydration will combine them with the new server-calculated cabinet costs.
+    """
+    defaults = {key: value for key, _label, value, _decimals in COEFFICIENT_FIELDS}
+    defaults["surface_price"] = _surface_default_price(item.get("coating_type"))
+    settings = migrate_material_prices(item.get("scheme2_cost_settings"), item.get("material_code"), defaults)
+    prefix = "MATCH_" + uuid4().hex
+    formula = item.get("formula_base") or _formula(item)
+    payload = {key: deepcopy(item[key]) for key in (
+        "product_code", "model_code", "material_code", "width_mm", "height_mm", "depth_mm",
+        "coating_type", "variant_code", "single_door_count", "double_door_count",
+    ) if item.get(key) is not None}
+    for key in ("width_mm", "height_mm", "depth_mm"):
+        if not math.isfinite(_number(payload.get(key), float("nan"))) or _number(payload.get(key)) <= 0:
+            raise ValueError("原订单实际尺寸不完整，请先编辑并重新计算整柜。")
+    if not payload.get("product_code") or not payload.get("material_code"):
+        raise ValueError("原订单产品或材质不完整，请先编辑并重新计算整柜。")
+    payload.update(
+        quote_id=prefix, quote_date=item.get("quote_date") or date.today().isoformat(),
+        attachments=[], attachment_contract=2, pricing_basis=PRICING_BASIS,
+        cabinet_body_thickness_mm=item.get("cabinet_body_thickness_mm", 1.5),
+        waste_factor=item.get("waste_factor", settings.get("waste_factor", 1.2)),
+        galvanized_sheet_unit_price_override=settings["galvanized_price"],
+        carbon_steel_unit_price_override=settings["carbon_price"],
+        material_unit_price_override=material_unit_price(settings, item.get("material_code")),
+        surface_treatment_unit_price_override=settings.get("surface_price", _surface_default_price(item.get("coating_type"))),
+        base_material_weight_kg=formula.get("corrected_material_weight_kg"),
+        product_area_m2=formula.get("product_area_m2"),
+    )
+    payload["coating_type"] = payload.get("coating_type") or "橘纹"
+    # Old rows can predate explicit door fields. Keep the saved product variant.
+    payload.setdefault("single_door_count", 0 if "DOUBLE" in str(item.get("product_code")) else 1)
+    payload.setdefault("double_door_count", 1 if "DOUBLE" in str(item.get("product_code")) else 0)
+    children = deepcopy(item.get("ganged_cabinets") or [])
+    count = int(_number(item.get("ganged_cabinet_count"), len(children) or 1))
+    if count <= 1 and not children:
+        return "/api/quotes/calculate-dual", payload, payload
+    if count < 2 or count != len(children):
+        raise ValueError("原订单子柜尺寸不完整，请先编辑并重新计算整柜。")
+    costs = formula.get("ganged_cabinet_costs") or []
+    cabinets = []
+    for index, child in enumerate(children):
+        local = costs[index].get("formula_cost", {}) if index < len(costs) else {}
+        cabinet = {**payload, **child, "quote_id": f"{prefix}-{index+1}",
+                   "base_material_weight_kg": local.get("corrected_material_weight_kg"),
+                   "product_area_m2": local.get("product_area_m2")}
+        cabinet.pop("attachment_contract", None)  # Child quotes are rolled back by the batch service.
+        cabinets.append(cabinet)
+    payload.update(quote_id=cabinets[0]["quote_id"], ganged_cabinet_count=count,
+                   ganged_cabinets=children, ganged_cabinet_inputs=cabinets)
+    return "/api/quotes/calculate-ganged", {"cabinets": cabinets, "attachment_total": 0,
+                                            "attachment_payload": payload}, payload
+
+
+def _apply_manual_quick_match(window, item, result, source_line_id, sizes, recovered=None):
     if getattr(window, "_quote_scheme_read_only", False):
         raise ValueError("当前方案只读，请先建立修订方案后再修改匹配尺寸。")
     if getattr(window, "_scheme2_document_busy", False):
         raise ValueError("报价单任务正在进行，本次取价结果未应用，请完成后重试。")
-    if not any(current is item for current in window.draft_items) or item.get("quote_line_id") != source_line_id:
+    original_id = recovered["original_line_id"] if recovered else source_line_id
+    if not any(current is item for current in window.draft_items) or item.get("quote_line_id") != original_id:
         raise ValueError("原订单已变化，本次取价结果未应用，请重新打开附件汇总。")
     if not isinstance(result, dict) or result.get("attachment_contract") != 2 or result.get("source_quote_line_id", "").lower() != source_line_id.lower():
         raise ValueError("取价响应与当前订单不一致，原报价未修改。")
@@ -1831,6 +1890,16 @@ def _apply_manual_quick_match(window, item, result, source_line_id, sizes):
                "total_cost": money_sum((price, fee))}
     previous = dict(item)
     try:
+        if recovered:
+            base = deepcopy(recovered["result"]["formula_cost"])
+            formula = {**base, "labor_cost": money_product(base["labor_cost"], item.get("labor_multiplier", 1))}
+            item.update(formula_base=base, formula=formula, quote_date=recovered["environment"]["quote_date"])
+            for key in ("coating_type", "cabinet_body_thickness_mm", "waste_factor"):
+                if item.get(key) is None:
+                    item[key] = recovered["environment"][key]
+            item.pop("cost_detail_rows", None)
+            item.pop("scheme2_cost_bases", None)
+            _recalculate_item_management(item)
         item.update(quick=updated, quote_line_id=line_id, attachment_contract=2, pricing_basis=PRICING_BASIS)
         item.pop("quote_display", None)  # Regenerated at the next document action.
         window.refresh_summary()
@@ -1852,6 +1921,7 @@ class MatchedSizeEditor(QDialog):
         from dialog_style import DIALOG_COLORS, DIALOG_METRICS, style_dialog
         self.summary, self.window, self.item = summary, summary.window, item
         self.source_line_id = item.get("quote_line_id")
+        self._recovered = None
         self._closed = self._busy = False
         self.setWindowTitle("修改柜体匹配尺寸")
         self.setObjectName("scheme2MatchedSizeDialog")
@@ -1907,16 +1977,22 @@ class MatchedSizeEditor(QDialog):
                 raise ValueError("当前方案只读，请先建立修订方案后再修改匹配尺寸。")
             if getattr(self.window, "_scheme2_document_busy", False):
                 raise ValueError("请等待当前报价单任务结束后再修改。")
-            if not self.source_line_id or self.item.get("attachment_contract") != 2:
-                raise ValueError("旧订单缺少服务端报价行，请先编辑并重新计算整柜，再修改匹配尺寸。")
             sizes = [_parse_manual_matched_size(field.text()) for field in self.inputs]
             worker_type = self.window._scheme2_api_worker_class
             if worker_type is None:
                 raise ValueError("取价服务不可用，请重新打开客户端。")
             self._request_state = deepcopy(self.item)
             self._sizes = sizes
-            worker = worker_type(self.window.base_url() + "/api/quotes/rematch-quick",
-                                 {"quote_line_id": self.source_line_id, "matched_sizes": sizes}, self.window)
+            self._recovered = None
+            if not self.source_line_id or self.item.get("attachment_contract") != 2:
+                endpoint, payload, environment = _manual_match_snapshot_request(self.item)
+                self._recovery_environment = environment
+                worker = worker_type(self.window.base_url() + endpoint, payload, self)
+                callback = self._snapshot_ready
+            else:
+                worker = worker_type(self.window.base_url() + "/api/quotes/rematch-quick",
+                                     {"quote_line_id": self.source_line_id, "matched_sizes": sizes}, self)
+                callback = self._succeeded
         except Exception as exc:
             self.status.setText(str(exc))
             return
@@ -1925,11 +2001,14 @@ class MatchedSizeEditor(QDialog):
         for field in self.inputs:
             field.setEnabled(False)
         self.status.setText("正在读取数据库价格并保存报价快照…")
+        self._start_worker(worker, callback)
+
+    def _start_worker(self, worker, callback):
         retained = getattr(self.window, "_scheme2_match_workers", None)
         if retained is None:
             retained = self.window._scheme2_match_workers = []
         retained.append(worker)
-        worker.succeeded.connect(self._succeeded)
+        worker.succeeded.connect(callback)
         worker.failed.connect(self._failed)
 
         def finished():
@@ -1943,13 +2022,37 @@ class MatchedSizeEditor(QDialog):
         worker.finished.connect(finished)
         worker.start()
 
+    def _snapshot_ready(self, result):
+        if self._closed:
+            return
+        try:
+            if self.item != self._request_state or not any(current is self.item for current in self.window.draft_items):
+                raise ValueError("取价期间订单已变化，原报价保留，请重新取价。")
+            line_id = result.get("quote_line_id") if isinstance(result, dict) else None
+            formula = result.get("formula_cost") if isinstance(result, dict) else None
+            if (not isinstance(result, dict) or result.get("attachment_contract") != 2 or not isinstance(line_id, str)
+                    or not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", line_id)
+                    or result.get("quote_id") != self._recovery_environment["quote_id"]
+                    or not isinstance(formula, dict) or any(
+                        not math.isfinite(_number(formula.get(key), float("nan")))
+                        for key in ("material_cost", "auxiliary_cost", "labor_cost", "spray_cost"))):
+                raise ValueError("柜体快照补全失败，原报价未修改。")
+            self._recovered = dict(original_line_id=self.source_line_id, result=deepcopy(result),
+                                   environment=self._recovery_environment)
+            worker = self.window._scheme2_api_worker_class(self.window.base_url() + "/api/quotes/rematch-quick",
+                {"quote_line_id": line_id, "matched_sizes": self._sizes}, self)
+            self._start_worker(worker, self._succeeded)
+        except Exception as exc:
+            self._failed(str(exc))
+
     def _succeeded(self, result):
         if self._closed:
             return
         try:
             if self.item != self._request_state:
                 raise ValueError("取价期间订单已变化，原报价保留，请重新取价。")
-            _apply_manual_quick_match(self.window, self.item, result, self.source_line_id, self._sizes)
+            source_id = self._recovered["result"]["quote_line_id"] if self._recovered else self.source_line_id
+            _apply_manual_quick_match(self.window, self.item, result, source_id, self._sizes, self._recovered)
         except Exception as exc:
             self._failed(str(exc))
             return
@@ -7387,7 +7490,7 @@ QLabel#scheme2OptionGroupTitle, QLabel#scheme2SidebarTitle,
 QLabel#scheme2DialogTitle, QLabel#scheme2DimensionTitle,
 QLabel#scheme2ConfirmTitle, QLabel#scheme2AttachmentEditorTitle,
 QLabel#scheme2AttachmentTitle {{ font-size:{SECTION_TITLE_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
-QFrame#navPanel QPushButton {{ font-size:{BODY_PX}px; font-weight:{MEDIUM_WEIGHT}; }}
+QFrame#navPanel QPushButton {{ font-size:{PAGE_TITLE_PX}px; font-weight:{MEDIUM_WEIGHT}; }}
 QLabel#scheme2OptionLabel, QLabel#scheme2FieldLabel,
 QLabel#scheme2SidebarHint, QLabel#scheme2GangedLabel,
 QLabel#scheme2DetailMeta {{ font-size:{LABEL_PX}px; font-weight:{REGULAR_WEIGHT}; }}
@@ -7507,7 +7610,7 @@ QFrame#navPanel { background:#DCE8F7; border:1px solid #BBD0EA; border-top-left-
 QFrame#scheme2NavBrand { background:transparent; border:0; }
 QLabel#scheme2NavLogo { background:#2563EB; color:#FFFFFF; border-radius:6px; font-size:11px; font-weight:600; }
 QLabel#scheme2NavTitle { color:#1F3A6A; font-size:13px; font-weight:600; }
-QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; min-height:28px; max-height:28px; text-align:left; font-size:15px; font-weight:500; }
+QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; min-height:28px; max-height:28px; text-align:left; font-weight:500; }
 QFrame#navPanel QPushButton:checked { color:#FFFFFF; background:#2563EB; }
 QPushButton#scheme2CollapseButton { color:#5A7AAB; background:transparent; border:0; padding:0; text-align:center; font-size:13px; }
 QPushButton#scheme2CollapseButton:hover { background:#E6F1FB; }

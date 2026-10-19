@@ -34,7 +34,7 @@ def test_discount_coefficient_is_directly_editable_like_freight():
     assert item["quick_discount"] == 0.75
 
 
-def test_navigation_font_is_two_pixels_larger():
-    source = open(scheme2_ui.__file__, encoding="utf-8").read()
-    rule = source[source.index("QFrame#navPanel QPushButton {"):]
-    assert "font-size:15px" in rule.split("}", 1)[0]
+def test_navigation_font_matches_page_title():
+    style = scheme2_ui._typography_style_sheet()
+    rule = style[style.index("QFrame#navPanel QPushButton {"):]
+    assert f"font-size:{scheme2_ui.PAGE_TITLE_PX}px" in rule.split("}", 1)[0]

@@ -111,3 +111,15 @@ assert layout_refresh._ganged_error_text(
 ) == "当前材质价格必须由成本计算副导航栏提供有效正数"
 
 print("ganged fixed-base snapshot prices passed")
+
+# Even empty/custom-only quotations need a cabinet snapshot for manual size
+# matching and immutable confirmation/export. Custom prices stay local.
+for rows in ([], [custom_attachment]):
+    window.attachments = rows
+    payload = layout_refresh._build_ganged_attachment_payload(window, child_payloads)
+    assert payload is not None
+    assert payload['attachment_contract'] == 2
+    assert payload['attachments'] == []
+    assert len(payload['ganged_cabinets']) == 2
+    assert window._v2_custom_attachments == [row for row in rows if row.get('custom')]
+print('empty/custom-only ganged cabinet snapshot passed')

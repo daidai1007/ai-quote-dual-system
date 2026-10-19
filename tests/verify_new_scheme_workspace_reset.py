@@ -362,7 +362,8 @@ class NewSchemeReset(unittest.TestCase):
         def calculate():
             worker = base.ns['ApiWorker']('https://offline.invalid/api/quotes/calculate-dual',
                                          {'quote_id': 'fresh-after-new'}, self.w)
-            self.w.show_result(stamp_quote_response(worker, dict(base.response(), quote_id='fresh-after-new')))
+            self.w.show_result(stamp_quote_response(worker, dict(base.response(), quote_id='fresh-after-new',
+                attachment_contract=2, quote_line_id='11111111-1111-4111-8111-111111111111', attachments=[])))
         self.w.calculate = calculate
         with patch.object(centre, '_ensure_created'):
             ui._calculate_and_add(self.w)

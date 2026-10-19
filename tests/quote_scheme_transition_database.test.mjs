@@ -41,6 +41,59 @@ test('quote-scheme transitions execute real SQL and retain all protection rules'
       }
     };
 
+    await t.test('formal export acknowledges QUOTED and preserves the unique receipt for timeout recovery',async()=>{
+      const initial=await create();
+      const no=initial.scheme_no;
+      const receipt={...structuredClone(snapshot),document:{scheme_no:no,version_no:1,
+        quote_date:'2026-10-19',client_version:'offline-test',export_registration_id:'local-export-receipt-1'}};
+      const payload={kind:'XLSX',succeeded:true,expected_version:1,operator_name:'实际导出人员',snapshot:receipt};
+      await assert.rejects(()=>service.exportResult(owner,no,{...payload,operator_name:''}),e=>e.statusCode===400);
+      assert.equal(row(no).status,'DRAFT');
+      await service.exportResult(owner,no,{...payload,kind:'PREVIEW'});
+      assert.equal(row(no).status,'DRAFT');
+      const result=await service.exportResult(owner,no,payload);
+      assert.deepEqual(result,{recorded:true,status:'QUOTED',lock_version:2,formal_success:true});
+      const restored=await service.get(owner,no);
+      assert.equal(restored.status,'QUOTED');
+      assert.equal(restored.lock_version,2);
+      assert.deepEqual(restored.snapshot,receipt);
+      assert.equal(restored.last_editor_name,'实际导出人员');
+      assert.equal(lastAudit(no).action,'EXPORT_CONFIRMED');
+      assert.equal(Number(pg.query(`SELECT count(*) FROM calc.quote_scheme_version v JOIN calc.quote_scheme s USING(scheme_id) WHERE s.scheme_no=${literal(no)};`)),1);
+      // A lost response can be proven using GET; a blind stale POST must not
+      // replace the official version or add a duplicate export record.
+      const count=Number(pg.query(`SELECT count(*) FROM calc.quote_scheme_export e JOIN calc.quote_scheme s USING(scheme_id) WHERE s.scheme_no=${literal(no)};`));
+      await assert.rejects(()=>service.exportResult(owner,no,payload),e=>e.statusCode===409);
+      assert.equal(Number(pg.query(`SELECT count(*) FROM calc.quote_scheme_export e JOIN calc.quote_scheme s USING(scheme_id) WHERE s.scheme_no=${literal(no)};`)),count);
+      const repeated=await service.exportResult(owner,no,{...payload,expected_version:2,
+        snapshot:{...receipt,document:{...receipt.document,export_registration_id:'repeat-file'}}});
+      assert.deepEqual(repeated,{recorded:true,status:'QUOTED',lock_version:2,formal_success:true});
+      assert.deepEqual((await service.get(owner,no)).snapshot,receipt);
+    });
+
+    await t.test('failed export does not finalise; revision export registers V2 without losing V1',async()=>{
+      const draft=await create();
+      const failed=await service.exportResult(owner,draft.scheme_no,{kind:'XLSX',succeeded:false,
+        expected_version:1,operator_name:'当前人员'});
+      assert.equal(failed.formal_success,false);
+      assert.equal(row(draft.scheme_no).status,'DRAFT');
+      const initial=await create('REVISING');
+      const no=initial.scheme_no;
+      assert.equal(initial.version_no,2);
+      const receipt={...structuredClone(snapshot),draft_items:[{product_code:'JP',quantity:3}],
+        document:{scheme_no:no,version_no:2,export_registration_id:'local-revision-receipt'}};
+      const result=await service.exportResult(owner,no,{kind:'XLSX',succeeded:true,
+        expected_version:initial.lock_version,operator_name:'修订导出人员',snapshot:receipt});
+      assert.equal(result.status,'QUOTED');
+      assert.equal(result.lock_version,initial.lock_version+1);
+      const versions=JSON.parse(pg.query(`SELECT json_agg(v ORDER BY v.version_no) FROM calc.quote_scheme_version v JOIN calc.quote_scheme s USING(scheme_id) WHERE s.scheme_no=${literal(no)};`));
+      assert.equal(versions.length,2);
+      assert.equal(versions[0].version_no,1);
+      assert.deepEqual(versions[0].snapshot_payload.draft_items,snapshot.draft_items);
+      assert.equal(versions[1].version_no,2);
+      assert.deepEqual(versions[1].snapshot_payload,receipt);
+    });
+
     await t.test('archive, restore, void write status, timestamps and exactly one audit each',async()=>{
       const initial=await create('QUOTED');
       let before=initial;

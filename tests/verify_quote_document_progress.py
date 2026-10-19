@@ -15,7 +15,7 @@ sys.path.insert(0,str(ROOT/'desktop_client'))
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 import scheme2_ui as ui
 import attachment_v2_client as v2
 import v3_launcher
@@ -93,6 +93,7 @@ class DocumentProgress(unittest.TestCase):
             patch.object(ExportWorker,'start',export_start),
             patch.object(ExportWorker,'isRunning',lambda worker:bool(getattr(worker,'test_running',False))),
             patch.object(QFileDialog,'getSaveFileName',lambda *args:(str(Path(self.folder.name)/'result.xlsx'),'')),
+            patch.object(QInputDialog,'getText',lambda *args:('离线测试操作人',True)),
             patch.object(QMessageBox,'critical',lambda parent,title,text:self.messages.append(text)),
             patch.object(QMessageBox,'information',lambda *args:None),
             patch.object(ns['QDesktopServices'],'openUrl',lambda *args:False),

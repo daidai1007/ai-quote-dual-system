@@ -2862,8 +2862,6 @@ def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | Non
         if isinstance(item, dict) and not item.get("custom")
     ]
     v2_rows = [item for item in rows if item.get("catalog_version") or item.get("data_version")]
-    if not v2_rows:
-        return None
     if len(v2_rows) != len(rows):
         raise ValueError("并柜附件同时包含新旧目录数据，请重新打开附件选择")
     ganged_rows = _ganged_rows(window)
