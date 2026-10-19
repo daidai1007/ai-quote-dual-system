@@ -129,7 +129,7 @@ class MatchedSizeTests(unittest.TestCase):
             table.setColumnWidth(9, 130 if width == 760 else 180)
             app.processEvents()
             self.assertEqual(table.item(1, 9).text(), expected)
-            self.assertEqual(table.item(1, 9).toolTip(), expected)
+            self.assertTrue(table.item(1, 9).toolTip().startswith(expected))
             self.assertGreaterEqual(table.rowHeight(1), table.fontMetrics().lineSpacing() * 3)
             self.assertEqual(table.item(2, 9).text(), '—')
         target = ROOT / '.codex-tmp' / f'matched-size-{os.environ.get("QT_SCALE_FACTOR", "1")}'

@@ -97,6 +97,18 @@ from pypdf import PdfReader, PdfWriter
 
 from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, door_transformation_default_names, size_match_display_text
 from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
+from ui_typography import (
+    AUXILIARY_PX,
+    BODY_PX,
+    FONT_FAMILY_QSS,
+    LABEL_PX,
+    MEDIUM_WEIGHT,
+    PAGE_TITLE_PX,
+    REGULAR_WEIGHT,
+    SECTION_TITLE_PX,
+    SEMIBOLD_WEIGHT,
+    TABLE_PX,
+)
 try:
     from cost_adjustments import rescale_material_weight
 except ModuleNotFoundError:  # Package import used by focused tests.
@@ -158,7 +170,6 @@ EDITABLE_COLUMNS = frozenset((1, 4, 9, 19))
 MATERIAL_DIFFERENCE_COLUMN = 8
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
-_FONT_SIZE_RULE = re.compile(r"font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
 _STYLE_LENGTH_RULE = re.compile(r"(?<![\w.-])(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNORECASE)
 GALVANIZED_MATERIAL_CODES = frozenset(("SGCC", "DX51D", "GI"))
 THREE_ROW_BEAM_MODELS = ("JP760240", "JP760250", "JP760260", "JP760280", "JP760210")
@@ -1764,12 +1775,215 @@ def _attachment_summary_product_values(item, sequence, columns=None):
             cabinet, *attachments, *extra, freight, discount)
 
 
+def _manual_matched_size_rows(item):
+    matched = _quick(item).get("matched_experience")
+    matched = matched if isinstance(matched, dict) else {}
+    count = max(1, int(_number(item.get("ganged_cabinet_count"), 1)))
+    children = matched.get("items") if count > 1 else [matched]
+    if not isinstance(children, list) or len(children) != count:
+        children = [{} for _ in range(count)]
+    rows = []
+    for child in children:
+        child = child if isinstance(child, dict) else {}
+        parts = [child.get(key) for key in ("reference_width_mm", "reference_depth_mm", "reference_height_mm")]
+        rows.append("*".join(str(part) for part in parts) if all(part is not None for part in parts) else "")
+    return rows
+
+
+def _parse_manual_matched_size(text):
+    parts = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)\s*", text)
+    if not parts:
+        raise ValueError("请按宽*深*高填写尺寸，例如 800*600*2000（mm）。")
+    values = [float(value) for value in parts.groups()]
+    if any(not math.isfinite(value) or value <= 0 or value > 1e6 for value in values):
+        raise ValueError("匹配尺寸必须为有效正数。")
+    return dict(zip(("width_mm", "depth_mm", "height_mm"), values))
+
+
+def _apply_manual_quick_match(window, item, result, source_line_id, sizes):
+    if getattr(window, "_quote_scheme_read_only", False):
+        raise ValueError("当前方案只读，请先建立修订方案后再修改匹配尺寸。")
+    if getattr(window, "_scheme2_document_busy", False):
+        raise ValueError("报价单任务正在进行，本次取价结果未应用，请完成后重试。")
+    if not any(current is item for current in window.draft_items) or item.get("quote_line_id") != source_line_id:
+        raise ValueError("原订单已变化，本次取价结果未应用，请重新打开附件汇总。")
+    if not isinstance(result, dict) or result.get("attachment_contract") != 2 or result.get("source_quote_line_id", "").lower() != source_line_id.lower():
+        raise ValueError("取价响应与当前订单不一致，原报价未修改。")
+    line_id = result.get("quote_line_id")
+    if not isinstance(line_id, str) or not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", line_id) or line_id.lower() == source_line_id.lower():
+        raise ValueError("新的柜体取价快照未保存，原报价未修改。")
+    quick = result.get("quick_quote")
+    if not isinstance(quick, dict):
+        raise ValueError("柜体取价结果不完整。")
+    price = _number(quick.get("base_price"), float("nan"))
+    if not math.isfinite(price) or price < 0:
+        raise ValueError("数据库未返回有效柜体价格，原报价未修改。")
+    matched = quick.get("matched_experience")
+    matches = matched.get("items") if isinstance(matched, dict) and len(sizes) > 1 else [matched]
+    if not isinstance(matches, list) or len(matches) != len(sizes) or any(
+        not isinstance(match, dict) or any(_number(match.get("reference_" + key), -1) != size[key]
+                                         for key in ("width_mm", "depth_mm", "height_mm"))
+        for match, size in zip(matches, sizes)
+    ):
+        raise ValueError("数据库返回的匹配尺寸与人工指定尺寸不一致，原报价未修改。")
+    fee = money_sum(_attachment_summary_named_amounts(item).values())
+    updated = {**_quick(item), **deepcopy(quick), "attachment_fee": fee,
+               "total_cost": money_sum((price, fee))}
+    previous = dict(item)
+    try:
+        item.update(quick=updated, quote_line_id=line_id, attachment_contract=2, pricing_basis=PRICING_BASIS)
+        item.pop("quote_display", None)  # Regenerated at the next document action.
+        window.refresh_summary()
+    except Exception:
+        item.clear()
+        item.update(previous)
+        try:
+            window.refresh_summary()
+        except Exception:
+            LOGGER.exception("Could not redraw the original quote after a manual-match display failure")
+        raise
+    _set_dirty(window, True)
+
+
+class MatchedSizeEditor(QDialog):
+    """Select a database size without changing the cabinet's actual dimensions."""
+    def __init__(self, summary, item):
+        super().__init__(summary)
+        from dialog_style import DIALOG_COLORS, DIALOG_METRICS, style_dialog
+        self.summary, self.window, self.item = summary, summary.window, item
+        self.source_line_id = item.get("quote_line_id")
+        self._closed = self._busy = False
+        self.setWindowTitle("修改柜体匹配尺寸")
+        self.setObjectName("scheme2MatchedSizeDialog")
+        rows = _manual_matched_size_rows(item)
+        self.resize(580, min(640, 180 + len(rows) * 44))
+        layout = QVBoxLayout(self)
+        inset = DIALOG_METRICS["content_inset"]
+        layout.setContentsMargins(inset, 0, inset, inset)
+        layout.setSpacing(DIALOG_METRICS["spacing"])
+        hint = QLabel("输入数据库中的尺寸（宽*深*高，mm）。实际产品规格、附件人工修改、折扣及运费保持不变。")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        scroll = QScrollArea()
+        scroll.setObjectName("scheme2MatchedSizeScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        content.setObjectName("scheme2MatchedSizeFields")
+        scroll.setStyleSheet(
+            f"QScrollArea#scheme2MatchedSizeScroll, QWidget#scheme2MatchedSizeFields "
+            f"{{ background:{DIALOG_COLORS['background']}; border:0; }}")
+        form = QFormLayout(content)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(DIALOG_METRICS["spacing"])
+        self.inputs = []
+        for index, text in enumerate(rows, 1):
+            field = QLineEdit(text)
+            field.setPlaceholderText("例如 800*600*2000")
+            field.setAccessibleName(f"柜体{index}匹配尺寸（宽深高）")
+            form.addRow(f"柜体{index}", field)
+            self.inputs.append(field)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        buttons = QDialogButtonBox()
+        self.confirm = buttons.addButton("重新取价", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.confirm.setObjectName("scheme2PrimaryAction")
+        self.confirm.setAutoDefault(False)
+        cancel = buttons.addButton("取消", QDialogButtonBox.ButtonRole.RejectRole)
+        cancel.setObjectName("scheme2PrimaryGhost")
+        buttons.accepted.connect(self.start_reprice)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        style_dialog(self)
+
+    def start_reprice(self):
+        if self._busy:
+            return
+        try:
+            if getattr(self.window, "_quote_scheme_read_only", False):
+                raise ValueError("当前方案只读，请先建立修订方案后再修改匹配尺寸。")
+            if getattr(self.window, "_scheme2_document_busy", False):
+                raise ValueError("请等待当前报价单任务结束后再修改。")
+            if not self.source_line_id or self.item.get("attachment_contract") != 2:
+                raise ValueError("旧订单缺少服务端报价行，请先编辑并重新计算整柜，再修改匹配尺寸。")
+            sizes = [_parse_manual_matched_size(field.text()) for field in self.inputs]
+            worker_type = self.window._scheme2_api_worker_class
+            if worker_type is None:
+                raise ValueError("取价服务不可用，请重新打开客户端。")
+            self._request_state = deepcopy(self.item)
+            self._sizes = sizes
+            worker = worker_type(self.window.base_url() + "/api/quotes/rematch-quick",
+                                 {"quote_line_id": self.source_line_id, "matched_sizes": sizes}, self.window)
+        except Exception as exc:
+            self.status.setText(str(exc))
+            return
+        self._busy = True
+        self.confirm.setEnabled(False)
+        for field in self.inputs:
+            field.setEnabled(False)
+        self.status.setText("正在读取数据库价格并保存报价快照…")
+        retained = getattr(self.window, "_scheme2_match_workers", None)
+        if retained is None:
+            retained = self.window._scheme2_match_workers = []
+        retained.append(worker)
+        worker.succeeded.connect(self._succeeded)
+        worker.failed.connect(self._failed)
+
+        def finished():
+            if worker in retained:
+                retained.remove(worker)
+            worker.deleteLater()
+            if getattr(self.window, "_scheme2_match_close_requested", False) and not retained:
+                self.window._scheme2_match_close_requested = False
+                self.window.close()
+
+        worker.finished.connect(finished)
+        worker.start()
+
+    def _succeeded(self, result):
+        if self._closed:
+            return
+        try:
+            if self.item != self._request_state:
+                raise ValueError("取价期间订单已变化，原报价保留，请重新取价。")
+            _apply_manual_quick_match(self.window, self.item, result, self.source_line_id, self._sizes)
+        except Exception as exc:
+            self._failed(str(exc))
+            return
+        self.summary._refresh_product_table()
+        self._closed = True
+        self.accept()
+
+    def _failed(self, message):
+        if self._closed:
+            return
+        try:
+            message = json.loads(message).get("message", message)
+        except (ValueError, TypeError, AttributeError):
+            pass
+        if "not_found" in str(message):
+            message = "取价接口尚未部署，请先更新 API 后重试。"
+        self.status.setText(f"取价失败，原报价未修改：{message}")
+        self._busy = False
+        self.confirm.setEnabled(True)
+        for field in self.inputs:
+            field.setEnabled(True)
+
+    def reject(self):
+        self._closed = True  # A cancelled request may finish, but must never change the order.
+        super().reject()
+
+
 class AttachmentSummaryDialog(AttachmentEditor):
     DEFAULT_SIZE = QSize(1560, 720)
     MINIMUM_SIZE = QSize(760, 460)
     PRODUCT_BASE_HEADERS = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价",
                            "原价单价", "原价总价", "匹配尺寸", "柜体")
     MATCHED_SIZE_COLUMN = 9
+    MATCHED_SIZE_LINK_COLOR = "#2563EB"
     PRODUCT_BASE_COLUMN_WIDTHS = (50, 100, 170, 60, 50, 95, 95, 95, 95, 180, 100)
     PRODUCT_TAIL_HEADERS = ("运费", "折扣")
     PRODUCT_TAIL_COLUMN_WIDTHS = (80, 60)
@@ -1837,7 +2051,8 @@ class AttachmentSummaryDialog(AttachmentEditor):
         self.product_table.setObjectName("scheme2AttachmentSummaryProducts")
         self.product_table.setHorizontalHeaderLabels(self.product_headers)
         self.product_table.horizontalHeaderItem(self.MATCHED_SIZE_COLUMN).setToolTip(
-            "本次柜体面价实际采用的数据库尺寸（宽*深*高，mm）；并柜按子柜分别列出；未保存匹配记录时显示—。")
+            "左键点击修改数据库匹配尺寸（宽*深*高，mm）并重新取价；不改变实际规格及附件；并柜逐柜填写。")
+        self.product_table.cellClicked.connect(self._edit_matched_size)
         self.product_table.verticalHeader().hide()
         self.product_table.setShowGrid(True)
         self.product_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1944,6 +2159,12 @@ class AttachmentSummaryDialog(AttachmentEditor):
                     cell = QTableWidgetItem(text)
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     cell.setToolTip(tooltip)
+                    if column == self.MATCHED_SIZE_COLUMN and not getattr(self.window, "_quote_scheme_read_only", False):
+                        cell.setForeground(QColor(self.MATCHED_SIZE_LINK_COLOR))
+                        font = cell.font()
+                        font.setUnderline(True)
+                        cell.setFont(font)
+                        cell.setToolTip(text + "\n左键点击修改匹配尺寸并重新取价")
                     cell.setTextAlignment((Qt.AlignmentFlag.AlignLeft if column in (1, 2, self.MATCHED_SIZE_COLUMN)
                                            else Qt.AlignmentFlag.AlignRight if column >= 5
                                            else Qt.AlignmentFlag.AlignCenter) | Qt.AlignmentFlag.AlignVCenter)
@@ -1962,6 +2183,19 @@ class AttachmentSummaryDialog(AttachmentEditor):
                 font.setBold(True)
                 cell.setFont(font)
                 self.product_table.setItem(footer, column, cell)
+
+    def _edit_matched_size(self, row, column):
+        if column != self.MATCHED_SIZE_COLUMN or not 0 <= row < len(self.window.draft_items):
+            return
+        if getattr(self.window, "_quote_scheme_read_only", False):
+            QMessageBox.warning(self, "修改匹配尺寸", "当前方案只读，请先建立修订方案后再修改。")
+            return
+        if getattr(self.window, "_scheme2_document_busy", False):
+            QMessageBox.warning(self, "修改匹配尺寸", "请等待当前报价单任务结束后再修改。")
+            return
+        editor = MatchedSizeEditor(self, self.window.draft_items[row])
+        self._manual_match_dialog = editor
+        editor.exec()
 
     def _unit_price_changed(self, index, value):
         changed = self._summary_rows[index]
@@ -7142,33 +7376,38 @@ def _apply_responsive(window):
     _position_scheme2_action_dock(window)
 
 
-def _increase_font_sizes(style_sheet, step=1.0):
-    """Raise every existing explicit UI font by one shared type-scale step."""
+def _typography_style_sheet():
+    """Return the single semantic type scale used by all workbench routes."""
 
-    def replace(match):
-        size = float(match.group(1)) + step
-        formatted = str(int(size)) if size.is_integer() else str(size).rstrip("0").rstrip(".")
-        return f"font-size:{formatted}{match.group(2)}"
-
-    return _FONT_SIZE_RULE.sub(replace, style_sheet)
-
-
-def _increase_region_font_sizes(root, step=2):
-    """Apply a one-time pixel-size increase to one complete UI region."""
-
-    if root is None or root.property("scheme2FontIncrease"):
-        return
-    widgets = [root, *root.findChildren(QWidget)]
-    sizes = []
-    for widget in widgets:
-        widget.ensurePolished()
-        size = widget.font().pixelSize()
-        if size > 0:
-            sizes.append((widget, size + step))
-    for widget, size in sizes:
-        existing = widget.styleSheet().rstrip().rstrip(";")
-        widget.setStyleSheet(f"{existing};font-size:{size}px;" if existing else f"font-size:{size}px;")
-    root.setProperty("scheme2FontIncrease", True)
+    return f"""
+QMainWindow QWidget {{ font-family:{FONT_FAMILY_QSS}; font-size:{BODY_PX}px; font-weight:{REGULAR_WEIGHT}; }}
+QMainWindow QPushButton, QMainWindow QToolButton {{ font-size:{BODY_PX}px; font-weight:{MEDIUM_WEIGHT}; }}
+QLabel#scheme2SectionTitle, QLabel#scheme2PageTitle {{ font-size:{PAGE_TITLE_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
+QLabel#scheme2OptionGroupTitle, QLabel#scheme2SidebarTitle,
+QLabel#scheme2DialogTitle, QLabel#scheme2DimensionTitle,
+QLabel#scheme2ConfirmTitle, QLabel#scheme2AttachmentEditorTitle,
+QLabel#scheme2AttachmentTitle {{ font-size:{SECTION_TITLE_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
+QFrame#navPanel QPushButton {{ font-size:{BODY_PX}px; font-weight:{MEDIUM_WEIGHT}; }}
+QLabel#scheme2OptionLabel, QLabel#scheme2FieldLabel,
+QLabel#scheme2SidebarHint, QLabel#scheme2GangedLabel,
+QLabel#scheme2DetailMeta {{ font-size:{LABEL_PX}px; font-weight:{REGULAR_WEIGHT}; }}
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
+QFrame#scheme2OptionControlShell QLineEdit,
+QFrame#scheme2OptionControlShell QComboBox,
+QFrame#scheme2OptionControlShell QSpinBox,
+QFrame#scheme2OptionControlShell QDoubleSpinBox,
+QFrame#scheme2CostSidebar QDoubleSpinBox {{ font-size:{BODY_PX}px; font-weight:{REGULAR_WEIGHT}; }}
+QTableWidget#summaryTable, QTableWidget#scheme2DetailTable,
+QTableWidget#scheme2AttachmentEditorTable {{ font-size:{TABLE_PX}px; font-weight:{REGULAR_WEIGHT}; }}
+QHeaderView::section,
+QTableWidget#scheme2AttachmentEditorTable QHeaderView::section {{ font-size:{TABLE_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
+QLabel#scheme2ServiceStatus, QLabel#scheme2ProvenancePending,
+QLabel#scheme2ProvenanceAi, QLabel#scheme2ProvenanceManual,
+QLabel#scheme2GangedAi, QLabel#scheme2AttachmentStatus,
+QLabel#scheme2CompletionPill, QLabel#scheme2RecognitionStatus,
+QLabel#scheme2QuotedBadge {{ font-size:{AUXILIARY_PX}px; }}
+QLabel#scheme2ActionDockLabel {{ font-size:{LABEL_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
+"""
 
 
 def _apply_palette(window):
@@ -7346,7 +7585,7 @@ QProgressBar#scheme2AddProgress { border:0; border-radius:5px; text-align:center
 QProgressBar#scheme2AddProgress::chunk { border-radius:5px; }
 """
     scheme_style += progress_color_style('QProgressBar#scheme2AddProgress')
-    window.setStyleSheet(_increase_font_sizes(window.styleSheet() + scheme_style))
+    window.setStyleSheet(window.styleSheet() + scheme_style + _typography_style_sheet())
     tabular_tag = QFont.Tag.fromString("tnum")
     for control_type in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTableWidget):
         for control in window.findChildren(control_type):
@@ -7535,12 +7774,6 @@ def install_scheme2_ui(namespace):
             preview.return_to_recognition.connect(lambda: window.show_section(OPTION_ROUTE))
         _install_shortcuts(window)
         _apply_palette(window)
-        for region in (
-            getattr(window, "scheme2_drawing_widget", None),
-            getattr(window, "scheme2_cost_page", None),
-            getattr(window, "scheme2_quote_page", None),
-        ):
-            _increase_region_font_sizes(region, 2)
         window.scheme2_company.setFixedHeight(COMPANY_COMBO_HEIGHT)
         window._scheme2_scale_reference = QSize(window.width(), window.height())
         window._scheme2_scale_styles = [
@@ -7588,6 +7821,10 @@ def install_scheme2_ui(namespace):
                 del window.validate_export_environment
 
     def close(window, event):
+        if getattr(window, "_scheme2_match_workers", []):
+            window._scheme2_match_close_requested = True
+            event.ignore()
+            return
         if getattr(window, "_scheme2_paused_quote_workers", set()):
             window._scheme2_close_after_quote_pause = True
             window.risk_label.setText("正在等待已暂停的网络请求结束后安全关闭客户端…")

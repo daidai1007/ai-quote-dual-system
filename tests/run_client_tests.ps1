@@ -47,6 +47,7 @@ $testFiles = @(
     "tests/verify_progress_style.py",
     "tests/verify_attachment_export_snapshot.py",
     "tests/verify_attachment_summary_matched_size.py",
+    "tests/verify_manual_matched_size.py",
     "tests/verify_attachment_summary_reference_layout.py",
     "tests/verify_attachment_summary_unit_price.py",
     "tests/verify_attachment_summary_print.py",

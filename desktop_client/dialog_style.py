@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QStyle, QToolButton,
 )
 from dropdown_style import POPUP_COLORS
+from ui_typography import BODY_PX, FONT_FAMILY_QSS, SECTION_TITLE_PX
 
 
 DIALOG_COLORS = {
@@ -18,7 +19,7 @@ DIALOG_COLORS = {
     "focus": "#7DB6FF",
 }
 DIALOG_METRICS = {
-    "font_px": 12, "title_px": 13, "radius": 14, "button_radius": 6, "button_height": 28,
+    "font_px": BODY_PX, "title_px": SECTION_TITLE_PX, "radius": 14, "button_radius": 6, "button_height": 28,
     "button_width": 60, "button_inset": 10, "spacing": 8,
     "content_inset": 18, "header_height": 40, "close_size": 28,
 }
@@ -46,7 +47,7 @@ def button_style(role):
     color, hover = c["primary"], c["hover_primary"]
     filled = role in ("primary", "danger")
     return f"""
-QPushButton {{ font-family:"Microsoft YaHei UI","Microsoft YaHei";
+QPushButton {{ font-family:{FONT_FAMILY_QSS};
     font-size:{m['font_px']}px; font-weight:500;
     min-height:{m['button_height']-2}px; max-height:{m['button_height']-2}px;
     min-width:{m['button_width']-2*m['button_inset']-2}px; padding:0 {m['button_inset']}px;
@@ -65,7 +66,7 @@ def dialog_style_sheet():
     c, m = DIALOG_COLORS, DIALOG_METRICS
     return f"""
 QDialog[unifiedDialog="true"] {{ background:{c['background']}; color:{c['text']};
-    font-family:"Microsoft YaHei UI","Microsoft YaHei"; font-size:{m['font_px']}px; }}
+    font-family:{FONT_FAMILY_QSS}; font-size:{m['font_px']}px; }}
 QDialog[unifiedDialog="true"][dialogOverlay="true"] {{ background:transparent; }}
 QDialog[unifiedDialog="true"][dialogOverlay="false"] {{ border:1px solid {c['border']}; border-radius:{m['radius']}px; }}
 QDialog[unifiedDialog="true"] QLabel {{ font-size:{m['font_px']}px; }}

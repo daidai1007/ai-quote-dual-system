@@ -11,6 +11,7 @@ import { historyPriceMatchSql } from './history_price_query.mjs';
 import { resolveRuntimeConfig } from './runtime_config.mjs';
 import { runPsqlCommand } from './psql_runner.mjs';
 import { createAttachmentService } from './attachment_service.mjs';
+import { createQuickMatchOverrideService } from './quick_match_override.mjs';
 import { applyCabinetMaterial, createCabinetMaterialService } from './cabinet_material_service.mjs';
 import { applyCabinetSpray, createCabinetSprayService } from './cabinet_spray_service.mjs';
 import { applyCabinetLabor, createCabinetLaborService } from './cabinet_labor_service.mjs';
@@ -1187,6 +1188,11 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
       input.quote_date=dateValue(input.quote_date);input.coating_type ||= DEFAULT_COATING_TYPE;
       return json(res,200,await attachmentService.preview(input));
     } catch(error) { return json(res,400,{error:'attachment_preview_failed',message:error.message}); }
+  }
+  if (req.method === 'POST' && req.url === '/api/quotes/rematch-quick') {
+    try { return json(res,200,await createQuickMatchOverrideService({runPsql})(await readBody(req))); }
+    catch(error) { return json(res,error.statusCode || clientErrorStatus(error),{
+      error:'quick_match_override_failed',message:error.message}); }
   }
   if (req.method === 'POST' && req.url === '/api/attachments/recalculate-line') {
     try { return json(res,200,await attachmentService.recalculateLine(await readBody(req))); }

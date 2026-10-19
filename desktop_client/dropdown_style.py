@@ -8,11 +8,12 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPen
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QCompleter, QLineEdit, QStyle, QStyledItemDelegate
 from shiboken6 import isValid
+from ui_typography import BODY_PX, FONT_FAMILY_QSS
 
 
 POPUP_METRICS = {
     "row_height": 40, "text_inset": 14, "vertical_inset": 8,
-    "font_px": 13, "radius": 6, "visible_rows": 8,
+    "font_px": BODY_PX, "radius": 6, "visible_rows": 8,
     "checkbox_size": 15, "checkbox_text_inset": 40, "icon_size": 16,
     "scrollbar_extent": 20, "scrollbar_handle": 40,
 }
@@ -30,7 +31,7 @@ def popup_style_sheet():
     return f"""
 QAbstractItemView {{ background:{c['background']}; color:{c['text']};
     border:1px solid {c['border']}; border-radius:{m['radius']}px;
-    outline:0; padding:0; font-size:{m['font_px']}px;
+    outline:0; padding:0; font-family:{FONT_FAMILY_QSS}; font-size:{m['font_px']}px;
     selection-background-color:{c['selected']}; selection-color:{c['selected_text']}; }}
 QAbstractItemView::item {{ min-height:{m['row_height']}px; padding:0; border:0; }}
 QScrollBar:vertical {{ background:{c['scroll_track']}; width:{m['scrollbar_extent']}px; margin:0; border:0; }}

@@ -35,23 +35,27 @@ def pixel_size(widget, expected):
 
 
 option_page = window.stack.widget(1)
-pixel_size(option_page.findChild(QLabel, "scheme2SectionTitle"), 17)
-pixel_size(option_page.findChild(QLabel, "scheme2OptionGroupTitle"), 14)
+pixel_size(option_page.findChild(QLabel, "scheme2SectionTitle"), 18)
+pixel_size(option_page.findChild(QLabel, "scheme2OptionGroupTitle"), 15)
 pixel_size(option_page.findChild(QLabel, "scheme2OptionLabel"), 13)
 pixel_size(window.product_combo, 14)
 
 cost_page = window.stack.widget(3)
-pixel_size(cost_page.findChild(QLabel, "scheme2PageTitle"), 19)
-pixel_size(cost_page.findChild(QLabel, "scheme2SidebarTitle"), 16)
-pixel_size(cost_page.findChild(QLabel, "scheme2FieldLabel"), 15)
-pixel_size(window.scheme2_cost_controls["carbon_price"], 16)
-pixel_size(window.summary_table, 15)
-pixel_size(window._scheme2_import_button, 15)
+pixel_size(cost_page.findChild(QLabel, "scheme2PageTitle"), 18)
+pixel_size(cost_page.findChild(QLabel, "scheme2SidebarTitle"), 15)
+pixel_size(cost_page.findChild(QLabel, "scheme2FieldLabel"), 13)
+pixel_size(window.scheme2_cost_controls["carbon_price"], 14)
+pixel_size(window.summary_table, 13)
+pixel_size(window._scheme2_import_button, 14)
 quote_page = window.stack.widget(2)
-pixel_size(quote_page.findChild(QLabel, "scheme2PageTitle"), 19)
-pixel_size(window.scheme2_company, 16)
-pixel_size(window.scheme2_quote_print, 15)
-pixel_size(window.scheme2_quote_preview, 16)
+pixel_size(quote_page.findChild(QLabel, "scheme2PageTitle"), 18)
+pixel_size(window.scheme2_company, 14)
+pixel_size(window.scheme2_quote_print, 14)
+pixel_size(window.scheme2_quote_preview, 14)
+pixel_size(window.quote_scheme_page.findChild(QLabel, "quoteSchemeTitle"), 18)
+pixel_size(window.quote_scheme_page.findChild(QLabel, "quoteSchemeFieldLabel"), 13)
+pixel_size(window.quote_scheme_filters["scheme_no"], 14)
+pixel_size(window.quote_scheme_table, 13)
 tabular_tag = QFont.Tag.fromString("tnum")
 assert window.quote_spec_edit.font().featureValue(tabular_tag) == 1
 assert window.scheme2_cost_controls["carbon_price"].font().featureValue(tabular_tag) == 1
@@ -59,11 +63,13 @@ assert window.summary_table.font().featureValue(tabular_tag) == 1
 
 buttons = [window._scheme2_import_button, *window.scheme2_cost_action_buttons]
 for button in buttons:
-    pixel_size(button, 15)
+    pixel_size(button, 14)
     assert button.height() == 28, (button.text(), button.size())
 assert all(button.height() == 28 for button in window.nav_buttons)
+for button in window.nav_buttons:
+    pixel_size(button, 14)
 
-assert 'font-family:"Microsoft YaHei UI","Segoe UI"' in window.styleSheet()
+assert 'font-family:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI"' in window.styleSheet()
 assert "QHeaderView::section { background:#2563EB; color:#FFFFFF;" in window.styleSheet()
-assert "padding:7px 8px; font-size:13px; font-weight:600;" in window.styleSheet()
+assert "QHeaderView::section,\nQTableWidget#scheme2AttachmentEditorTable QHeaderView::section { font-size:13px; font-weight:600; }" in window.styleSheet()
 print("scheme2 typography contract passed")

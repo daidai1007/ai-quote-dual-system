@@ -29,7 +29,7 @@ from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (QApplication, QComboBox, QCompleter, QStyle,
                                QLineEdit, QStyleOptionViewItem, QVBoxLayout, QWidget)
-from dropdown_style import ComboPopupDelegate, POPUP_COLORS, install_combo_popup_style
+from dropdown_style import ComboPopupDelegate, POPUP_COLORS, POPUP_METRICS, install_combo_popup_style
 import quote_scheme_center as centre
 from quote_scheme_widgets import SchemeComboBox
 import scheme2_ui as ui
@@ -79,7 +79,7 @@ class DropdownStyleTests(unittest.TestCase):
         self.assertTrue(view.property('unifiedComboPopup'))
         self.assertIsInstance(view.itemDelegate(), ComboPopupDelegate)
         self.assertIn(POPUP_COLORS['selected'], view.styleSheet())
-        self.assertIn('font-size:13px', view.styleSheet())
+        self.assertIn(f"font-size:{POPUP_METRICS['font_px']}px", view.styleSheet())
         if view.model().rowCount():
             self.assertEqual(view.sizeHintForRow(0), 40)
 

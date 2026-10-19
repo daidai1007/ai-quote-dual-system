@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QSizePolicy, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
     QSpinBox, QTableWidget, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
+from ui_typography import AUXILIARY_PX, BODY_PX, LABEL_PX, TABLE_PX
 
 
 PAGE_SIZES = (10, 20, 50, 100)
@@ -33,14 +34,14 @@ COMPACT_COLUMN_WIDTHS = (164, 124, 168, 74, 108, 76, 92, 150, 116)
 def page_style_sheet():
     c, m = COLORS, METRICS
     return f"""
-QWidget#quoteSchemeCenterPage {{ background:{c['background']}; color:{c['text']}; font-size:14px; }}
-QWidget#quoteSchemeCenterPage QLabel {{ color:{c['text']}; font-size:14px; background:transparent; border:0; padding:0; }}
-QWidget#quoteSchemeCenterPage QLabel#quoteSchemeServerNotice {{ color:{c['muted']}; font-size:13px; }}
+QWidget#quoteSchemeCenterPage {{ background:{c['background']}; color:{c['text']}; font-size:{BODY_PX}px; }}
+QWidget#quoteSchemeCenterPage QLabel {{ color:{c['text']}; font-size:{BODY_PX}px; background:transparent; border:0; padding:0; }}
+QWidget#quoteSchemeCenterPage QLabel#quoteSchemeServerNotice {{ color:{c['muted']}; font-size:{AUXILIARY_PX}px; }}
 QWidget#quoteSchemeCenterPage QFrame#quoteSchemeFilters {{ background:#FFFFFF; border:1px solid {c['border']}; border-radius:4px; }}
-QWidget#quoteSchemeCenterPage QLabel#quoteSchemeFieldLabel {{ font-size:14px; font-weight:500; }}
+QWidget#quoteSchemeCenterPage QLabel#quoteSchemeFieldLabel {{ font-size:{LABEL_PX}px; font-weight:500; }}
 QWidget#quoteSchemeCenterPage QLineEdit,
 QWidget#quoteSchemeCenterPage QComboBox,
-QWidget#quoteSchemeCenterPage QSpinBox {{ color:{c['text']}; background:#FFFFFF; border:1px solid {c['border']}; border-radius:4px; padding:0 10px; min-height:38px; max-height:38px; font-size:14px; selection-background-color:{c['selection']}; selection-color:{c['text']}; }}
+QWidget#quoteSchemeCenterPage QSpinBox {{ color:{c['text']}; background:#FFFFFF; border:1px solid {c['border']}; border-radius:4px; padding:0 10px; min-height:38px; max-height:38px; font-size:{BODY_PX}px; selection-background-color:{c['selection']}; selection-color:{c['text']}; }}
 QWidget#quoteSchemeCenterPage QLineEdit:focus,
 QWidget#quoteSchemeCenterPage QComboBox:focus,
 QWidget#quoteSchemeCenterPage QSpinBox:focus {{ border-color:{c['primary']}; }}
@@ -49,34 +50,34 @@ QWidget#quoteSchemeCenterPage QComboBox::drop-down {{ border:0; width:22px; }}
 QWidget#quoteSchemeCenterPage QComboBox::down-arrow {{ image:none; width:0; height:0; }}
 QWidget#quoteSchemeCenterPage QSpinBox::up-button,
 QWidget#quoteSchemeCenterPage QSpinBox::down-button {{ width:0; border:0; }}
-QWidget#quoteSchemeCenterPage QPushButton#scheme2PrimaryAction {{ color:#FFFFFF; background:{c['primary']}; border:1px solid {c['primary']}; border-radius:5px; padding:0 14px; min-height:38px; max-height:38px; font-size:14px; font-weight:500; }}
+QWidget#quoteSchemeCenterPage QPushButton#scheme2PrimaryAction {{ color:#FFFFFF; background:{c['primary']}; border:1px solid {c['primary']}; border-radius:5px; padding:0 14px; min-height:38px; max-height:38px; font-size:{BODY_PX}px; font-weight:500; }}
 QWidget#quoteSchemeCenterPage QPushButton#scheme2PrimaryAction:hover {{ background:{c['hover']}; border-color:{c['hover']}; }}
 QWidget#quoteSchemeCenterPage QPushButton#scheme2PrimaryAction:disabled {{ color:#FFFFFF; background:#AEC5EC; border-color:#AEC5EC; }}
 QWidget#quoteSchemeCenterPage QPushButton#scheme2PrimaryAction:focus {{ border:2px solid #123A9B; }}
-QWidget#quoteSchemeCenterPage QTableWidget#quoteSchemeTable {{ color:{c['text']}; background:#FFFFFF; alternate-background-color:#FFFFFF; border:1px solid {c['border']}; border-radius:3px; gridline-color:{c['grid']}; font-size:14px; selection-background-color:{c['selection']}; selection-color:{c['text']}; }}
+QWidget#quoteSchemeCenterPage QTableWidget#quoteSchemeTable {{ color:{c['text']}; background:#FFFFFF; alternate-background-color:#FFFFFF; border:1px solid {c['border']}; border-radius:3px; gridline-color:{c['grid']}; font-size:{TABLE_PX}px; selection-background-color:{c['selection']}; selection-color:{c['text']}; }}
 QWidget#quoteSchemeCenterPage QTableWidget#quoteSchemeTable::item {{ padding:0 12px; border:0; }}
 QWidget#quoteSchemeCenterPage QTableWidget#quoteSchemeTable::item:selected {{ background:{c['selection']}; color:{c['text']}; }}
-QWidget#quoteSchemeCenterPage QTableWidget#quoteSchemeTable QHeaderView::section {{ color:{c['text']}; background:{c['header']}; border:0; border-right:1px solid {c['border']}; border-bottom:1px solid {c['border']}; padding:0 12px; min-height:{m['header_height']}px; font-size:14px; font-weight:600; }}
+QWidget#quoteSchemeCenterPage QTableWidget#quoteSchemeTable QHeaderView::section {{ color:{c['text']}; background:{c['header']}; border:0; border-right:1px solid {c['border']}; border-bottom:1px solid {c['border']}; padding:0 12px; min-height:{m['header_height']}px; font-size:{TABLE_PX}px; font-weight:600; }}
 QWidget#quoteSchemeCenterPage QWidget#quoteSchemeRowActions {{ background:transparent; border:0; }}
 QWidget#quoteSchemeCenterPage QPushButton#quoteSchemeRowLink,
-QWidget#quoteSchemeCenterPage QToolButton#quoteSchemeMore {{ color:{c['primary']}; background:transparent; border:0; border-radius:3px; padding:0 2px; min-height:30px; max-height:30px; font-size:14px; font-weight:400; }}
+QWidget#quoteSchemeCenterPage QToolButton#quoteSchemeMore {{ color:{c['primary']}; background:transparent; border:0; border-radius:3px; padding:0 2px; min-height:30px; max-height:30px; font-size:{TABLE_PX}px; font-weight:400; }}
 QWidget#quoteSchemeCenterPage QPushButton#quoteSchemeRowLink:hover,
 QWidget#quoteSchemeCenterPage QToolButton#quoteSchemeMore:hover {{ background:#D8E9FF; }}
 QWidget#quoteSchemeCenterPage QPushButton#quoteSchemeRowLink:focus,
 QWidget#quoteSchemeCenterPage QToolButton#quoteSchemeMore:focus {{ border:1px solid {c['primary']}; }}
 QWidget#quoteSchemeCenterPage QToolButton#quoteSchemeMore {{ padding-right:12px; }}
 QWidget#quoteSchemeCenterPage QToolButton#quoteSchemeMore::menu-indicator {{ subcontrol-position:right center; width:10px; }}
-QWidget#quoteSchemeCenterPage QPushButton#quoteSchemePageButton {{ color:{c['text']}; background:#FFFFFF; border:1px solid {c['border']}; border-radius:4px; padding:0; min-height:34px; max-height:34px; min-width:34px; max-width:34px; font-size:14px; }}
+QWidget#quoteSchemeCenterPage QPushButton#quoteSchemePageButton {{ color:{c['text']}; background:#FFFFFF; border:1px solid {c['border']}; border-radius:4px; padding:0; min-height:34px; max-height:34px; min-width:34px; max-width:34px; font-size:{TABLE_PX}px; }}
 QWidget#quoteSchemeCenterPage QPushButton#quoteSchemePageButton:checked {{ color:#FFFFFF; background:{c['primary']}; border-color:{c['primary']}; }}
 QWidget#quoteSchemeCenterPage QPushButton#quoteSchemePageButton:hover {{ border-color:{c['primary']}; }}
 QWidget#quoteSchemeCenterPage QPushButton#quoteSchemePageButton:disabled {{ color:#B7C0CD; background:#FAFBFD; }}
 QWidget#quoteSchemeCenterPage QComboBox#quoteSchemePageSize {{ min-height:34px; max-height:34px; }}
 QWidget#quoteSchemeCenterPage QSpinBox#quoteSchemePageJump {{ min-height:34px; max-height:34px; padding:0 6px; }}
-QWidget#quoteSchemeCenterPage QPushButton#quoteSchemeOperatorButton {{ color:#64748B; background:transparent; border:0; padding:0 4px; min-height:30px; max-height:30px; font-size:12px; font-weight:400; text-align:left; }}
+QWidget#quoteSchemeCenterPage QPushButton#quoteSchemeOperatorButton {{ color:#64748B; background:transparent; border:0; padding:0 4px; min-height:30px; max-height:30px; font-size:{AUXILIARY_PX}px; font-weight:400; text-align:left; }}
 QWidget#quoteSchemeCenterPage QPushButton#quoteSchemeOperatorButton:hover {{ color:{c['primary']}; }}
-QWidget#quoteSchemeCenterPage QLabel#quoteSchemePageStatus {{ color:#64748B; font-size:14px; padding:24px; }}
+QWidget#quoteSchemeCenterPage QLabel#quoteSchemePageStatus {{ color:#64748B; font-size:{TABLE_PX}px; padding:24px; }}
 QWidget#quoteSchemeCenterPage QLabel#quoteSchemePageStatus[state="error"] {{ color:#B42318; }}
-QWidget#quoteSchemeCenterPage QLabel#quoteSchemeOperationStatus {{ color:#B42318; font-size:13px; }}
+QWidget#quoteSchemeCenterPage QLabel#quoteSchemeOperationStatus {{ color:#B42318; font-size:{AUXILIARY_PX}px; }}
 QMenu#quoteSchemeCalendarPopup {{ background:#FFFFFF; border:1px solid {c['border']}; padding:8px; }}
 """
 
