@@ -73,13 +73,13 @@ from PySide6.QtWidgets import (
     QStyleOptionComboBox,
     QTableWidget,
     QTableWidgetItem,
-    QTextBrowser,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from layout_refresh import _fit_window_minimum_to_screen
+from wheel_edit_guard import install_wheel_edit_guard
 try:
     from quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product, apply_management_fee,
                                      quick_attachment_line_amount, quick_discount_breakdown)
@@ -90,7 +90,6 @@ from pypdf import PdfReader, PdfWriter
 
 from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, door_transformation_default_names, size_match_display_text
 from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
-from quote_diagnostics import build_report, record_event, submit_report
 try:
     from cost_adjustments import rescale_material_weight
 except ModuleNotFoundError:  # Package import used by focused tests.
@@ -111,102 +110,6 @@ DRAWING_VERTICAL_CHROME = 118
 DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE = 25.0
 
 
-class _DiagnosticSubmissionWorker(QThread):
-    submitted = Signal(str)
-    failed = Signal(str)
-
-    def __init__(self, api_url, headers, report, parent=None):
-        super().__init__(parent)
-        self.api_url, self.headers, self.report = api_url, headers, report
-
-    def run(self):
-        try:
-            self.submitted.emit(submit_report(self.api_url, self.headers, self.report))
-        except Exception as error:
-            LOGGER.exception("operator-approved diagnostic report submission failed")
-            self.failed.emit(str(error))
-
-
-def _diagnostic_client_version():
-    manifest = Path(sys.executable).parent / "release-manifest.json"
-    try:
-        return str(json.loads(manifest.read_text(encoding="utf-8-sig")).get("version") or "")
-    except (OSError, ValueError):
-        return "source"
-
-
-def _submit_diagnostic_report(window):
-    worker = getattr(window, "_scheme2_diagnostic_worker", None)
-    if worker is not None and worker.isRunning():
-        return
-    try:
-        snapshot = window.quote_export_items_snapshot()
-        report = build_report(window, snapshot, client_version=_diagnostic_client_version())
-    except Exception as error:
-        QMessageBox.warning(window, "无法生成诊断报告", str(error))
-        return
-    preview = QDialog(window)
-    preview.setWindowTitle("查看并提交诊断报告")
-    preview.resize(760, 540)
-    layout = QVBoxLayout(preview)
-    problem = QLineEdit(preview)
-    problem.setPlaceholderText("例如：修改第 2 行附件金额后，导出金额未更新")
-    operator = QLineEdit(preview)
-    operator.setPlaceholderText("可选，便于开发人员联系")
-    form = QFormLayout()
-    form.addRow("遇到的问题", problem)
-    form.addRow("操作人员", operator)
-    layout.addLayout(form)
-    description = QLabel(
-        "此报告包含当前报价的产品型号、尺寸、数量、价格、折扣、附件、成本明细、订单信息与最近操作记录。"
-        "开发人员可查看这些内容；不包含图纸文件、电脑文件路径、API 密钥或数据库凭据。"
-        "只有点击“确认提交”后才会上传。"
-    )
-    description.setWordWrap(True)
-    layout.addWidget(description)
-    content = QTextBrowser(preview)
-    content.setPlainText(json.dumps(report, ensure_ascii=False, indent=2))
-    layout.addWidget(content, 1)
-    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-    buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确认提交")
-    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-    buttons.accepted.connect(preview.accept)
-    buttons.rejected.connect(preview.reject)
-    layout.addWidget(buttons)
-    if preview.exec() != QDialog.DialogCode.Accepted:
-        return
-    report["issue_description"] = problem.text().strip()[:500]
-    report["operator_name"] = operator.text().strip()[:100]
-    headers_factory = getattr(window, "_scheme2_diagnostic_headers_factory", None)
-    try:
-        headers = headers_factory() if callable(headers_factory) else {}
-        api_url = window._scheme2_diagnostic_api_url
-    except Exception as error:
-        QMessageBox.warning(window, "无法提交诊断报告", str(error))
-        return
-    button = window.scheme2_diagnostic_button
-    button.setEnabled(False)
-    button.setText("提交中…")
-    worker = _DiagnosticSubmissionWorker(api_url, headers, report, window)
-    window._scheme2_diagnostic_worker = worker
-
-    def finished(message, success):
-        button.setEnabled(True)
-        button.setText("提交诊断报告")
-        if success:
-            record_event(window, "diagnostic_submitted", report_id=message)
-            QMessageBox.information(window, "提交成功", f"诊断报告编号：{message}\n请将此编号告知开发人员。")
-        else:
-            QMessageBox.warning(window, "提交失败", f"报告未上传，请稍后重试。\n原因：{message}")
-
-    worker.submitted.connect(lambda report_id: finished(report_id, True))
-    worker.failed.connect(lambda message: finished(message, False))
-    def cleanup():
-        window._scheme2_diagnostic_worker = None
-        worker.deleteLater()
-
-    worker.finished.connect(cleanup)
-    worker.start()
 COEFFICIENT_FIELDS = (
     ("galvanized_price", "镀锌板价格", 4.55, 2),
     ("carbon_price", "碳钢价格", 4.20, 2),
@@ -857,6 +760,7 @@ class _DoubleClickEditGuard(QObject):
 
     def __init__(self, spin):
         super().__init__(spin)
+        install_wheel_edit_guard()
         self.spin = spin
         self.line_edit = spin.lineEdit()
         self.armed = False
@@ -907,9 +811,6 @@ class _DoubleClickEditGuard(QObject):
             return False
         if event_type == QEvent.Type.FocusOut and self.armed:
             self._finish()
-        if event_type == QEvent.Type.Wheel and not self.armed:
-            event.ignore()
-            return True
         if event_type == QEvent.Type.KeyPress and not self.armed:
             if event.key() not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab, Qt.Key.Key_Escape):
                 event.ignore()
@@ -1309,7 +1210,6 @@ class AttachmentEditor(QDialog):
         if str(current or "").strip() == model:
             self._end_model_edit(row)
             return
-        record_event(self.window, "attachment_model_changed", row=row + 1, model=model)
         if is_light_switch:
             source.update({"category_level1": "照明灯/行程开关", "item_name": model, "specification": model})
             source.pop("model_code", None)
@@ -1424,7 +1324,6 @@ class AttachmentEditor(QDialog):
                     cell.setData(Qt.ItemDataRole.BackgroundRole, None)
 
     def _amount_changed(self, row, value):
-        record_event(self.window, "attachment_amount_changed", row=row + 1, amount=value)
         editor = self.table.cellWidget(row, self.COL_AMOUNT)
         if editor is not None:
             editor.setProperty("schemeEdited", True)
@@ -1432,7 +1331,6 @@ class AttachmentEditor(QDialog):
             editor.setProperty("unitAmount", value / quantity if quantity else value)
 
     def _custom_cost_changed(self, row, value):
-        record_event(self.window, "attachment_cost_changed", row=row + 1, cost=value)
         cost_editor = self.table.cellWidget(row, self.COL_FORMULA_AMOUNT)
         if isinstance(cost_editor, QDoubleSpinBox):
             cost_editor.setProperty("schemeEdited", True)
@@ -1445,7 +1343,6 @@ class AttachmentEditor(QDialog):
             amount_editor.setProperty("unitAmount", None)
 
     def _quantity_changed(self, row, value):
-        record_event(self.window, "attachment_quantity_changed", row=row + 1, quantity=value)
         amount_editor = self.table.cellWidget(row, self.COL_AMOUNT)
         quantity_editor = self.table.cellWidget(row, self.COL_QUANTITY)
         previous_quantity = _number(quantity_editor.property("previousQuantity"), 1)
@@ -2426,11 +2323,6 @@ def _quote_name_changed(window, row, column):
 
 
 def _quote_cell_changed(window, row, column):
-    if not getattr(window, "_scheme2_refreshing_quote", False) and row >= 10 and column in (1, 5):
-        cell = window.scheme2_quote_preview.item(row, column)
-        record_event(window, "quote_cell_changed", row=row - 9,
-                     field="name" if column == 1 else "unit_price",
-                     value=cell.text() if cell is not None else "")
     if column == 1:
         _quote_name_changed(window, row, column)
     elif column == 5:
@@ -3364,7 +3256,6 @@ def _apply_cost_control(window, key, value):
         original_price = _number(base_state.setdefault(key, old), old)
         _replace_component(item, "spray_cost", base * value / max(original_price, .01))
     _recalculate_item_management(item)
-    record_event(window, "cost_coefficient_changed", field=key, value=value)
     window.refresh_summary()
 
 
@@ -3670,7 +3561,6 @@ def _cost_cell_changed(window, row, column):
     else:
         item["quick_discount"] = value
     item["pricing_basis"] = PRICING_BASIS
-    record_event(window, "cost_cell_changed", row=row + 1, column=HEADERS[column], value=value)
     window.refresh_summary()
 
 
@@ -3689,7 +3579,6 @@ def _cost_cell_clicked(window, row, column):
         targets = [candidate for candidate in items if _cost_product(candidate) == product]
         FaceDiscountEditor(window, item, targets).exec()
     elif column == 5:
-        record_event(window, "attachment_editor_opened", row=row + 1)
         AttachmentEditor(window, item).exec()
     elif column == 23:
         _show_detail(window, item)
@@ -3926,12 +3815,6 @@ def _configure_navigation(window):
         nav_layout.addWidget(wanted[COST_ROUTE])
         nav_layout.addWidget(wanted[QUOTE_ROUTE])
         nav_layout.addStretch(1)
-        diagnostic_button = QPushButton("提交诊断报告")
-        diagnostic_button.setObjectName("scheme2PrimaryGhost")
-        diagnostic_button.setToolTip("先预览当前详细报价与操作记录，确认后提交给开发人员")
-        diagnostic_button.clicked.connect(lambda: _submit_diagnostic_report(window))
-        nav_layout.addWidget(diagnostic_button)
-        window.scheme2_diagnostic_button = diagnostic_button
         nav_layout.addWidget(collapse, 0, Qt.AlignmentFlag.AlignLeft)
     expand = QPushButton("»", window)
     expand.setObjectName("scheme2ExpandButton")
@@ -6577,7 +6460,6 @@ def _finish_add(window):
     window.add_current_to_summary()
     if len(getattr(window, "draft_items", [])) != before + 1:
         return
-    record_event(window, "quote_item_added", row=editing_index + 1 if editing_index is not None else before + 1)
     if source_route == OPTION_ROUTE and window.stack.currentIndex() != OPTION_ROUTE:
         window.show_section(OPTION_ROUTE)
     item = window.draft_items[-1]
@@ -7320,10 +7202,6 @@ def install_scheme2_ui(namespace):
     original_company_catalog_loaded = getattr(cls, "company_catalog_loaded", None)
 
     def init(window, *args, **kwargs):
-        window._scheme2_diagnostic_api_url = namespace.get("API_URL", "")
-        window._scheme2_diagnostic_headers_factory = namespace.get("api_headers")
-        window._scheme2_diagnostic_worker = None
-        record_event(window, "client_opened")
         window._scheme2_add_after_calculate = False
         window._scheme2_edit_item = None
         window._scheme2_detail_item = None
@@ -7381,23 +7259,6 @@ def install_scheme2_ui(namespace):
         window.stack.insertWidget(DETAIL_ROUTE, detail)
         _configure_navigation(window)
         _configure_option_page(window, namespace)
-        for field, control in (
-            ("product", getattr(window, "product_combo", None)),
-            ("model_name", getattr(window, "scheme2_name_edit", None)),
-            ("dimensions", getattr(window, "quote_spec_edit", None)),
-            ("quantity", getattr(window, "quantity_spin", None)),
-            ("material", getattr(window, "material_combo", None)),
-            ("coating", getattr(window, "coating_combo", None)),
-        ):
-            if isinstance(control, QComboBox):
-                control.activated.connect(
-                    lambda _index, name=field, combo=control: record_event(
-                        window, "selection_changed", field=name, value=combo.currentText()))
-            elif isinstance(control, (QLineEdit, QSpinBox)):
-                control.editingFinished.connect(
-                    lambda name=field, editor=control: record_event(
-                        window, "selection_changed", field=name,
-                        value=editor.value() if isinstance(editor, QSpinBox) else editor.text()))
         _register_order_workspace_file_type()
         window._scheme2_loading_order = False
         window._scheme2_order_save_worker = None
@@ -7481,7 +7342,6 @@ def install_scheme2_ui(namespace):
         QTimer.singleShot(0, lambda: _apply_responsive(window))
 
     def confirm_and_export(window):
-        record_event(window, "quote_export_requested", items=len(getattr(window, "draft_items", [])))
         _sync_export_company(window)
         had_override = "validate_export_environment" in window.__dict__
         previous = window.__dict__.get("validate_export_environment")
@@ -7497,11 +7357,6 @@ def install_scheme2_ui(namespace):
                 del window.validate_export_environment
 
     def close(window, event):
-        diagnostic_worker = getattr(window, "_scheme2_diagnostic_worker", None)
-        if diagnostic_worker is not None and diagnostic_worker.isRunning():
-            QMessageBox.information(window, "诊断报告提交中", "请等待诊断报告提交完成后再关闭客户端。")
-            event.ignore()
-            return
         if getattr(window, "_scheme2_paused_quote_workers", set()):
             window._scheme2_close_after_quote_pause = True
             window.risk_label.setText("正在等待已暂停的网络请求结束后安全关闭客户端…")
@@ -7523,8 +7378,6 @@ def install_scheme2_ui(namespace):
         if index in (0, 4):
             index = OPTION_ROUTE
         previous_index = window.stack.currentIndex()
-        if previous_index != index:
-            record_event(window, "page_changed", from_route=previous_index, to_route=index)
         if index == COST_ROUTE:
             window.refresh_summary()
             if previous_index != COST_ROUTE:
@@ -7548,8 +7401,6 @@ def install_scheme2_ui(namespace):
                 != getattr(window, "_scheme2_calculation_epoch", 0)):
             return
         result = original_show_result(window, payload, *args, **kwargs)
-        record_event(window, "quote_calculation_completed",
-                     request_id=getattr(window, "_quote_progress_request_id", ""))
         _stamp_quote_result_signature(window)
         if hasattr(window, "quote_right_stack"):
             window.quote_right_stack.setCurrentIndex(0)
@@ -7567,8 +7418,6 @@ def install_scheme2_ui(namespace):
         sender = window.sender()
         if getattr(window, "_scheme2_calculation_paused", False) or getattr(sender, "_client_cancelled", False):
             return
-        record_event(window, "quote_calculation_failed", message=str(message)[:500],
-                     request_id=getattr(window, "_quote_progress_request_id", ""))
         window._scheme2_add_after_calculate = False
         if hasattr(window, "scheme2_add_button"):
             window.scheme2_add_button.setEnabled(True)

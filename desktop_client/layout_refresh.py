@@ -23,6 +23,7 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from material_prices import material_unit_price
+from wheel_edit_guard import install_wheel_edit_guard
 
 from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor
@@ -8008,6 +8009,7 @@ def install_layout_refresh(namespace: dict) -> None:
     original_update_quote_readiness = getattr(main_window, "update_quote_readiness", None)
 
     def build_ui_with_refresh(self):
+        install_wheel_edit_guard()
         original_build_ui(self)
         summary_table = getattr(self, "summary_table", None)
         self._summary_core_has_door_column = False

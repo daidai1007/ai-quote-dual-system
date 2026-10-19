@@ -8,6 +8,18 @@ import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+test('diagnostic submission code and deployment dependencies have been removed', async () => {
+  for (const file of ['api/server.mjs', 'desktop_client/scheme2_ui.py',
+    'desktop_client/quote_document_progress.py', 'Dockerfile', '.dockerignore', 'desktop_client/README.md']) {
+    const source = await fs.readFile(path.join(projectRoot, file), 'utf8');
+    assert.doesNotMatch(source, /quote_diagnostics|diagnostic_report|scheme2_diagnostic|诊断报告|\/api\/diagnostics\/reports/, file);
+  }
+  for (const file of ['api/diagnostic_report.mjs', 'desktop_client/quote_diagnostics.py',
+    'database/migrations/client_diagnostic_report.sql']) {
+    await assert.rejects(fs.access(path.join(projectRoot, file)), {code: 'ENOENT'});
+  }
+});
+
 test('Docker image includes every local module needed by the API and workbook exporter', async () => {
   const [serverSource, exporterSource, dockerfile, dockerignore] = await Promise.all([
     fs.readFile(path.join(projectRoot, 'api', 'server.mjs'), 'utf8'),
@@ -100,12 +112,22 @@ test('Docker-compatible server starts and serves a database-free health check', 
       assert.equal(match[1], health.build, `${file}: ${constant} must match GET /health build`);
     }
   });
-  assert.equal(health.deployment, '20261016-management6-v1');
+  assert.equal(health.deployment, '20261019-no-diagnostic-reports-v1');
   assert.equal(health.database_checked, false);
   assert.equal(health.attachment_ganged_ready, true);
 
   const protectedResponse = await fetch(`http://127.0.0.1:${port}/api/health/database`);
   assert.equal(protectedResponse.status, 401);
+
+  await t.test('removed report upload endpoint returns 404 without contacting the database', async () => {
+    const removed = await fetch(`http://127.0.0.1:${port}/api/diagnostics/reports`, {
+      method: 'POST',
+      headers: {'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key'},
+      body: JSON.stringify({confirmed_by_operator: true, report: {quote_items: [], events: []}}),
+    });
+    assert.equal(removed.status, 404);
+    assert.equal((await removed.json()).error, 'not_found');
+  });
 
   const attachmentValidation = await fetch(`http://127.0.0.1:${port}/api/attachments/catalog`, {
     method: 'POST',

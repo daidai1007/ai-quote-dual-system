@@ -19,7 +19,6 @@ import { normalizeDrawingContext } from './drawing_context.mjs';
 import { formulaTemplateSql } from './formula_template_query.mjs';
 import { createBatchReadExecutor, validateGangedBatch, calculateGangedBatch } from './ganged_quote_service.mjs';
 import { withQuoteRequest, withQuoteChild, timedQuotePhase, emitQuoteProgress, startQuoteStream, recordQuoteEvent, sqlTimingFields } from './quote_telemetry.mjs';
-import {MAX_DIAGNOSTIC_BYTES, diagnosticReportSql, validateDiagnosticSubmission} from './diagnostic_report.mjs';
 import {
   apiKeyHash, createQuoteSchemeService, loadPrincipalMap, resolveQuoteSchemePrincipal,
 } from './quote_scheme_service.mjs';
@@ -30,7 +29,7 @@ const HOST = RUNTIME_CONFIG.host;
 const API_KEY = RUNTIME_CONFIG.apiKey;
 const QUOTE_SCHEME_PRINCIPALS = loadPrincipalMap();
 const API_BUILD = '2026-09-11-complete-cost-catalogs-v5';
-const DEPLOYMENT_BUILD = '20261016-management6-v1';
+const DEPLOYMENT_BUILD = '20261019-no-diagnostic-reports-v1';
 const DEFAULT_COATING_TYPE = '橘纹';
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -1054,22 +1053,6 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
     } catch (error) {
       return json(res, error.statusCode || clientErrorStatus(error), {
         error: error.code || 'quote_scheme_request_failed', message: error.message,
-      });
-    }
-  }
-  if (req.method === 'POST' && req.url === '/api/diagnostics/reports') {
-    try {
-      const report = validateDiagnosticSubmission(await readBody(req, MAX_DIAGNOSTIC_BYTES + 1024));
-      const output = await runPsql(diagnosticReportSql(report));
-      const resultLine = output.split(/\r?\n/).map(line => line.trim())
-        .findLast(line => line.startsWith('{'));
-      recordQuoteEvent('diagnostic_report_submitted', {status: 'ok'});
-      return json(res, 201, JSON.parse(resultLine));
-    } catch (error) {
-      recordQuoteEvent('diagnostic_report_failed', {status: 'failed'});
-      return json(res, clientErrorStatus(error), {
-        error: 'diagnostic_report_failed',
-        message: error.statusCode ? error.message : '报告提交失败，请联系管理员检查诊断表是否已部署。',
       });
     }
   }

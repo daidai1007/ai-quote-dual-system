@@ -128,6 +128,9 @@ def _require_operator(window, prompt=False):
 def _set_state(window, text, kind="normal"):
     label = window.quote_scheme_save_status
     label.setText(text)
+    # Keep idle workspace hints in the scheme centre, not in the sidebar.
+    # Save progress and failures remain visible even before a number exists.
+    label.setVisible(bool(text) and (bool(window._quote_scheme_id) or kind in ("busy", "error")))
     colors = {"normal": "#4B5563", "busy": "#185FA5", "ok": "#237804", "error": "#B42318"}
     label.setStyleSheet(f"color:{colors[kind]};font-size:12px;padding:4px 2px;")
     window.quote_scheme_page_status.setText(text)
@@ -155,6 +158,20 @@ def _field(placeholder, name):
     editor.setClearButtonEnabled(True)
     editor.setMinimumHeight(34)
     return editor
+
+
+class _FilterActionButton(QPushButton):
+    LABELS = ("查询", "重置", "新建方案")
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        metrics = self.fontMetrics()
+        label_width = max(metrics.horizontalAdvance(text) for text in self.LABELS)
+        hint.setWidth(hint.width() + max(0, label_width - metrics.horizontalAdvance(self.text())))
+        return hint
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
 
 def _build_page(window):
@@ -213,10 +230,13 @@ def _build_page(window):
     dates = QHBoxLayout(); dates.setSpacing(5)
     dates.addWidget(window.quote_scheme_filters["updated_from"]); dates.addWidget(QLabel("至")); dates.addWidget(window.quote_scheme_filters["updated_to"])
     grid.addLayout(dates, 1, 3, 1, 3)
-    query = QPushButton("查询"); query.setObjectName("scheme2PrimaryAction")
-    reset = QPushButton("重置"); reset.setObjectName("scheme2SecondaryAction")
-    create = QPushButton("新建方案"); create.setObjectName("scheme2PrimaryAction")
-    actions = QHBoxLayout(); actions.addWidget(query); actions.addWidget(reset); actions.addWidget(create)
+    query, reset, create = (_FilterActionButton(text) for text in _FilterActionButton.LABELS)
+    filter_actions = (query, reset, create)
+    actions = QHBoxLayout()
+    actions.setSpacing(grid.horizontalSpacing())
+    for button in filter_actions:
+        button.setObjectName("scheme2PrimaryAction")
+        actions.addWidget(button, 1)
     grid.addLayout(actions, 1, 6, 1, 2)
     for column in (1, 3, 5, 7): grid.setColumnStretch(column, 1)
     root.addWidget(filters)
@@ -640,8 +660,9 @@ def install_quote_scheme_center(namespace):
             (2, "报价单", "", None),
             (SCHEME_ROUTE, "报价方案", "", None),
         )
-        window.quote_scheme_save_status = QLabel("未打开报价方案")
+        window.quote_scheme_save_status = QLabel()
         window.quote_scheme_save_status.setWordWrap(True)
+        window.quote_scheme_save_status.hide()
         service = getattr(window, "scheme2_service_status", None)
         layout.insertWidget(max(0, layout.indexOf(service)), window.quote_scheme_save_status)
         for control in (

@@ -32,6 +32,8 @@ foreach ($requiredCoreFile in @("main.raw", "original.pyz")) {
 }
 
 $testFiles = @(
+    "tests/verify_wheel_edit_guard.py",
+    "tests/verify_removed_diagnostic_report.py",
     "tests/verify_management_fee.py",
     "tests/verify_self_made_weight.py",
     "tests/verify_quote_unit_rounding.py",

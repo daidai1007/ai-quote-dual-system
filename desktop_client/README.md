@@ -15,6 +15,14 @@ Quote formulas, quick-quote rules, BOM data and Excel generation remain outside
 `layout_refresh.py`. Attachment catalogue writes are sent to the API and are
 never stored only in the desktop process.
 
+## 鼠标滚轮与修改
+
+滚轮仅用于页面、表格、下拉列表和图纸的滚动，不再修改数量、金额、折扣、
+日期、尺寸或下拉框当前选择。已获得焦点及已双击进入编辑的输入框也遵循此规则。
+修改时通过鼠标左键点击选择或按原有规则双击进入编辑，之后仍可键盘录入。
+图纸缩放使用“＋／−”等工具栏按钮。此项由 `wheel_edit_guard.py` 统一处理，
+同时覆盖动态创建的弹窗及临时表格编辑器，不改变报价计算或 API；重建客户端后生效。
+
 ## Local layout verification
 
 The verified V3 core is a build artifact and is intentionally not committed.
@@ -39,23 +47,5 @@ window, so it does not call Render or Neon.
 - 客户端请求 `Accept: application/x-ndjson`，API 依次发送真实阶段进度和最终结果。没有该请求头的旧客户端仍收到普通 JSON；仅当批量接口返回 404/405 时回退到旧逐柜接口，计算失败不会自动重复提交。
 - 底部进度区显示当前阶段时间，宽屏同时显示累计时间；窄屏显示简短阶段，悬停可查看完整时间和请求编号。子柜完成计数更新不会重置阶段计时。
 - 客户端日志在 `%LOCALAPPDATA%/AIQuoteDualSystem/logs/client.log`。服务端日志记录请求编号、各子柜、材料/辅材/人工/喷涂阶段、数据库耗时及批次查询复用；不记录 SQL、请求正文、API 密钥或数据库连接串。
-
-## 使用者主动提交诊断报告
-
-侧边栏“提交诊断报告”先显示完整报价 JSON 预览，并允许使用者填写遇到的问题及可选的姓名；点击“确认提交”后，客户端才会通过当前 HTTPS 报价 API 的 `POST /api/diagnostics/reports` 上传。报告包含当前订单号、公司、产品型号和尺寸、数量、详细报价/成本/附件快照、本次运行中最近 200 条操作事件与请求编号；操作事件仅在内存中暂存，未确认不上传，重启后不会保留。不上传图纸文件、本地路径、API 密钥或数据库凭据。提交成功后弹出报告编号。网络失败时不宣称成功，可重试。
-
-上线顺序：先在现有 PostgreSQL 执行 `database/migrations/client_diagnostic_report.sql`，再部署新 API，最后构建客户端。**当前客户端 EXE 不会自动获得源码功能。**数据库表仅供管理员通过受控 SQL 访问，普通客户端没有读取报告的 API。示例查询：
-
-```sql
-SELECT report_id, submitted_at, client_version, order_number,
-       report_payload->>'issue_description' AS issue_description,
-       report_payload->>'operator_name' AS operator_name,
-       report_payload->'quote_items' AS quote_items,
-       report_payload->'events' AS operation_events
-FROM calc.client_diagnostic_report
-ORDER BY submitted_at DESC LIMIT 20;
-```
-
-报告在下一次提交时清理超过 90 天的记录；若需严格到期删除，应由数据库运维另设每日清理任务。生产数据库权限应限制为诊断 API 可写、授权开发人员可读；不要对普通客户端开放查询权限。
 
 报价性能与进度的专项验证：`npm run test:performance`、`npm run test:database:performance`（后者仅用于本机 55439 隔离测试库），以及 `tests/verify_template_cache_and_batch.py`、`tests/verify_quote_progress_ui.py`；该部分原有功能无需新增数据库迁移。

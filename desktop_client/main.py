@@ -59,6 +59,7 @@ from quote_defaults import (
     apply_default_quote_inputs,
 )
 from quote_remark_rules import door_phrase_for_item, replace_door_configuration_phrase
+from wheel_edit_guard import install_wheel_edit_guard
 from quick_discount_rules import (
     apply_management_fee,
     attachment_excluded_from_discount,
@@ -2329,6 +2330,7 @@ class MainWindow(QMainWindow):
     """
 
     def __init__(self):
+        install_wheel_edit_guard()
         super().__init__()
         self.setWindowTitle("AI 智能报价 - 双报价录入")
         # Use the desktop work area in logical pixels.  The V3 launcher may

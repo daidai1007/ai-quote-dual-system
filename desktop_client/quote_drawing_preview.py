@@ -530,10 +530,9 @@ class InkCanvas(QGraphicsView):
             self.fit()
 
     def wheelEvent(self, event):
-        delta = event.pixelDelta().y() or event.angleDelta().y()
-        if delta:
-            self.zoom(pow(1.0015, delta))
-        event.accept()
+        # Zoom is an explicit left-click toolbar action. Wheel gestures only
+        # pan the document through the native graphics-view scrollbars.
+        super().wheelEvent(event)
 
     def mousePressEvent(self, event):
         if self.text_enabled and event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
