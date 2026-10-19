@@ -35,7 +35,6 @@ def page_style_sheet():
     return f"""
 QWidget#quoteSchemeCenterPage {{ background:{c['background']}; color:{c['text']}; font-size:14px; }}
 QWidget#quoteSchemeCenterPage QLabel {{ color:{c['text']}; font-size:14px; background:transparent; border:0; padding:0; }}
-QWidget#quoteSchemeCenterPage QLabel#quoteSchemeTitle {{ color:#101C2F; font-size:32px; font-weight:700; }}
 QWidget#quoteSchemeCenterPage QLabel#quoteSchemeServerNotice {{ color:{c['muted']}; font-size:13px; }}
 QWidget#quoteSchemeCenterPage QFrame#quoteSchemeFilters {{ background:#FFFFFF; border:1px solid {c['border']}; border-radius:4px; }}
 QWidget#quoteSchemeCenterPage QLabel#quoteSchemeFieldLabel {{ font-size:14px; font-weight:500; }}

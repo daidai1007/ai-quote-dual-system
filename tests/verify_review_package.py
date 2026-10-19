@@ -33,7 +33,8 @@ def verify(directory):
         pyz = ZlibArchiveReader(str(pyz_path))
         for name in ('drawing_workflow', 'quote_drawing_preview', 'freight_state', 'freight_export', 'layout_refresh',
                      'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules', 'scheme2_ui',
-                     'quote_scheme_center', 'quote_document_progress', 'material_prices', 'wheel_edit_guard'):
+                     'quote_scheme_center', 'quote_scheme_widgets', 'quote_request_context',
+                     'quote_document_progress', 'material_prices', 'wheel_edit_guard'):
             expected = compile((ROOT / 'desktop_client' / f'{name}.py').read_text(encoding='utf-8'), '', 'exec')
             actual = pyz.extract(name)
             assert normalized(expected) == normalized(actual), f'Packaged source differs: {name}'

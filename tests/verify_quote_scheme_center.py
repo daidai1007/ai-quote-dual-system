@@ -46,7 +46,7 @@ quote_scheme_center._new_scheme(window)
 assert window.quote_scheme_save_status.isHidden()
 assert "首次加入报价清单" in window.quote_scheme_page_status.text()
 
-assert window.windowTitle().endswith("2026.10.16.01")
+assert window.windowTitle().endswith("2026.10.19.02")
 assert window.quote_scheme_nav_button.text() == "报价方案"
 assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单", "报价方案"]
 assert window.stack.widget(quote_scheme_center.SCHEME_ROUTE).objectName() == "quoteSchemeCenterPage"
@@ -155,7 +155,7 @@ quote_scheme_center._run = original_run
 assert window._quote_scheme_id == "BJ-20261016-000123" and len(calls) == 1
 assert calls[0][2]["operator_name"] == "张师傅"
 assert "scheme_summary" in calls[0][2]["snapshot"]
-assert calls[0][2]["snapshot"]["document"]["client_version"] == "2026.10.16.01"
+assert calls[0][2]["snapshot"]["document"]["client_version"] == "2026.10.19.02"
 
 # A change made while one save is in flight is not lost: finishing the older
 # request schedules another save for the newer dirty sequence.

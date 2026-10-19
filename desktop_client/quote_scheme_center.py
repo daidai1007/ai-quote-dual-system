@@ -25,7 +25,7 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.16.01"
+CLIENT_VERSION = "2026.10.19.02"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
@@ -274,6 +274,16 @@ def _build_page(window):
     heading = QHBoxLayout()
     title = QLabel("报价方案中心")
     title.setObjectName("quoteSchemeTitle")
+    # Match the actual current quote-page title after its shared font scaling,
+    # rather than maintaining a separate large-title type scale on this page.
+    reference_title = window.scheme2_quote_page.findChild(QLabel, "scheme2PageTitle")
+    reference_title.ensurePolished()
+    title_font = reference_title.font()
+    title.setFont(title_font)
+    size = (f"{title_font.pixelSize()}px" if title_font.pixelSize() > 0
+            else f"{title_font.pointSizeF():g}pt")
+    color = reference_title.palette().color(reference_title.foregroundRole()).name()
+    title.setStyleSheet(f"font-size:{size};font-weight:{int(title_font.weight())};color:{color};")
     server = ServerNotice()
     server.setObjectName("quoteSchemeServerNotice")
     heading.addWidget(title)

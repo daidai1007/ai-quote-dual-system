@@ -46,6 +46,7 @@ $testFiles = @(
     "tests/verify_attachment_negative_quantity.py",
     "tests/verify_quote_scheme_center.py",
     "tests/verify_quote_scheme_reference_ui.py",
+    "tests/verify_quote_scheme_restore.py",
     "tests/verify_scheme2_material_price_sidebar.py",
     "tests/verify_scheme2_cost_repricing.py",
     "tests/verify_scheme2_stainless_pricing.py",

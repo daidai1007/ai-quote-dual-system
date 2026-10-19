@@ -126,7 +126,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.16.01"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.19.02"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -2260,10 +2260,11 @@ def _print_quote(window):
 
 
 def _quote_unit_price_changed(window, row, column):
+    # Filling the table emits cellChanged too; never redraw from that signal.
+    if getattr(window, "_scheme2_refreshing_quote", False) or column != 5 or row < 10:
+        return
     if getattr(window, "_quote_scheme_read_only", False):
         _refresh_quote_page(window)
-        return
-    if getattr(window, "_scheme2_refreshing_quote", False) or column != 5 or row < 10:
         return
     items = getattr(window, "draft_items", [])
     index = row - 10
@@ -2313,10 +2314,10 @@ def _update_quote_item_name(window, item, text):
 
 
 def _quote_name_changed(window, row, column):
+    if getattr(window, "_scheme2_refreshing_quote", False) or column != 1 or row < 10:
+        return
     if getattr(window, "_quote_scheme_read_only", False):
         _refresh_quote_page(window)
-        return
-    if getattr(window, "_scheme2_refreshing_quote", False) or column != 1 or row < 10:
         return
     items = getattr(window, "draft_items", [])
     index = row - 10
@@ -3553,10 +3554,11 @@ def _edit_selected(window):
 
 
 def _cost_cell_changed(window, row, column):
+    # Read-only protection may redraw, so first ignore our own table updates.
+    if getattr(window, "_scheme2_refreshing", False) or column not in EDITABLE_COLUMNS:
+        return
     if getattr(window, "_quote_scheme_read_only", False):
         window.refresh_summary()
-        return
-    if getattr(window, "_scheme2_refreshing", False) or column not in EDITABLE_COLUMNS:
         return
     items = getattr(window, "draft_items", [])
     if not 0 <= row < len(items):

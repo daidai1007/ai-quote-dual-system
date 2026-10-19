@@ -101,6 +101,14 @@ class ReferenceSchemeUI(unittest.TestCase):
         w = self.window
         self.assertEqual([b.text() for b in w.nav_buttons],
                          ['选型配置', '成本计算', '报价单', '报价方案'])
+        title = w.quote_scheme_page.findChild(QLabel, 'quoteSchemeTitle')
+        quote_title = w.scheme2_quote_page.findChild(QLabel, 'scheme2PageTitle')
+        self.assertEqual(title.font().families(), quote_title.font().families())
+        self.assertEqual(title.font().pixelSize(), quote_title.font().pixelSize())
+        self.assertEqual(title.font().pointSizeF(), quote_title.font().pointSizeF())
+        self.assertEqual(title.font().weight(), quote_title.font().weight())
+        self.assertEqual(title.palette().color(title.foregroundRole()),
+                         quote_title.palette().color(quote_title.foregroundRole()))
         self.assertTrue(w.quote_scheme_operator_name.isHidden())
         self.assertFalse(w.scheme2_action_dock.isVisibleTo(w))
         if hasattr(w, 'quote_action_dock'):
@@ -221,6 +229,26 @@ class ReferenceSchemeUI(unittest.TestCase):
         self.assertTrue(w.quote_scheme_operation_status.isVisibleTo(w))
         centre._set_state(w, '已保存', 'ok')
         self.assertTrue(w.quote_scheme_operation_status.isHidden())
+
+    def test_programmatic_refresh_is_ignored_before_read_only_protection(self):
+        w = self.window
+        try:
+            for read_only in (True, False):
+                with self.subTest(read_only=read_only):
+                    w._quote_scheme_read_only = read_only
+                    w._scheme2_refreshing = True
+                    w._scheme2_refreshing_quote = True
+                    with patch.object(w, 'refresh_summary') as cost_refresh, \
+                            patch.object(scheme2_ui, '_refresh_quote_page') as quote_refresh:
+                        scheme2_ui._cost_cell_changed(w, 0, 4)
+                        scheme2_ui._quote_name_changed(w, 10, 1)
+                        scheme2_ui._quote_unit_price_changed(w, 10, 5)
+                        cost_refresh.assert_not_called()
+                        quote_refresh.assert_not_called()
+        finally:
+            w._scheme2_refreshing = False
+            w._scheme2_refreshing_quote = False
+            w._quote_scheme_read_only = False
 
     def test_product_names_without_dimensions_preserve_source(self):
         for summary, expected in (
