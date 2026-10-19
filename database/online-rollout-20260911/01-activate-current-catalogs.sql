@@ -64,7 +64,7 @@ BEGIN
     SELECT 1 FROM calc.cabinet_labor_catalog_version
     WHERE data_version='cabinet-labor-a3d12580527a3eb6-v1'
       AND source_sha256='a3d12580527a3eb69eedd47b35107b0c8577333d1a52a7331ce8730dd866d1bd'
-      AND status IN ('STAGED','ACTIVE') AND management_fee_rate=0.13
+      AND status IN ('STAGED','ACTIVE') AND management_fee_rate=0.06
   ) OR (SELECT count(*) FROM calc.cabinet_labor_rule
         WHERE data_version='cabinet-labor-a3d12580527a3eb6-v1')<>57 THEN
     RAISE EXCEPTION 'Cabinet labor v1 is not the expected complete STAGED/ACTIVE source';

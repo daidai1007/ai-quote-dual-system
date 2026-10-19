@@ -61,6 +61,8 @@ from quote_defaults import (
 )
 from quote_remark_rules import door_phrase_for_item, replace_door_configuration_phrase
 from wheel_edit_guard import install_wheel_edit_guard
+from dropdown_style import install_combo_popup_style
+from dialog_style import install_dialog_style
 from quick_discount_rules import (
     apply_management_fee,
     attachment_excluded_from_discount,
@@ -2332,6 +2334,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         install_wheel_edit_guard()
+        install_combo_popup_style()
+        install_dialog_style()
         super().__init__()
         self.setWindowTitle("AI 智能报价 - 双报价录入")
         # Use the desktop work area in logical pixels.  The V3 launcher may
@@ -3080,17 +3084,14 @@ class MainWindow(QMainWindow):
         if not self.current_result: return
         freight = float(self.freight_spin.value()) if hasattr(self, "freight_spin") else 0.0
         formula = dict(self._formula_base_result or self.current_result["formula"])
-        labor = formula.get("labor_cost"); management = formula.get("management_fee"); total = formula.get("total_cost")
-        if labor is not None and management is not None and total is not None:
+        labor = formula.get("labor_cost")
+        if labor is not None:
             multiplier = float(self.labor_multiplier.value())
             new_labor = float(labor) * multiplier
             formula["labor_cost"] = new_labor
-            formula["total_cost"] = float(total) - float(labor) + new_labor
         if isinstance(getattr(self, "attachments", None), list):
             popup_fee = sum(formula_attachment_line_amount(row) for row in self.attachments
                             if not formula_attachment_excluded(row))
-            if formula.get("total_cost") is not None:
-                formula["total_cost"] += popup_fee - float(formula.get("attachment_fee") or 0)
             formula["attachment_fee"] = popup_fee
         formula = apply_management_fee(formula, freight)
         self.current_result["formula"] = formula

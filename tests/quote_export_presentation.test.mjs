@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import ExcelJS from "@excel.js/exceljs";
-import {money, moneyProduct, quickOrderLineBreakdown, PRICING_BASIS} from "../quick_discount_rules.mjs";
+import {money, moneySum, moneyProduct, quickOrderLineBreakdown, PRICING_BASIS, formulaAttachmentLineAmount, attachmentExcludedFromDiscount} from "../quick_discount_rules.mjs";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const fixturePath = path.join(projectRoot, "tests", "fixtures", "export_formula_cost_detail.json");
@@ -88,6 +88,13 @@ const closeTo = (actual, expected, label) => {
   assert.ok(Number.isFinite(Number(actual)), `${label} is not numeric: ${actual}`);
   assert.ok(Math.abs(Number(actual) - expected) < 0.01, `${label}: expected ${expected}, got ${actual}`);
 };
+const expectedCurrentFormulaUnit = item => {
+  const rows=item.attachments||[];
+  const cabinet=moneySum(['material_cost','auxiliary_cost','labor_cost','spray_cost'].map(key=>item.formula[key]));
+  const fee=moneyProduct(moneySum([cabinet,...rows.map(formulaAttachmentLineAmount),item.freight_fee||0]),.06);
+  return moneySum([moneyProduct(moneySum([cabinet,fee,...rows.filter(row=>!attachmentExcludedFromDiscount(row)).map(formulaAttachmentLineAmount)]),item.formula_discount??1),
+    ...rows.filter(attachmentExcludedFromDiscount).map(formulaAttachmentLineAmount),item.freight_fee||0]);
+};
 
 // Recalculate the generated arithmetic formulas instead of trusting cached
 // XLSX results. Only cell references, arithmetic and ROUND are accepted.
@@ -146,9 +153,11 @@ for (const modern of [false, true]) {
         const sheet = workbook.getWorksheet(name);
         cases.forEach((sample,index) => {
           const row = 11 + index;
-          assert.equal(sheet.getCell(`F${row}`).value,sample.unit,`${name} ${sample.name} unit`);
-          assert.equal(sheet.getCell(`G${row}`).value,sample.total,`${name} ${sample.name} total`);
-          assert.equal(moneyProduct(sheet.getCell(`F${row}`).value,sample.quantity),sample.total);
+          const unit=name==='公式法报价单'?expectedCurrentFormulaUnit(payload.items[index]):sample.unit;
+          const total=moneyProduct(unit,sample.quantity);
+          assert.equal(sheet.getCell(`F${row}`).value,unit,`${name} ${sample.name} unit`);
+          assert.equal(sheet.getCell(`G${row}`).value,total,`${name} ${sample.name} total`);
+          assert.equal(moneyProduct(sheet.getCell(`F${row}`).value,sample.quantity),total);
           const freightColumn = sheet.getRow(10).values.indexOf("运费");
           assert.ok(freightColumn > 0, `${name} freight column`);
           assert.equal(money(sheet.getCell(row,freightColumn).value || 0),
@@ -173,7 +182,8 @@ for (const modern of [false, true]) {
             }
           }
         });
-        assert.equal(sheet.getCell(`G${11+cases.length}`).value,money(cases.reduce((sum,sample)=>sum+sample.total,0)));
+        assert.equal(sheet.getCell(`G${11+cases.length}`).value,moneySum(cases.map((sample,index)=>
+          name==='公式法报价单'?moneyProduct(expectedCurrentFormulaUnit(payload.items[index]),sample.quantity):sample.total)));
       }
     } finally {
       await fs.rm(tempDir,{recursive:true,force:true});
@@ -386,7 +396,7 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
     closeTo(quickSheet.getCell(11, reinforcementColumn).value, 120, "quick reinforcement per-cabinet amount");
     assert.deepEqual(
       ["L11", "M11", "N11", "O11", "P11"].map((cell) => Number(formulaSheet.getCell(cell).value)),
-      [180, 90, 270, 135, 35.1],
+      [180, 90, 270, 135, 52.38],
       "other formula components changed",
     );
     closeTo(quickSheet.getCell("L11").value, 3150, "quick cabinet per-cabinet amount excluding attachments");
@@ -440,7 +450,9 @@ test("formal workbook preserves the legacy desktop quotation format", async () =
       "",
     ];
     for (const [sheetName, expectedAmounts] of [
-      ["公式法报价单", [[755.1, 1510.2], [1115.5, 1115.5]]],
+      ["公式法报价单", (JSON.parse(await fs.readFile(fixturePath,'utf8')).items).map(item=>{
+        const unit=expectedCurrentFormulaUnit(item);return [unit,moneyProduct(unit,item.quantity)];
+      })],
       ["快速报价单", [[3200, 6400], [4100, 4100]]],
     ]) {
       const sheet = workbook.getWorksheet(sheetName);
@@ -628,11 +640,11 @@ test("workbook uses final attachment quantities for every ordinary row", async (
       "Excel recalculation preserves the rounded unit price with freight outside discount");
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 822.4, "formula unit scales ordinary attachment rows");
-    closeTo(formulaSheet.getCell("G11").value, 2467.2, "formula line scales ordinary attachment rows");
+    closeTo(formulaSheet.getCell("F11").value, 854.62, "formula unit scales ordinary attachment rows");
+    closeTo(formulaSheet.getCell("G11").value, 2563.86, "formula line scales ordinary attachment rows");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(formulaSheet.getCell(11, formulaHeaderIndex("运费")).value, 150, "formula final freight");
-    [360, 90, 180, 72, 23.4].forEach((expected, index) => closeTo(
+    [360, 90, 180, 72, 55.62].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
       expected,
       `non-ganged formula per-cabinet component ${index + 1}`,
@@ -733,11 +745,11 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     closeTo(quickSheet.getCell(11, headerIndex("运费")).value, 100, "ganged freight ignores split count");
 
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 910.4, "ganged formula equivalent unit excludes door transformation");
-    closeTo(formulaSheet.getCell("G11").value, 1820.8, "ganged formula line excludes door transformation");
+    closeTo(formulaSheet.getCell("F11").value, 948.02, "ganged formula equivalent unit excludes door transformation");
+    closeTo(formulaSheet.getCell("G11").value, 1896.04, "ganged formula line excludes door transformation");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(formulaSheet.getCell(11, formulaHeaderIndex("运费")).value, 100, "ganged formula freight ignores split count");
-    [720, 180, 360, 144, 46.8].forEach((expected, index) => closeTo(
+    [720, 180, 360, 144, 122.04].forEach((expected, index) => closeTo(
       formulaSheet.getCell(11, 12 + index).value,
       expected,
       `ganged formula component ${index + 1}`,
@@ -781,7 +793,7 @@ test("formula export falls back from null attachment fees and leaves missing wei
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     const formulaSheet = workbook.getWorksheet("公式法报价单");
-    closeTo(formulaSheet.getCell("F11").value, 755.1, "formula null attachment fee fallback");
+    closeTo(formulaSheet.getCell("F11").value, 763.2, "formula uses popup fee and current management");
 
     const detailSheet = workbook.getWorksheet("成本明细");
     let materialRow = null;
@@ -837,7 +849,7 @@ test("other attachments stay at original price in both exported quotations", asy
     await workbook.xlsx.readFile(outputPath);
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     const quickSheet = workbook.getWorksheet("快速报价单");
-    closeTo(formulaSheet.getCell("F11").value, 950, "formula keeps other attachment outside discount");
+    closeTo(formulaSheet.getCell("F11").value, 983.15, "formula keeps other attachment outside discount");
     closeTo(quickSheet.getCell("F11").value, 950, "quick keeps other attachment outside discount");
 
     const quickHeaders = quickSheet.getRow(10).values;

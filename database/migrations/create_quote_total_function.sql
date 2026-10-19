@@ -25,21 +25,20 @@ RETURNS TABLE (
 LANGUAGE SQL
 IMMUTABLE
 AS $function$
-  SELECT ROUND(p_corrected_material_weight_kg * p_material_price_per_kg, 2),
-         ROUND(COALESCE(p_auxiliary_cost, 0), 2),
-         ROUND(COALESCE(p_labor_cost, 0), 2),
-         ROUND(COALESCE(p_attachment_fee, 0), 2),
-         ROUND(COALESCE(p_spray_cost, 0), 2),
-         ROUND(COALESCE(p_labor_cost, 0) * 0.13, 2),
-         ROUND(
-           p_corrected_material_weight_kg * p_material_price_per_kg
-           + COALESCE(p_auxiliary_cost, 0)
-           + COALESCE(p_labor_cost, 0)
-           + COALESCE(p_attachment_fee, 0)
-           + COALESCE(p_spray_cost, 0)
-           + COALESCE(p_labor_cost, 0) * 0.13,
-           2
-         );
+  -- The database base has zero freight; API/client rederive with actual freight.
+  WITH components AS (
+    SELECT ROUND(p_corrected_material_weight_kg * p_material_price_per_kg, 2) AS material_cost,
+      ROUND(COALESCE(p_auxiliary_cost, 0), 2) AS auxiliary_cost,
+      ROUND(COALESCE(p_labor_cost, 0), 2) AS labor_cost,
+      ROUND(COALESCE(p_attachment_fee, 0), 2) AS attachment_fee,
+      ROUND(COALESCE(p_spray_cost, 0), 2) AS spray_cost
+  ), fees AS (
+    SELECT *, ROUND((material_cost + auxiliary_cost + labor_cost + attachment_fee + spray_cost) * 0.06, 2) AS management_fee
+    FROM components
+  )
+  SELECT material_cost, auxiliary_cost, labor_cost, attachment_fee, spray_cost, management_fee,
+    material_cost + auxiliary_cost + labor_cost + attachment_fee + spray_cost + management_fee AS total_cost
+  FROM fees;
 $function$;
 
 CREATE OR REPLACE FUNCTION calc.get_material_unit_price(
@@ -286,7 +285,7 @@ END;
 $function$;
 
 COMMENT ON FUNCTION calc.calculate_quote_total(VARCHAR, VARCHAR, VARCHAR, VARCHAR, NUMERIC, NUMERIC, NUMERIC, NUMERIC, NUMERIC, VARCHAR, VARCHAR, DATE)
-IS 'Unified V1.0 cost: material + auxiliary + labor + attachment + spray + labor*13%. Standard template weight/area are supplied from the formula engine; experience products are looked up from model tables.';
+IS 'Current cost: material + auxiliary + cabinet labor + attachment + spray + 6% management on all components including actual freight. Standard template weight/area are supplied from the formula engine; experience products are looked up from model tables.';
 
 COMMIT;
 

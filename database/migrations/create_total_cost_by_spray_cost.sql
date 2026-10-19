@@ -24,33 +24,20 @@ RETURNS TABLE (
 LANGUAGE SQL
 IMMUTABLE
 AS $function$
-  WITH inputs AS (
-    SELECT
-      p_corrected_material_weight_kg * p_material_price_per_kg AS material_cost_raw,
-      COALESCE(p_auxiliary_cost, 0) AS auxiliary_cost_raw,
-      COALESCE(p_labor_cost, 0) AS labor_cost_raw,
-      COALESCE(p_attachment_fee, 0) AS attachment_fee_raw,
-      COALESCE(p_spray_cost, 0) AS spray_cost_raw
-  ), components AS (
-    SELECT
-      ROUND(material_cost_raw, 2) AS material_cost,
-      ROUND(auxiliary_cost_raw, 2) AS auxiliary_cost,
-      ROUND(labor_cost_raw, 2) AS labor_cost,
-      ROUND(attachment_fee_raw, 2) AS attachment_fee,
-      ROUND(spray_cost_raw, 2) AS spray_cost,
-      ROUND(labor_cost_raw * 0.13, 2) AS management_fee,
-      material_cost_raw + auxiliary_cost_raw + labor_cost_raw
-        + attachment_fee_raw + spray_cost_raw + labor_cost_raw * 0.13 AS total_cost_raw
-    FROM inputs
+  -- The database base has zero freight; API/client rederive with actual freight.
+  WITH components AS (
+    SELECT ROUND(p_corrected_material_weight_kg * p_material_price_per_kg, 2) AS material_cost,
+      ROUND(COALESCE(p_auxiliary_cost, 0), 2) AS auxiliary_cost,
+      ROUND(COALESCE(p_labor_cost, 0), 2) AS labor_cost,
+      ROUND(COALESCE(p_attachment_fee, 0), 2) AS attachment_fee,
+      ROUND(COALESCE(p_spray_cost, 0), 2) AS spray_cost
+  ), fees AS (
+    SELECT *, ROUND((material_cost + auxiliary_cost + labor_cost + attachment_fee + spray_cost) * 0.06, 2) AS management_fee
+    FROM components
   )
-  SELECT material_cost,
-         auxiliary_cost,
-         labor_cost,
-         attachment_fee,
-         spray_cost,
-         management_fee,
-         ROUND(total_cost_raw, 2) AS total_cost
-  FROM components;
+  SELECT material_cost, auxiliary_cost, labor_cost, attachment_fee, spray_cost, management_fee,
+    material_cost + auxiliary_cost + labor_cost + attachment_fee + spray_cost + management_fee AS total_cost
+  FROM fees;
 $function$;
 
 COMMENT ON FUNCTION calc.calculate_total_cost_by_spray_cost(NUMERIC, NUMERIC, NUMERIC, NUMERIC, NUMERIC, NUMERIC)
@@ -58,6 +45,6 @@ IS 'Total cost using a resolved spray cost; supports both template area pricing 
 
 COMMIT;
 
--- Example: 100 kg * 4.20 + 8.30 + 1000 + 50 + direct spray 86 + 1000 * 0.13 = 1694.30
+-- Example: base 1564.30 + ROUND(1564.30 * 0.06, 2) = 1658.16 (freight zero).
 SELECT *
 FROM calc.calculate_total_cost_by_spray_cost(100, 4.20, 8.30, 1000, 50, 86);

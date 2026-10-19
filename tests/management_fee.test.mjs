@@ -34,3 +34,21 @@ test('ganged management is rounded once on whole-set costs, not child management
   assert.equal(result.formula_cost.total_cost,.17);
   assert.equal(result.quick_quote.total_cost,2);
 });
+
+test('all executable SQL entrypoints and generated labor imports use the current fee rule',async()=>{
+  for(const file of ['database/migrations/create_total_cost_calculation.sql',
+    'database/migrations/create_total_cost_by_spray_cost.sql','database/migrations/create_quote_total_function.sql',
+    'database/migrations/create_attachment_selection_and_fee.sql','database/migrations/enforce_management_fee_6_percent.sql',
+    'database/migrations/cabinet_labor_v1.sql','database/cabinet-labor/web/01-create.sql']) {
+    const source=await fs.readFile(new URL('../'+file,import.meta.url),'utf8');
+    assert.doesNotMatch(source,/0\.13|13%/,file);
+    assert.match(source,/0\.06/,file);
+  }
+  const stage=await fs.readFile(new URL('../database/cabinet-labor/web/02-stage.sql',import.meta.url),'utf8');
+  const hex=stage.match(/decode\('([0-9a-f]+)'/)?.[1];
+  assert.equal(JSON.parse(Buffer.from(hex,'hex').toString('utf8')).management_fee_rate,.06);
+  const exporter=await fs.readFile(new URL('../export_dual_quote_workbook.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(exporter,/历史管理费用|历史人工成本的|management_fee_rate\s*\?\?\s*0\.13/);
+  const client=await fs.readFile(new URL('../desktop_client/layout_refresh.py',import.meta.url),'utf8');
+  assert.doesNotMatch(client,/base_management|original_refresh\(self\)/);
+});

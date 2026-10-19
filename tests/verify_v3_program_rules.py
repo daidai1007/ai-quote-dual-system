@@ -15,6 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT_ROOT = ROOT / "desktop_client"
 sys.path.insert(0, str(CLIENT_ROOT))
 
+# These application policies now use real Qt types. Load them before the
+# deliberately minimal legacy overlay stubs below replace PySide6 modules.
+import wheel_edit_guard
+import dropdown_style
+
 
 class Widget:
     pass

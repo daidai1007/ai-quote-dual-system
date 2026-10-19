@@ -8,6 +8,7 @@ editing state inside the existing draft-item JSON snapshots.
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import ExitStack
 from datetime import date
 import hashlib
 import html
@@ -82,6 +83,8 @@ from PySide6.QtWidgets import (
 from layout_refresh import (_fit_window_minimum_to_screen, _retire_quote_action_dock,
                             _ensure_quote_action_dock_host)
 from wheel_edit_guard import install_wheel_edit_guard
+from dropdown_style import ComboPopupDelegate as _SchemeComboItemDelegate
+from quick_discount_rules import missing_management_costs
 try:
     from quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product, apply_management_fee,
                                      quick_attachment_line_amount, quick_discount_breakdown)
@@ -507,18 +510,8 @@ def _row_values(item):
         _quick(item), attachments, _popup_quick_amount,
     )
     formula_current_fee = money_sum(_popup_formula_amount(row) for row in attachments)
-    stored_formula_fee = _number(formula.get("attachment_fee"), formula_current_fee)
-    formula_total = _number(formula.get("total_cost"))
-    if formula.get("total_cost") is None:
-        formula_base_total = sum(
-            _number(formula.get(key))
-            for key in ("material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee")
-        )
-    else:
-        formula_base_total = formula_total - stored_formula_fee
     formula = dict(formula)
     formula["attachment_fee"] = formula_current_fee
-    formula["total_cost"] = formula_base_total + formula_current_fee
     quantity = max(1, int(_number(item.get("quantity", 1), 1)))
     freight = max(0.0, _number(item.get("freight_fee", item.get("freight", 0))))
     formula = apply_management_fee(formula, freight)
@@ -2359,6 +2352,11 @@ def _quote_export_items_snapshot(window, items=None):
         )
         item["quick"] = quick_snapshot
         item["formula"] = apply_management_fee(formula_snapshot, _number(item.get("freight_fee", item.get("freight", 0))))
+        missing = missing_management_costs(item["formula"])
+        if missing:
+            labels = {"material_cost": "材料成本", "auxiliary_cost": "辅材成本", "labor_cost": "柜体人工成本",
+                      "attachment_fee": "附件成本", "spray_cost": "喷涂费用"}
+            raise ValueError(f"第{number}行柜体成本分项缺失（{'、'.join(labels[key] for key in missing)}），请重新计算整柜")
         values = _row_values(item)
         quick = _quick(item)
         display = {
@@ -2683,7 +2681,7 @@ def _detail_rows(item):
             spec="材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
             formula=f"{expression} × {rate:g} = {_money(management)} 元",
             quantity=1, unit="项", unit_price=management, base_amount=management,
-            note=f"计费基数 {_money(base)} 元；管理费本身不参与基数" + ("" if complete else "；历史快照缺少分项，以原总成本扣除原管理费并加运费还原基数"),
+            note=f"计费基数 {_money(base)} 元；管理费本身不参与基数" + ("" if complete else "；成本分项缺失，须重新计算整柜"),
         )
     else:
         add_row(category="management_fee", type="管理费用", name="管理费用", spec="报价快照汇总",
@@ -2982,65 +2980,6 @@ def _confirm_discard_unsaved(parent):
         "放弃更改并关闭",
     )
     return dialog.exec() == QDialog.DialogCode.Accepted
-
-
-class _SchemeComboItemDelegate(QStyledItemDelegate):
-    def __init__(self, combo, separator_index=-1):
-        super().__init__(combo.view())
-        self.combo = combo
-        self.separator_index = separator_index
-        self.setObjectName("scheme2DropdownItemDelegate")
-
-    def sizeHint(self, option, index):
-        return QSize(max(120, option.rect.width()), 40)
-
-    @staticmethod
-    def checkbox_rect(rect):
-        return QRect(rect.left() + 14, rect.center().y() - 7, 15, 15)
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        placeholder_value = self.combo.property("schemePlaceholderIndex")
-        placeholder_index = int(placeholder_value) if placeholder_value is not None else -1
-        if hasattr(self.combo, "is_row_selected"):
-            chosen = self.combo.is_row_selected(index.row())
-        else:
-            chosen = (
-                index.row() == self.combo.currentIndex()
-                and self.combo.currentIndex() >= 0
-                and index.row() != placeholder_index
-            )
-        hovered = bool(option.state & (QStyle.StateFlag.State_MouseOver | QStyle.StateFlag.State_Selected))
-        if chosen:
-            painter.fillRect(rect, QColor("#E6F1FB"))
-        elif hovered:
-            painter.fillRect(rect, QColor("#F5F9FF"))
-        else:
-            painter.fillRect(rect, QColor("#FFFFFF"))
-        if index.row() == self.separator_index:
-            painter.setPen(QColor("#D7DCE3"))
-            painter.drawLine(rect.left(), rect.top(), rect.right(), rect.top())
-        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        custom = index.row() == self.separator_index
-        shows_checkbox = hasattr(self.combo, "is_row_selected") and index.row() > 0
-        if shows_checkbox:
-            check_rect = self.checkbox_rect(rect)
-            painter.setPen(QPen(QColor("#2563EB" if chosen else "#98A2B3"), 1))
-            painter.setBrush(QColor("#2563EB") if chosen else QColor("#FFFFFF"))
-            painter.drawRoundedRect(check_rect, 2, 2)
-            if chosen:
-                painter.setPen(QPen(QColor("#FFFFFF"), 1.7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-                center_y = check_rect.center().y()
-                painter.drawLine(QPoint(check_rect.left() + 3, center_y), QPoint(check_rect.left() + 6, center_y + 3))
-                painter.drawLine(QPoint(check_rect.left() + 6, center_y + 3), QPoint(check_rect.right() - 2, center_y - 4))
-        painter.setPen(QColor("#185FA5" if chosen or custom else "#1C1C1E"))
-        painter.drawText(
-            rect.adjusted(40 if shows_checkbox else 14, 0, -14, 0),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            text,
-        )
-        painter.restore()
 
 
 class _DropdownPopupStateFilter(QObject):
@@ -4533,14 +4472,19 @@ def _recognize_scheme2_page(window, entry):
     worker = _Scheme2PageRecognitionWorker(window._scheme2_recognition_tools, entry, window)
     window._scheme2_page_worker = worker
     window._scheme2_recognition_key = entry["key"]
-    worker.succeeded.connect(lambda key, item: _finish_scheme2_page_recognition(window, key, item))
-    worker.failed.connect(lambda key, message: _fail_scheme2_page_recognition(window, key, message))
+    epoch = getattr(window, "_scheme2_workspace_epoch", 0)
+    def current():
+        return epoch == getattr(window, "_scheme2_workspace_epoch", 0)
+    worker.succeeded.connect(lambda key, item: _finish_scheme2_page_recognition(window, key, item) if current() else None)
+    worker.failed.connect(lambda key, message: _fail_scheme2_page_recognition(window, key, message) if current() else None)
 
     def finished():
         if getattr(window, "_scheme2_page_worker", None) is worker:
             window._scheme2_page_worker = None
             window._scheme2_recognition_key = None
         worker.deleteLater()
+        if not current():
+            return
         _sync_scheme2_page_navigation(window)
         QTimer.singleShot(0, lambda: _start_next_scheme2_recognition(window))
 
@@ -5665,6 +5609,7 @@ def _refresh_scheme2_attachment_summary(window):
     while layout.count():
         item = layout.takeAt(0)
         if item.widget() is not None:
+            item.widget().hide()
             item.widget().deleteLater()
     attachments = [item for item in getattr(window, "attachments", []) if isinstance(item, dict)]
     if not attachments:
@@ -6197,7 +6142,35 @@ def _retire_paused_quote_worker(window, worker):
         QTimer.singleShot(0, window.close)
 
 
-def _pause_quote_calculation(window):
+def _retire_workspace_workers(window, names):
+    """Detach obsolete callbacks, retaining Qt threads until they finish safely."""
+    retired = getattr(window, "_scheme2_paused_quote_workers", set())
+    window._scheme2_paused_quote_workers = retired
+    for name in names:
+        worker = getattr(window, name, None)
+        setattr(window, name, None)
+        if worker is None or worker in retired:
+            continue
+        try:
+            running = worker.isRunning()
+        except RuntimeError:  # A completed worker may already be deleteLater'd.
+            continue
+        worker._client_cancelled = True
+        worker.requestInterruption()
+        for signal_name in ("succeeded", "failed", "progress", "retrying", "finished"):
+            signal = getattr(worker, signal_name, None)
+            if signal is not None:
+                try:
+                    signal.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+        retired.add(worker)
+        worker.finished.connect(lambda stopped=worker: _retire_paused_quote_worker(window, stopped))
+        if not running:
+            _retire_paused_quote_worker(window, worker)
+
+
+def _invalidate_quote_calculation(window):
     """Cancel this client flow without terminating a live Qt/network thread."""
     window._scheme2_calculation_epoch = getattr(window, "_scheme2_calculation_epoch", 0) + 1
     window._scheme2_calculation_paused = True
@@ -6213,28 +6186,12 @@ def _pause_quote_calculation(window):
         timer = getattr(window, name, None)
         if isinstance(timer, QTimer):
             timer.stop()
-    retired = getattr(window, "_scheme2_paused_quote_workers", set())
-    window._scheme2_paused_quote_workers = retired
-    for name in ("worker", "template_worker", "ganged_template_worker", "_scheme2_attachment_catalog_worker"):
-        worker = getattr(window, name, None)
-        setattr(window, name, None)
-        if worker is None or worker in retired:
-            continue
-        worker._client_cancelled = True
-        worker.requestInterruption()
-        # Stop legacy core callbacks as well as the overlay callbacks. The
-        # thread stays owned and alive until its current network call returns.
-        for signal_name in ("succeeded", "failed", "progress", "retrying", "finished"):
-            signal = getattr(worker, signal_name, None)
-            if signal is not None:
-                try:
-                    signal.disconnect()
-                except (RuntimeError, TypeError):
-                    pass
-        retired.add(worker)
-        worker.finished.connect(lambda stopped=worker: _retire_paused_quote_worker(window, stopped))
-        if not worker.isRunning():
-            _retire_paused_quote_worker(window, worker)
+    _retire_workspace_workers(window, (
+        "worker", "template_worker", "ganged_template_worker", "_scheme2_attachment_catalog_worker"))
+
+
+def _pause_quote_calculation(window):
+    _invalidate_quote_calculation(window)
     window.scheme2_add_button.setEnabled(True)
     window.scheme2_add_button.setText("重试")
     window.scheme2_add_button.setToolTip("手动重新发起计算；不会自动重试")
@@ -6245,6 +6202,135 @@ def _pause_quote_calculation(window):
     window.risk_label.setText("计算已暂停；旧任务结果不会采用，点击“重试”可重新计算。")
     LOGGER.info("quote calculation paused by operator epoch=%s request_id=%s", window._scheme2_calculation_epoch,
                 getattr(window, "_quote_progress_request_id", ""))
+
+
+def _reset_scheme2_workspace(window):
+    """A fresh scheme is not the per-cabinet reset, which retains selections."""
+    window._scheme2_workspace_epoch = getattr(window, "_scheme2_workspace_epoch", 0) + 1
+    loading = getattr(window, "_scheme2_loading_order", False)
+    window._scheme2_loading_order = True
+    try:
+        _invalidate_quote_calculation(window)
+        overlay = getattr(window, "_scheme2_attachment_overlay", None)
+        if overlay is not None:
+            overlay.reject()
+            window._scheme2_attachment_overlay = None
+        controller = window._scheme2_document_controller
+        controller.reset()
+        # A document precheck has no writes. Export/confirmation is allowed to
+        # finish before starting a new scheme (guarded by the scheme centre).
+        preview_worker = getattr(controller, "preview_worker", None)
+        if preview_worker is not None:
+            window._scheme2_retired_preview_worker = preview_worker
+            controller.preview_worker = None
+        _retire_workspace_workers(window, (
+            "_scheme2_page_worker", "_scheme2_order_load_worker", "_scheme2_order_save_worker",
+            "_scheme2_retired_preview_worker", "history_worker"))
+        # Prevent change handlers from scheduling new templates, marking fields
+        # as manual, or saving an intermediate, half-cleared workspace.
+        with ExitStack() as blockers:
+            signal_blockers = []
+            for name in (
+                "model_edit", "scheme2_name_edit", "quote_spec_edit", "product_combo",
+                "material_combo", "coating_combo", "scheme2_color_combo", "company_combo", "scheme2_company",
+                "quantity_spin", "cabinet_body_thickness_spin", "width_spin", "height_spin", "depth_spin",
+                "single_door_combo", "double_door_combo", "freight_spin", "waste_factor_spin",
+                "labor_multiplier", "formula_discount", "quick_discount", "notes_text", "scheme2_order_number",
+            ):
+                control = getattr(window, name, None)
+                if control is not None:
+                    signal_blockers.append(blockers.enter_context(QSignalBlocker(control)))
+            window.reset_current_cabinet()
+            # The recovered per-cabinet reset explicitly unblocks some inputs.
+            # Reapply our outer guard before clearing the whole scheme.
+            for blocker in signal_blockers:
+                blocker.reblock()
+            window.quantity_spin.setValue(1)
+            for name, value in (("single_door_combo", 1), ("double_door_combo", 0)):
+                combo = getattr(window, name)
+                combo.setCurrentIndex(combo.findData(value))
+            window.scheme2_name_edit.clear()
+            window.quote_spec_edit.clear()
+            for name in ("product_combo", "material_combo", "coating_combo", "scheme2_color_combo",
+                         "company_combo", "scheme2_company"):
+                combo = getattr(window, name, None)
+                if isinstance(combo, QComboBox):
+                    combo.setCurrentIndex(-1)
+                    if combo.isEditable():
+                        combo.clearEditText()
+            window.scheme2_order_number.clear()
+            window.scheme2_order_number.setToolTip("")
+        # Per-cabinet defaults can restart history/template debounce timers.
+        for name in ("_scheme2_recognition_elapsed_timer", "_scheme2_order_save_timer", "scheme2_undo_timer",
+                     "_history_price_timer", "_formula_template_debounce_timer"):
+            timer = getattr(window, name, None)
+            if isinstance(timer, QTimer):
+                timer.stop()
+        window._persistent_product_selection = None
+        window.draft_items = []
+        window.recognized_drawings, window.recognized_documents = [], []
+        window._draft_drawing_refs = {}
+        window.active_drawing = window._quote_drawing = None
+        window._scheme2_drawing_pages, window._scheme2_drawing_page_index = [], -1
+        window._scheme2_recognition_key = window._scheme2_recognition_started_at = None
+        window._scheme2_edit_item = window._scheme2_detail_item = window._scheme2_deleted = None
+        window._scheme2_new_quote_required = False
+        window._scheme2_clear_attachments_on_return = False
+        window._scheme2_active_settings = None
+        window._scheme2_advancing = False
+        window.current_template_code = None
+        window._attachment_v2_line_id = None
+        window._v2_confirmation_inputs = []
+        window._quote_progress_state, window._quote_progress_request_id = {}, ""
+        window.pending_export_path = None
+        window._scheme2_export_validation_passed = False
+        window.scheme2_manual_fields.clear()
+        for badge in window.scheme2_provenance_labels.values():
+            badge.setText("待识别")
+            badge.setObjectName("scheme2ProvenancePending")
+            shell = badge.parentWidget()
+            shell.setProperty("provenanceState", "pending")
+            for widget in (shell, badge):
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+        _clear_scheme2_attachments(window)
+        window.scheme2_attachment_status.setText("未选择附件")
+        window.scheme2_attachment_card.setProperty("provenanceState", "pending")
+        window.scheme2_attachment_card.style().unpolish(window.scheme2_attachment_card)
+        window.scheme2_attachment_card.style().polish(window.scheme2_attachment_card)
+        preview = getattr(window, "quote_drawing_preview", None)
+        if preview is not None:
+            preview.reset_workspace()
+        progress = window.scheme2_add_progress
+        window._scheme2_add_started_at = window._scheme2_add_phase_started_at = None
+        window._scheme2_add_paused_at = window._scheme2_add_phase_key = None
+        for key, value in (("step", 0), ("stepLabel", ""), ("failed", False),
+                           ("paused", False), ("failureReason", "")):
+            progress.setProperty(key, value)
+        progress.reset()
+        progress.setFormat("")
+        progress.setToolTip("")
+        progress.setAccessibleName("")
+        progress.setCursor(Qt.CursorShape.ArrowCursor)
+        progress.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        progress.hide()
+        progress.style().unpolish(progress)
+        progress.style().polish(progress)
+        window.scheme2_add_button.setText("加入报价清单")
+        window.scheme2_add_button.setToolTip("")
+        window.scheme2_add_button.setEnabled(True)
+        window.scheme2_cost_undo.hide()
+        window.scheme2_detail_table.setRowCount(0)
+        window.scheme2_detail_meta.clear()
+        window.scheme2_save_button.setToolTip("保存当前页面、图纸、报价、成本明细及报价单")
+        window.statusBar().clearMessage()
+        _sync_scheme2_page_navigation(window)
+        _refresh_scheme2_ganged_ui(window)
+        _set_dirty(window, False)
+        window.refresh_summary()
+        controller.sync_buttons()
+    finally:
+        window._scheme2_loading_order = loading
 
 
 def _calculate_and_add(window):
@@ -6328,6 +6414,9 @@ def _refresh_add_progress_display(window):
         return
     step = int(progress.property("step") or 0)
     label = str(progress.property("stepLabel") or "")
+    if not step and not label:
+        # Resize/page changes must not reconstruct elapsed text for an idle flow.
+        return
     started = getattr(window, "_scheme2_add_started_at", None)
     clock_end = getattr(window, "_scheme2_add_paused_at", None) or time.monotonic()
     elapsed = max(0.0, clock_end - started) if started is not None else 0.0

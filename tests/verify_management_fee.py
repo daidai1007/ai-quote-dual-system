@@ -52,6 +52,34 @@ class ManagementFee(unittest.TestCase):
                 self.assertEqual(pricing.apply_management_fee(result, sample["freight"]), result)
                 self.assertEqual(sample["quote"], before)
 
+    def test_je_null_old_fee_and_total_work_in_live_controller_summary_and_export(self):
+        item = product()
+        item["freight_fee"] = 61.86
+        item["formula"] = dict(material_cost=826.52, auxiliary_cost=49.60, labor_cost=332.54,
+                               spray_cost=80.65, attachment_fee=None, management_fee=None, total_cost=None,
+                               management_fee_rate=.13)
+        item["formula_base"] = copy.deepcopy(item["formula"])
+        item["attachments"][0]["formula_amount"] = 720.88
+        self.window.current_result = dict(formula=copy.deepcopy(item["formula"]), quick=copy.deepcopy(item["quick"]))
+        self.window._formula_base_result = copy.deepcopy(item["formula_base"])
+        self.window.attachments = copy.deepcopy(item["attachments"])
+        self.window.freight_spin.setValue(61.86)
+        self.window.refresh_discounted_totals()
+        self.assertEqual(self.window.current_result["formula"]["management_fee"], 124.32)
+        self.assertEqual(self.window.current_result["formula"]["total_cost"], 2134.51)
+        self.window.draft_items = [item]
+        self.window.refresh_summary()
+        self.assertEqual(ui._row_values(item)[17], 2196.37)
+        frozen = ui._quote_export_items_snapshot(self.window, items=[item])[0]
+        self.assertEqual(frozen["formula"]["management_fee"], 124.32)
+        self.assertEqual(frozen["formula"]["management_fee_rate"], .06)
+
+    def test_missing_actual_cost_component_cannot_be_filled_from_old_total(self):
+        item = product()
+        del item["formula"]["auxiliary_cost"]
+        with self.assertRaisesRegex(ValueError, "辅材成本"):
+            ui._quote_export_items_snapshot(self.window, items=[item])
+
     def test_quantity_freight_popup_cost_and_export_stay_consistent(self):
         item = product(10)
         self.window.draft_items = [item]

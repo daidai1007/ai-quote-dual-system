@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
 import { materialUnitPriceFromSidebar } from './material_price_override.mjs';
-import {PRICING_BASIS, money, moneySum, quickAttachmentLineAmount, validateQuoteDisplay, applyManagementFee} from '../quick_discount_rules.mjs';
+import {PRICING_BASIS, money, moneySum, quickAttachmentLineAmount, formulaAttachmentLineAmount, validateQuoteDisplay, applyManagementFee, missingManagementCosts} from '../quick_discount_rules.mjs';
 
 // SQL values are always UTF-8 hex literals; formulas are evaluated only by attachment_cost.
 export const sqlValue = value => value == null ? 'NULL' : typeof value === 'number'
@@ -80,9 +80,20 @@ const addCustomAmount=(quote,amount)=>{
   if(output.total_cost!=null) output.total_cost=round(Number(output.total_cost)+amount);
   return output;
 };
+function requireCabinetCosts(formula) {
+  const labels={material_cost:'材料成本',auxiliary_cost:'辅材成本',labor_cost:'柜体人工成本',spray_cost:'喷涂费用'};
+  const missing=missingManagementCosts({...formula,attachment_fee:0}).filter(key=>key in labels);
+  if(missing.length) throw new Error(`柜体成本快照不完整（缺少${missing.map(key=>labels[key]).join('、')}），请重新计算整柜`);
+}
+function currentFormula(formula, rows, multiplier=1, freight=0) {
+  requireCabinetCosts(formula);
+  multiplier=Number(multiplier);
+  if(!Number.isFinite(multiplier)||multiplier<0.01||multiplier>10) throw new Error('人工倍率必须在0.01至10之间');
+  return applyManagementFee({...formula,labor_cost:money(Number(formula.labor_cost)*multiplier),
+    attachment_fee:moneySum(rows.map(row=>row.status==='QUICK_ONLY'?0:formulaAttachmentLineAmount(row)))},freight);
+}
 export function applyAttachmentTotals(base,rows,freightFee=0) {
   const totals=attachmentTotals(rows),formula={...(base.formula_cost||{})},quick={...(base.quick_quote||{})};
-  formula.total_cost=formula.total_cost==null||totals.formula_attachment_fee==null?null:round(Number(formula.total_cost)-Number(formula.attachment_fee||0)+totals.formula_attachment_fee);
   quick.total_cost=quick.total_cost==null||totals.quick_attachment_fee==null?null:round(Number(quick.total_cost)-Number(quick.attachment_fee||0)+totals.quick_attachment_fee);
   formula.attachment_fee=totals.formula_attachment_fee;quick.attachment_fee=totals.quick_attachment_fee;
   return {...base,formula_cost:applyManagementFee(formula,freightFee),quick_quote:quick,attachments:rows,attachment_contract:2,
@@ -132,32 +143,15 @@ function popupDocumentSnapshot(item, saved) {
   });
   const result=saved.environment.quote_result;
   if(!result?.formula_cost||!result?.quick_quote) throw new Error('柜体成本快照不完整，请重新计算整柜');
-  let formula={...result.formula_cost};
+  const formula=currentFormula(result.formula_cost,rows,item.labor_multiplier??1,item.freight_fee??item.freight??0);
   const quick={...result.quick_quote};
-  let baseCost;
-  if(formula.total_cost!=null) baseCost=moneySum([formula.total_cost,-Number(formula.attachment_fee||0)]);
-  else {
-    const components=['material_cost','auxiliary_cost','labor_cost','spray_cost','management_fee'];
-    if(components.some(key=>formula[key]==null||!Number.isFinite(Number(formula[key]))))
-      throw new Error('柜体成本快照不完整，请重新计算整柜');
-    baseCost=components.reduce((sum,key)=>sum+Number(formula[key]),0);
-  }
-  const multiplier=Number(item.labor_multiplier??1);
-  if(!Number.isFinite(multiplier)||multiplier<0.01||multiplier>10) throw new Error('人工倍率必须在0.01至10之间');
-  if(formula.labor_cost!=null&&formula.management_fee!=null){
-    const labor=Number(formula.labor_cost)*multiplier;
-    baseCost=baseCost-Number(formula.labor_cost)+labor;
-    formula.labor_cost=labor;
-  }
-  formula.attachment_fee=moneySum(rows.map(row=>row.formula_amount));
-  formula.total_cost=moneySum([baseCost,formula.attachment_fee]);
-  formula=applyManagementFee(formula,item.freight_fee??item.freight??0);
   const basePrice=quick.base_price??(quick.total_cost==null?NaN:Number(quick.total_cost)-Number(quick.attachment_fee||0));
   if(!Number.isFinite(Number(basePrice))) throw new Error('柜体面价快照不完整，请重新计算整柜');
   quick.base_price=money(basePrice);
   quick.attachment_fee=moneySum(rows.map(quickAttachmentLineAmount));
   quick.total_cost=moneySum([quick.base_price,quick.attachment_fee]);
-  const hydrated={...item,attachments:rows,formula,quick,formula_base:result.formula_cost,
+  const hydrated={...item,attachments:rows,formula,quick,
+    formula_base:currentFormula(result.formula_cost,rows,1,item.freight_fee??item.freight??0),
     quote_display:{...item.quote_display,attachments:rows}};
   validateQuoteDisplay(hydrated);
   return hydrated;
@@ -318,14 +312,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       ||!base.quick_quote||typeof base.quick_quote!=='object')
       throw new Error('柜体成本快照不完整，请重新计算整柜');
     base.risk_flags=(base.risk_flags||[]).filter(risk=>risk.code!=='attachment_error');
-    const formula=base.formula_cost;
-    if(formula.total_cost==null){
-      const components=['material_cost','auxiliary_cost','labor_cost','spray_cost','management_fee'];
-      if(components.some(key=>formula[key]==null||!Number.isFinite(Number(formula[key]))))
-        throw new Error('柜体成本快照不完整，请重新计算整柜');
-      formula.total_cost=round(components.reduce((sum,key)=>sum+Number(formula[key]),0));
-      formula.attachment_fee=0;
-    }
+    requireCabinetCosts(base.formula_cost);
     const children=environment.ganged_cabinets||[];
     const replay={...environment,...(input.pricing_basis?{pricing_basis:input.pricing_basis}:{}),quote_id:base.quote_id,
       material_unit_price_override:environment.material_unit_price,
@@ -391,8 +378,9 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         if((item.attachments||[]).some(a=>a.catalog_version||a.rule_id||a.status)) throw new Error('附件V2报价缺少服务端报价行ID');
         const ids=(item.attachments||[]).filter(a=>a.attachment_price_id!=null).map(a=>id(a.attachment_price_id));
         if(ids.length && await query(`SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_price WHERE attachment_price_id IN (${ids.join(',')}) AND data_version IS NOT NULL));`)) throw new Error('附件V2报价缺少服务端报价行ID');
-        validateQuoteDisplay(item);
-        items.push(item);continue;
+        const current=item.formula?{...item,formula:currentFormula(item.formula,item.attachments||[],1,item.freight_fee??item.freight??0)}:item;
+        validateQuoteDisplay(current);
+        items.push(current);continue;
       }
       const saved=structuredClone(snapshots[item.quote_line_id.toLowerCase()]);
       if(!saved) throw new Error('附件报价行不存在，请重新计算');
@@ -425,18 +413,8 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         throw error;
       }
       const result=saved.environment.quote_result;
-      let formula={...result.formula_cost};
-      // Adjust cabinet labor only; the final six-component base determines management.
-      const multiplier=Number(item.labor_multiplier??1);
-      if(!Number.isFinite(multiplier)||multiplier<0.01||multiplier>10) throw new Error('人工倍率必须在0.01至10之间');
-      if(formula.total_cost!=null && formula.labor_cost!=null && formula.management_fee!=null){
-        const labor=Number(formula.labor_cost)*multiplier;
-        formula.total_cost=Number(formula.total_cost)-Number(formula.labor_cost)+labor;
-        formula.labor_cost=labor;
-      }
-      const customFormulaTotal=customAttachments.reduce((sum,row)=>sum+Number(row.formula_amount),0);
       const customQuickTotal=customAttachments.reduce((sum,row)=>sum+Number(row.quick_amount),0);
-      formula=addCustomAmount(formula,customFormulaTotal);
+      let formula;
       let quick=addCustomAmount(result.quick_quote,customQuickTotal);
       let rows=[...saved.attachments,...customAttachments];
       if(item.pricing_basis===PRICING_BASIS){
@@ -471,14 +449,14 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         const base=money(quick.base_price??(Number(quick.total_cost||0)-oldQuickFee));
         const quickFee=moneySum(rows.map(quickAttachmentLineAmount));
         quick={...quick,base_price:base,attachment_fee:quickFee,total_cost:moneySum([base,quickFee])};
-        const formulaFee=moneySum(rows.map(row=>row.status==='QUICK_ONLY'?0:row.formula_amount));
-        formula={...formula,total_cost:moneySum([Number(formula.total_cost||0),-Number(formula.attachment_fee||0),formulaFee]),attachment_fee:formulaFee};
+        formula=currentFormula(result.formula_cost,rows,item.labor_multiplier??1,item.freight_fee??item.freight??0);
         validateQuoteDisplay({...item,attachments:rows,formula,quick});
       }
-      formula=applyManagementFee(formula,item.freight_fee??item.freight??0);
+      formula=currentFormula(result.formula_cost,rows,item.labor_multiplier??1,item.freight_fee??item.freight??0);
       // A frozen service result remains independent of later catalog and price updates.
       items.push({...item,attachments:rows,
-        ...(item.pricing_basis===PRICING_BASIS?{quote_display:{...item.quote_display,attachments:rows}}:{}),formula_base:result.formula_cost,
+        ...(item.pricing_basis===PRICING_BASIS?{quote_display:{...item.quote_display,attachments:rows}}:{}),
+        formula_base:currentFormula(result.formula_cost,rows,1,item.freight_fee??item.freight??0),
         formula,quick});
       } catch(error) {
         if(item?.pricing_basis===PRICING_BASIS && !error.issues){

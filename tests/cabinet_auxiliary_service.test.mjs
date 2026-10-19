@@ -63,8 +63,8 @@ test('JP auxiliary frame spray uses current spray price and zero for no spray',(
 test('auxiliary replacement is formula-only',()=>{
   const quick={base_price:1000,attachment_fee:20,total_cost:1020};
   const auxiliary={data_version:'aux-v1',auxiliary_cost:80,auxiliary_spray_area_m2:0,auxiliary_spray_cost:0,source_sheet:'JA1',lines:[]};
-  const result=applyCabinetAuxiliary({formula_cost:{auxiliary_cost:30,total_cost:500},quick_quote:quick},auxiliary);
-  assert.equal(result.formula_cost.total_cost,550);assert.deepEqual(result.quick_quote,quick);
+  const result=applyCabinetAuxiliary({formula_cost:{material_cost:470,labor_cost:0,spray_cost:0,attachment_fee:0,auxiliary_cost:30,total_cost:500},quick_quote:quick},auxiliary);
+  assert.equal(result.formula_cost.total_cost,583);assert.deepEqual(result.quick_quote,quick);
 });
 
 test('all 32 material profiles and 510 BOM rows execute',()=>{

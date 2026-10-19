@@ -60,7 +60,7 @@ if(!rules.some(r=>r.product_code==='JM'&&r.material_codes.includes('SUS304')))
   issues.push('JM 工作表只有 SECC 人工公式；JM 选择 SUS304/SUS316 时服务端将返回具体缺规则错误。');
 const identities=new Set();for(const rule of rules){const key=[rule.rule_kind,rule.product_code,rule.profile_code,rule.material_codes.join(','),rule.model_code,rule.width_mm,rule.height_mm,rule.depth_mm].join('|');if(identities.has(key))throw new Error(`人工规则冲突：${key}`);identities.add(key);}
 const version=`cabinet-labor-${sourceSha256.slice(0,16)}-v1`;
-const bundle={data_version:version,source_file:path.basename(source),source_sha256:sourceSha256,management_fee_rate:0.13,rules};
+const bundle={data_version:version,source_file:path.basename(source),source_sha256:sourceSha256,management_fee_rate:0.06,rules};
 fs.mkdirSync(outDir,{recursive:true});fs.mkdirSync(webDir,{recursive:true});
 fs.writeFileSync(path.join(outDir,'cabinet-labor-bundle.json'),JSON.stringify(bundle,null,2)+'\n');
 fs.copyFileSync(path.join(root,'database/migrations/cabinet_labor_v1.sql'),path.join(webDir,'01-create.sql'));
@@ -70,7 +70,7 @@ const counts=Object.fromEntries([...new Set(rules.map(r=>r.product_code))].map(c
 const report=['# 柜体人工规则读取报告','',`- 数据版本：\`${version}\``,`- 源文件 SHA-256：\`${sourceSha256}\``,`- 规则总数：${rules.length}`,
   `- 线性重量规则：${rules.filter(r=>r.rule_kind==='LINEAR_WEIGHT').length}`,
   `- 固定/尺寸匹配规则：${rules.filter(r=>r.rule_kind==='FIXED').length}`,'',...Object.entries(counts).map(([k,v])=>`- ${k}：${v} 条`),'',
-  '线性规则使用柜体“计价材料重量”。不锈钢 JS/JP 扣除安装纵梁和安装板的计价重量；不锈钢 JA/JE 扣除安装板的计价重量。固定表按产品、型号、材质及尺寸匹配，保留现有非标尺寸周长比例规则。人工与由人工派生的管理费只替换公式法报价，快速报价不变。','',
+  '线性规则使用柜体“计价材料重量”。不锈钢 JS/JP 扣除安装纵梁和安装板的计价重量；不锈钢 JA/JE 扣除安装板的计价重量。固定表按产品、型号、材质及尺寸匹配，保留现有非标尺寸周长比例规则。人工更新后，管理费按材料＋辅材＋柜体人工＋附件＋喷涂＋运费的6%统一重算；快速报价面价不变。','',
   '## 审计事项','',...issues.map(x=>`- ${x}`),''].join('\n');
 fs.writeFileSync(path.join(outDir,'读取报告.md'),report);
 console.log(JSON.stringify({version,sourceSha256,total:rules.length,counts,issues},null,2));

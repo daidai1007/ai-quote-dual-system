@@ -57,7 +57,7 @@ BEGIN
   IF v_version IS NULL OR v_version!~'^cabinet-labor-[0-9a-f]{16}-v[0-9]+$' THEN RAISE EXCEPTION 'Invalid cabinet labor data_version'; END IF;
   IF p_payload->>'source_sha256' IS NULL OR p_payload->>'source_sha256'!~'^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'Invalid source SHA-256'; END IF;
   IF jsonb_typeof(p_payload->'rules')<>'array' OR jsonb_array_length(p_payload->'rules')<>57 THEN RAISE EXCEPTION 'Expected exactly 57 labor rules'; END IF;
-  IF (p_payload->>'management_fee_rate')::numeric<>0.13 THEN RAISE EXCEPTION 'Expected management fee rate 0.13'; END IF;
+  IF (p_payload->>'management_fee_rate')::numeric IS DISTINCT FROM 0.06 THEN RAISE EXCEPTION 'Expected management fee rate 0.06'; END IF;
   IF EXISTS(SELECT 1 FROM calc.cabinet_labor_catalog_version WHERE data_version=v_version AND status='ACTIVE') THEN RAISE EXCEPTION 'Cannot overwrite ACTIVE labor version %',v_version; END IF;
   DELETE FROM calc.cabinet_labor_catalog_version WHERE data_version=v_version;
   INSERT INTO calc.cabinet_labor_catalog_version(data_version,source_file,source_sha256,status,management_fee_rate)

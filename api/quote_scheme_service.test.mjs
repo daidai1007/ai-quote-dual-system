@@ -153,3 +153,17 @@ test('HTTP routes use the shared-client compatibility resolver and forward enter
   assert.match(source,/schemeNo, action, input\.expected_version, input\.operator_name/);
   assert.match(source,/searchParams\.get\('operator_name'\)/);
 });
+
+test('state transitions qualify unchanged timestamps against the updated table',async()=>{
+  const {service,calls}=serviceHarness();
+  const principal={userId:'local-admin',displayName:'管理员',departmentId:null,role:'ADMIN'};
+  for(const action of ['archive','restore','void']) {
+    await service.transition(principal,'BJ-20261016-000001',action,7,'测试操作人');
+    const sql=calls.at(-1);
+    assert.match(sql,/ELSE s\.archived_at END/);
+    assert.match(sql,/ELSE s\.voided_at END/);
+    assert.doesNotMatch(sql,/ELSE (?:archived_at|voided_at) END/);
+    assert.match(sql,/s\.lock_version=7/);
+    assert.match(sql,/INSERT INTO calc\.quote_scheme_audit/);
+  }
+});

@@ -13,9 +13,9 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'desktop_client'))
 
-from PySide6.QtCore import QDate, QPoint, QRect, Qt, QThread
+from PySide6.QtCore import QDate, QPoint, QRect, QSignalBlocker, Qt, QThread
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit, QPushButton
 import quote_scheme_center as centre
 import quote_scheme_widgets as widgets
 import scheme2_ui
@@ -26,6 +26,8 @@ NS['MainWindow'].load_catalogs = lambda self: None
 NS['ApiWorker'].run = lambda self: self.failed.emit('offline test transport')
 APP = QApplication.instance() or QApplication([])
 NS['install_application_font'](APP)
+# Offline catalogue matching the option-page choices in the user's reference.
+PRODUCT_TYPES = ('JA', 'JC', 'JE', 'JK', 'JM', 'JP', 'JP WIDE', 'JQ', 'JS', 'JS WIDE', '操作台')
 BASE_ROWS = [
     dict(scheme_no=f'BJ-20261019-{123 - index:06d}', company_name=company,
          product_summary=product, status=status, quoted_amount=amount,
@@ -33,11 +35,11 @@ BASE_ROWS = [
          last_editor_name=('张三', '王五', '赵六', '赵六', '孙七')[index], lock_version=1,
          updated_at='2026-10-19T01:45:01+00:00', version_no=1)
     for index, (status, company, product, amount) in enumerate((
-        ('DRAFT', '样例精密机械有限公司', '机箱外壳 600×400×200mm', None),
-        ('QUOTED', '样例电子科技有限公司', '控制面板 300×200×1.2mm', 2860),
-        ('REVISING', '样例航空实业有限公司', '设备支架 500×300×2.0mm', 5320),
-        ('ARCHIVED', '样例五金有限公司', '散热盖板 400×250×1.5mm', 3180),
-        ('VOID', '样例电器有限公司', '电源外壳 350×220×1.0mm', 1950),
+        ('DRAFT', '样例精密机械有限公司', 'JQ_EXP 1000*725*(1150+100)', None),
+        ('QUOTED', '样例电子科技有限公司', 'JE_SINGLE 600*300*800', 2860),
+        ('REVISING', '样例航空实业有限公司', 'JP_DOUBLE 800*600*2000', 5320),
+        ('ARCHIVED', '样例五金有限公司', 'JS_SINGLE 800*600*2000', 3180),
+        ('VOID', '样例电器有限公司', 'OP_TABLE_EXP 1000*600*800', 1950),
     ))
 ]
 
@@ -75,6 +77,10 @@ class ReferenceSchemeUI(unittest.TestCase):
         self.worker_patch = patch.object(centre.QuoteSchemeWorker, 'run', offline_run)
         self.worker_patch.start()
         self.window = NS['MainWindow']()
+        with QSignalBlocker(self.window.product_combo):
+            self.window.product_combo.clear()
+            for name in PRODUCT_TYPES:
+                self.window.product_combo.addItem(name, name)
         self.window.resize(1553, 980)
         self.window.show()
         scheme2_ui._set_nav_collapsed(self.window, False, manual=True)
@@ -129,8 +135,8 @@ class ReferenceSchemeUI(unittest.TestCase):
         self.assertEqual(table.rowCount(), 5)
         self.assertEqual(table.horizontalHeaderItem(2).text(), '产品')
         self.assertEqual([table.item(row, 2).text() for row in range(5)],
-                         ['机箱外壳', '控制面板', '设备支架', '散热盖板', '电源外壳'])
-        self.assertEqual(table.item(0, 2).toolTip(), '机箱外壳')
+                         ['JQ', 'JE', 'JP', 'JS', '操作台'])
+        self.assertEqual(table.item(0, 2).toolTip(), 'JQ')
         self.assertGreaterEqual(table.rowHeight(0), widgets.METRICS['row_height'])
         self.assertIsInstance(table.itemDelegateForColumn(3), widgets.StatusBadgeDelegate)
         self.assertEqual([table.item(row, 3).text() for row in range(5)],
@@ -192,6 +198,32 @@ class ReferenceSchemeUI(unittest.TestCase):
             self.assertEqual(changed.call_args.args[1]['scheme_no'], BASE_ROWS[1]['scheme_no'])
             self.assertEqual(changed.call_args.args[2], 'revision')
 
+    def test_transition_failures_name_the_action_and_preserve_confirmation(self):
+        w = self.window
+        for action, label, row in (('archive', '归档', BASE_ROWS[1]),
+                                   ('restore', '恢复', BASE_ROWS[3]),
+                                   ('void', '作废', BASE_ROWS[0])):
+            with self.subTest(action=action):
+                with patch.object(centre.QMessageBox, 'question', return_value=centre.QMessageBox.Yes) as question, \
+                     patch.object(centre, '_require_operator', return_value='离线测试人员'), \
+                     patch.object(centre, '_run') as request:
+                    centre._confirm_transition(w, row, action)
+                    args = request.call_args.args
+                    self.assertEqual(args[1], 'POST')
+                    self.assertTrue(args[2].endswith('/' + action))
+                    self.assertEqual(args[3], {'expected_version': row['lock_version'], 'operator_name': '离线测试人员'})
+                    self.assertEqual(question.call_args.args[-1], centre.QMessageBox.No)
+                    args[5]('模拟数据库错误')
+                    self.assertEqual(w.quote_scheme_page_status.text(), f'{label}失败：模拟数据库错误')
+                    self.assertNotIn('保存失败', w.quote_scheme_page_status.text())
+                    with patch.object(centre, '_load_list') as reload_list:
+                        args[4]({'changed': True})
+                        reload_list.assert_called_once_with(w, w._quote_scheme_page)
+                with patch.object(centre.QMessageBox, 'question', return_value=centre.QMessageBox.No), \
+                     patch.object(centre, '_run') as request:
+                    centre._confirm_transition(w, row, action)
+                    request.assert_not_called()
+
     def test_optional_dates_reset_and_query_validation(self):
         w = self.window
         start, end = (w.quote_scheme_filters[key] for key in ('updated_from', 'updated_to'))
@@ -218,8 +250,70 @@ class ReferenceSchemeUI(unittest.TestCase):
             centre._filters(w, 1)
         w.quote_scheme_reset.click()
         self.wait_loaded()
-        self.assertTrue(all(not editor.text() for editor in w.quote_scheme_filters.values()))
+        self.assertTrue(all(not (editor.text() if isinstance(editor, QLineEdit) else editor.currentData())
+                            for editor in w.quote_scheme_filters.values()))
         self.assertTrue(w.quote_scheme_page_status.isHidden())
+
+    def test_product_filter_is_noneditable_catalogue_dropdown_and_reset_preserves_options(self):
+        w = self.window
+        combo = w.quote_scheme_filters['product']
+        self.assertIsInstance(combo, QComboBox)
+        self.assertFalse(combo.isEditable())
+        self.assertIsNone(combo.lineEdit())
+        self.assertEqual([combo.itemText(i) for i in range(combo.count())], ['全部', *PRODUCT_TYPES])
+        self.assertNotIn('product', centre._filters(w, 1))
+        source_selection = w.product_combo.currentText()
+        combo.showPopup()
+        APP.processEvents()
+        self.assertTrue(combo.view().property('unifiedComboPopup'))
+        self.assertEqual(combo.view().styleSheet(), w.product_combo.view().styleSheet())
+        self.assertEqual(combo.view().sizeHintForRow(0), w.product_combo.view().sizeHintForRow(0))
+        index = combo.model().index(combo.findData('JQ'), 0)
+        combo.view().scrollTo(index)
+        APP.processEvents()
+        artifacts = os.environ.get('AI_QUOTE_UI_ARTIFACT_DIR', '').strip()
+        if artifacts:
+            directory = Path(artifacts)
+            directory.mkdir(parents=True, exist_ok=True)
+            self.assertTrue(combo.view().window().grab().save(str(directory / 'quote_scheme_product_dropdown.png')))
+        before = len(self.requests)
+        QTest.mouseClick(combo.view().viewport(), Qt.MouseButton.LeftButton,
+                         pos=combo.view().visualRect(index).center())
+        APP.processEvents()
+        self.assertEqual(combo.currentData(), 'JQ')
+        self.assertEqual(len(self.requests), before, 'Selecting a filter must not submit or change configuration')
+        self.assertEqual(w.product_combo.currentText(), source_selection)
+        w.quote_scheme_query.click()
+        self.wait_loaded()
+        self.assertEqual(parse_qs(urlparse(self.requests[-1][1]).query)['product'], ['JQ'])
+        combo.setCurrentIndex(combo.findData('JP WIDE'))
+        self.assertEqual(centre._filters(w, 1)['product'], 'JP WIDE')
+        w.quote_scheme_reset.click()
+        self.wait_loaded()
+        self.assertEqual(combo.currentData(), '')
+        self.assertEqual(combo.count(), len(PRODUCT_TYPES) + 1)
+        self.assertNotIn('product', parse_qs(urlparse(self.requests[-1][1]).query))
+
+    def test_product_filter_tracks_async_catalogue_refresh_without_queries(self):
+        w = self.window
+        source, combo = w.product_combo, w.quote_scheme_filters['product']
+        combo.setCurrentIndex(combo.findData('JQ'))
+        before = len(self.requests)
+        with QSignalBlocker(source):
+            source.clear()
+            for name in reversed(PRODUCT_TYPES):
+                source.addItem(name, name)
+        pump(lambda: not w._quote_scheme_product_sync_timer.isActive())
+        self.assertEqual([combo.itemText(i) for i in range(combo.count())], ['全部', *reversed(PRODUCT_TYPES)])
+        self.assertEqual(combo.currentData(), 'JQ')
+        with QSignalBlocker(source):
+            source.clear()
+            source.addItem('正在读取产品型号…', None)
+        pump(lambda: not w._quote_scheme_product_sync_timer.isActive())
+        self.assertEqual(combo.count(), 1)
+        self.assertEqual(combo.currentText(), '全部')
+        self.assertNotIn('product', centre._filters(w, 1))
+        self.assertEqual(len(self.requests), before)
 
     def test_save_failure_stays_visible_without_obscuring_rows(self):
         w = self.window
@@ -252,24 +346,56 @@ class ReferenceSchemeUI(unittest.TestCase):
 
     def test_product_names_without_dimensions_preserve_source(self):
         for summary, expected in (
-            ('JQ_EXP 1000*480*1060；JE_DOUBLE 1200*600*2000', 'JQ_EXP；JE_DOUBLE'),
-            ('机箱外壳 600×400×200mm；机箱外壳 800×500×200mm', '机箱外壳'),
-            ('控制面板 300 x 200 x 1.2 mm', '控制面板'),
-            ('设备支架 500mm×300mm×2.0mm', '设备支架'),
-            ('AE-20 机箱 V2 600*400*200;JK 01 500*300*200', 'AE-20 机箱 V2；JK 01'),
-            ('AE-20 机箱 V2；JK 01', 'AE-20 机箱 V2；JK 01'),
+            ('JQ_EXP 1000*480*1060；JE_DOUBLE 1200*600*2000', 'JQ；JE'),
+            ('JQ_EXP 1000*725*(1150+100)', 'JQ'),
+            ('JQ_EXP 1000*725*（1150+100）；JE_SINGLE；JE_DOUBLE 800*600*2000', 'JQ；JE'),
+            ('JP_SINGLE (800+800)*600*(2000+100)；JP_DOUBLE 1600*600*2100', 'JP'),
+            ('JC_EXP 600 x 400 x 200 mm；JP_WIDE_EXP 800*600*2100', 'JC；JP WIDE'),
+            ('JS_WIDE_EXP 800*600*2100；OP_TABLE_EXP 1000*600*800', 'JS WIDE；操作台'),
+            ('JQ；JE；JP；JS；JC；操作台', 'JQ；JE；JP；JS；JC；操作台'),
+            ('机箱外壳', '机箱外壳'),
+            ('未知名称 600×400×200mm', ''),
+            ('AE-20 机箱 V2 600*400*200;JK 01 500*300*200', 'AE-20；JK'),
             ('', ''), (None, ''),
         ):
             with self.subTest(summary=summary):
-                self.assertEqual(centre._display_products(summary), expected)
+                self.assertEqual(centre._display_products(self.window, summary), expected)
         row = deepcopy(BASE_ROWS[0])
         row['product_summary'] = 'JQ_EXP 1000*480*1060；JE_DOUBLE 1200*600*2000'
         original = deepcopy(row)
         centre._list_loaded(self.window, dict(items=[row], total=1, page=1, page_size=10))
-        self.assertEqual(self.window.quote_scheme_table.item(0, 2).text(), 'JQ_EXP；JE_DOUBLE')
+        self.assertEqual(self.window.quote_scheme_table.item(0, 2).text(), 'JQ；JE')
         self.assertEqual(row, original)
         stored = self.window.quote_scheme_table.item(0, 0).data(Qt.ItemDataRole.UserRole)
         self.assertEqual(stored['product_summary'], original['product_summary'])
+
+    def test_snapshot_product_types_follow_saved_configuration_not_specs_or_names(self):
+        w = self.window
+        with QSignalBlocker(w.product_combo):
+            w.product_combo.clear()
+            w.product_combo.addItem('JS', 'JS')
+        w.draft_items = [
+            dict(product_code='JQ_EXP', product_family='JQ', name='自填柜名与类型无关',
+                 specification='1000*725*(1150+100)', quantity=1),
+            dict(product_code='JE_SINGLE', scheme2_selected_product_name='JE',
+                 product_name='不是产品类型', specification='600*300*800', quantity=2),
+            dict(product_code='JE_DOUBLE', scheme2_selected_product_code='JE',
+                 specification='800*300*(800+100)', quantity=1),
+            dict(product_code='JP_WIDE_EXP', specification='800*600*2000', quantity=1),
+            dict(product_code='OP_TABLE_EXP', specification='1000*600*800', quantity=1),
+        ]
+        original = deepcopy(w.draft_items)
+        snapshot = centre._snapshot(w)
+        self.assertEqual(snapshot['scheme_summary']['product_summary'], 'JQ；JE；JP WIDE；操作台')
+        self.assertEqual(snapshot['draft_items'], original)
+        self.assertEqual(w.draft_items, original)
+        self.assertEqual(centre._display_products(w, snapshot['scheme_summary']['product_summary']),
+                         'JQ；JE；JP WIDE；操作台')
+        # Prefer an actual saved configuration label over a generic code token.
+        w.product_combo.addItem('JE 产品类型', 'JE')
+        self.assertEqual(centre._display_products(w, 'JE 产品类型 600*(300+50)*800'), 'JE 产品类型')
+        w.product_combo.addItem('JP', 'JP')
+        self.assertEqual(centre._display_products(w, 'JP WIDE；JS WIDE'), 'JP WIDE；JS WIDE')
 
     def test_pagination_empty_loading_failure_and_recovery(self):
         w = self.window

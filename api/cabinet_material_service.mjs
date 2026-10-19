@@ -1,5 +1,6 @@
 import {evaluateFormula,round} from './attachment_formula.mjs';
 import {withSidebarMaterialPrices} from './material_price_override.mjs';
+import {applyManagementFee} from '../quick_discount_rules.mjs';
 
 const valueSql=value=>value==null?'NULL':typeof value==='number'?String(value):
   `convert_from(decode('${Buffer.from(String(value)).toString('hex')}','hex'),'UTF8')`;
@@ -174,18 +175,8 @@ export function createCabinetMaterialService({runPsql}){
 
 export function applyCabinetMaterial(result,material){
   if(!material)return result;
-  const formula={...(result.formula_cost||{})},old=Number(formula.material_cost);
-  const baseTotal=Number(formula.total_cost);
-  const hasDatabaseMaterialCost=formula.material_cost!=null&&Number.isFinite(old);
-  const hasDatabaseTotal=formula.total_cost!=null&&Number.isFinite(baseTotal);
+  const formula={...(result.formula_cost||{})};
   formula.material_cost=material.material_cost;
-  if(hasDatabaseMaterialCost&&hasDatabaseTotal) formula.total_cost=round(baseTotal-old+material.material_cost,2);
-  else{
-    const componentKeys=['auxiliary_cost','labor_cost','attachment_fee','spray_cost','management_fee'];
-    const components=componentKeys.map(key=>Number(formula[key]));
-    if(components.some(value=>!Number.isFinite(value))) throw new Error('数据库基础公式非材料成本缺失');
-    formula.total_cost=round(material.material_cost+components.reduce((sum,value)=>sum+value,0),2);
-  }
   if(material.material_details?.length===1) formula.material_unit_price=material.material_details[0].material_unit_price;
   Object.assign(formula,{net_material_weight_kg:material.net_material_weight_kg,
     corrected_material_weight_kg:material.corrected_material_weight_kg,waste_factor:material.waste_factor,
@@ -194,5 +185,5 @@ export function applyCabinetMaterial(result,material){
     cabinet_material_version:material.data_version,material_details:material.material_details,
     cabinet_material_part_details:material.part_details});
   const riskFlags=(result.risk_flags||[]).filter(flag=>flag?.code!=='material_price_missing');
-  return {...result,formula_cost:formula,risk_flags:riskFlags};
+  return {...result,formula_cost:applyManagementFee(formula),risk_flags:riskFlags};
 }

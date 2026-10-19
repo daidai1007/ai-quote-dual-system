@@ -4,8 +4,8 @@
  * Input is a confirmed multi-cabinet JSON snapshot.  The public quotation
  * layout is generated from a sanitized, code-owned template so source and
  * packaged deployments do not depend on a private workbook or Codex runtime.
- * Cost calculation remains database-owned; this exporter only lays out the
- * already-confirmed values.
+ * Cabinet components remain database-owned. Management is rederived using
+ * the shared six-component rule and the already-confirmed popup costs.
  */
 import ExcelJS from "@excel.js/exceljs";
 import fs from "node:fs/promises";
@@ -32,7 +32,7 @@ import {
   quickDiscountBreakdown,
   quickDiscountCategory,
   quickOrderLineBreakdown,
-  money, moneySum, moneyProduct, PRICING_BASIS, validateQuoteDisplay, MANAGEMENT_FEE_BASIS,
+  money, moneySum, moneyProduct, PRICING_BASIS, validateQuoteDisplay, applyManagementFee, missingManagementCosts, MANAGEMENT_FEE_RATE,
 } from "./quick_discount_rules.mjs";
 
 const [inputPath, outputPath] = process.argv.slice(2);
@@ -42,6 +42,17 @@ if (!Array.isArray(payload.items) || payload.items.length === 0) {
   throw new Error("报价清单为空，无法生成正式报价单");
 }
 validateConfirmedQuoteSnapshot(payload);
+// Management is always derived from current components, including popup costs.
+// Neither a saved fee, a saved total nor a historical rate may price an export.
+for (const [index,item] of payload.items.entries()) {
+  const rows=item.quote_display?.attachment_source==='popup_v1'
+    ? item.quote_display.attachments : item.attachments||[];
+  item.attachments=rows;
+  const formula={...(item.formula||{}),attachment_fee:moneySum(rows.map(formulaAttachmentLineAmount))};
+  const missing=missingManagementCosts(formula);
+  if(missing.length) throw new Error(`第${index+1}行柜体成本分项缺失（${missing.join('、')}），请重新计算整柜`);
+  item.formula=applyManagementFee(formula,item.freight_fee??item.freight??0);
+}
 
 const sellerInformation = {
   name: "浙江京能电力设备有限公司",
@@ -579,16 +590,12 @@ const formulaOrderLineBreakdown = (item = {}) => {
   const discount = asNumber(item.formula_discount) || 1;
   const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
   const freightTotal = freightFee * cabinetQuantity;
-  // Formula attachment cost follows the rows currently shown in the
-  // attachment editor.  Keep the API fee only to recover the cabinet base
-  // from an old snapshot whose aggregate fee is stale.
+  // Formula attachments and management have been normalized to current rules.
   const listedAttachmentTotal = attachments.reduce(
     (sum, row) => sum + (!formulaAttachmentExcluded(row)
       ? formulaAttachmentLineAmount(row) : 0),
     0,
   );
-  const storedAttachmentFee = hasFiniteNumber(quote.attachment_fee)
-    ? Number(quote.attachment_fee) : listedAttachmentTotal;
   const attachmentFee = listedAttachmentTotal;
   const excludedFormulaAttachmentTotal = attachments.reduce(
     (sum, attachment) => sum + (!attachment.catalog_version && formulaAttachmentExcluded(attachment)
@@ -599,12 +606,7 @@ const formulaOrderLineBreakdown = (item = {}) => {
   const componentKeys = [
     "material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee",
   ];
-  const hasCompleteComponentBreakdown = componentKeys.every(
-    (key) => hasFiniteNumber(quote[key]),
-  );
-  const basePrice = hasCompleteComponentBreakdown
-    ? componentKeys.reduce((sum, key) => sum + asNumber(quote[key]), 0)
-    : asNumber(quote.total_cost) - storedAttachmentFee;
+  const basePrice = moneySum(componentKeys.map(key=>quote[key]));
   const originalPriceAttachmentTotal = attachments.reduce(
     (sum, attachment) => sum + (!formulaAttachmentExcluded(attachment)
       && attachmentExcludedFromDiscount(attachment)
@@ -1366,21 +1368,17 @@ function buildFormulaCostDetailSheet() {
     }
 
     const managementCost = asNumber(quote.management_fee);
-    const managementRate = asNumber(quote.management_fee_rate ?? 0.13);
-    const currentManagement = quote.management_fee_basis === MANAGEMENT_FEE_BASIS;
-    const managementBase = currentManagement ? asNumber(quote.management_fee_base) : laborCost;
+    const managementRate = MANAGEMENT_FEE_RATE;
+    const managementBase = asNumber(quote.management_fee_base);
     const managementTerms = [materialCost, auxiliaryCost, laborCost, attachmentCost, sprayCost,
       Math.max(0, asNumber(item.freight_fee ?? item.freight))];
-    const managementExpression = currentManagement
-      ? (['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost'].every(key=>hasFiniteNumber(quote[key]))
-        ? `(${managementTerms.map(value=>value.toFixed(2)).join(' + ')})` : managementBase.toFixed(2))
-      : laborCost.toFixed(2);
+    const managementExpression = `(${managementTerms.map(value=>value.toFixed(2)).join(' + ')})`;
     addDetail(
       itemIndex, item, "管理费用", "管理费用",
-      currentManagement ? "材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%" : `历史人工成本的 ${managementRate * 100}%`,
+      "材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
       `${managementExpression} × ${managementRate} = ${managementCost.toFixed(2)} 元`,
       managementBase, "元", managementRate, managementCost, "系统统一公式",
-      currentManagement ? "管理费用＝（材料＋辅材＋柜体人工＋附件＋喷涂＋运费）×0.06；不含管理费本身" : `历史管理费用＝人工成本×${managementRate}`,
+      "管理费用＝（材料＋辅材＋柜体人工＋附件＋喷涂＋运费）×0.06；不含管理费本身",
     );
 
     const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));

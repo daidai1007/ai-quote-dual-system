@@ -1,4 +1,5 @@
 import {evaluateFormula,round} from './attachment_formula.mjs';
+import {applyManagementFee} from '../quick_discount_rules.mjs';
 
 const valueSql=value=>value==null?'NULL':typeof value==='number'?String(value):
   `convert_from(decode('${Buffer.from(String(value)).toString('hex')}','hex'),'UTF8')`;
@@ -118,10 +119,8 @@ export function createCabinetAuxiliaryService({runPsql}){
 
 export function applyCabinetAuxiliary(result,auxiliary){
   if(!auxiliary)return result;
-  const formula={...(result.formula_cost||{})},old=Number(formula.auxiliary_cost);
-  if(!Number.isFinite(old)||!Number.isFinite(Number(formula.total_cost)))throw new Error('数据库基础公式辅材成本缺失，不能应用最新辅材规则');
+  const formula={...(result.formula_cost||{})};
   formula.auxiliary_cost=auxiliary.auxiliary_cost;
-  formula.total_cost=round(Number(formula.total_cost)-old+auxiliary.auxiliary_cost,2);
   Object.assign(formula,{cabinet_auxiliary_version:auxiliary.data_version,cabinet_auxiliary_method:auxiliary.method,
     cabinet_auxiliary_match_method:auxiliary.match_method,cabinet_auxiliary_source_sheet:auxiliary.source_sheet,
     cabinet_auxiliary_source_row_no:auxiliary.source_row_no,cabinet_auxiliary_reference_model_code:auxiliary.reference_model_code??null,
@@ -129,5 +128,5 @@ export function applyCabinetAuxiliary(result,auxiliary){
     cabinet_auxiliary_reference_depth_mm:auxiliary.reference_depth_mm??null,cabinet_auxiliary_perimeter_ratio:auxiliary.perimeter_ratio??null,
     cabinet_auxiliary_lines:auxiliary.lines,cabinet_auxiliary_spray_area_m2:auxiliary.auxiliary_spray_area_m2,
     cabinet_auxiliary_spray_cost:auxiliary.auxiliary_spray_cost});
-  return {...result,formula_cost:formula};
+  return {...result,formula_cost:applyManagementFee(formula)};
 }

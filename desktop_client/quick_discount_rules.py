@@ -14,6 +14,16 @@ from decimal import Decimal, ROUND_HALF_UP
 PRICING_BASIS = "per_unit_set_v1"
 MANAGEMENT_FEE_RATE = 0.06
 MANAGEMENT_FEE_BASIS = "pre_management_cost_with_freight_v1"
+MANAGEMENT_COST_KEYS = ("material_cost", "auxiliary_cost", "labor_cost", "attachment_fee", "spray_cost")
+
+
+def missing_management_costs(quote):
+    def finite(value):
+        try:
+            return value not in (None, "") and math.isfinite(float(value))
+        except (TypeError, ValueError, OverflowError):
+            return False
+    return [key for key in MANAGEMENT_COST_KEYS if not finite(quote.get(key))]
 
 
 def money(value=0):
@@ -38,7 +48,7 @@ def apply_management_fee(quote, freight_fee=0):
     """Six percent of current pre-management costs plus per-cabinet freight.
 
     total_cost continues to exclude freight itself, avoiding a second addition
-    by the existing quotation/quantity rules. Keep unlisted historical costs.
+    by the existing quotation/quantity rules. Old fees/totals are not inputs.
     """
     def finite(value):
         try:
@@ -47,14 +57,10 @@ def apply_management_fee(quote, freight_fee=0):
             return False
     result = dict(quote)
     result.update(management_fee_rate=MANAGEMENT_FEE_RATE, management_fee_basis=MANAGEMENT_FEE_BASIS)
-    keys = ("material_cost", "auxiliary_cost", "labor_cost", "attachment_fee", "spray_cost")
-    if all(finite(quote.get(key)) for key in keys):
-        base = money_sum(quote[key] for key in keys)
-    elif finite(quote.get("total_cost")):
-        base = money_sum((quote["total_cost"], -float(quote.get("management_fee") or 0)))
-    else:
+    if missing_management_costs(quote):
         result.update(management_fee_base=None, management_fee=None, total_cost=None)
         return result
+    base = money_sum(quote[key] for key in MANAGEMENT_COST_KEYS)
     freight = max(0, float(freight_fee)) if finite(freight_fee) else 0
     result["management_fee_base"] = money_sum((base, freight))
     result["management_fee"] = money_product(result["management_fee_base"], MANAGEMENT_FEE_RATE)

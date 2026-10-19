@@ -6,7 +6,7 @@ const lineId='11111111-1111-4111-8111-111111111111';
 const environment={product_code:'JP',material_code:'SECC',width_mm:800,height_mm:1800,depth_mm:600,
   coating_type:'橘纹',quote_date:'2026-10-12',cabinet_body_thickness_mm:1.5,waste_factor:1.2,
   ganged_cabinet_count:1,ganged_cabinets:[],quote_result:{
-    formula_cost:{total_cost:100,attachment_fee:20},quick_quote:{total_cost:200,attachment_fee:0}}};
+    formula_cost:{material_cost:80,auxiliary_cost:0,labor_cost:0,spray_cost:0,total_cost:100,attachment_fee:20},quick_quote:{total_cost:200,attachment_fee:0}}};
 const attachment={attachment_price_id:99,item_name:'固定底座',quantity:1,attachment_price_sign:1,
   manual_inputs:{},status:'ERROR',error:'人工尺寸 底座高度必须是正数',formula_amount:null,quick_amount:0};
 const item={...environment,name:'JP测试柜',quote_line_id:lineId,attachment_contract:2,

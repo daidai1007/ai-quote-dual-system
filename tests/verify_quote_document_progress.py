@@ -29,7 +29,7 @@ good=dict(name='JP测试柜',product_code='JP',material_code='SECC',quantity=2,
   specification='800*600*1800',attachments=[dict(item_name='固定底座',attachment_price_id=99,
   quantity=1,status='CALCULATED',formula_amount=20,quick_amount=0)],
   attachment_contract=2,quote_line_id='11111111-1111-4111-8111-111111111111',
-  formula={'total_cost':100},quick={'total_cost':200})
+  formula={'material_cost':80,'auxiliary_cost':0,'labor_cost':0,'spray_cost':0,'total_cost':100},quick={'total_cost':200})
 
 def wait(predicate):
     for _ in range(300):
@@ -71,7 +71,7 @@ class DocumentProgress(unittest.TestCase):
                         for selection in worker.test_payload['attachments']]
                     worker.succeeded.emit(dict(attachments=costs,attachment_contract=2,
                         quote_line_id='22222222-2222-4222-8222-222222222222',
-                        formula_cost={'total_cost':158.8}))
+                        formula_cost={'material_cost':80,'auxiliary_cost':0,'labor_cost':0,'spray_cost':0,'total_cost':158.8}))
                 else:
                     self.fail('unexpected offline endpoint: '+endpoint)
                 worker.finished.emit()
@@ -130,7 +130,7 @@ class DocumentProgress(unittest.TestCase):
                         category_level1='风机',quantity=4,status='FIXED',formula_amount=280,
                         quick_amount=480,quick_amount_override=480,custom_amount_edited=True)],
                     quick={'base_price':500,'attachment_fee':480,'total_cost':980},
-                    formula={'attachment_fee':280,'total_cost':360},attachment_snapshot_dirty=True)
+                    formula={'material_cost':80,'auxiliary_cost':0,'labor_cost':0,'spray_cost':0,'attachment_fee':280,'total_cost':360},attachment_snapshot_dirty=True)
                 self.window.draft_items=[item]
                 self.window.refresh_summary()
                 self.controller.generate()
@@ -214,7 +214,7 @@ class DocumentProgress(unittest.TestCase):
             quick_amount_override=6,custom_amount_edited=True)
         first['attachments'].append(temporary)
         first['quick']={'total_cost':506,'attachment_fee':6}
-        first['formula']={'total_cost':163.8,'attachment_fee':13.8}
+        first['formula']={'material_cost':150,'auxiliary_cost':0,'labor_cost':0,'spray_cost':0,'total_cost':163.8,'attachment_fee':13.8}
         started=[]
         original=Worker.start
         def track(worker):
@@ -264,7 +264,7 @@ class DocumentProgress(unittest.TestCase):
             manual_inputs={'玻璃门宽度':400,'玻璃门高度':400})
         item['attachments']=[row]
         item['attachment_confirmation_inputs']=v2.confirmation_inputs([{**row,'manual_inputs':{}}])
-        item['formula']={'total_cost':158.8,'attachment_fee':8.8}
+        item['formula']={'material_cost':150,'auxiliary_cost':0,'labor_cost':0,'spray_cost':0,'total_cost':158.8,'attachment_fee':8.8}
         item['quick']={'total_cost':750.26,'attachment_fee':250.26}
         self.window.refresh_summary()
         return item,row
@@ -291,14 +291,14 @@ class DocumentProgress(unittest.TestCase):
                        quick_amount=6,quick_amount_override=6,custom_amount_edited=True)
         item['attachments'].append(copy.deepcopy(temporary))
         item['quick']={'total_cost':506,'attachment_fee':6}
-        item['formula']={'total_cost':163.8,'attachment_fee':13.8}
+        item['formula']={'material_cost':150,'auxiliary_cost':0,'labor_cost':0,'spray_cost':0,'total_cost':163.8,'attachment_fee':13.8}
         self.controller.generate()
         wait(lambda:not self.controller.busy)
         self.assertEqual(item['attachments'][0]['quick_amount'],0)
         self.assertEqual(item['attachments'][1],temporary)
         self.assertEqual(len(self.requests[0][1]['items'][0]['attachments']),2)
         self.assertEqual(item['quick']['total_cost'],506)
-        self.assertEqual(item['formula']['total_cost'],163.8)
+        self.assertEqual(item['formula']['total_cost'],163.8)  # Export freezes a copy, not the stored draft.
         self.assertEqual(item['quantity'],2)
 
     def test_export_uses_popup_snapshot_for_preflight_and_commit(self):
@@ -414,6 +414,10 @@ class DocumentProgress(unittest.TestCase):
         self.assertEqual([url.rsplit('/',1)[-1] for url,_ in self.requests],['confirm-check','confirm'])
         self.assertTrue((Path(self.folder.name)/'result.xlsx').is_file())
         self.assertEqual(self.controller.widgets['export'][1].value(),5)
+        self.assertEqual(self.controller.state, 'success')
+        self.assertEqual(self.controller.feedback['export']['label'].full_text, '✓ 报价单已导出')
+        self.assertTrue(self.controller.widgets['export'][1].isHidden())
+        self.assertEqual(self.controller.hide_timer.interval(), 2000)
         self.assertEqual(self.messages,[])
 
     def test_export_failure_keeps_details_and_does_not_confirm(self):
@@ -439,7 +443,11 @@ class DocumentProgress(unittest.TestCase):
         app.processEvents()
         host,bar,locate=self.controller.widgets['generate']
         self.assertTrue(locate.isVisible())
-        self.assertFalse(bar.geometry().intersects(locate.geometry()))
+        self.assertTrue(bar.isHidden(), 'failed feedback is text and recovery actions, not a full progress bar')
+        feedback = self.controller.feedback['generate']
+        for button in (feedback['retry'], feedback['details'], locate):
+            self.assertTrue(button.isVisible())
+            self.assertFalse(feedback['label'].geometry().intersects(button.geometry()))
         self.assertIn('底座高度',bar.toolTip())
         path=ROOT/'outputs'/'quote-generation-failure.png'
         path.parent.mkdir(exist_ok=True)

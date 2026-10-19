@@ -22,6 +22,7 @@ table = QTableWidget(1, 1)
 table.setCurrentCell(0, 0)
 formula = {
     "material_cost": 197.75,
+    "auxiliary_cost": 0,
     "labor_cost": 80.0,
     "spray_cost": 40.0,
     "management_fee": 10.0,

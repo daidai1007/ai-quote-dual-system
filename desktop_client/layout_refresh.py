@@ -24,6 +24,8 @@ from datetime import datetime
 from pathlib import Path
 from material_prices import material_unit_price
 from wheel_edit_guard import install_wheel_edit_guard
+from dropdown_style import install_combo_popup_style
+from dialog_style import install_dialog_style
 from quote_request_context import bind_quote_request, quote_request_is_current, stamp_quote_response
 
 from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
@@ -896,7 +898,6 @@ class _GangedQuoteWorker(QThread):
 
             formula_keys = (
                 "material_cost", "auxiliary_cost", "labor_cost", "spray_cost",
-                "management_fee",
             )
             formula = {
                 key: self._sum(results, "formula_cost", key) for key in formula_keys
@@ -912,21 +913,11 @@ class _GangedQuoteWorker(QThread):
             formula["corrected_material_weight_kg"] = self._sum(
                 results, "formula_cost", "corrected_material_weight_kg"
             )
-            formula_base_total = self._sum(results, "formula_cost", "total_cost")
-            formula_existing_attachment = self._sum(
-                results, "formula_cost", "attachment_fee"
-            ) or 0.0
-            if formula_base_total is not None:
-                formula_base_total -= formula_existing_attachment
             formula["attachment_fee"] = self.attachment_total
             formula["product_area_m2"] = (
                 self.area_total
                 if self.area_total is not None
                 else self._sum(results, "formula_cost", "product_area_m2")
-            )
-            formula["total_cost"] = (
-                formula_base_total + self.attachment_total
-                if formula_base_total is not None else None
             )
             # ``show_result`` deliberately keeps only ``formula_cost`` and
             # ``quick_quote``.  Preserve each independently calculated child
@@ -2267,23 +2258,16 @@ def _formula_order_line_breakdown(item: dict) -> dict[str, float]:
     cabinets = _safe_float(item.get("quantity")) or 1.0
     split_count = float(ganged_split_count(item))
     discount = _safe_float(item.get("formula_discount")) or 1.0
-    # Formula attachment cost follows the rows currently shown in the
-    # attachment editor.  Keep the API fee only to recover the cabinet base
-    # from an old snapshot whose aggregate fee is stale.
+    # The current popup is the only attachment cost input.
     listed = sum(
         formula_attachment_line_amount(row)
         for row in attachments
         if not formula_attachment_excluded(row)
     )
-    stored_attachment_fee = _safe_float(quote.get("attachment_fee"))
-    if stored_attachment_fee is None:
-        stored_attachment_fee = listed
     attachment_fee = listed
     freight_fee = max(0.0, _safe_float(item.get("freight_fee", item.get("freight"))) or 0.0)
-    quote = apply_management_fee({**quote, "attachment_fee": listed,
-        "total_cost": (_safe_float(quote.get("total_cost")) or 0.0) - stored_attachment_fee + listed}, freight_fee)
-    stored_attachment_fee = listed
-    base = (_safe_float(quote.get("total_cost")) or 0.0) - stored_attachment_fee
+    quote = apply_management_fee({**quote, "attachment_fee": listed}, freight_fee)
+    base = (_safe_float(quote.get("total_cost")) or 0.0) - listed
     original_price_attachment_total = sum(
         effective_formula_attachment_line_amount(row, cabinets, split_count)
         for row in attachments
@@ -5287,6 +5271,14 @@ def _refresh_quick_discount_total(window, money) -> None:
     discount_widget = getattr(window, "quick_discount", None)
     if not isinstance(quick, dict) or not isinstance(labels, dict) or "total" not in labels:
         return
+    if "base_price" in labels:
+        labels["base_price"].setText(money(quick.get("base_price")))
+    if "matched_size" in labels:
+        matched = quick.get("matched_experience") or {}
+        dimensions = [_safe_float(matched.get(key)) for key in
+                      ("reference_width_mm", "reference_height_mm", "reference_depth_mm")]
+        labels["matched_size"].setText(" × ".join(f"{value:g}" for value in dimensions) + " mm"
+                                       if all(value is not None for value in dimensions) else "待补充经验值")
     discount = _safe_float(getattr(discount_widget, "value", lambda: 1.0)())
     freight_widget = getattr(window, "freight_spin", None)
     freight_fee = max(
@@ -5313,9 +5305,8 @@ def _refresh_quick_discount_total(window, money) -> None:
 
 
 def _patch_discounted_totals(namespace: dict, main_window) -> None:
-    original_refresh = getattr(main_window, "refresh_discounted_totals", None)
     original_show_result = getattr(main_window, "show_result", None)
-    if not callable(original_refresh) or getattr(main_window, "_layout_refresh_discount_patched", False):
+    if getattr(main_window, "_layout_refresh_discount_patched", False):
         return
 
     money = _money_formatter(namespace)
@@ -5394,30 +5385,22 @@ def _patch_discounted_totals(namespace: dict, main_window) -> None:
             base = dict(formula)
             self._formula_base_result = dict(base)
         base_labor = _safe_float(base.get("labor_cost"))
-        base_management = _safe_float(base.get("management_fee"))
-        base_total = _safe_float(base.get("total_cost"))
-        if base_labor is None or base_management is None or base_total is None:
-            original_refresh(self)
-            _refresh_quick_discount_total(self, money)
-            return
-
-        labor = base_labor * multiplier
         rendered = dict(base)
-        rendered["labor_cost"] = labor
-        rendered["total_cost"] = base_total - base_labor + labor
+        if base_labor is not None:
+            rendered["labor_cost"] = money_product(base_labor, multiplier)
         if isinstance(getattr(self, "attachments", None), list):
             popup_fee = money_sum(formula_attachment_line_amount(row) for row in self.attachments
                                   if not formula_attachment_excluded(row))
-            rendered["total_cost"] += popup_fee - (_safe_float(rendered.get("attachment_fee")) or 0)
             rendered["attachment_fee"] = popup_fee
         freight = getattr(getattr(self, "freight_spin", None), "value", lambda: 0.0)()
         rendered = apply_management_fee(rendered, freight)
 
         self.current_result["formula"] = rendered
-        original_refresh(self)
-        self.current_result["formula"] = rendered
-        if "management" in labels:
-            labels["management"].setText(money(rendered.get("management_fee")))
+        # Do not invoke the recovered binary's retired labor-linked fee path.
+        for label, key in (("material", "material_cost"), ("auxiliary", "auxiliary_cost"),
+                           ("labor", "labor_cost"), ("spray", "spray_cost"), ("management", "management_fee")):
+            if label in labels:
+                labels[label].setText(money(rendered.get(key)))
         area_value = _safe_float(rendered.get("product_area_m2"))
         if area_value is not None and "area" in labels:
             labels["area"].setText(f"{area_value:,.1f} m²")
@@ -8074,6 +8057,8 @@ def install_layout_refresh(namespace: dict) -> None:
 
     def build_ui_with_refresh(self):
         install_wheel_edit_guard()
+        install_combo_popup_style()
+        install_dialog_style()
         original_build_ui(self)
         summary_table = getattr(self, "summary_table", None)
         self._summary_core_has_door_column = False

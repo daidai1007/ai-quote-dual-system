@@ -15,10 +15,17 @@ sys.path.insert(0, str(ROOT / "desktop_client"))
 from PySide6.QtWidgets import QApplication, QLineEdit, QTableWidget
 import layout_refresh
 import scheme2_ui
-from quick_discount_rules import PRICING_BASIS, money, quick_order_line_breakdown
+from quick_discount_rules import PRICING_BASIS, money, money_sum, money_product, quick_order_line_breakdown, apply_management_fee
 
 CASES = json.loads((ROOT / "tests/fixtures/quote_unit_rounding.json").read_text(encoding="utf-8"))
 APP = QApplication.instance() or QApplication([])
+
+
+def expected_formula_unit(sample):
+    management = money_product(money_sum((sample["base"], sample.get("eligible", 0),
+                                          sample.get("original", 0), sample["freight"])), .06)
+    return money_sum((money_product(money_sum((sample["base"], management, sample.get("eligible", 0))),
+                                    sample["discount"]), sample.get("original", 0), sample["freight"]))
 
 
 def quote_item(sample):
@@ -28,7 +35,7 @@ def quote_item(sample):
             attachments.append(dict(item_name=name, category_level1=name, quantity=1,
                                     quick_amount=sample[field], formula_amount=sample[field]))
     fee = money(sum(row["quick_amount"] for row in attachments))
-    return dict(
+    item = dict(
         name=sample["name"], product_code="JS_SINGLE", material_code="SECC",
         specification="1000*600*2000", quantity=sample["quantity"],
         quick_discount=sample["discount"], formula_discount=sample["discount"],
@@ -39,6 +46,8 @@ def quote_item(sample):
                      spray_cost=0, management_fee=0, attachment_fee=fee,
                      total_cost=money(sample["base"] + fee)),
     )
+    item["formula"] = apply_management_fee(item["formula"], item["freight_fee"])
+    return item
 
 
 class QuoteUnitRounding(unittest.TestCase):
@@ -72,8 +81,8 @@ class QuoteUnitRounding(unittest.TestCase):
                 self.assertEqual(Decimal(str(sample["unit"])) * sample["quantity"],
                                  Decimal(str(sample["total"])))
                 formula = layout_refresh._formula_order_line_breakdown(item)
-                self.assertEqual(formula["equivalent_unit_total"], sample["unit"])
-                self.assertEqual(formula["line_total"], sample["total"])
+                self.assertEqual(formula["equivalent_unit_total"], expected_formula_unit(sample))
+                self.assertEqual(formula["line_total"], money_product(expected_formula_unit(sample), sample["quantity"]))
                 self.assertEqual(item, before, "Displaying or exporting must not mutate stored costs")
 
     def test_freight_stays_outside_every_discount_and_quantity(self):
@@ -90,7 +99,7 @@ class QuoteUnitRounding(unittest.TestCase):
                         self.assertEqual(Decimal(str(freight["line_total"]))
                                          - Decimal(str(zero["line_total"])), Decimal("36.67") * quantity)
                         self.assertEqual(layout_refresh._formula_order_line_breakdown(item)["line_total"],
-                                         freight["line_total"])
+                                         money_product(expected_formula_unit(dict(base=1234.55,discount=discount,freight=36.67)), quantity))
 
     def test_manually_edited_unit_price_rounds_before_quantity(self):
         item = quote_item(dict(name="人工单价", base=1000, discount=1, quantity=3, freight=0))

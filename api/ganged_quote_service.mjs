@@ -75,13 +75,10 @@ export async function calculateGangedBatch(input, {calculateChild, snapshotGange
   }));
   const error = results.find(result => result?.error)?.error;
   if (error) throw error;
-  const formula = Object.fromEntries(['material_cost', 'auxiliary_cost', 'labor_cost', 'spray_cost', 'management_fee',
+  const formula = Object.fromEntries(['material_cost', 'auxiliary_cost', 'labor_cost', 'spray_cost',
     'net_material_weight_kg', 'corrected_material_weight_kg'].map(key => [key, sum(results, 'formula_cost', key)]));
-  const baseTotal = sum(results, 'formula_cost', 'total_cost');
   formula.attachment_fee = attachmentTotal;
   formula.product_area_m2 = areaTotal ?? sum(results, 'formula_cost', 'product_area_m2');
-  formula.total_cost = baseTotal == null ? null
-    : baseTotal - (sum(results, 'formula_cost', 'attachment_fee') ?? 0) + attachmentTotal;
   formula.ganged_cabinet_costs = results.map((result, index) => ({
     cabinet_index: index + 1, ...Object.fromEntries(['model_code', 'product_code', 'width_mm', 'depth_mm', 'height_mm']
       .map(key => [key, cabinets[index][key]])), formula_cost: result.formula_cost,

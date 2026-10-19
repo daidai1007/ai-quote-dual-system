@@ -9,6 +9,7 @@ from unittest.mock import patch
 from zipfile import ZipFile
 
 import verify_drawing_workflow as base
+import scheme2_ui as ui
 from attachment_v2_client import confirmation_inputs, confirmation_payload
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,7 @@ class ExportSnapshotTests(unittest.TestCase):
 
     def test_excel_and_both_confirmation_requests_use_identical_snapshot(self):
         payload = self.payload()
+        payload['items'] = ui._quote_export_items_snapshot(self.w, items=payload['items'])
         unchanged = copy.deepcopy(payload)
         expected = confirmation_payload(payload, validate=True)
         for endpoint in ('confirm', 'confirm-check'):
@@ -84,14 +86,12 @@ class ExportSnapshotTests(unittest.TestCase):
                                         dict(payload=expected, snapshots=snapshots)))
         self.assertEqual(hydrated['items'][0]['attachments'][-1]['custom'], True)
         self.assertEqual(hydrated['items'][0]['attachments'][-1]['formula_amount'], 5)
-        # The legacy fixture contains management=39. Confirmation must replace
-        # it using the current 6% rule after adding the custom attachment cost:
-        # (200 material + 100 auxiliary + 300 labor + 55 attachments + 150 spray)
-        # * 6% = 48.30; total = 805 + 48.30. Never carry the stale fee forward.
-        self.assertEqual(hydrated['items'][0]['formula']['attachment_fee'], 55)
-        self.assertEqual(hydrated['items'][0]['formula']['management_fee'], 48.3)
-        self.assertEqual(hydrated['items'][0]['formula']['total_cost'], 853.3)
-        self.assertEqual(hydrated['items'][0]['quick']['total_cost'], expected['items'][0]['quick']['total_cost'] + 10)
+        # Current confirmed popup: two costs of 15 plus custom cost 5. Ignore
+        # the database's old 5-per-row snapshots and the old aggregate fee.
+        self.assertEqual(hydrated['items'][0]['formula']['attachment_fee'], 35)
+        self.assertEqual(hydrated['items'][0]['formula']['management_fee'], 47.1)
+        self.assertEqual(hydrated['items'][0]['formula']['total_cost'], 832.1)
+        self.assertEqual(hydrated['items'][0]['quick']['total_cost'], expected['items'][0]['quick']['total_cost'])
         self.assertEqual([r['ganged_cabinet_index'] for r in hydrated['items'][0]['attachments'][:2]], [0, 1])
         with tempfile.TemporaryDirectory(dir=ROOT / 'outputs', prefix='export-snapshot-') as directory:
             directory = Path(directory)

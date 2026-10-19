@@ -111,7 +111,7 @@ def test_export_snapshot_freezes_exact_visible_quote_row_without_mutating_draft(
         "name": "人工名称", "source_pdf_name": "旧图号.pdf",
         "specification": "600*230*400", "quantity": 2, "quick_discount": 0.8,
         "quick": {"total_cost": 560, "attachment_fee": 15, "base_price": 545},
-        "formula": {"total_cost": 300},
+        "formula": {"material_cost":300,"auxiliary_cost":0,"labor_cost":0,"spray_cost":0,"total_cost":300},
         "final_remark": "人工备注。", "attachments": [copper],
     }
     table = QTableWidget(0, 8)

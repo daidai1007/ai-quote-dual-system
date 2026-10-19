@@ -1,4 +1,5 @@
 import {evaluateFormula,round} from './attachment_formula.mjs';
+import {applyManagementFee} from '../quick_discount_rules.mjs';
 
 const valueSql=value=>value==null?'NULL':typeof value==='number'?String(value):
   `convert_from(decode('${Buffer.from(String(value)).toString('hex')}','hex'),'UTF8')`;
@@ -126,11 +127,9 @@ export function createCabinetSprayService({runPsql}){
 
 export function applyCabinetSpray(result,spray){
   if(!spray)return result;
-  const formula={...(result.formula_cost||{})},old=Number(formula.spray_cost);
-  if(!Number.isFinite(old)||!Number.isFinite(Number(formula.total_cost)))throw new Error('数据库基础公式喷塑成本缺失，不能应用最新柜体喷塑规则');
+  const formula={...(result.formula_cost||{})};
   formula.spray_cost=spray.spray_cost;
   if(spray.product_area_m2!=null&&Number.isFinite(Number(spray.product_area_m2)))formula.product_area_m2=spray.product_area_m2;
-  formula.total_cost=round(Number(formula.total_cost)-old+spray.spray_cost,2);
   Object.assign(formula,{...(spray.spray_unit_price!=null&&Number.isFinite(Number(spray.spray_unit_price))?{spray_unit_price:spray.spray_unit_price}:{}),cabinet_spray_version:spray.data_version,
     cabinet_spray_method:spray.method??'AREA_FORMULA',cabinet_spray_match_method:spray.match_method??'AREA_FORMULA',
     cabinet_spray_source_sheet:spray.source_sheet??null,cabinet_spray_source_row_no:spray.source_row_no??null,
@@ -139,5 +138,5 @@ export function applyCabinetSpray(result,spray){
     cabinet_spray_reference_height_mm:spray.reference_height_mm??null,
     cabinet_spray_reference_depth_mm:spray.reference_depth_mm??null,
     cabinet_spray_perimeter_ratio:spray.perimeter_ratio??null,cabinet_spray_part_details:spray.part_details});
-  return {...result,formula_cost:formula};
+  return {...result,formula_cost:applyManagementFee(formula)};
 }

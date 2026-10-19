@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from PySide6.QtCore import QDate, QDateTime, QTimer, Qt, QThread, Signal
+from PySide6.QtCore import QDate, QDateTime, QSignalBlocker, QTimer, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QAbstractSpinBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QInputDialog, QLineEdit, QMessageBox, QPushButton,
@@ -36,20 +36,45 @@ STATUS_COLORS = {
     "VOID": ("#FDECEC", "#B42318"),
 }
 
-# Existing server summaries join product + dimensions with a space, and
-# separate quote lines with semicolons. Strip only a trailing dimension
-# expression, never split product names on spaces or remove model digits.
-_PRODUCT_DIMENSIONS = re.compile(
-    r"\s+\d+(?:\.\d+)?\s*(?:mm|cm|m|毫米|厘米|米)?"
-    r"(?:\s*[×xX*＊]\s*\d+(?:\.\d+)?\s*(?:mm|cm|m|毫米|厘米|米)?)+\s*$",
+# Older APIs return code + specification instead of the selected family.
+# Read only that code prefix: dimensions can contain arbitrary arithmetic.
+_LEGACY_PRODUCT_CODE = re.compile(
+    r"^(?:[A-Z][A-Z0-9_-]*(?:\s+WIDE)?|操作台)(?=\s|$)",
     re.IGNORECASE,
 )
 
 
-def _display_products(summary):
+def _selected_product_type(window, item):
+    selected_name = str(item.get("scheme2_selected_product_name") or "").strip()
+    if selected_name:
+        return selected_name
+    for key in ("scheme2_selected_product_code", "product_family", "product_code"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return str(window.family_for_code(value) or "").strip()
+    return ""
+
+
+def _display_products(window, summary):
+    # Use the very same code-to-family function as the configuration combo.
+    # No pricing, current price lookup or historical snapshot rewrite occurs.
     products = []
+    combo = getattr(window, "product_combo", None)
+    known_labels = set(getattr(window, "product_catalog", {}) or {})
+    if combo is not None:
+        known_labels.update(combo.itemText(index).strip() for index in range(combo.count())
+                            if combo.itemData(index) is not None)
+    known_labels = sorted(known_labels - {""}, key=len, reverse=True)
     for label in re.split(r"[；;]", str(summary or "")):
-        product = _PRODUCT_DIMENSIONS.sub("", label.strip()).strip()
+        label = label.strip()
+        saved_type = next((name for name in known_labels
+                           if label == name or label.startswith(name + " ")), "")
+        match = _LEGACY_PRODUCT_CODE.match(label)
+        product = str(window.family_for_code(match.group()) or "").strip() if match else ""
+        if saved_type and (not match or len(saved_type) >= len(match.group())):
+            product = saved_type
+        if not product and label and not re.search(r"[0-9*×＊()（）]", label):
+            product = label  # A saved human-readable product-type label.
         if product and product not in products:
             products.append(product)
     return "；".join(products)
@@ -105,18 +130,16 @@ def _snapshot(window):
     for item in items:
         values = _row_values(item)
         quoted_amount += float(values[16] or 0)
-        product = str(item.get("product_name") or item.get("product_code") or item.get("name") or "").strip()
-        specification = str(item.get("specification") or item.get("model_code") or "").strip()
-        label = " ".join(value for value in (product, specification) if value)
-        if label and label not in products:
-            products.append(label)
+        product = _selected_product_type(window, item)
+        if product and product not in products:
+            products.append(product)
     quote_date = str(getattr(window, "_quote_scheme_quote_date", "") or date.today().isoformat())
     payload["quote_scheme_schema_version"] = 1
     payload["client_version"] = CLIENT_VERSION
     payload["active_route"] = int(window.stack.currentIndex())
     payload["scheme_summary"] = {
         "company": str(payload.get("company") or "").strip(),
-        "product_summary": "；".join(products[:3]),
+        "product_summary": "；".join(products),
         "quoted_amount": round(quoted_amount, 2),
     }
     payload["document"] = {
@@ -261,6 +284,26 @@ def _update_page_buttons(window, page, pages):
     window.quote_scheme_page_jump.setValue(page)
 
 
+def _sync_product_filter(window):
+    source = window.product_combo
+    target = window.quote_scheme_filters["product"]
+    options = [("全部", "")]
+    seen = set()
+    for index in range(source.count()):
+        label = source.itemText(index).strip()
+        if source.itemData(index) is not None and label and label not in seen:
+            options.append((label, label))
+            seen.add(label)
+    if options == [(target.itemText(i), target.itemData(i)) for i in range(target.count())]:
+        return
+    selected = target.currentData()
+    with QSignalBlocker(target):
+        target.clear()
+        for label, value in options:
+            target.addItem(label, value)
+        target.setCurrentIndex(max(0, target.findData(selected)))
+
+
 def _build_page(window):
     page = SchemePage()
     page.setObjectName("quoteSchemeCenterPage")
@@ -305,10 +348,15 @@ def _build_page(window):
     grid.setContentsMargins(16, 14, 16, 16)
     grid.setHorizontalSpacing(METRICS["filter_gap"])
     grid.setVerticalSpacing(16)
+    product = SchemeComboBox()
+    product.setObjectName("quoteSchemeProductFilter")
+    product.setAccessibleName("产品类型筛选")
+    product.setEditable(False)
+    product.addItem("全部", "")
     window.quote_scheme_filters = {
         "scheme_no": _field("请输入方案编号", "quoteSchemeNumberFilter"),
         "company": _field("请输入下单公司", "quoteSchemeCompanyFilter"),
-        "product": _field("请输入产品名称", "quoteSchemeProductFilter"),
+        "product": product,
         "creator": _field("请输入创建人", "quoteSchemeCreatorFilter"),
         "updated_from": DateFilter("quoteSchemeUpdatedFrom", "更新时间开始日期"),
         "updated_to": DateFilter("quoteSchemeUpdatedTo", "更新时间结束日期"),
@@ -316,7 +364,20 @@ def _build_page(window):
     for key, editor in window.quote_scheme_filters.items():
         editor.setMinimumWidth(0 if key not in ("updated_from", "updated_to") else 96)
         editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        editor.returnPressed.connect(lambda: _load_list(window, 1))
+        if isinstance(editor, QLineEdit):
+            editor.returnPressed.connect(lambda: _load_list(window, 1))
+    # The catalogue arrives asynchronously. Coalesce model updates so this
+    # list always mirrors configuration without copying a hard-coded catalogue
+    # or triggering queries while the source combo is being populated.
+    product_sync = QTimer(page)
+    product_sync.setSingleShot(True)
+    product_sync.setInterval(0)
+    product_sync.timeout.connect(lambda: _sync_product_filter(window))
+    window._quote_scheme_product_sync_timer = product_sync
+    model = window.product_combo.model()
+    for signal in (model.rowsInserted, model.rowsRemoved, model.modelReset, model.dataChanged):
+        signal.connect(lambda *_: product_sync.start())
+    _sync_product_filter(window)
     status = SchemeComboBox()
     status.setObjectName("quoteSchemeStatusFilter")
     status.addItem("全部", "")
@@ -479,13 +540,19 @@ def _build_page(window):
 
 
 def _reset_filters(window):
-    for editor in window.quote_scheme_filters.values(): editor.clear()
+    for editor in window.quote_scheme_filters.values():
+        if isinstance(editor, QLineEdit):
+            editor.clear()
+        else:
+            editor.setCurrentIndex(0)
     window.quote_scheme_status_filter.setCurrentIndex(0)
     _load_list(window, 1)
 
 
 def _filters(window, page):
-    values = {key: editor.text().strip() for key, editor in window.quote_scheme_filters.items()}
+    values = {key: (editor.text().strip() if isinstance(editor, QLineEdit)
+                    else str(editor.currentData() or ""))
+              for key, editor in window.quote_scheme_filters.items()}
     for key in ("updated_from", "updated_to"):
         if values[key] and (not QDate.fromString(values[key], "yyyy-MM-dd").isValid()
                             or len(values[key]) != 10):
@@ -568,7 +635,7 @@ def _list_loaded(window, result):
         status = str(scheme.get("status") or "DRAFT")
         amount = scheme.get("quoted_amount")
         values = [
-            scheme_no, scheme.get("company_name"), _display_products(scheme.get("product_summary")),
+            scheme_no, scheme.get("company_name"), _display_products(window, scheme.get("product_summary")),
             STATUS_TEXT.get(status, status),
             "—" if amount is None else f"¥ {float(amount):,.2f}",
             scheme.get("creator_name"), scheme.get("last_editor_name"),
@@ -649,9 +716,12 @@ def _open_scheme(window, scheme_no, route=3, after_open=None):
         QMessageBox.information(window, "方案保存中", "请等待当前方案保存完成后再打开其他方案。")
         return
     _set_state(window, "正在从服务器恢复方案…", "busy")
+    epoch = getattr(window, "_scheme2_workspace_epoch", 0)
+    def current():
+        return epoch == getattr(window, "_scheme2_workspace_epoch", 0)
     _run(window, "GET", "/api/quote-schemes/" + urllib.parse.quote(scheme_no), None,
-         lambda result: _apply_opened_scheme(window, result, route, after_open),
-         lambda message: _set_state(window, f"打开失败：{message}", "error"))
+         lambda result: _apply_opened_scheme(window, result, route, after_open) if current() else None,
+         lambda message: _set_state(window, f"打开失败：{message}", "error") if current() else None)
 
 
 def _apply_read_only(window, read_only):
@@ -710,23 +780,36 @@ def _apply_opened_scheme(window, result, route=3, after_open=None):
 
 
 def _new_scheme(window):
-    busy = getattr(window, "_quote_scheme_save_worker", None) or getattr(window, "_quote_scheme_create_worker", None)
-    if busy is not None and busy.isRunning():
-        QMessageBox.information(window, "方案保存中", "请等待当前方案保存完成后再新建方案。")
+    for name in ("_quote_scheme_save_worker", "_quote_scheme_create_worker"):
+        busy = getattr(window, name, None)
+        if busy is not None and busy.isRunning():
+            QMessageBox.information(window, "方案保存中", "请等待当前方案保存完成后再新建方案。")
+            return
+    controller = getattr(window, "_scheme2_document_controller", None)
+    if controller is not None and controller.busy and controller.kind == "export":
+        QMessageBox.information(window, "报价单导出中", "请等待当前报价单导出完成后再新建方案。")
         return
-    if window._quote_scheme_id or getattr(window, "draft_items", []):
+    if (window._quote_scheme_id or getattr(window, "draft_items", [])
+            or getattr(window, "_scheme2_dirty", False) or getattr(window, "_scheme2_drawing_pages", [])
+            or window.quote_spec_edit.text().strip() or window.scheme2_name_edit.text().strip()):
         answer = QMessageBox.question(window, "新建方案", "将清空当前工作区并开始新方案。是否继续？",
                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                       QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes: return
-    window._quote_scheme_id = ""; window._quote_scheme_version = 0; window._quote_scheme_status = ""
-    window._quote_scheme_business_version = 1
-    window._quote_scheme_quote_date = date.today().isoformat()
-    window._quote_scheme_dirty_seq = 0; window._quote_scheme_saved_seq = 0
-    window._quote_scheme_save_pending = False; window._quote_scheme_last_save_failed = False
-    window.draft_items = []
-    _apply_read_only(window, False)
-    window.refresh_summary(); window.show_section(1)
+    from scheme2_ui import _reset_scheme2_workspace
+    window._quote_scheme_loading = True
+    try:
+        window._quote_scheme_save_timer.stop()
+        window._quote_scheme_id = ""; window._quote_scheme_version = 0; window._quote_scheme_status = ""
+        window._quote_scheme_business_version = 1
+        window._quote_scheme_quote_date = date.today().isoformat()
+        window._quote_scheme_dirty_seq = 0; window._quote_scheme_saved_seq = 0
+        window._quote_scheme_save_pending = False; window._quote_scheme_last_save_failed = False
+        _reset_scheme2_workspace(window)
+        _apply_read_only(window, False)
+        window.show_section(1)
+    finally:
+        window._quote_scheme_loading = False
     _set_state(window, "新方案尚未生成编号；首次加入报价清单后由服务器编号。")
 
 
@@ -845,7 +928,8 @@ def _confirm_transition(window, scheme, action):
         return
     path = f"/api/quote-schemes/{urllib.parse.quote(scheme['scheme_no'])}/{action}"
     _run(window, "POST", path, {"expected_version": scheme["lock_version"], "operator_name": operator_name},
-         lambda _r: _load_list(window, window._quote_scheme_page))
+         lambda _r: _load_list(window, window._quote_scheme_page),
+         lambda message: _set_state(window, f"{label}失败：{message}", "error"))
 
 
 def _confirm_delete(window, scheme):

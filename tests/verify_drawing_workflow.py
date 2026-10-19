@@ -611,7 +611,7 @@ class DrawingWorkflowTests(unittest.TestCase):
         self.assertEqual(self.w.freight_state.mode, 'AUTO')
         self.assertEqual(self.w.formula_labels['freight'].text(), '66.10 元')
         self.assertEqual(self.w.quick_labels['freight'].text(), '66.10 元')
-        self.assertEqual(self.w.formula_labels['total'].text(), '228.70 元')
+        self.assertEqual(self.w.formula_labels['total'].text(), '239.67 元')
         self.assertEqual(self.w.quick_labels['total'].text(), '266.10 元')
         self.accept(response(72.33))
         self.assertEqual(self.w.freight_spin.value(), 72.33)

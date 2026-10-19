@@ -2,7 +2,7 @@
   "data_version": "cabinet-labor-a3d12580527a3eb6-v1",
   "source_file": "人工公式xlsx.xlsx",
   "source_sha256": "a3d12580527a3eb69eedd47b35107b0c8577333d1a52a7331ce8730dd866d1bd",
-  "management_fee_rate": 0.13,
+  "management_fee_rate": 0.06,
   "rules": [
     {
       "rule_kind": "LINEAR_WEIGHT",

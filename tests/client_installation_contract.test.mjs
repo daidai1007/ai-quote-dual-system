@@ -22,7 +22,10 @@ test('client layout and diagnostics cover small high-DPI desktops', async () => 
   assert.match(layout, /availableGeometry\(\)/);
   assert.match(layout, /_configure_quote_action_dock_density/);
   assert.match(layout, /mainScrollHost/);
-  assert.match(layout, /host_layout\.addWidget\(dock, 0\)/);
+  assert.match(layout, /def _ensure_quote_action_dock_host/);
+  assert.match(layout, /def _retire_quote_action_dock/);
+  const currentUi = await read('desktop_client', 'scheme2_ui.py');
+  assert.match(currentUi, /host\.layout\(\)\.addWidget\(dock/);
   assert.match(launcher, /AIQuoteDualSystem" \/ "logs" \/ "client\.log/);
   assert.match(launcher, /RotatingFileHandler/);
   assert.match(launcher, /客户端启动失败/);

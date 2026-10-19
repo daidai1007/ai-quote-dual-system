@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QTimer, QDate
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QWidget
 from shiboken6 import isValid
 from material_prices import material_unit_price
-from quick_discount_rules import money_sum, quick_attachment_line_amount
+from quick_discount_rules import money_sum, quick_attachment_line_amount, apply_management_fee
 from ganged_cabinet_rules import parse_ganged_specification
 from quote_request_context import attachment_inputs, bind_quote_request, check_quote_response, retire_quote_request, settle_quote_request
 
@@ -222,11 +222,7 @@ def provisionalize_manual_dimension_result(result):
         sum(float(row.get("formula_amount") or 0) for row in rendered.get("attachments", []))
         if not has_blocking_error else None
     )
-    if not has_blocking_error and formula.get("total_cost") is None:
-        formula["total_cost"] = sum(float(formula.get(key) or 0) for key in (
-            "material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee",
-        )) + float(formula.get("attachment_fee") or 0)
-    rendered["formula_cost"] = formula
+    rendered["formula_cost"] = apply_management_fee(formula)
     pending_names = {
         str(row.get("item_name") or "") for row in rendered.get("attachments", [])
         if row.get("status") == "PENDING_MANUAL"

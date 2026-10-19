@@ -801,6 +801,36 @@ class QuoteDrawingPreview(QFrame):
         self.delete_selection_button.setEnabled(bool(self.canvas.selected_indices))
         self.clear_button.setEnabled(bool(self.canvas.strokes))
 
+    def reset_workspace(self):
+        """Forget this workspace's drawings/ink without killing render threads."""
+        self._detail_timer.stop()
+        self.serial += 1  # A renderer from the previous scheme may still finish.
+        self.canvas.finish_stroke()
+        self.canvas.clear_selection(remove_items=False)
+        self.document_key, self.source, self.path = None, '', ''
+        self.page, self.page_count = 0, 0
+        for mapping in (self.annotations, self.pages, self.rotations, self.render_edges,
+                        self.logical_sizes, self.cache, self._render_context):
+            mapping.clear()
+        self.current_render_edge, self.current_kind = RENDER_EDGE, ''
+        self.canvas.scene().clear()
+        self.canvas.scene().setSceneRect(QRectF())
+        self.canvas.strokes, self.canvas._items, self.canvas._history = [], [], []
+        self.canvas.set_tool('pan')
+        self.canvas.set_text(False)
+        self.canvas.resetTransform()
+        self.canvas.rotation_degrees = 0
+        self.canvas.fit_mode = True
+        self.canvas.fit_zoom = DEFAULT_READABLE_ZOOM
+        self.canvas.setEnabled(False)
+        for button, caption in ((self.pen_button, '手写笔'), (self.select_button, '框选'),
+                                (self.text_button, '文字框')):
+            button.setChecked(False)
+            button.setText(caption)
+        self.filename.setText('尚未关联图纸')
+        self.message.setText('请导入并确认图纸')
+        self.update_tools()
+
     def set_document(self, key, source, path):
         identity = (key, normalized_path(source), normalized_path(path))
         if identity == self.document_key:

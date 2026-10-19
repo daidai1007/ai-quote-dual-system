@@ -104,6 +104,41 @@ test('incomplete popup cost, inconsistent totals and changed cabinet dimensions 
   await assert.rejects(h.service.hydrateDocument({items:[changed]}),/height_mm/);
 });
 
+test('JE missing old management and totals uses confirmed costs and six percent including freight',async()=>{
+  for(const count of [1,2]) {
+    const saved=structuredClone(environment);
+    saved.ganged_cabinet_count=count;
+    saved.ganged_cabinets=count===1?[]:[{width_mm:740},{width_mm:740}];
+    saved.quote_result.formula_cost={material_cost:826.52,auxiliary_cost:49.60,labor_cost:332.54,
+      spray_cost:80.65,attachment_fee:null,management_fee:null,total_cost:null,management_fee_rate:.13};
+    const original=structuredClone(saved);
+    const rows=[{...fan,formula_amount:720.88,quick_amount:1562,quick_amount_override:1562}];
+    const input={...quote(rows,10),freight_fee:61.86,ganged_cabinet_count:count,ganged_cabinets:saved.ganged_cabinets};
+    const line=quickOrderLineBreakdown({quote:input.quick,attachments:rows,discount:.5,cabinetQuantity:10,freightFee:61.86});
+    Object.assign(input.quote_display,{unit_price:line.equivalentUnitTotal,total:line.lineTotal});
+    const {items:[item]}=await harness(saved).service.hydrateDocument({items:[input]});
+    assert.equal(item.formula.management_fee,124.32);
+    assert.equal(item.formula.management_fee_rate,.06);
+    assert.equal(item.formula_base.management_fee_rate,.06);
+    assert.equal(item.formula_base.management_fee,124.32);
+    assert.equal(item.formula.total_cost,2134.51);
+    assert.equal(moneySum([item.formula.total_cost,input.freight_fee]),2196.37);
+    assert.equal(item.formula.attachment_fee,720.88);
+    assert.deepEqual(saved,original,'original partial snapshot is not rewritten');
+    assert.deepEqual(item.attachments[0].quick_amount_override,1562);
+  }
+});
+
+test('obsolete fees cannot affect output and missing source costs cannot use a stored total',async()=>{
+  const saved=structuredClone(environment);
+  saved.quote_result.formula_cost.management_fee=999999;
+  saved.quote_result.formula_cost.total_cost=9999999;
+  const result=await harness(saved).service.hydrateDocument({items:[quote()]});
+  assert.equal(result.items[0].formula.management_fee,25.8);
+  delete saved.quote_result.formula_cost.auxiliary_cost;
+  await assert.rejects(harness(saved).service.hydrateDocument({items:[quote()]}),/缺少辅材成本/);
+});
+
 test('actual ordinary and ganged workbooks preserve popup fan sale and formula cost',async()=>{
   const folder=await fs.mkdtemp(path.join(os.tmpdir(),'popup-document-'));
   try{

@@ -294,8 +294,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     ), changed AS (
       UPDATE calc.quote_scheme s SET status=${sqlUnicodeText(config.to)},lock_version=s.lock_version+1,
         updated_at=now(),last_editor_user_id=${p.id},last_editor_name_snapshot=${sqlUnicodeText(operatorName)},
-        archived_at=CASE WHEN ${sqlUnicodeText(config.to)}='ARCHIVED' THEN now() ELSE archived_at END,
-        voided_at=CASE WHEN ${sqlUnicodeText(config.to)}='VOID' THEN now() ELSE voided_at END
+        archived_at=CASE WHEN ${sqlUnicodeText(config.to)}='ARCHIVED' THEN now() ELSE s.archived_at END,
+        voided_at=CASE WHEN ${sqlUnicodeText(config.to)}='VOID' THEN now() ELSE s.voided_at END
       FROM target t WHERE s.scheme_id=t.scheme_id
       RETURNING s.*
     ), audit AS (INSERT INTO calc.quote_scheme_audit(scheme_id,action,from_status,to_status,actor_user_id,actor_name_snapshot)

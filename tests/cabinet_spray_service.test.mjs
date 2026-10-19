@@ -57,8 +57,9 @@ test('body thickness selects the exact spray profile',()=>{
 
 test('applying spray replaces old spray cost and keeps the quick quote unchanged',()=>{
   const spray=calculateCabinetSpray(rules,environment);
-  const result=applyCabinetSpray({formula_cost:{material_cost:200,spray_cost:99,total_cost:500},quick_quote:{total_cost:800}},spray);
-  assert.equal(result.formula_cost.total_cost,500-99+spray.spray_cost);
+  const result=applyCabinetSpray({formula_cost:{material_cost:200,auxiliary_cost:201,labor_cost:0,attachment_fee:0,spray_cost:99,total_cost:500},quick_quote:{total_cost:800}},spray);
+  const base=401+spray.spray_cost;
+  assert.equal(result.formula_cost.total_cost,Math.round((base+Math.round(base*.06*100)/100)*100)/100);
   assert.equal(result.formula_cost.product_area_m2,spray.product_area_m2);
   assert.equal(result.quick_quote.total_cost,800);
 });
@@ -127,9 +128,9 @@ test('no-spray selection makes fixed experience spray zero',()=>{
 });
 
 test('fixed spray replacement preserves base area and unit price fields',()=>{
-  const result=applyCabinetSpray({formula_cost:{product_area_m2:3.2,spray_unit_price:12,spray_cost:80,total_cost:500},quick_quote:{total_cost:700}},
+  const result=applyCabinetSpray({formula_cost:{material_cost:420,auxiliary_cost:0,labor_cost:0,attachment_fee:0,product_area_m2:3.2,spray_unit_price:12,spray_cost:80,total_cost:500},quick_quote:{total_cost:700}},
     {data_version:'spray-v2',method:'FIXED',match_method:'FIXED_EXACT',product_code:'JQ_EXP',product_area_m2:null,spray_unit_price:null,
       spray_cost:49.5,part_details:[],source_sheet:'JQ',source_row_no:3});
   assert.equal(result.formula_cost.product_area_m2,3.2);assert.equal(result.formula_cost.spray_unit_price,12);
-  assert.equal(result.formula_cost.total_cost,469.5);assert.equal(result.quick_quote.total_cost,700);
+  assert.equal(result.formula_cost.total_cost,497.67);assert.equal(result.quick_quote.total_cost,700);
 });

@@ -63,13 +63,13 @@ export function createCabinetLaborService({runPsql}){
   const query=async sql=>{const output=await runPsql(sql);return JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).at(-1)||'null');};
   return {async calculate(input,material){
     let data;
-    try{data=await query(`SELECT jsonb_build_object('data_version',v.data_version,'management_fee_rate',v.management_fee_rate,
+    try{data=await query(`SELECT jsonb_build_object('data_version',v.data_version,
       'rules',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.source_sheet,r.source_row_no),'[]')
         FROM calc.cabinet_labor_rule r WHERE r.data_version=v.data_version))
       FROM calc.cabinet_labor_catalog_version v WHERE v.status='ACTIVE';`);}
     catch(error){if(/cabinet_labor_(catalog_version|rule).*does not exist/i.test(String(error?.message||error)))return null;throw error;}
     if(!data)return null;
-    return calculateCabinetLabor(data.rules,{...input,data_version:data.data_version,management_fee_rate:data.management_fee_rate},material);
+    return calculateCabinetLabor(data.rules,{...input,data_version:data.data_version},material);
   },async persist(quoteId,result,labor){
     if(!labor)return;
     const formula=result.formula_cost||{},snapshot={...labor,matched_rule:labor.matched_rule,
@@ -87,10 +87,8 @@ export function createCabinetLaborService({runPsql}){
 
 export function applyCabinetLabor(result,labor,freightFee=0){
   if(!labor)return {...result,formula_cost:applyManagementFee(result.formula_cost||{},freightFee)};
-  const formula={...(result.formula_cost||{})},oldLabor=Number(formula.labor_cost),oldManagement=Number(formula.management_fee);
-  if(!Number.isFinite(oldLabor)||!Number.isFinite(oldManagement)||!Number.isFinite(Number(formula.total_cost)))throw new Error('数据库基础公式人工或管理费缺失，不能应用最新人工规则');
+  const formula={...(result.formula_cost||{})};
   formula.labor_cost=labor.labor_cost;
-  formula.total_cost=round(Number(formula.total_cost)-oldLabor+labor.labor_cost,2);
   Object.assign(formula,{cabinet_labor_version:labor.data_version,labor_method:labor.match_method,
     labor_billable_weight_kg:labor.labor_billable_weight_kg,labor_excluded_part_names:labor.excluded_part_names,
     labor_source_sheet:labor.matched_rule.source_sheet,labor_source_row_no:labor.matched_rule.source_row_no,

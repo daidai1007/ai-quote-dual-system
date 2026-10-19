@@ -6,7 +6,7 @@ const lineA='11111111-1111-4111-8111-111111111111';
 const lineB='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const environment={product_code:'JP',material_code:'SECC',width_mm:800,height_mm:1800,depth_mm:600,
   coating_type:'橘纹',quote_date:'2026-10-12',ganged_cabinet_count:1,ganged_cabinets:[],quote_result:{
-    formula_cost:{total_cost:100,attachment_fee:20,labor_cost:10,management_fee:1.3},
+    formula_cost:{material_cost:68.7,auxiliary_cost:0,spray_cost:0,total_cost:100,attachment_fee:20,labor_cost:10,management_fee:1.3},
     quick_quote:{total_cost:200,attachment_fee:30}}};
 const attachment={attachment_price_id:99,item_name:'固定底座',quantity:1,attachment_price_sign:1,
   manual_inputs:{底座高度:100},status:'CALCULATED',formula_amount:20,quick_amount:30};

@@ -8,7 +8,7 @@ const lineId='11111111-1111-4111-8111-111111111111';
 const environment={product_code:'JM',material_code:'SUS304',width_mm:800,height_mm:1400,depth_mm:250,
   coating_type:'橘纹',quote_date:'2026-10-08',cabinet_body_thickness_mm:1.5,waste_factor:1.2,
   ganged_cabinet_count:1,ganged_cabinets:[],quote_result:{
-    formula_cost:{total_cost:100,attachment_fee:20,labor_cost:10,management_fee:1.3},
+    formula_cost:{material_cost:68.7,auxiliary_cost:0,spray_cost:0,total_cost:100,attachment_fee:20,labor_cost:10,management_fee:1.3},
     quick_quote:{total_cost:200,attachment_fee:30}}};
 const savedAttachment={attachment_price_id:99,quantity:1,attachment_price_sign:1,manual_inputs:{},
   attachment_selection_id:123,quote_line_id:lineId,status:'FIXED',catalog_version:'v2',item_name:'不锈钢门锁',

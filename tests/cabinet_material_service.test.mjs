@@ -78,8 +78,9 @@ test('fixed SGCC uses the galvanized price from the cost sidebar',async()=>{
 
 test('base quote material cost and total are replaced while other components stay intact',()=>{
   const material=calculateCabinetMaterial(rules,environment);
-  const applied=applyCabinetMaterial({formula_cost:{material_cost:999,auxiliary_cost:10,total_cost:1200},quick_quote:{total_cost:1500}},material);
-  assert.equal(applied.formula_cost.total_cost,1200-999+material.material_cost);
+  const applied=applyCabinetMaterial({formula_cost:{material_cost:999,auxiliary_cost:10,labor_cost:0,spray_cost:0,attachment_fee:0,total_cost:1200},quick_quote:{total_cost:1500}},material);
+  const base=material.material_cost+10;
+  assert.equal(applied.formula_cost.total_cost,Math.round((base+Math.round(base*.06*100)/100)*100)/100);
   assert.equal(applied.formula_cost.auxiliary_cost,10);
   assert.equal(applied.quick_quote.total_cost,1500);
 });
@@ -88,7 +89,8 @@ test('sidebar material price works when the database base material price is miss
   const material=calculateCabinetMaterial(rules,environment);
   const applied=applyCabinetMaterial({formula_cost:{material_cost:null,auxiliary_cost:10,labor_cost:20,
     attachment_fee:3,spray_cost:4,management_fee:2.6,total_cost:null},risk_flags:[{code:'material_price_missing'}]},material);
-  assert.equal(applied.formula_cost.total_cost,Math.round((material.material_cost+39.6)*100)/100);
+  const base=material.material_cost+37;
+  assert.equal(applied.formula_cost.total_cost,Math.round((base+Math.round(base*.06*100)/100)*100)/100);
   assert.deepEqual(applied.risk_flags,[]);
 });
 

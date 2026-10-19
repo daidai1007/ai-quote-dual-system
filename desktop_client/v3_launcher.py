@@ -116,6 +116,12 @@ def _show_fatal_startup_error(error: BaseException, log_path: pathlib.Path) -> N
         app = QApplication.instance()
         if app is None:
             app = QApplication(sys.argv[:1])
+        try:
+            from dialog_style import install_dialog_style
+            install_dialog_style()
+        except Exception:
+            # A broken theme must never suppress the fatal startup message.
+            _LOGGER.warning("startup dialog theme unavailable", exc_info=True)
         QMessageBox.critical(
             None,
             "客户端启动失败",

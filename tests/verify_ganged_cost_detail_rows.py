@@ -50,9 +50,7 @@ assert any(row["type"].startswith("柜体1\n") for row in rows)
 assert any(row["type"].startswith("柜体2\n") for row in rows)
 assert all(row.get("_scheme2_version") == 3 for row in rows)
 attachment_rows = [row for row in rows if row["category"] == "attachment_fee"]
-assert len(attachment_rows) == 1
-assert attachment_rows[0]["type"] == "并柜附件"
-assert attachment_rows[0]["base_amount"] == 12
-assert sum(float(row["base_amount"]) for row in rows) == 512
+assert attachment_rows == []  # No confirmed popup rows: ignore the stale aggregate 12.
+assert sum(float(row["base_amount"]) for row in rows) == 503.5
 
 print("ganged cost detail rows passed")
