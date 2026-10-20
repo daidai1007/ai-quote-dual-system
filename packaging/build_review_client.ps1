@@ -50,6 +50,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $currentClient $name) -Destination $portable
     }
     New-Item -ItemType Directory -Path (Join-Path $portable 'output') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'update_config.example.json') -Destination (Join-Path $portable 'update_config.json')
     $builtEntry = Join-Path $portable 'AIQuoteDualSystem_layout_v0.exe'
     $protectedAfter = @(Get-FileHash -LiteralPath $entry,$config -Algorithm SHA256)
     if (Compare-Object $protectedBefore.Hash $protectedAfter.Hash) { throw 'Protected files unexpectedly changed.' }

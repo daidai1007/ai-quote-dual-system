@@ -3601,21 +3601,21 @@ def main() -> int:
         }
         QScrollBar:vertical {
             background: #e8eef5;
-            width: 14px;
+            width: 11px;
             margin: 2px;
-            border-radius: 7px;
+            border-radius: 5px;
         }
         QScrollBar:horizontal {
             background: #e8eef5;
-            height: 14px;
+            height: 11px;
             margin: 2px;
-            border-radius: 7px;
+            border-radius: 5px;
         }
         QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
             background: #9fb3c8;
-            border-radius: 6px;
-            min-height: 28px;
-            min-width: 28px;
+            border-radius: 5px;
+            min-height: 21px;
+            min-width: 21px;
         }
         QScrollBar::handle:hover {
             background: #6f8fab;
@@ -3624,6 +3624,10 @@ def main() -> int:
         QScrollBar::add-page, QScrollBar::sub-page {
             background: none;
             border: 0;
+        }
+        QScrollBar::add-line, QScrollBar::sub-line {
+            width: 0;
+            height: 0;
         }
         QWidget#hero {
             background: #173d63;

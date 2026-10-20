@@ -78,7 +78,12 @@ Section "主程序" SEC_MAIN
   SectionIn RO
   SetOutPath "$INSTDIR"
   File "${StageDir}\${APP_EXE}"
-  File "${StageDir}\client_config.json"
+  IfFileExists "$INSTDIR\client_config.json" keep_client_config
+    File "${StageDir}\client_config.json"
+  keep_client_config:
+  IfFileExists "$INSTDIR\update_config.json" keep_update_config
+    File "${StageDir}\update_config.json"
+  keep_update_config:
   File "${StageDir}\PROJECT-LICENSE.txt"
   File "${StageDir}\README.txt"
   File "${StageDir}\release-manifest.json"

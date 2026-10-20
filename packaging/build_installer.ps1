@@ -90,6 +90,10 @@ $builtClient = Join-Path $distRoot "AIQuoteDualSystem_layout_v0"
 Copy-Item -LiteralPath (Join-Path $builtClient "AIQuoteDualSystem_layout_v0.exe") -Destination (Join-Path $stageRoot "AIQuoteDualSystem_layout_v0.exe") -Force
 Copy-Item -LiteralPath (Join-Path $currentClient "_internal") -Destination (Join-Path $stageRoot "_internal") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $currentClient "runtime") -Destination (Join-Path $stageRoot "runtime") -Recurse -Force
+Get-ChildItem -LiteralPath (Join-Path $builtClient '_internal') | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stageRoot '_internal') -Recurse -Force
+}
+Copy-Item -LiteralPath (Join-Path $packagingRoot 'update_config.example.json') -Destination (Join-Path $stageRoot 'update_config.json') -Force
 foreach ($name in @("client_config.json", "PROJECT-LICENSE.txt", "README.txt", "THIRD_PARTY_NOTICES.txt")) {
     Copy-Item -LiteralPath (Join-Path $currentClient $name) -Destination (Join-Path $stageRoot $name) -Force
 }

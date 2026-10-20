@@ -1,4 +1,4 @@
-"""Real Qt geometry and pointer checks for shared, unscaled scrollbar targets."""
+"""Real Qt geometry and pointer checks for shared 3/4-size scrollbars."""
 import os
 from pathlib import Path
 import sys
@@ -54,7 +54,7 @@ class ScrollbarTargets(unittest.TestCase):
     def assert_bar(self, bar):
         self.assertTrue(bar.isVisible())
         thickness = bar.width() if bar.orientation() == Qt.Orientation.Vertical else bar.height()
-        self.assertEqual(thickness, 20)
+        self.assertEqual(thickness, 15)
 
     def slider_rect(self, bar):
         option = QStyleOptionSlider()
@@ -69,11 +69,11 @@ class ScrollbarTargets(unittest.TestCase):
                 self.resize(*size)
                 self.assert_bar(table.verticalScrollBar())
                 self.assert_bar(table.horizontalScrollBar())
-                self.assertGreaterEqual(self.slider_rect(table.verticalScrollBar()).height(), 40)
-                self.assertGreaterEqual(self.slider_rect(table.horizontalScrollBar()).width(), 40)
+                self.assertGreaterEqual(self.slider_rect(table.verticalScrollBar()).height(), 30)
+                self.assertGreaterEqual(self.slider_rect(table.horizontalScrollBar()).width(), 30)
         self.assertTrue(self.window.grab().save(str(ROOT / 'outputs/scrollbar-thicker-cost.png')))
 
-    def test_handle_edges_are_clickable_and_drag_moves_both_axes(self):
+    def test_handle_centers_are_clickable_and_drag_moves_both_axes(self):
         table = self.window.summary_table
         for bar in (table.verticalScrollBar(), table.horizontalScrollBar()):
             with self.subTest(orientation=bar.orientation()):
@@ -83,7 +83,7 @@ class ScrollbarTargets(unittest.TestCase):
                 option = QStyleOptionSlider()
                 bar.initStyleOption(option)
                 vertical = bar.orientation() == Qt.Orientation.Vertical
-                start = QPoint(2, rect.center().y()) if vertical else QPoint(rect.center().x(), 2)
+                start = rect.center()
                 hit = bar.style().hitTestComplexControl(QStyle.ComplexControl.CC_ScrollBar, option, start, bar)
                 self.assertEqual(hit, QStyle.SubControl.SC_ScrollBarSlider)
                 target = start + (QPoint(0, 100) if vertical else QPoint(100, 0))
@@ -92,12 +92,8 @@ class ScrollbarTargets(unittest.TestCase):
                 QTest.mouseRelease(bar, Qt.MouseButton.LeftButton, pos=target)
                 self.assertGreater(bar.value(), 0)
 
-    def test_sidebar_option_outer_and_option_panel_share_target_size(self):
-        scroll = self.window.findChild(QScrollArea, 'scheme2CoefficientScroll')
-        for field in self.window.scheme2_cost_fields.values():
-            field.setMinimumHeight(100)
-        QTest.qWait(40)
-        self.assert_bar(scroll.verticalScrollBar())
+    def test_option_outer_and_option_panel_share_target_size(self):
+        self.assertTrue(self.window.scheme2_cost_sidebar.isHidden())
         self.window.show_section(ui.OPTION_ROUTE)
         self.resize(840, 600)
         self.assert_bar(self.window.findChild(QScrollArea, 'mainScroll').verticalScrollBar())

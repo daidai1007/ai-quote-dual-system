@@ -35,13 +35,15 @@ def verify(directory):
                      'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules', 'scheme2_ui',
                      'quote_scheme_center', 'quote_scheme_widgets', 'quote_request_context',
                      'quote_document_progress', 'material_prices', 'wheel_edit_guard', 'dropdown_style', 'progress_style',
-                     'cost_detail_export', 'dialog_style', 'ui_typography', 'support_plate_pricing'):
+                     'cost_detail_export', 'dialog_style', 'ui_typography', 'support_plate_pricing',
+                     'client_update_core', 'client_update_ui', 'client_update_runner'):
             expected = compile((ROOT / 'desktop_client' / f'{name}.py').read_text(encoding='utf-8'), '', 'exec')
             actual = pyz.extract(name)
             assert normalized(expected) == normalized(actual), f'Packaged source differs: {name}'
             checked.append(name)
         assert 'quote_diagnostics' not in pyz.toc, 'Removed diagnostic submission module is still packaged'
-        for name in ('ezdxf.addons.drawing.svg', 'PIL.Image', 'fontTools.ttLib', 'pypdf'):
+        for name in ('ezdxf.addons.drawing.svg', 'PIL.Image', 'fontTools.ttLib', 'pypdf',
+                     'cryptography.hazmat.primitives.asymmetric.ed25519'):
             assert name in pyz.toc, f'Missing renderer module: {name}'
         actual = marshal.loads(reader.extract('v3_launcher'))
         expected = compile((ROOT / 'desktop_client/v3_launcher.py').read_text(encoding='utf-8'), '', 'exec')

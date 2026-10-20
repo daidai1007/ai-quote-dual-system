@@ -1,4 +1,4 @@
-"""Eight permanent coefficients in the actual recovered Qt workbench."""
+"""Eight coefficient values remain available through the cost-page dialog."""
 from copy import deepcopy
 import json
 import os
@@ -50,8 +50,13 @@ try:
     window.show_section(ui.COST_ROUTE)
     QTest.qWait(50)
     ui._sync_sidebar(window)
-    assert not window.scheme2_cost_sidebar.isHidden()
-    assert all(not field.isHidden() for field in window.scheme2_cost_fields.values())
+    assert window.scheme2_cost_sidebar.isHidden()
+    dialog = ui._CostCoefficientDialog(window)
+    assert len(dialog.controls) == 8
+    dialog.show()
+    QTest.qWait(30)
+    assert all(control.isVisible() for control in dialog.controls.values())
+    dialog.reject()
     window.draft_items = [sample("SECC"), sample("SUS304", 17.5), sample("SUS316", 35)]
     ui._refresh_cost_table(window)
     for index in range(3):
@@ -59,7 +64,7 @@ try:
         ui._sync_sidebar(window)
         assert [field.findChild(QLabel, "scheme2FieldLabel").text()
                 for field in window.scheme2_cost_fields.values()] == expected
-        assert all(not field.isHidden() for field in window.scheme2_cost_fields.values())
+        assert window.scheme2_cost_sidebar.isHidden()
     assert window.draft_items[1]["scheme2_cost_settings"]["stainless_304_price"] == 17.5
     assert window.draft_items[1]["scheme2_cost_settings"]["stainless_316_price"] == 32.4
     assert window.draft_items[2]["scheme2_cost_settings"]["stainless_316_price"] == 35
@@ -129,18 +134,20 @@ try:
         window.resize(width, height)
         QTest.qWait(50)
         ui._apply_responsive(window)
-        assert not window.scheme2_cost_sidebar.isHidden()
+        assert window.scheme2_cost_sidebar.isHidden()
         assert window.scheme2_compact_coefficients.isHidden()
-        assert all(not field.isHidden() for field in window.scheme2_cost_fields.values())
-        for field in window.scheme2_cost_fields.values():
+        dialog = ui._CostCoefficientDialog(window)
+        dialog.show()
+        QTest.qWait(30)
+        for field in dialog.findChildren(ui.QFrame, "scheme2Field"):
             label = field.findChild(QLabel, "scheme2FieldLabel")
             assert label.fontMetrics().horizontalAdvance(label.text()) <= label.width(), label.text()
-        viewport = window.scheme2_cost_sidebar.findChild(QScrollArea).viewport()
-        for control in window.scheme2_cost_controls.values():
-            assert control.mapTo(viewport, control.rect().topRight()).x() < viewport.width()
-        output = ROOT / "outputs" / "coefficient-sidebar-verification"
+        for control in dialog.controls.values():
+            assert control.isVisible()
+        output = ROOT / "outputs" / "coefficient-dialog-verification"
         output.mkdir(parents=True, exist_ok=True)
-        assert window.grab().save(str(output / f"{name}.png"))
+        assert dialog.grab().save(str(output / f"{name}.png"))
+        dialog.reject()
     child = sample("SUS304")["formula"]
     gang = {"material_code": "SUS304", "scheme2_cost_settings": window.scheme2_defaults.copy(),
             "formula": {"material_cost": 338.2, "total_cost": 538.2,
@@ -153,6 +160,6 @@ try:
     assert gang["formula"]["material_cost"] == 418.2
     assert [row["unit_price"] for row in ui._detail_rows(gang) if row.get("name") == "箱体"] == [20, 20]
     assert material_unit_price(migrate_material_prices({"stainless_price": 38}, "SUS316"), "SUS304") == 16
-    print("PASS: eight permanent fields, independent 304/316 prices, legacy migration, detail costs, API payloads and responsive Qt layout")
+    print("PASS: coefficient dialog, independent 304/316 prices, legacy migration, detail costs, API payloads and responsive Qt layout")
 finally:
     window.close()

@@ -36,9 +36,9 @@ ADD_PROGRESS_COMPACT_THRESHOLD = 650
 ADD_PROGRESS_MIN_WIDTH = 110
 ADD_PROGRESS_MAX_WIDTH = 460
 ADD_PROGRESS_TEXT_PADDING = 30
-SCROLLBAR_EXTENT = 20
-SCROLLBAR_HANDLE_MIN_LENGTH = 40
-SCROLLBAR_CORNER_RADIUS = 6
+SCROLLBAR_EXTENT = 15
+SCROLLBAR_HANDLE_MIN_LENGTH = 30
+SCROLLBAR_CORNER_RADIUS = 5
 SCROLLBAR_COLORS = {
     "track": "#EEF0F3", "handle": "#A8B5C5",
     "hover": "#6E91BF", "pressed": "#2563EB",
@@ -150,7 +150,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.20.03"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.20.04"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -171,6 +171,7 @@ COST_COLUMN_BACKGROUNDS = (
     "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD",
     "#F5F0FA", "#ECF4F1", "#F5F6F8",
 )
+COST_SELECTION_DETAIL_COLUMNS = (3, 4, *range(5, 23))
 DETAIL_COLUMN_WIDTHS = (72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)
 MONEY_COLUMNS = frozenset((6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
 EDITABLE_COLUMNS = frozenset((1, 4, 9, 19))
@@ -3676,6 +3677,97 @@ def _cost_sidebar(window):
     return bar
 
 
+class _CostCoefficientDialog(QDialog):
+    """Edit a copy of the current coefficients, committing only on confirmation."""
+
+    def __init__(self, window):
+        super().__init__(window, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("scheme2CoefficientDialog")
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(window.size())
+        self.move(window.mapToGlobal(QPoint(0, 0)))
+        self.controls = {}
+
+        overlay = QVBoxLayout(self)
+        overlay.setContentsMargins(18, 18, 18, 18)
+        shell = QFrame()
+        shell.setObjectName("scheme2CoefficientShell")
+        shell.setFixedWidth(min(640, max(280, window.width() - 64)))
+        layout = QVBoxLayout(shell)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QFrame()
+        header.setObjectName("scheme2CoefficientHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 8, 10, 8)
+        title = QLabel("修改系数")
+        title.setObjectName("scheme2CoefficientTitle")
+        close = QToolButton()
+        close.setObjectName("scheme2CoefficientClose")
+        close.setText("×")
+        close.setAccessibleName("关闭修改系数")
+        close.setFixedSize(28, 28)
+        close.clicked.connect(self.reject)
+        header_layout.addWidget(title)
+        header_layout.addStretch(1)
+        header_layout.addWidget(close)
+        layout.addWidget(header)
+
+        fields = QWidget()
+        grid = QGridLayout(fields)
+        grid.setContentsMargins(20, 18, 20, 18)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
+        columns = 4 if shell.width() >= 560 else 2
+        for index, (key, label, _default, decimals) in enumerate(COEFFICIENT_FIELDS):
+            source = window.scheme2_cost_controls[key]
+            control = _sidebar_price_spin(source.value(), decimals)
+            control.setObjectName("scheme2CoefficientInput")
+            control.setRange(source.minimum(), source.maximum())
+            control.setDecimals(source.decimals())
+            control.setValue(source.value())
+            control.setAccessibleName(label)
+            self.controls[key] = control
+            field = _field(label, control)
+            field.findChild(QLabel, "scheme2FieldLabel").setWordWrap(True)
+            grid.addWidget(field, index // columns, index % columns)
+        layout.addWidget(fields)
+
+        footer = QFrame()
+        footer.setObjectName("scheme2CoefficientFooter")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(16, 10, 16, 10)
+        footer_layout.addStretch(1)
+        cancel = QPushButton("取消")
+        cancel.setObjectName("scheme2CoefficientCancel")
+        confirm = QPushButton("确定")
+        confirm.setObjectName("scheme2CoefficientConfirm")
+        cancel.clicked.connect(self.reject)
+        confirm.clicked.connect(self.accept)
+        footer_layout.addWidget(cancel)
+        footer_layout.addWidget(confirm)
+        layout.addWidget(footer)
+        overlay.addWidget(shell, 0, Qt.AlignmentFlag.AlignCenter)
+
+
+def _show_cost_coefficients(window):
+    if getattr(window, "_quote_scheme_read_only", False):
+        return
+    _sync_sidebar(window)
+    dialog = _CostCoefficientDialog(window)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return
+    changes = [
+        (key, control.value()) for key, control in dialog.controls.items()
+        if not math.isclose(control.value(), window.scheme2_cost_controls[key].value(), abs_tol=1e-6)
+    ]
+    for key, value in changes:
+        window.scheme2_cost_controls[key].setValue(value)
+        _apply_cost_control(window, key, value)
+
+
 def _apply_cost_control(window, key, value):
     item = _selected_item(window)
     if item is None:
@@ -3728,7 +3820,12 @@ def _build_cost_page(window):
     outer = QHBoxLayout(page)
     outer.setContentsMargins(0, 0, 0, 0)
     outer.setSpacing(0)
-    outer.addWidget(_cost_sidebar(window))
+    # Keep the existing controls as the calculation state bridge; the visible
+    # editor is a modal, so the narrow coefficient rail no longer consumes
+    # horizontal space beside the full-width table.
+    sidebar = _cost_sidebar(window)
+    outer.addWidget(sidebar)
+    sidebar.hide()
     body = QFrame()
     body.setObjectName("scheme2CostBody")
     body_layout = QVBoxLayout(body)
@@ -3738,6 +3835,10 @@ def _build_cost_page(window):
     title.setObjectName("scheme2PageTitle")
     header.addWidget(title)
     header.addStretch(1)
+    edit_coefficients = QPushButton("修改系数")
+    edit_coefficients.setObjectName("scheme2CostEditCoefficients")
+    edit_coefficients.clicked.connect(lambda: _show_cost_coefficients(window))
+    header.addWidget(edit_coefficients)
     body_layout.addLayout(header)
     compact = QFrame()
     compact.setObjectName("scheme2CompactCoefficients")
@@ -3769,6 +3870,48 @@ def _build_cost_page(window):
         table.setColumnWidth(column, width)
     window.summary_table = table
     body_layout.addWidget(table, 1)
+    selection_detail = QFrame()
+    selection_detail.setObjectName("scheme2CostSelectionDetail")
+    detail_layout = QVBoxLayout(selection_detail)
+    detail_layout.setContentsMargins(0, 0, 0, 0)
+    detail_layout.setSpacing(0)
+    detail_header = QFrame()
+    detail_header.setObjectName("scheme2CostSelectionHeader")
+    detail_header_layout = QHBoxLayout(detail_header)
+    detail_header_layout.setContentsMargins(12, 6, 12, 6)
+    detail_title = QLabel("所选条目明细")
+    detail_title.setObjectName("scheme2CostSelectionTitle")
+    detail_context = QLabel("请选择表格中的条目")
+    detail_context.setObjectName("scheme2CostSelectionContext")
+    detail_header_layout.addWidget(detail_title)
+    detail_header_layout.addWidget(detail_context)
+    detail_header_layout.addStretch(1)
+    detail_layout.addWidget(detail_header)
+    metrics = QWidget()
+    metrics.setObjectName("scheme2CostSelectionMetrics")
+    metric_grid = QGridLayout(metrics)
+    metric_grid.setContentsMargins(0, 0, 0, 0)
+    metric_grid.setSpacing(0)
+    detail_values = {}
+    detail_tiles = []
+    for index, column in enumerate(COST_SELECTION_DETAIL_COLUMNS):
+        tile = QFrame()
+        tile.setObjectName("scheme2CostSelectionMetric")
+        tile_layout = QVBoxLayout(tile)
+        tile_layout.setContentsMargins(10, 7, 8, 7)
+        tile_layout.setSpacing(3)
+        caption = QLabel(HEADERS[column])
+        caption.setObjectName("scheme2CostSelectionMetricLabel")
+        value = QLabel("—")
+        value.setObjectName("scheme2CostSelectionMetricValue")
+        value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        tile_layout.addWidget(caption)
+        tile_layout.addWidget(value)
+        metric_grid.addWidget(tile, index // 5, index % 5)
+        detail_values[column] = value
+        detail_tiles.append(tile)
+    detail_layout.addWidget(metrics)
+    body_layout.addWidget(selection_detail)
     empty = QLabel("在选型配置页点击加入报价清单后，柜型会出现在这里", table.viewport())
     empty.setObjectName("scheme2EmptyState")
     empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -3818,9 +3961,15 @@ def _build_cost_page(window):
     compact_value.editingFinished.connect(lambda: _apply_compact_control(window))
     table.cellChanged.connect(lambda row, column: _cost_cell_changed(window, row, column))
     table.cellClicked.connect(lambda row, column: _cost_cell_clicked(window, row, column))
-    table.itemSelectionChanged.connect(lambda: _sync_sidebar(window))
+    table.itemSelectionChanged.connect(lambda: (_sync_sidebar(window), _sync_cost_selection_detail(window)))
     window.scheme2_cost_page = page
     window.scheme2_cost_sidebar = page.findChild(QFrame, "scheme2CostSidebar")
+    window.scheme2_cost_edit_coefficients = edit_coefficients
+    window.scheme2_cost_selection_detail = selection_detail
+    window.scheme2_cost_selection_context = detail_context
+    window.scheme2_cost_selection_values = detail_values
+    window.scheme2_cost_selection_tiles = detail_tiles
+    window.scheme2_cost_selection_grid = metric_grid
     window.scheme2_compact_coefficients = compact
     window.scheme2_compact_key = compact_key
     window.scheme2_compact_value = compact_value
@@ -4088,6 +4237,43 @@ def _sync_sidebar(window):
         surface_control.setPrefix("")
     if hasattr(window, "scheme2_compact_key"):
         _sync_compact_control(window)
+    edit_coefficients = getattr(window, "scheme2_cost_edit_coefficients", None)
+    if edit_coefficients is not None:
+        edit_coefficients.setEnabled(not getattr(window, "_quote_scheme_read_only", False))
+
+
+def _sync_cost_selection_detail(window):
+    values = getattr(window, "scheme2_cost_selection_values", None)
+    if not isinstance(values, dict):
+        return
+    table = window.summary_table
+    row = _selected_row(window)
+    has_item = 0 <= row < len(getattr(window, "draft_items", []))
+    context = getattr(window, "scheme2_cost_selection_context", None)
+    if context is not None:
+        if has_item:
+            name = table.item(row, 1)
+            product = table.item(row, 2)
+            context.setText(f"{name.text() if name else '—'} · {product.text() if product else '—'}")
+        else:
+            context.setText("请选择表格中的条目")
+    for column, label in values.items():
+        cell = table.item(row, column) if has_item else None
+        label.setText(cell.text() if cell is not None else "—")
+
+
+def _layout_cost_selection_detail(window, available_width):
+    tiles = getattr(window, "scheme2_cost_selection_tiles", None)
+    grid = getattr(window, "scheme2_cost_selection_grid", None)
+    if not tiles or grid is None:
+        return
+    columns = 5 if available_width >= 980 else 4 if available_width >= 730 else 3
+    if getattr(window, "_scheme2_cost_detail_columns", None) == columns:
+        return
+    window._scheme2_cost_detail_columns = columns
+    for index, tile in enumerate(tiles):
+        grid.removeWidget(tile)
+        grid.addWidget(tile, index // columns, index % columns)
 
 
 def _select_cost_item_for_current_material(window):
@@ -4207,6 +4393,7 @@ def _refresh_cost_table(window):
     finally:
         window._scheme2_refreshing = False
         _sync_sidebar(window)
+        _sync_cost_selection_detail(window)
 
 
 def _find_nav(window):
@@ -7340,6 +7527,7 @@ QScrollBar::handle:vertical {{ background:{SCROLLBAR_COLORS['handle']}; min-heig
 QScrollBar::handle:horizontal {{ background:{SCROLLBAR_COLORS['handle']}; min-width:{SCROLLBAR_HANDLE_MIN_LENGTH}px; border-radius:{SCROLLBAR_CORNER_RADIUS}px; }}
 QScrollBar::handle:hover {{ background:{SCROLLBAR_COLORS['hover']}; }}
 QScrollBar::handle:pressed {{ background:{SCROLLBAR_COLORS['pressed']}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width:0; height:0; border:0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background:{SCROLLBAR_COLORS['track']}; }}
 QAbstractScrollArea::corner {{ background:{SCROLLBAR_COLORS['track']}; border:0; }}
 """
@@ -7571,10 +7759,14 @@ def _apply_responsive(window):
     sidebar = getattr(window, "scheme2_cost_sidebar", None)
     compact_coefficients = getattr(window, "scheme2_compact_coefficients", None)
     if sidebar is not None and compact_coefficients is not None:
-        # Keep all eight fields available; constrained height uses scrolling.
-        sidebar.show()
+        # The coefficient editor now opens from the header; its backing
+        # controls remain mounted but must never reserve cost-table width.
+        sidebar.hide()
         compact_coefficients.hide()
         _layout_cost_actions(window, width < 900)
+    cost_body = getattr(window, "scheme2_cost_page", None)
+    if cost_body is not None:
+        _layout_cost_selection_detail(window, max(1, width - round(NAV_EXPANDED_WIDTH * scale) - 28))
     detail_table = getattr(window, "scheme2_detail_table", None)
     if detail_table is not None:
         card_columns = {0, 1, 7, 8, 9}
@@ -7663,6 +7855,7 @@ QFrame#scheme2OptionControlShell QComboBox,
 QFrame#scheme2OptionControlShell QSpinBox,
 QFrame#scheme2OptionControlShell QDoubleSpinBox,
 QFrame#scheme2CostSidebar QDoubleSpinBox {{ font-size:{BODY_PX}px; font-weight:{REGULAR_WEIGHT}; }}
+QDialog#scheme2CoefficientDialog QDoubleSpinBox {{ font-size:{BODY_PX}px; font-weight:{REGULAR_WEIGHT}; }}
 QTableWidget#summaryTable, QTableWidget#scheme2DetailTable,
 QTableWidget#scheme2AttachmentEditorTable {{ font-size:{TABLE_PX}px; font-weight:{REGULAR_WEIGHT}; }}
 QHeaderView::section,
@@ -7781,8 +7974,29 @@ QFrame#scheme2CostSidebar { background:#DCE8F7; border-right:1px solid #BBD0EA; 
 QScrollArea#scheme2CoefficientScroll, QScrollArea#scheme2CoefficientScroll > QWidget > QWidget { background:transparent; }
 QFrame#scheme2CostSidebar QDoubleSpinBox { background:#FFFFFF; color:#2A3541; border:1px solid #BBD0EA; border-radius:7px; padding:1px 22px 1px 7px; min-height:28px; font-size:13px; font-weight:400; }
 QFrame#scheme2CostSidebar QDoubleSpinBox:focus { border-color:#2563EB; }
+QPushButton#scheme2CostEditCoefficients { color:#185FA5; background:#E6F1FB; border:1px solid #85B7EB; border-radius:6px; padding:0 15px; }
+QPushButton#scheme2CostEditCoefficients:disabled { color:#8A8A86; background:#F6F7F9; border-color:#D7DCE3; }
+QDialog#scheme2CoefficientDialog { background:rgba(22,28,36,0.45); }
+QFrame#scheme2CoefficientShell { background:#FFFFFF; border:1px solid #B8C7D3; border-radius:8px; }
+QFrame#scheme2CoefficientHeader { background:#E6F1FB; border:0; border-bottom:1px solid #BBD0EA; }
+QLabel#scheme2CoefficientTitle { color:#1F3A6A; font-size:16px; font-weight:600; }
+QToolButton#scheme2CoefficientClose { color:#5F6F82; background:transparent; border:0; font-size:18px; }
+QToolButton#scheme2CoefficientClose:hover { color:#1C1C1E; }
+QDoubleSpinBox#scheme2CoefficientInput { background:#FFFFFF; color:#2A3541; border:1px solid #BBD0EA; border-radius:6px; padding:1px 22px 1px 7px; min-height:30px; }
+QDoubleSpinBox#scheme2CoefficientInput:focus { border-color:#2563EB; }
+QFrame#scheme2CoefficientFooter { background:#FFFFFF; border:0; border-top:1px solid #E2E9F1; }
+QPushButton#scheme2CoefficientCancel { color:#185FA5; background:#FFFFFF; border:1px solid #BBD0EA; border-radius:6px; padding:0 17px; }
+QPushButton#scheme2CoefficientConfirm { color:#FFFFFF; background:#2563EB; border:1px solid #2563EB; border-radius:6px; padding:0 17px; }
 QFrame#scheme2CompactCoefficients { background:#DCE8F7; border:1px solid #BBD0EA; border-radius:7px; }
 QFrame#scheme2CostBody { background:#FFFFFF; }
+QFrame#scheme2CostSelectionDetail { background:#FFFFFF; border:1px solid #D1DFED; }
+QFrame#scheme2CostSelectionHeader { background:#E6F1FB; border:0; border-bottom:1px solid #D1DFED; }
+QLabel#scheme2CostSelectionTitle { color:#1F3A6A; font-size:13px; font-weight:600; }
+QLabel#scheme2CostSelectionContext { color:#5A779B; font-size:12px; }
+QWidget#scheme2CostSelectionMetrics { background:#FFFFFF; }
+QFrame#scheme2CostSelectionMetric { background:#FFFFFF; border:0; border-right:1px solid #E1EAF2; border-bottom:1px solid #E1EAF2; }
+QLabel#scheme2CostSelectionMetricLabel { color:#567597; font-size:11px; }
+QLabel#scheme2CostSelectionMetricValue { color:#1F3A6A; font-size:13px; font-weight:500; }
 QFrame#scheme2QuoteCompanyField { background:transparent; border:0; }
 QFrame#scheme2UndoBar { background:#E6F1FB; border:1px solid #85B7EB; border-radius:7px; }
 QLabel#scheme2EmptyState { color:#8A8A86; background:#FFFFFF; font-size:13px; }

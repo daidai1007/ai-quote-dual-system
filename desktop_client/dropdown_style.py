@@ -15,7 +15,7 @@ POPUP_METRICS = {
     "row_height": 40, "text_inset": 14, "vertical_inset": 8,
     "font_px": BODY_PX, "radius": 6, "visible_rows": 8,
     "checkbox_size": 15, "checkbox_text_inset": 40, "icon_size": 16,
-    "scrollbar_extent": 20, "scrollbar_handle": 40,
+    "scrollbar_extent": 15, "scrollbar_handle": 30, "scrollbar_radius": 5,
 }
 POPUP_COLORS = {
     "background": "#FFFFFF", "text": "#1C1C1E", "border": "#B8BEC7",
@@ -36,10 +36,11 @@ QAbstractItemView {{ background:{c['background']}; color:{c['text']};
 QAbstractItemView::item {{ min-height:{m['row_height']}px; padding:0; border:0; }}
 QScrollBar:vertical {{ background:{c['scroll_track']}; width:{m['scrollbar_extent']}px; margin:0; border:0; }}
 QScrollBar:horizontal {{ background:{c['scroll_track']}; height:{m['scrollbar_extent']}px; margin:0; border:0; }}
-QScrollBar::handle:vertical {{ background:{c['scroll_handle']}; min-height:{m['scrollbar_handle']}px; border-radius:{m['radius']}px; }}
-QScrollBar::handle:horizontal {{ background:{c['scroll_handle']}; min-width:{m['scrollbar_handle']}px; border-radius:{m['radius']}px; }}
+QScrollBar::handle:vertical {{ background:{c['scroll_handle']}; min-height:{m['scrollbar_handle']}px; border-radius:{m['scrollbar_radius']}px; }}
+QScrollBar::handle:horizontal {{ background:{c['scroll_handle']}; min-width:{m['scrollbar_handle']}px; border-radius:{m['scrollbar_radius']}px; }}
 QScrollBar::handle:hover {{ background:{c['scroll_hover']}; }}
 QScrollBar::handle:pressed {{ background:{c['primary']}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width:0; height:0; border:0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background:{c['scroll_track']}; }}
 QAbstractScrollArea::corner {{ background:{c['scroll_track']}; border:0; }}
 """

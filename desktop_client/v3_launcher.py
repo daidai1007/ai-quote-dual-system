@@ -30,6 +30,7 @@ from drawing_workflow import install_drawing_workflow
 from freight_export import install_freight_export
 from scheme2_ui import install_scheme2_ui
 from quote_scheme_center import install_quote_scheme_center
+from client_update_ui import install_client_updates
 
 
 _DLL_DIRECTORY_HANDLES = []
@@ -465,10 +466,15 @@ def load_v3_namespace() -> dict:
     install_freight_export(namespace)
     install_scheme2_ui(namespace)
     install_quote_scheme_center(namespace)
+    install_client_updates(namespace)
     return namespace
 
 
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--client-updater":
+        from client_update_runner import main as run_updater
+        run_updater(sys.argv[2])
+        return
     log_path = _configure_diagnostics()
     _LOGGER.info(
         "client startup executable=%s cwd=%s log=%s",

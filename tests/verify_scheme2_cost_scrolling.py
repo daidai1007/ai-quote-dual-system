@@ -122,16 +122,14 @@ class CostScrolling(unittest.TestCase):
                 self.settle(*size)
                 self.assert_page_fits()
 
-    def test_sidebar_scrolls_independently_and_other_routes_restore_outer_scrolling(self):
+    def test_coefficient_modal_and_other_routes_restore_outer_scrolling(self):
         self.settle(1024, 620)
-        scroll = self.window.findChild(QScrollArea, 'scheme2CoefficientScroll')
-        for field in self.window.scheme2_cost_fields.values():
-            field.setMinimumHeight(100)
+        self.assertTrue(self.window.scheme2_cost_sidebar.isHidden())
+        dialog = ui._CostCoefficientDialog(self.window)
+        dialog.show()
         QTest.qWait(40)
-        self.assertTrue(scroll.verticalScrollBar().isVisible())
-        scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
-        last = self.window.scheme2_cost_controls['surface_price']
-        self.assertTrue(scroll.viewport().rect().contains(last.mapTo(scroll.viewport(), last.rect().center())))
+        self.assertTrue(all(control.isVisible() for control in dialog.controls.values()))
+        dialog.reject()
         self.assert_page_fits()
         self.window.show_section(ui.OPTION_ROUTE)
         self.settle(840, 600)
@@ -140,10 +138,7 @@ class CostScrolling(unittest.TestCase):
         self.window.show_section(ui.COST_ROUTE)
         self.settle(1024, 620)
         self.assert_page_fits()
-        for field in self.window.scheme2_cost_fields.values():
-            field.setMinimumHeight(0)
-        QTest.qWait(40)
-        self.assertFalse(scroll.verticalScrollBar().isVisible())
+        self.assertTrue(self.window.scheme2_cost_sidebar.isHidden())
         self.window.show_section(ui.QUOTE_ROUTE)
         self.settle(1024, 620)
         self.assertEqual(self.outer.verticalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAsNeeded)
