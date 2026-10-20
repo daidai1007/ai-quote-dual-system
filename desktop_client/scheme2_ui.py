@@ -97,7 +97,7 @@ except ModuleNotFoundError:
                                       quick_attachment_line_amount, quick_discount_breakdown)
 from pypdf import PdfReader, PdfWriter
 
-from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, door_transformation_default_names, size_match_display_text
+from attachment_category_browser import COMPUTER_TRAY_MODEL_DEPTHS, SUPPORT_PLATE_MODELS, door_transformation_default_names, size_match_display_text
 from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
 from ui_typography import (
     AUXILIARY_PX,
@@ -181,6 +181,11 @@ _STYLE_LENGTH_RULE = re.compile(r"(?<![\w.-])(\d+(?:\.\d+)?)\s*(px|pt)", re.IGNO
 GALVANIZED_MATERIAL_CODES = frozenset(("SGCC", "DX51D", "GI"))
 THREE_ROW_BEAM_MODELS = ("JP760240", "JP760250", "JP760260", "JP760280", "JP760210")
 COMPUTER_TRAY_MODELS = tuple(COMPUTER_TRAY_MODEL_DEPTHS)
+ATTACHMENT_MODEL_OPTIONS = {
+    "三排安装梁": THREE_ROW_BEAM_MODELS,
+    "电脑托盘": COMPUTER_TRAY_MODELS,
+    **SUPPORT_PLATE_MODELS,
+}
 LIGHT_SWITCH_OPTIONS = (
     "行程开关", "照明灯220V长款", "照明灯220V短款",
     "照明灯24V-0.28m", "照明灯24V-0.6m",
@@ -1062,7 +1067,7 @@ class AttachmentEditor(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(False)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.setToolTip("金额和成本需左键双击后修改；三排安装梁、电脑托盘型号双击后选择；右键可添加或删除临时附件")
+        self.table.setToolTip("金额和成本需左键双击后修改；三排安装梁、电脑托盘、有孔承板、无孔承板型号双击后选择；右键可添加或删除临时附件")
         self.table.customContextMenuRequested.connect(self._show_table_menu)
         table_header = self.table.horizontalHeader()
         table_header.setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeMode.Stretch)
@@ -1116,11 +1121,11 @@ class AttachmentEditor(QDialog):
             name = "照明灯/行程开关"
         spec = _attachment_dimension_or_model(source)
         self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
-        if name in {"三排安装梁", "电脑托盘"} and not source.get("custom"):
+        if name in ATTACHMENT_MODEL_OPTIONS and not source.get("custom"):
             spec = str(source.get("model_code") or source.get("specification") or "").strip()
         specification_item = QTableWidgetItem(spec)
         specification_item.setData(ROLE_DERIVED_SPEC, spec)
-        if is_light_switch or (name in {"三排安装梁", "电脑托盘"} and not source.get("custom")):
+        if is_light_switch or (name in ATTACHMENT_MODEL_OPTIONS and not source.get("custom")):
             specification_item.setFlags(specification_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         if is_light_switch:
             specification_item.setFlags(specification_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
@@ -1153,10 +1158,16 @@ class AttachmentEditor(QDialog):
         source = source_item.data(ROLE_ROW) if source_item is not None else None
         if not isinstance(source, dict) or source.get("custom"):
             return
-        options = {
-            "三排安装梁": THREE_ROW_BEAM_MODELS,
-            "电脑托盘": COMPUTER_TRAY_MODELS,
-        }.get(str(source.get("item_name") or "").strip())
+        name = str(source.get("item_name") or "").strip()
+        options = ATTACHMENT_MODEL_OPTIONS.get(name)
+        if name in SUPPORT_PLATE_MODELS:
+            # Include later catalogue additions without changing this UI code.
+            options = tuple(dict.fromkeys((*options, *(
+                str(item.get("model_code") or "").strip()
+                for item in getattr(self.window, "_attachment_catalog_cache", [])
+                if isinstance(item, dict) and item.get("category_level1") == "控制柜附件"
+                and item.get("item_name") == name and str(item.get("model_code") or "").strip()
+            ))))
         if not options or row in getattr(self, "_pending_reprices", {}):
             return
         existing = self.table.cellWidget(row, column)
@@ -1429,7 +1440,13 @@ class AttachmentEditor(QDialog):
         source_item.setData(ROLE_ROW, source)
         specification = self.table.item(row, self.COL_SPECIFICATION)
         if specification is not None:
-            specification.setText("；".join(f"{name}={value:g} mm" for name, value in values.items()))
+            dimension_text = "；".join(f"{name}={value:g} mm" for name, value in values.items())
+            if source.get("item_name") in SUPPORT_PLATE_MODELS:
+                # Formula dimensions are not a catalogue model. Keep the model
+                # cell stable so closing the editor cannot save them as a code.
+                specification.setToolTip(dimension_text)
+            else:
+                specification.setText(dimension_text)
             specification.setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
         self._reprice_row(row, source, specification)
 
@@ -1549,7 +1566,7 @@ class AttachmentEditor(QDialog):
             if data.get("category_level1") == "照明灯/行程开关" and specification:
                 data["item_name"] = specification
                 data.pop("model_code", None)
-            elif data.get("item_name") in {"三排安装梁", "电脑托盘"} and specification and not data.get("custom"):
+            elif data.get("item_name") in ATTACHMENT_MODEL_OPTIONS and specification and not data.get("custom"):
                 data["model_code"] = specification
             elif data.get("item_name") == "电脑托盘" and not data.get("custom") and not specification:
                 data.pop("model_code", None)

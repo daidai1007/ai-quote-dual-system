@@ -36,7 +36,8 @@ assert row["quick_amount"] == 0 and row["formula_amount"] == 0
 assert row["pending_manual_dimensions"] == ["分段板高度"]
 assert result["quick_quote"]["attachment_fee"] == 0
 assert result["formula_cost"]["attachment_fee"] == 0
-assert result["formula_cost"]["total_cost"] == 165
+assert result["formula_cost"]["management_fee"] == 9.6
+assert result["formula_cost"]["total_cost"] == 169.6
 assert result["risk_flags"] == []
 
 app = QApplication.instance() or QApplication([])

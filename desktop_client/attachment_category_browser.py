@@ -43,6 +43,15 @@ COMPUTER_TRAY_MODEL_DEPTHS = {
     "JP930040": 400.0, "JP930050": 500.0, "JP930060": 600.0,
     "JP930080": 800.0, "JP930010": 1000.0,
 }
+# Catalogue model choices only; all prices are still read from the live API.
+SUPPORT_PLATE_MODELS = {
+    name: tuple(prefix + suffix for suffix in (
+        "64", "84", "04", "24", "65", "85", "05", "25",
+        "66", "86", "06", "26", "68", "88", "08", "28",
+    ))
+    for name, prefix in (("有孔承板", "JP7911"), ("无孔承板", "JP7910"))
+}
+SUPPORT_PLATE_DEFAULT_MODELS = {name: models[0] for name, models in SUPPORT_PLATE_MODELS.items()}
 DEFAULT_LIGHT_SWITCH = "light_switch"
 DEFAULT_A3_FOLDER = "a3_folder"
 DEFAULT_A4_FOLDER = "a4_folder"

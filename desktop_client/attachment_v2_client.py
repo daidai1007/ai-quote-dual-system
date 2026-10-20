@@ -20,6 +20,7 @@ from ganged_cabinet_rules import parse_ganged_specification
 from quote_request_context import attachment_inputs, bind_quote_request, check_quote_response, retire_quote_request, settle_quote_request
 
 from attachment_category_browser import (
+    SUPPORT_PLATE_DEFAULT_MODELS,
     match_computer_tray_depth,
     match_attachment_size,
     match_installation_board_for_product,
@@ -251,6 +252,20 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
     )
     category = str(selection.get("category_level1") or selection.get("attachment_category") or "").strip()
     name = str(selection.get("item_name") or selection.get("name") or "").strip()
+    if category == "控制柜附件" and name in SUPPORT_PLATE_DEFAULT_MODELS:
+        # Configuration supplies a name, not a model. Cost-popup model edits
+        # explicitly pin another model and must never fall back to the default.
+        model = attachment_image_match_key(
+            selection.get("model_code") or selection.get("specification")
+            or SUPPORT_PLATE_DEFAULT_MODELS[name]
+        )
+        matches = [
+            item for item in catalog if isinstance(item, dict)
+            and attachment_image_match_key(item.get("category_level1")) == wanted_category
+            and attachment_image_match_key(item.get("item_name")) == wanted_name
+            and attachment_image_match_key(item.get("model_code")) == model
+        ]
+        return matches[0] if len(matches) == 1 else None
     if category == "控制柜附件" and name == "电脑托盘":
         model = "" if selection.get("computer_tray_auto_match") else (
             selection.get("model_code") or selection.get("specification") or "")
@@ -1508,6 +1523,7 @@ def install_attachment_v2(namespace):
                     **source,
                     "attachment_price_id": match.get("attachment_price_id"),
                     "catalog_version": version,
+                    **({"model_code": match.get("model_code")} if source.get("item_name") in SUPPORT_PLATE_DEFAULT_MODELS else {}),
                 })
             if missing:
                 failed("价格库中未找到唯一匹配项：" + "、".join(missing))
@@ -1609,6 +1625,7 @@ def install_attachment_v2(namespace):
                     **attachment,
                     "attachment_price_id": match.get("attachment_price_id"),
                     "catalog_version": body.get("data_version"),
+                    **({"model_code": match.get("model_code")} if attachment.get("item_name") in SUPPORT_PLATE_DEFAULT_MODELS else {}),
                 }
                 if installation_board(attachment) or is_base_attachment(attachment):
                     resolved = resolve_installation_board(attachment, match, body.get("data_version"))
