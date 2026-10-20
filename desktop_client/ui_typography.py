@@ -6,7 +6,8 @@ window resizing must not add another font multiplier.
 
 FONT_FAMILY_QSS = '"Microsoft YaHei UI","Microsoft YaHei","Segoe UI"'
 
-PAGE_TITLE_PX = 18
+PAGE_TITLE_PX = 20
+NAVIGATION_PX = 15
 SECTION_TITLE_PX = 15
 BODY_PX = 14
 FIELD_LABEL_PX = 14

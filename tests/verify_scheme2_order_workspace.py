@@ -7,10 +7,10 @@ API = (ROOT / "api" / "server.mjs").read_text(encoding="utf-8")
 SQL = (ROOT / "database" / "migrations" / "order_workspace.sql").read_text(encoding="utf-8")
 
 
-def test_cost_hint_removed_and_navigation_font_uses_page_title_token():
+def test_cost_hint_removed_and_navigation_font_uses_navigation_token():
     assert "运费、数量可直接编辑；点击产品可批量设置同型号折扣" not in UI
     assert "QLabel#scheme2ServiceStatus" in UI and "font-size:11px" in UI
-    assert "QFrame#navPanel QPushButton {{ font-size:{PAGE_TITLE_PX}px;" in UI
+    assert "QFrame#navPanel QPushButton {{ font-size:{NAVIGATION_PX}px;" in UI
 
 
 def test_requested_option_labels_share_door_heading_style():

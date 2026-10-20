@@ -103,6 +103,15 @@ class ReferenceSchemeUI(unittest.TestCase):
         self.worker_patch.stop()
         self.screen_patch.stop()
 
+    def test_reviewer_header_preserves_existing_names_and_table_style(self):
+        table = self.window.quote_scheme_table
+        self.assertEqual(table.horizontalHeaderItem(6).text(), '审核人')
+        for row, scheme in enumerate(BASE_ROWS):
+            self.assertEqual(table.item(row, 6).text(), scheme['last_editor_name'])
+        self.assertEqual(table.columnCount(), 9)
+        self.assertEqual(table.horizontalHeaderItem(5).text(), '创建人')
+        self.assertEqual(table.horizontalHeaderItem(7).text(), '更新时间')
+
     def test_reference_structure_and_five_statuses(self):
         w = self.window
         self.assertEqual([b.text() for b in w.nav_buttons],

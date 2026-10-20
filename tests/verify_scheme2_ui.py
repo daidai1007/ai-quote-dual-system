@@ -63,7 +63,7 @@ assert window.nav_routes == (
 )
 assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单", "报价方案"]
 assert window.scheme2_nav.width() == scheme2_ui.NAV_EXPANDED_WIDTH
-assert all(button.height() == 28 for button in window.nav_buttons)
+assert all(button.height() == 32 for button in window.nav_buttons)
 assert window.scheme2_nav.findChild(__import__("PySide6.QtWidgets").QtWidgets.QLabel, "scheme2NavLogo").size().width() == 26
 assert window.scheme2_nav.findChild(QPushButton, "scheme2CollapseButton").size().width() == 28
 assert window.stack.widget(1).objectName() == "scheme2OptionPage"

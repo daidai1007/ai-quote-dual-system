@@ -35,24 +35,24 @@ def pixel_size(widget, expected):
 
 
 option_page = window.stack.widget(1)
-pixel_size(option_page.findChild(QLabel, "scheme2SectionTitle"), 18)
+pixel_size(option_page.findChild(QLabel, "scheme2SectionTitle"), 20)
 pixel_size(option_page.findChild(QLabel, "scheme2OptionGroupTitle"), 15)
 pixel_size(option_page.findChild(QLabel, "scheme2OptionLabel"), 14)
 pixel_size(window.product_combo, 14)
 
 cost_page = window.stack.widget(3)
-pixel_size(cost_page.findChild(QLabel, "scheme2PageTitle"), 18)
+pixel_size(cost_page.findChild(QLabel, "scheme2PageTitle"), 20)
 pixel_size(cost_page.findChild(QLabel, "scheme2SidebarTitle"), 15)
 pixel_size(cost_page.findChild(QLabel, "scheme2FieldLabel"), 14)
 pixel_size(window.scheme2_cost_controls["carbon_price"], 14)
 pixel_size(window.summary_table, 13)
 pixel_size(window._scheme2_import_button, 14)
 quote_page = window.stack.widget(2)
-pixel_size(quote_page.findChild(QLabel, "scheme2PageTitle"), 18)
+pixel_size(quote_page.findChild(QLabel, "scheme2PageTitle"), 20)
 pixel_size(window.scheme2_company, 14)
 pixel_size(window.scheme2_quote_print, 14)
 pixel_size(window.scheme2_quote_preview, 14)
-pixel_size(window.quote_scheme_page.findChild(QLabel, "quoteSchemeTitle"), 18)
+pixel_size(window.quote_scheme_page.findChild(QLabel, "quoteSchemeTitle"), 20)
 pixel_size(window.quote_scheme_page.findChild(QLabel, "quoteSchemeFieldLabel"), 14)
 pixel_size(window.quote_scheme_filters["scheme_no"], 14)
 pixel_size(window.quote_scheme_table, 13)
@@ -65,12 +65,13 @@ buttons = [window._scheme2_import_button, *window.scheme2_cost_action_buttons]
 for button in buttons:
     pixel_size(button, 14)
     assert button.height() == 28, (button.text(), button.size())
-assert all(button.height() == 28 for button in window.nav_buttons)
+assert all(button.height() == 32 for button in window.nav_buttons)
 for button in window.nav_buttons:
-    pixel_size(button, 18)
-    assert button.font().weight() == QFont.Weight.DemiBold
+    pixel_size(button, 15)
+    assert button.font().weight() == QFont.Weight.Medium
 
 assert 'font-family:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI"' in window.styleSheet()
+assert "QFrame#navPanel QPushButton:checked { font-weight:600; }" in window.styleSheet()
 assert "QHeaderView::section { background:#2563EB; color:#FFFFFF;" in window.styleSheet()
 assert "QHeaderView::section,\nQTableWidget#scheme2AttachmentEditorTable QHeaderView::section { font-size:13px; font-weight:600; }" in window.styleSheet()
 print("scheme2 typography contract passed")

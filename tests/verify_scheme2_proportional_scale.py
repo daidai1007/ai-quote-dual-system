@@ -47,7 +47,7 @@ assert window.scheme2_detail_table.isColumnHidden(3)
 assert window.scheme2_detail_table.horizontalHeader().minimumHeight() == round(44 * window._scheme2_scale)
 assert window.scheme2_detail_table.verticalHeader().defaultSectionSize() == round(46 * window._scheme2_scale)
 assert window.styleSheet() != base_style
-assert base_title_size == 18
+assert base_title_size == 20
 assert page_title.font().pixelSize() == round(base_title_size * window._scheme2_scale)
 
 window.close()

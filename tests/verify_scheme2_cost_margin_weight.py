@@ -34,7 +34,8 @@ def test_discount_coefficient_is_directly_editable_like_freight():
     assert item["quick_discount"] == 0.75
 
 
-def test_navigation_font_matches_page_title():
+def test_navigation_uses_its_own_quieter_type_token():
     style = scheme2_ui._typography_style_sheet()
     rule = style[style.index("QFrame#navPanel QPushButton {"):]
-    assert f"font-size:{scheme2_ui.PAGE_TITLE_PX}px" in rule.split("}", 1)[0]
+    assert f"font-size:{scheme2_ui.NAVIGATION_PX}px" in rule.split("}", 1)[0]
+    assert scheme2_ui.NAVIGATION_PX < scheme2_ui.PAGE_TITLE_PX

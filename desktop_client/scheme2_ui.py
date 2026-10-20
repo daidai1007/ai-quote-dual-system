@@ -106,6 +106,7 @@ from ui_typography import (
     FONT_FAMILY_QSS,
     LABEL_PX,
     MEDIUM_WEIGHT,
+    NAVIGATION_PX,
     PAGE_TITLE_PX,
     REGULAR_WEIGHT,
     SECTION_TITLE_PX,
@@ -123,6 +124,7 @@ QUOTE_ROUTE = 2
 COST_ROUTE = 3
 DETAIL_ROUTE = 5
 NAV_EXPANDED_WIDTH = 128
+NAV_BUTTON_HEIGHT = 32
 COST_SIDEBAR_WIDTH = 130
 COMPANY_COMBO_HEIGHT = 56
 SCHEME2_ACTION_DOCK_HEIGHT = 48
@@ -148,7 +150,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.19.03"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.20.01"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -3739,7 +3741,7 @@ def _build_cost_page(window):
         # interaction state continues to come from one shared QSS definition.
         button.setObjectName("scheme2PrimaryGhost")
         button.setFixedSize(secondary_size)
-        button.setFixedHeight(28)
+        button.setFixedHeight(SCHEME2_ACTION_BUTTON_MIN_HEIGHT)
     generate.setObjectName("scheme2PrimaryAction")
     action_buttons = (delete, up, down, duplicate, edit, back, generate)
     body_layout.addWidget(action_widget)
@@ -4184,7 +4186,7 @@ def _configure_navigation(window):
         button.show()
         button.setText(labels[route])
         button.setIcon(button.icon().__class__())
-        button.setFixedHeight(28)
+        button.setFixedHeight(NAV_BUTTON_HEIGHT)
         try:
             button.clicked.disconnect()
         except RuntimeError:
@@ -7589,9 +7591,10 @@ QLabel#scheme2OptionGroupTitle, QLabel#scheme2SidebarTitle,
 QLabel#scheme2DialogTitle, QLabel#scheme2DimensionTitle,
 QLabel#scheme2ConfirmTitle, QLabel#scheme2AttachmentEditorTitle,
 QLabel#scheme2AttachmentTitle {{ font-size:{SECTION_TITLE_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
-QFrame#navPanel QPushButton {{ font-size:{PAGE_TITLE_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
+QFrame#navPanel QPushButton {{ font-size:{NAVIGATION_PX}px; font-weight:{MEDIUM_WEIGHT}; min-height:{NAV_BUTTON_HEIGHT}px; max-height:{NAV_BUTTON_HEIGHT}px; }}
+QFrame#navPanel QPushButton:checked {{ font-weight:{SEMIBOLD_WEIGHT}; }}
 QLabel#scheme2OptionLabel, QLabel#scheme2FieldLabel,
-QLabel#scheme2GangedLabel {{ font-size:{FIELD_LABEL_PX}px; font-weight:{MEDIUM_WEIGHT}; }}
+QLabel#scheme2GangedLabel {{ font-size:{FIELD_LABEL_PX}px; font-weight:{REGULAR_WEIGHT}; }}
 QLabel#scheme2SidebarHint,
 QLabel#scheme2DetailMeta {{ font-size:{LABEL_PX}px; font-weight:{REGULAR_WEIGHT}; }}
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
@@ -7710,7 +7713,7 @@ QFrame#navPanel { background:#DCE8F7; border:1px solid #BBD0EA; border-top-left-
 QFrame#scheme2NavBrand { background:transparent; border:0; }
 QLabel#scheme2NavLogo { background:#2563EB; color:#FFFFFF; border-radius:6px; font-size:11px; font-weight:600; }
 QLabel#scheme2NavTitle { color:#1F3A6A; font-size:13px; font-weight:600; }
-QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; min-height:28px; max-height:28px; text-align:left; font-weight:500; }
+QFrame#navPanel QPushButton { color:#0B326B; border:0; border-radius:8px; padding:0 10px; text-align:left; font-weight:500; }
 QFrame#navPanel QPushButton:checked { color:#FFFFFF; background:#2563EB; }
 QPushButton#scheme2CollapseButton { color:#5A7AAB; background:transparent; border:0; padding:0; text-align:center; font-size:13px; }
 QPushButton#scheme2CollapseButton:hover { background:#E6F1FB; }

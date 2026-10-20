@@ -46,7 +46,7 @@ quote_scheme_center._new_scheme(window)
 assert window.quote_scheme_save_status.isHidden()
 assert "首次加入报价清单" in window.quote_scheme_page_status.text()
 
-assert window.windowTitle().endswith("2026.10.19.03")
+assert window.windowTitle().endswith(quote_scheme_center.CLIENT_VERSION)
 assert window.quote_scheme_nav_button.text() == "报价方案"
 assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单", "报价方案"]
 assert window.stack.widget(quote_scheme_center.SCHEME_ROUTE).objectName() == "quoteSchemeCenterPage"
@@ -55,7 +55,7 @@ assert window.findChild(QLabel, "quoteSchemeServerNotice").text() == "数据保�
 assert window.quote_scheme_operator_name.objectName() == "quoteSchemeOperatorName"
 assert "自填" in window.quote_scheme_operator_name.toolTip()
 assert [window.quote_scheme_table.horizontalHeaderItem(i).text() for i in range(9)] == [
-    "方案编号", "下单公司", "产品", "状态", "报价金额", "创建人", "最后修改人", "更新时间", "操作",
+    "方案编号", "下单公司", "产品", "状态", "报价金额", "创建人", "审核人", "更新时间", "操作",
 ]
 assert {"scheme_no", "company", "product", "creator", "updated_from", "updated_to"} == set(window.quote_scheme_filters)
 scheme_page = window.stack.widget(quote_scheme_center.SCHEME_ROUTE)
@@ -155,7 +155,7 @@ quote_scheme_center._run = original_run
 assert window._quote_scheme_id == "BJ-20261016-000123" and len(calls) == 1
 assert calls[0][2]["operator_name"] == "张师傅"
 assert "scheme_summary" in calls[0][2]["snapshot"]
-assert calls[0][2]["snapshot"]["document"]["client_version"] == "2026.10.19.03"
+assert calls[0][2]["snapshot"]["document"]["client_version"] == quote_scheme_center.CLIENT_VERSION
 
 # A change made while one save is in flight is not lost: finishing the older
 # request schedules another save for the newer dirty sequence.

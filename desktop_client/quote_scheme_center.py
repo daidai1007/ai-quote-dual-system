@@ -26,7 +26,7 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.19.04"
+CLIENT_VERSION = "2026.10.20.01"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
@@ -420,7 +420,7 @@ def _build_page(window):
     table.setObjectName("quoteSchemeTable")
     table.setHorizontalHeaderLabels([
         "方案编号", "下单公司", "产品", "状态", "报价金额",
-        "创建人", "最后修改人", "更新时间", "操作",
+        "创建人", "审核人", "更新时间", "操作",
     ])
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -1181,7 +1181,8 @@ def install_quote_scheme_center(namespace):
         window._quote_scheme_save_timer.timeout.connect(lambda: _save(window))
         window.stack.addWidget(_build_page(window))
         nav = window.scheme2_nav; layout = nav.layout()
-        button = QPushButton("报价方案"); button.setObjectName("navButton"); button.setCheckable(True); button.setFixedHeight(28)
+        button = QPushButton("报价方案"); button.setObjectName("navButton"); button.setCheckable(True)
+        button.setFixedHeight(window.nav_buttons[0].height() if window.nav_buttons else 32)
         button.clicked.connect(lambda: window.show_section(SCHEME_ROUTE))
         # Keep the established workflow order from the approved V0 sidebar:
         # selection -> cost -> quote sheet -> quote schemes.

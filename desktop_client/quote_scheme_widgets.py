@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QSizePolicy, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
     QSpinBox, QTableWidget, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
-from ui_typography import AUXILIARY_PX, BODY_PX, FIELD_LABEL_PX, TABLE_PX
+from ui_typography import AUXILIARY_PX, BODY_PX, FIELD_LABEL_PX, REGULAR_WEIGHT, TABLE_PX
 
 
 PAGE_SIZES = (10, 20, 50, 100)
@@ -38,7 +38,7 @@ QWidget#quoteSchemeCenterPage {{ background:{c['background']}; color:{c['text']}
 QWidget#quoteSchemeCenterPage QLabel {{ color:{c['text']}; font-size:{BODY_PX}px; background:transparent; border:0; padding:0; }}
 QWidget#quoteSchemeCenterPage QLabel#quoteSchemeServerNotice {{ color:{c['muted']}; font-size:{AUXILIARY_PX}px; }}
 QWidget#quoteSchemeCenterPage QFrame#quoteSchemeFilters {{ background:#FFFFFF; border:1px solid {c['border']}; border-radius:4px; }}
-QWidget#quoteSchemeCenterPage QLabel#quoteSchemeFieldLabel {{ font-size:{FIELD_LABEL_PX}px; font-weight:500; }}
+QWidget#quoteSchemeCenterPage QLabel#quoteSchemeFieldLabel {{ font-size:{FIELD_LABEL_PX}px; font-weight:{REGULAR_WEIGHT}; }}
 QWidget#quoteSchemeCenterPage QLineEdit,
 QWidget#quoteSchemeCenterPage QComboBox,
 QWidget#quoteSchemeCenterPage QSpinBox {{ color:{c['text']}; background:#FFFFFF; border:1px solid {c['border']}; border-radius:4px; padding:0 10px; min-height:38px; max-height:38px; font-size:{BODY_PX}px; selection-background-color:{c['selection']}; selection-color:{c['text']}; }}
