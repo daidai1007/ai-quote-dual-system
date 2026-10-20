@@ -82,6 +82,7 @@ class SummaryPrintTests(unittest.TestCase):
             self.assertIn('产品<测试>&', plain)
             self.assertIn('末行产品', plain)
             self.assertIn('匹配尺寸', plain)
+            self.assertIn('柜体原价', plain)
             self.assertIn('柜体1：800*600*1800', plain)
             self.assertIn('柜体2：600*500*1800', plain)
             self.assertIn('合计', plain)

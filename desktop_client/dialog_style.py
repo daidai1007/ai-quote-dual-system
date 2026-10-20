@@ -68,6 +68,7 @@ def dialog_style_sheet():
 QDialog[unifiedDialog="true"] {{ background:{c['background']}; color:{c['text']};
     font-family:{FONT_FAMILY_QSS}; font-size:{m['font_px']}px; }}
 QDialog[unifiedDialog="true"][dialogOverlay="true"] {{ background:transparent; }}
+QDialog#scheme2AttachmentOverlay[unifiedDialog="true"] {{ background:{c['background']}; }}
 QDialog[unifiedDialog="true"][dialogOverlay="false"] {{ border:1px solid {c['border']}; border-radius:{m['radius']}px; }}
 QDialog[unifiedDialog="true"] QLabel {{ font-size:{m['font_px']}px; }}
 QDialog[unifiedDialog="true"] QLineEdit,

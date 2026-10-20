@@ -160,6 +160,8 @@ class ManualMatchTests(unittest.TestCase):
         for key in ('attachments','formula','width_mm','depth_mm','height_mm','specification','quantity','quick_discount','freight_fee'):
             self.assertEqual(self.item[key],before[key],key)
         self.assertEqual(self.summary.product_table.item(0,9).text(),'600*250*600')
+        self.assertEqual(self.summary.product_table.horizontalHeaderItem(10).text(),'柜体原价')
+        self.assertEqual(self.summary.product_table.item(0,10).text(),'600.00')
         self.assertEqual(self.summary.product_table.item(0,5).text(),'577.00')
         self.summary.accept()
         self.assertEqual(self.window.summary_table.item(0,ui.HEADERS.index('报价')).text(),'577.00')

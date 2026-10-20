@@ -22,6 +22,7 @@ import shutil
 import sys
 import tempfile
 import time
+import unicodedata
 from uuid import uuid4
 from types import MethodType
 import zipfile
@@ -101,6 +102,7 @@ from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, mater
 from ui_typography import (
     AUXILIARY_PX,
     BODY_PX,
+    FIELD_LABEL_PX,
     FONT_FAMILY_QSS,
     LABEL_PX,
     MEDIUM_WEIGHT,
@@ -127,6 +129,8 @@ SCHEME2_ACTION_DOCK_HEIGHT = 48
 SCHEME2_ACTION_BUTTON_MIN_HEIGHT = 28
 SCHEME2_ACTION_BUTTON_TEXT_PADDING = 8
 SCHEME2_ACTION_DOCK_VERTICAL_MARGIN = 6
+ATTACHMENT_ADD_METRICS = {"button_height": 44, "row_inset_x": 10, "row_inset_y": 8}
+ATTACHMENT_SEARCH_HEIGHT = 36
 QUOTE_COMPANY_FIELD_WIDTH = 420
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
@@ -1734,7 +1738,7 @@ def _attachment_summary_matched_size(item):
 
 
 def _attachment_summary_product_values(item, sequence, columns=None):
-    """Audit the same per-cabinet/set quotation shown on the cost page."""
+    """Show the cabinet's original price alongside unchanged quote totals."""
     values = _row_values(item)
     names, show_material, show_difference = columns or _attachment_summary_columns([item])
     amounts = _attachment_summary_named_amounts(item)
@@ -1762,15 +1766,12 @@ def _attachment_summary_product_values(item, sequence, columns=None):
     attachments = tuple(attachments)
     residual = fee - listed
     freight = max(0.0, _number(values[10]))
-    material = values[22] if show_material else 0.0
-    # Allocate any quantity/ganged-set normalization difference to the
-    # cabinet component so the audit columns always reconcile to the visible
-    # selective-discount quote (the row value at index 15).
-    cabinet = values[15] - sum(attachments) - material - freight
+    # One cabinet/set, before discount; never derive it as the residual of
+    # discounted attachment columns. The shared helper also recovers legacy
+    # snapshots without base_price from total_cost minus the stored fee.
+    cabinet = quick_discount_breakdown(quick, item.get("attachments", []), 1)["base_price"]
     extra = ((values[22],) if show_material else ()) + (
         (residual,) if show_difference else ())
-    if show_difference:
-        cabinet -= residual
     return (sequence, values[1], values[3], values[11], "台", values[15], values[16],
             values[13], values[13] * values[11], _attachment_summary_matched_size(item),
             cabinet, *attachments, *extra, freight, discount)
@@ -2084,8 +2085,10 @@ class AttachmentSummaryDialog(AttachmentEditor):
     DEFAULT_SIZE = QSize(1560, 720)
     MINIMUM_SIZE = QSize(760, 460)
     PRODUCT_BASE_HEADERS = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价",
-                           "原价单价", "原价总价", "匹配尺寸", "柜体")
+                           "原价单价", "原价总价", "匹配尺寸", "柜体原价")
     MATCHED_SIZE_COLUMN = 9
+    CABINET_ORIGINAL_COLUMN = 10
+    CABINET_ORIGINAL_TOOLTIP = "单台／单套柜体折前原价，不含附件、材料差价及运费；并柜为各子柜原价之和，不乘订单数量。"
     MATCHED_SIZE_LINK_COLOR = "#2563EB"
     PRODUCT_BASE_COLUMN_WIDTHS = (50, 100, 170, 60, 50, 95, 95, 95, 95, 180, 100)
     PRODUCT_TAIL_HEADERS = ("运费", "折扣")
@@ -2155,6 +2158,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
         self.product_table.setHorizontalHeaderLabels(self.product_headers)
         self.product_table.horizontalHeaderItem(self.MATCHED_SIZE_COLUMN).setToolTip(
             "左键点击修改数据库匹配尺寸（宽*深*高，mm）并重新取价；不改变实际规格及附件；并柜逐柜填写。")
+        self.product_table.horizontalHeaderItem(self.CABINET_ORIGINAL_COLUMN).setToolTip(self.CABINET_ORIGINAL_TOOLTIP)
         self.product_table.cellClicked.connect(self._edit_matched_size)
         self.product_table.verticalHeader().hide()
         self.product_table.setShowGrid(True)
@@ -2172,7 +2176,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
         widths = self.PRODUCT_BASE_COLUMN_WIDTHS + attachment_widths + self.PRODUCT_TAIL_COLUMN_WIDTHS
         for column, width in enumerate(widths):
             self.product_table.setColumnWidth(column, width)
-        self.product_table.setToolTip("费用拆分按单台（并柜为整套）计，与成本计算界面报价一致；折后总价=折后单价×数量；原价总价=原价单价×数量。")
+        self.product_table.setToolTip("柜体原价为单台／单套折前价，不含附件、材料差价及运费；附件列仍按当前折扣口径显示，不能与柜体原价直接相加作为折后单价。折后总价=折后单价×数量；原价总价=原价单价×数量。")
         for title, object_name, table in (
             ("产品报价", "scheme2AttachmentSummaryProductsTitle", self.product_table),
             ("附件明细", "scheme2AttachmentSummaryDetailsTitle", self.table),
@@ -2262,6 +2266,8 @@ class AttachmentSummaryDialog(AttachmentEditor):
                     cell = QTableWidgetItem(text)
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     cell.setToolTip(tooltip)
+                    if column == self.CABINET_ORIGINAL_COLUMN:
+                        cell.setToolTip(text + "\n" + self.CABINET_ORIGINAL_TOOLTIP)
                     if column == self.MATCHED_SIZE_COLUMN and not getattr(self.window, "_quote_scheme_read_only", False):
                         cell.setForeground(QColor(self.MATCHED_SIZE_LINK_COLOR))
                         font = cell.font()
@@ -2862,7 +2868,7 @@ def _build_quote_page(window):
     title.setObjectName("scheme2PageTitle")
     header.addWidget(title)
     header.addStretch(1)
-    company_field = _inline_field("下单公司", window.scheme2_company)
+    company_field = _inline_field("下单公司", _build_quote_company_selector(window))
     company_field.setObjectName("scheme2QuoteCompanyField")
     company_field.setFixedWidth(QUOTE_COMPANY_FIELD_WIDTH)
     print_button = QPushButton("打印")
@@ -3520,16 +3526,8 @@ def _refresh_product_placeholder(combo):
     combo.update()
 
 
-def _cost_sidebar(window):
-    bar = QFrame()
-    bar.setObjectName("scheme2CostSidebar")
-    bar.setFixedWidth(COST_SIDEBAR_WIDTH)
-    layout = QVBoxLayout(bar)
-    layout.setContentsMargins(10, 12, 10, 12)
-    layout.setSpacing(7)
-    heading = QLabel("修改系数")
-    heading.setObjectName("scheme2SidebarTitle")
-    layout.addWidget(heading)
+def _build_quote_company_selector(window):
+    """Create the quotation-page buyer selector independently of the cost page."""
     company = getattr(window, "base_company_combo", None) or window.findChild(QComboBox, "baseCompanyCombo")
     if company is None:
         company = QComboBox()
@@ -3564,6 +3562,19 @@ def _cost_sidebar(window):
     company.setToolTip(company.currentText())
     company.currentTextChanged.connect(company.setToolTip)
     window.scheme2_company = company
+    return company
+
+
+def _cost_sidebar(window):
+    bar = QFrame()
+    bar.setObjectName("scheme2CostSidebar")
+    bar.setFixedWidth(COST_SIDEBAR_WIDTH)
+    layout = QVBoxLayout(bar)
+    layout.setContentsMargins(8, 12, 8, 12)
+    layout.setSpacing(7)
+    heading = QLabel("修改系数")
+    heading.setObjectName("scheme2SidebarTitle")
+    layout.addWidget(heading)
     scroll = QScrollArea()
     scroll.setObjectName("scheme2CoefficientScroll")
     scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -5313,6 +5324,17 @@ class _SchemeAttachmentCombo(QComboBox):
             return
         super().hidePopup()
 
+    def showPopup(self):
+        super().showPopup()
+        # Search hides options in the view, never rebuilds the selection model.
+        # A previously selected (now hidden) row must not anchor the popup.
+        view = self.view()
+        if view.isRowHidden(self.currentIndex()):
+            first = next((row for row in range(1, self.count()) if not view.isRowHidden(row)), 0)
+            index = self.model().index(first, 0)
+            view.setCurrentIndex(index)
+            view.scrollTo(index)
+
     def is_row_selected(self, row):
         return row in self._selected_rows
 
@@ -5507,6 +5529,31 @@ class _SchemeAttachmentCombo(QComboBox):
         painter.drawPolygon(QPolygon(points))
 
 
+def _style_attachment_add_row(frame, button):
+    """Shared, spacious secondary action for both attachment picker paths."""
+    from dialog_style import DIALOG_COLORS, DIALOG_METRICS
+    colors, metrics = DIALOG_COLORS, ATTACHMENT_ADD_METRICS
+    frame.setObjectName("scheme2CustomAttachmentCard")
+    frame.layout().setContentsMargins(metrics["row_inset_x"], metrics["row_inset_y"],
+                                     metrics["row_inset_x"], metrics["row_inset_y"])
+    frame.setMinimumHeight(metrics["button_height"] + 2 * metrics["row_inset_y"])
+    frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    frame.setStyleSheet(f"QFrame#scheme2CustomAttachmentCard {{ background:{colors['background']}; border:0; }}")
+    button.setObjectName("scheme2AddAttachment")
+    button.setAutoDefault(False)
+    button.setFixedHeight(metrics["button_height"])
+    button.setStyleSheet(f"""
+QPushButton#scheme2AddAttachment {{ background:{colors['selected']}; color:{colors['selected_text']};
+    border:1px solid {colors['border']}; border-radius:{DIALOG_METRICS['button_radius']}px;
+    min-height:{metrics['button_height']-2}px; max-height:{metrics['button_height']-2}px;
+    padding:0 {DIALOG_METRICS['button_inset']}px; }}
+QPushButton#scheme2AddAttachment:hover {{ background:{colors['hover']}; }}
+QPushButton#scheme2AddAttachment:pressed {{ background:{colors['selected']}; }}
+QPushButton#scheme2AddAttachment:focus {{ border-color:{colors['focus']}; }}
+QPushButton#scheme2AddAttachment:disabled {{ color:{colors['disabled']}; background:{colors['scroll_track']}; }}
+""")
+
+
 class _SchemeAttachmentDialog(QDialog):
     """Price-free attachment picker matching the approved scheme."""
 
@@ -5520,6 +5567,7 @@ class _SchemeAttachmentDialog(QDialog):
         self.category_checks = {}
         self.category_combos = {}
         self.direct_checks = {}
+        self.category_cards = {}
         self.custom_rows = [dict(item) for item in selected if isinstance(item, dict) and item.get("custom")]
         selected_pairs = set()
         legacy_selected_names = set()
@@ -5569,10 +5617,28 @@ class _SchemeAttachmentDialog(QDialog):
         header_layout.addWidget(close_button)
         root.addWidget(header)
 
-        hint = QLabel("勾选附件；带下拉标志的分类可展开选择具体附件")
-        hint.setObjectName("scheme2AttachmentHint")
-        hint.setWordWrap(True)
-        root.addWidget(hint)
+        from dialog_style import DIALOG_COLORS, DIALOG_METRICS
+        search_bar = QFrame()
+        search_bar.setObjectName("scheme2AttachmentSearchBar")
+        search_layout = QHBoxLayout(search_bar)
+        search_layout.setContentsMargins(DIALOG_METRICS['button_inset'], DIALOG_METRICS['spacing'],
+                                        DIALOG_METRICS['button_inset'], DIALOG_METRICS['spacing'])
+        search_bar.setStyleSheet(f"QFrame#scheme2AttachmentSearchBar {{ background:{DIALOG_COLORS['background']}; border:0; }}")
+        self.search_edit = QLineEdit()
+        self.search_edit.setObjectName("scheme2AttachmentSearch")
+        self.search_edit.setPlaceholderText("搜索附件名称、型号或分类")
+        self.search_edit.setAccessibleName("搜索附件")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setFixedHeight(ATTACHMENT_SEARCH_HEIGHT)
+        self.search_edit.setStyleSheet(f"""
+QLineEdit#scheme2AttachmentSearch {{ background:{DIALOG_COLORS['background']}; color:{DIALOG_COLORS['text']};
+    border:1px solid {DIALOG_COLORS['border']}; border-radius:{DIALOG_METRICS['button_radius']}px;
+    padding:0 {DIALOG_METRICS['button_inset']}px; }}
+QLineEdit#scheme2AttachmentSearch:focus {{ border-color:{DIALOG_COLORS['focus']}; }}
+""")
+        self.search_edit.installEventFilter(self)
+        search_layout.addWidget(self.search_edit)
+        root.addWidget(search_bar)
         scroll = QScrollArea()
         scroll.setObjectName("scheme2AttachmentScroll")
         scroll.setWidgetResizable(True)
@@ -5597,6 +5663,7 @@ class _SchemeAttachmentDialog(QDialog):
             card = QFrame()
             card.setObjectName("scheme2AttachmentCategory")
             card.setProperty("categoryName", category)
+            self.category_cards[category] = card
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(10, 7, 10, 8)
             card_layout.setSpacing(6)
@@ -5643,12 +5710,15 @@ class _SchemeAttachmentDialog(QDialog):
                 card_layout.addWidget(category_check)
                 card_layout.addWidget(combo)
             cards.addWidget(card)
+        self.search_empty = QLabel("未找到匹配附件，请更换关键词。")
+        self.search_empty.setObjectName("scheme2AttachmentSearchEmpty")
+        self.search_empty.setWordWrap(True)
+        self.search_empty.hide()
+        cards.addWidget(self.search_empty)
         custom_card = QFrame()
-        custom_card.setObjectName("scheme2CustomAttachmentCard")
         custom_layout = QHBoxLayout(custom_card)
-        custom_layout.setContentsMargins(10, 7, 10, 7)
         custom_toggle = QPushButton("＋ 新增附件")
-        custom_toggle.setObjectName("scheme2AddAttachment")
+        _style_attachment_add_row(custom_card, custom_toggle)
         custom_name = QLineEdit()
         custom_name.setObjectName("scheme2CustomAttachmentName")
         custom_name.setPlaceholderText("请输入附件名称")
@@ -5707,6 +5777,36 @@ class _SchemeAttachmentDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+        self.search_edit.textChanged.connect(self._filter_attachments)
+
+    def eventFilter(self, watched, event):
+        if (watched is self.search_edit and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            event.accept()  # Searching must not trigger the dialog's default Confirm action.
+            return True
+        return super().eventFilter(watched, event)
+
+    def _filter_attachments(self, text):
+        def normalize(value):
+            return unicodedata.normalize("NFKC", str(value)).casefold()
+        tokens = normalize(text).split()
+        visible = 0
+        for category, card in self.category_cards.items():
+            combo = self.category_combos.get(category)
+            names = [category] if combo is None else [combo.itemText(row) for row in range(1, combo.count())]
+            matches = [all(token in normalize(name) for token in tokens) for name in names]
+            if normalize(text).strip() == normalize(category) or not any(matches):
+                matches = [all(token in normalize(category + " " + name) for token in tokens) for name in names]
+            found = any(matches)
+            card.setVisible(found)
+            visible += found
+            if combo is not None:
+                for row, matched in enumerate(matches, 1):
+                    combo.view().setRowHidden(row, not matched)
+        self.search_empty.setVisible(bool(tokens) and not visible)
+        scroll = self.findChild(QScrollArea, "scheme2AttachmentScroll")
+        if scroll is not None:
+            scroll.verticalScrollBar().setValue(0)
 
     def collect_attachments(self):
         selected = []
@@ -5884,9 +5984,8 @@ def _open_legacy_attachment_overlay(window, dialog_class, anchor):
     custom_rows = []
     custom_frame = QFrame()
     custom_layout = QHBoxLayout(custom_frame)
-    custom_layout.setContentsMargins(0, 3, 0, 3)
     custom_toggle = QPushButton("＋ 新增附件")
-    custom_toggle.setObjectName("scheme2AddAttachment")
+    _style_attachment_add_row(custom_frame, custom_toggle)
     custom_name = QLineEdit()
     custom_name.setPlaceholderText("请输入附件名称")
     custom_add = QPushButton("添加")
@@ -7490,9 +7589,10 @@ QLabel#scheme2OptionGroupTitle, QLabel#scheme2SidebarTitle,
 QLabel#scheme2DialogTitle, QLabel#scheme2DimensionTitle,
 QLabel#scheme2ConfirmTitle, QLabel#scheme2AttachmentEditorTitle,
 QLabel#scheme2AttachmentTitle {{ font-size:{SECTION_TITLE_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
-QFrame#navPanel QPushButton {{ font-size:{PAGE_TITLE_PX}px; font-weight:{MEDIUM_WEIGHT}; }}
+QFrame#navPanel QPushButton {{ font-size:{PAGE_TITLE_PX}px; font-weight:{SEMIBOLD_WEIGHT}; }}
 QLabel#scheme2OptionLabel, QLabel#scheme2FieldLabel,
-QLabel#scheme2SidebarHint, QLabel#scheme2GangedLabel,
+QLabel#scheme2GangedLabel {{ font-size:{FIELD_LABEL_PX}px; font-weight:{MEDIUM_WEIGHT}; }}
+QLabel#scheme2SidebarHint,
 QLabel#scheme2DetailMeta {{ font-size:{LABEL_PX}px; font-weight:{REGULAR_WEIGHT}; }}
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
 QFrame#scheme2OptionControlShell QLineEdit,

@@ -47,13 +47,13 @@ assert hasattr(dialog, 'product_table'), 'reference requires a product quote tab
 products = dialog.product_table
 assert [products.horizontalHeaderItem(c).text() for c in range(products.columnCount())] == [
     '序号', '名称', '规格型号(W*D*H)', '数量', '单位', '折后单价', '折后总价',
-    '原价单价', '原价总价', '匹配尺寸', '柜体', '固定底座', '木托', '接地线-编织带', '运费', '折扣']
+    '原价单价', '原价总价', '匹配尺寸', '柜体原价', '固定底座', '木托', '接地线-编织带', '运费', '折扣']
 assert products.rowCount() == 3
 # Current selective discounts: cabinet 180 + bases 45 + wood 20 + wire 30 + freight 10.
 assert [products.item(0, c).text().replace('\n', '') for c in range(7)] == [
     '1', 'JP', '(1000+800)*600*(1800+100)', '3', '台', '285.00', '855.00']
 assert [products.item(0, c).text() for c in range(7, 16)] == [
-    '510.00', '1,530.00', '—', '180.00', '45.00', '20.00', '30.00', '10.00', '0.50']
+    '510.00', '1,530.00', '—', '360.00', '45.00', '20.00', '30.00', '10.00', '0.50']
 assert products.item(1, 5).text() == '164.00' and products.item(1, 6).text() == '328.00'
 assert products.item(2, 1).text() == '合计' and products.item(2, 6).text() == '1,183.00'
 assert products.item(1, 8).text() == '408.00'
@@ -71,17 +71,17 @@ assert products.item(0, 5).text() == '295.00'
 assert products.item(0, 6).text() == '885.00'
 assert products.item(0, 8).text() == '1,590.00'
 assert products.item(2, 8).text() == '1,998.00'
-assert products.item(0, 10).text() == '180.00'
+assert products.item(0, 10).text() == '360.00'
 assert products.item(0, 11).text() == '55.00'
 assert products.item(1, 5).text() == '164.00'
 assert products.item(2, 6).text() == '1,213.00'
 assert dialog.table.item(0, 4).text() == '210.00'
 assert window.summary_table.item(0, 10).text() == '295.00'
 assert window.draft_items[0]['formula'] == before[0]['formula']
-# The fee audit must always reconcile to the current cost-table quote.
+# Only the cabinet column changes basis; final quotation totals stay identical.
 for row, item in enumerate(window.draft_items):
     values = ui._attachment_summary_product_values(item, row + 1)
-    assert abs(sum(values[10:-1]) - values[5]) < .000001
+    assert abs(values[10] * values[-1] + sum(values[11:-1]) - values[5]) < .000001
     assert values[5] == ui._row_values(item)[15]
     assert values[6] == ui._row_values(item)[16]
     assert values[8] == values[7] * values[3]
@@ -91,7 +91,7 @@ sus['formula']['corrected_material_weight_kg'] = 10
 values = ui._attachment_summary_product_values(sus, 1)
 material_column = len(ui.AttachmentSummaryDialog.PRODUCT_BASE_HEADERS) + len(ui._attachment_summary_columns([sus])[0])
 assert values[material_column] == 25 and abs(values[5] - 189.0) < .000001
-assert abs(sum(values[10:-1]) - values[5]) < .000001
+assert abs(values[10] * values[-1] + sum(values[11:-1]) - values[5]) < .000001
 dialog.resize(1560, 720)
 dialog.show()
 app.processEvents()

@@ -1,4 +1,4 @@
-"""Focused contract for the cost-page company field layout."""
+"""Focused contract for the quote-page company field layout."""
 
 from __future__ import annotations
 
@@ -47,4 +47,6 @@ assert combo.lineEdit().text() == "杭州拓强机械股份有限公司"
 assert "color:transparent" not in combo.lineEdit().styleSheet().replace(" ", "")
 assert not combo._scheme2_multiline_filter.eventFilter(combo, QEvent(QEvent.Type.Paint))
 assert all(label.text() != "下单公司" for label in window.scheme2_cost_page.findChildren(QLabel))
+window.close()
+app.processEvents()
 print("scheme2 quote company inline layout contract passed")
