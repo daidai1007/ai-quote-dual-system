@@ -15,7 +15,11 @@ from PySide6.QtCore import Qt, QTimer, QDate
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QTableWidgetItem, QVBoxLayout, QHeaderView, QWidget
 from shiboken6 import isValid
 from material_prices import material_unit_price
-from quick_discount_rules import money_sum, quick_attachment_line_amount, apply_management_fee
+from quick_discount_rules import PRICING_BASIS, money_sum, quick_attachment_line_amount, apply_management_fee
+from support_plate_pricing import (
+    COST_SNAPSHOT, MODEL_ONLY, is_support_plate, model_price_result,
+    remember_cost, merge_snapshot_cost,
+)
 from ganged_cabinet_rules import parse_ganged_specification
 from quote_request_context import attachment_inputs, bind_quote_request, check_quote_response, retire_quote_request, settle_quote_request
 
@@ -49,7 +53,7 @@ def new_quote_attachment_selection(source):
         "catalogue_face_price", "catalogue_quick_amount", "quick_face_price",
     }
     for key in list(row):
-        if key in inherited or key.startswith("size_match_"):
+        if key in inherited or key in (COST_SNAPSHOT, MODEL_ONLY) or key.startswith("size_match_"):
             row.pop(key, None)
     row["quote_catalog_refresh_required"] = True
     return row
@@ -1620,6 +1624,15 @@ def install_attachment_v2(namespace):
                     label = attachment.get("item_name") or attachment.get("name") or attachment.get("model_code") or "未命名附件"
                     failed(f"附件“{label}”的价格库 ID 无效，请更新附件目录后重试。")
                     return
+                try:
+                    sale_only = model_price_result(
+                        attachment, match, quote_item, getattr(window, "scheme2_defaults", {}), body.get("data_version"))
+                except ValueError as error:
+                    failed(str(error))
+                    return
+                if sale_only is not None:
+                    succeeded(sale_only)
+                    return
                 resolved = {
                     **copy.deepcopy(match),
                     **attachment,
@@ -1665,6 +1678,8 @@ def install_attachment_v2(namespace):
             "attachments": [selected_input(attachment)],
             "attachment_contract": 2,
         }
+        if is_support_plate(attachment):
+            payload["pricing_basis"] = quote_item.get("pricing_basis") or PRICING_BASIS
         # Reprice against this saved order, never the currently visible product.
         # A per-child selection cannot be previewed without its child context.
         child_index = attachment.get("ganged_cabinet_index", attachment.get("ganged_fixed_base_index"))
@@ -1692,6 +1707,8 @@ def install_attachment_v2(namespace):
             if calculated.get("status") == "ERROR":
                 failed(str(calculated.get("error") or "附件金额计算失败"))
                 return
+            if is_support_plate(calculated):
+                calculated = remember_cost(calculated, quote_item, getattr(window, "scheme2_defaults", {}))
             succeeded(calculated)
 
         worker.succeeded.connect(loaded)
@@ -1739,7 +1756,9 @@ def install_attachment_v2(namespace):
             if errors:
                 failed("；".join(f"{row.get('item_name')}：{row.get('error') or '尺寸未补齐'}" for row in errors))
                 return
-            merged = [merge_cost(source, cost) for source, cost in zip(rows, costs)]
+            merged = [merge_snapshot_cost(source, merge_cost(source, cost), item,
+                                         getattr(window, "scheme2_defaults", {}))
+                      for source, cost in zip(rows, costs)]
             iterator = iter(merged)
             updated = [row if row.get("custom") else next(iterator) for row in sources]
             quotes = {}
@@ -1756,6 +1775,8 @@ def install_attachment_v2(namespace):
                 quotes[key] = quote
             item.update(attachments=updated, quote_line_id=body["quote_line_id"],
                         attachment_confirmation_inputs=confirmation_inputs(costs), **quotes)
+            item.pop("cost_detail_rows", None)
+            item.pop("quote_display", None)
             item.pop("attachment_snapshot_dirty", None)
             window.refresh_summary()
             succeeded()

@@ -150,7 +150,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.20.01"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.20.03"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -1057,6 +1057,14 @@ class AttachmentEditor(QDialog):
         close_button.clicked.connect(self.accept)
         header_layout.addWidget(title)
         header_layout.addStretch(1)
+        self.dimensions_button = QToolButton()
+        self.dimensions_button.setObjectName("scheme2AttachmentDimensions")
+        self.dimensions_button.setText("修改尺寸…")
+        self.dimensions_button.setToolTip("选择有孔承板或无孔承板，修改高度、宽度并重新计算成本")
+        self.dimensions_button.setEnabled(False)
+        self.dimensions_button.hide()
+        self.dimensions_button.clicked.connect(self._edit_support_plate_dimensions)
+        header_layout.addWidget(self.dimensions_button)
         header_layout.addWidget(close_button)
         layout.addWidget(header)
         self.table = QTableWidget(0, 5)
@@ -1080,10 +1088,29 @@ class AttachmentEditor(QDialog):
         self.table.setColumnWidth(self.COL_FORMULA_AMOUNT, 88)
         self.table.cellClicked.connect(self.edit_missing_dimensions)
         self.table.cellDoubleClicked.connect(self._begin_model_edit)
+        self.table.itemSelectionChanged.connect(self._update_dimension_action)
         layout.addWidget(self.table, 1)
         for attachment in item.get("attachments", []):
             if isinstance(attachment, dict):
                 self.add_row(attachment)
+        self._update_dimension_action()
+
+    def _update_dimension_action(self):
+        from support_plate_pricing import is_support_plate
+        row = self.table.currentRow()
+        cell = self.table.item(row, self.COL_NAME) if row >= 0 else None
+        source = cell.data(ROLE_ROW) if cell is not None else None
+        self.dimensions_button.setVisible(any(
+            is_support_plate(self.table.item(index, self.COL_NAME).data(ROLE_ROW) or {})
+            for index in range(self.table.rowCount())
+            if self.table.item(index, self.COL_NAME) is not None))
+        self.dimensions_button.setEnabled(
+            isinstance(source, dict) and is_support_plate(source)
+            and row not in getattr(self, "_pending_reprices", {}))
+
+    def _edit_support_plate_dimensions(self):
+        if self.dimensions_button.isEnabled():
+            self.edit_missing_dimensions(self.table.currentRow(), self.COL_SPECIFICATION, force=True)
 
     def _show_table_menu(self, position):
         if getattr(self, "_pending_reprices", {}):
@@ -1239,6 +1266,10 @@ class AttachmentEditor(QDialog):
         if str(current or "").strip() == model:
             self._end_model_edit(row)
             return
+        from support_plate_pricing import is_support_plate, prepare_model_change
+        support_plate = is_support_plate(source)
+        if support_plate:
+            source = prepare_model_change(source, self.item, getattr(self.window, "scheme2_defaults", {}))
         if is_light_switch:
             source.update({"category_level1": "照明灯/行程开关", "item_name": model, "specification": model})
             source.pop("model_code", None)
@@ -1251,7 +1282,10 @@ class AttachmentEditor(QDialog):
                 source["computer_tray_auto_match"] = False
                 source.pop("quick_amount_override", None)
                 source["custom_amount_edited"] = False
-        for key in ("attachment_price_id", "unit_price_override", "matched_price", "quick_amount", "formula_amount"):
+        reset_fields = ["attachment_price_id", "unit_price_override", "matched_price", "quick_amount"]
+        if not support_plate:
+            reset_fields.append("formula_amount")
+        for key in reset_fields:
             source.pop(key, None)
         source.pop("quick_amount_override", None)
         source["custom_amount_edited"] = False
@@ -1418,12 +1452,17 @@ class AttachmentEditor(QDialog):
                          else previous_formula / selected_quantity if selected_quantity else 0)
             formula.setText(_money(money_product(unit_cost, value)))
 
-    def edit_missing_dimensions(self, row, column):
+    def edit_missing_dimensions(self, row, column, *, force=False):
         if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
             return
         source_item = self.table.item(row, self.COL_NAME)
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         missing = self._pending_dimensions(source)
+        if force:
+            from support_plate_pricing import is_support_plate
+            if not is_support_plate(source) or row in getattr(self, "_pending_reprices", {}):
+                return
+            missing = ["孔承板高度", "孔承板宽度"]
         if not missing:
             return
         manual = source.get("manual_inputs") if isinstance(source.get("manual_inputs"), dict) else {}
@@ -1464,6 +1503,7 @@ class AttachmentEditor(QDialog):
         token = object()
         pending[row] = token
         self._pending_reprices = pending
+        self._update_dimension_action()
         if quantity_editor is not None:
             quantity_editor.setEnabled(False)
         specification_editor = self.table.cellWidget(row, self.COL_SPECIFICATION)
@@ -1486,6 +1526,7 @@ class AttachmentEditor(QDialog):
 
         def finished():
             pending.pop(row, None)
+            self._update_dimension_action()
             for editor in (quantity_editor, amount_editor, specification_editor):
                 if editor is not None:
                     editor.setEnabled(True)
@@ -1617,6 +1658,8 @@ class AttachmentEditor(QDialog):
                 data["selection_source"] = "QUOTE_LOCAL"
             rows.append(data)
         self.item["attachments"] = rows
+        self.item.pop("cost_detail_rows", None)
+        self.item.pop("quote_display", None)
         self.item["pricing_basis"] = PRICING_BASIS
         from attachment_v2_client import confirmation_inputs
         if self.item.get("attachment_contract") == 2 and confirmation_inputs(rows) != self.original_snapshot_inputs:

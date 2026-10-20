@@ -35,7 +35,7 @@ def verify(directory):
                      'attachment_v2_client', 'attachment_category_browser', 'quick_discount_rules', 'scheme2_ui',
                      'quote_scheme_center', 'quote_scheme_widgets', 'quote_request_context',
                      'quote_document_progress', 'material_prices', 'wheel_edit_guard', 'dropdown_style', 'progress_style',
-                     'cost_detail_export', 'dialog_style', 'ui_typography'):
+                     'cost_detail_export', 'dialog_style', 'ui_typography', 'support_plate_pricing'):
             expected = compile((ROOT / 'desktop_client' / f'{name}.py').read_text(encoding='utf-8'), '', 'exec')
             actual = pyz.extract(name)
             assert normalized(expected) == normalized(actual), f'Packaged source differs: {name}'
