@@ -87,7 +87,8 @@ class UpdateTests(unittest.TestCase):
     def test_protected_paths_traversal_windows_names_and_duplicates_rejected(self):
         for name in ("../escape.exe", "_internal/../client_config.json", "C:/escape.exe", "_internal\\escape.exe",
                      "client_config.json", "update_config.json", "output/a.xlsx", "orders/a.aiquote",
-                     "_internal/client_config.json", "_internal/x.key", "_internal/NUL.dll", "_internal/x. ",
+                     "_internal/client_config.json", "_internal/x.key", "_internal/x.pem",
+                     "_internal/other/cacert.pem", "_internal/NUL.dll", "_internal/x. ",
                      "/absolute.exe", "_internal//x", "_internal/./x"):
             with self.subTest(name=name), self.assertRaises(UpdateError): safe_member(name)
         self.fixture.repack([(ENTRY, b"new"), ("_internal/a.dll", b"a"), ("_internal/A.dll", b"b")])
@@ -97,6 +98,40 @@ class UpdateTests(unittest.TestCase):
         self.fixture.repack([(ENTRY, b"new"), ("client_config.json", b"stolen")])
         with self.assertRaises(UpdateError): self.prepared()
         self.fixture.assert_user_files(self)
+
+    def test_real_public_ca_bundle_build_stage_and_install(self):
+        from make_client_update import build
+        value = (ROOT.parent / "AIQuoteDualSystem" / core.PUBLIC_CA_BUNDLE).read_bytes()
+        path = self.fixture.source / core.PUBLIC_CA_BUNDLE
+        path.parent.mkdir(parents=True); path.write_bytes(value)
+        self.fixture.envelope = build(self.fixture.source, self.fixture.root / "with-ca", self.fixture.key,
+                                      "2026.10.20.05", self.fixture.url, "Public CA bundle")
+        # Serve the newly built real-layout package through the existing fixture.
+        release = self.fixture.envelope["release"]
+        shutil.copy2(self.fixture.root / "with-ca" / Path(release["url"]).name,
+                     self.fixture.web / Path(release["url"]).name)
+        job = self.prepared()
+        self.assertEqual(apply_update(job, lambda _: True)["status"], "completed")
+        self.assertEqual((self.fixture.install / core.PUBLIC_CA_BUNDLE).read_bytes(), value)
+        self.fixture.assert_user_files(self)
+
+    def test_private_or_invalid_pem_at_ca_path_is_rejected(self):
+        values = [b"not a certificate", b"-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----",
+                  (ROOT.parent / "AIQuoteDualSystem" / core.PUBLIC_CA_BUNDLE).read_bytes()
+                  + b"\n-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"]
+        for value in values:
+            with self.subTest(value=value[:20]):
+                self.fixture.repack([(ENTRY, b"new"), (core.PUBLIC_CA_BUNDLE, value)])
+                with self.assertRaises(UpdateError): self.prepared()
+                self.assertEqual((self.fixture.install / ENTRY).read_bytes(), b"old-exe")
+
+    def test_build_rejects_private_key_disguised_as_ca_bundle(self):
+        from make_client_update import build
+        path = self.fixture.source / core.PUBLIC_CA_BUNDLE
+        path.parent.mkdir(parents=True); path.write_bytes(b"-----BEGIN PRIVATE KEY-----\nsecret")
+        with self.assertRaises(UpdateError):
+            build(self.fixture.source, self.fixture.root / "bad-ca", self.fixture.key,
+                  "2026.10.20.05", self.fixture.url, "Invalid CA")
 
     def test_zip_symlink_and_expansion_limit(self):
         package = self.fixture.web / Path(self.fixture.envelope["release"]["url"]).name

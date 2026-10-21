@@ -21,7 +21,7 @@ def hash_file(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def verify(directory):
+def verify(directory, public_config=False):
     directory = Path(directory).resolve()
     current = ROOT.parent / 'AIQuoteDualSystem'
     entry = directory / 'AIQuoteDualSystem_layout_v0.exe'
@@ -48,17 +48,23 @@ def verify(directory):
         actual = marshal.loads(reader.extract('v3_launcher'))
         expected = compile((ROOT / 'desktop_client/v3_launcher.py').read_text(encoding='utf-8'), '', 'exec')
         assert normalized(expected) == normalized(actual), 'Packaged launcher differs'
-    assert hash_file(current / 'client_config.json') == hash_file(directory / 'client_config.json')
+    if public_config:
+        config = json.loads((directory / 'client_config.json').read_text(encoding='utf-8-sig'))
+        assert set(config) == {'api_url', 'api_key'} and config['api_key'] == ''
+        assert config['api_url'].startswith('https://')
+    else:
+        assert hash_file(current / 'client_config.json') == hash_file(directory / 'client_config.json')
     for source in (current / '_internal/v3_core').rglob('*'):
         if source.is_file():
             target = directory / '_internal/v3_core' / source.relative_to(current / '_internal/v3_core')
             assert target.is_file() and hash_file(source) == hash_file(target), f'Runtime core differs: {source.name}'
     assert list((directory / 'runtime').rglob('pdftoppm.exe')), 'Missing PDF renderer'
     assert list((directory / '_internal/PySide6').rglob('QtSvg.pyd')), 'Missing Qt SVG module'
-    return {'current_source_in_exe': checked + ['v3_launcher'], 'config_identical': True,
+    return {'current_source_in_exe': checked + ['v3_launcher'],
+            'config_identical': not public_config, 'public_config_without_api_key': public_config,
             'all_recovered_core_files_identical': True, 'render_dependencies_present': True,
             'sha256': hash_file(entry)}
 
 
 if __name__ == '__main__':
-    print(json.dumps(verify(sys.argv[1]), ensure_ascii=False, indent=2))
+    print(json.dumps(verify(sys.argv[1], '--public-config' in sys.argv[2:]), ensure_ascii=False, indent=2))

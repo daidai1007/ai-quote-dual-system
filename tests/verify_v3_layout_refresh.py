@@ -1455,6 +1455,9 @@ quote_scheme_center.QuoteSchemeWorker.run = lambda self: self.succeeded.emit(
 )
 namespace["ApiWorker"].run = lambda self: self.failed.emit("offline test transport")
 window = namespace["MainWindow"]()
+# The offscreen plugin exposes an 800px desktop. These cases exercise
+# 1024/1280/1536px layouts, not the separately tested small-screen clamping.
+window.screen = lambda: _LogicalScreen(1920, 1080)
 try:
     window.show()
     app.processEvents()
@@ -1499,6 +1502,7 @@ try:
         for route, object_name in pages.items():
             window.show_section(route)
             app.processEvents()
+            assert (window.width(), window.height()) == (width, height)
             page = window.stack.currentWidget()
             assert page.objectName() == object_name
             assert page.isVisible()

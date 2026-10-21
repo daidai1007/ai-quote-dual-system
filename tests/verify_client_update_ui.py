@@ -48,6 +48,9 @@ class UpdateUiTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.env = patch.dict(os.environ, {"LOCALAPPDATA": self.temp.name}); self.env.start(); self.addCleanup(self.env.stop)
         self.fixture = LocalSource(Path(self.temp.name)); self.addCleanup(self.fixture.close)
+        # The fixture models .04 -> .05 independently of the shipped app version.
+        self.version = patch.object(ui, "CLIENT_VERSION", "2026.10.20.04")
+        self.version.start(); self.addCleanup(self.version.stop)
         self.window = TestWindow(); self.window.resize(1000, 700); self.window.show()
         self.c = ui.UpdateController(self.window, self.fixture.install, self.fixture.config, startup=False)
         self.addCleanup(self.close)
@@ -76,6 +79,13 @@ class UpdateUiTests(unittest.TestCase):
         self.assertIsNone(self.c.dialog)
         self.assertIsNone(self.c.job_path)
         self.assertTrue(self.c.banner.isVisible())
+
+    def test_same_release_version_does_not_offer_or_download_update(self):
+        with patch.object(ui, "CLIENT_VERSION", self.fixture.envelope["release"]["version"]):
+            self.c.check(); wait_until(lambda: self.c.worker is None)
+        self.assertEqual(self.c.state, "current")
+        self.assertIsNone(self.c.job_path)
+        self.assertIsNone(self.c.dialog)
 
     def test_startup_timer_checks_locally_without_opening_dialog(self):
         window = TestWindow(); window.show()

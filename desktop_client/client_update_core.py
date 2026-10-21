@@ -28,6 +28,7 @@ MAX_EXPANDED = 3 * MAX_PACKAGE
 MAX_FILES = 30000
 TIMEOUT = 8
 CONFIG_NAME = "update_config.json"
+PUBLIC_CA_BUNDLE = "_internal/certifi/cacert.pem"
 ROOT_FILES = {ENTRY.casefold(), "project-license.txt", "third_party_notices.txt", "aiquotedualsystem.ico"}
 RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
 LAN_NETWORKS = tuple(ipaddress.IPv4Network(network) for network in
@@ -197,10 +198,27 @@ def safe_member(name):
         return name
     if len(path.parts) > 1 and path.parts[0] in {"_internal", "runtime"}:
         # Even inside the runtime, never distribute application secrets/settings.
-        if path.name.casefold() in {"client_config.json", CONFIG_NAME, "workspace.json"} or path.suffix.casefold() in {".aiquote", ".pem", ".key"}:
+        if (path.name.casefold() in {"client_config.json", CONFIG_NAME, "workspace.json"}
+                or path.suffix.casefold() in {".aiquote", ".key"}
+                or (path.suffix.casefold() == ".pem" and name != PUBLIC_CA_BUNDLE)):
             raise UpdateError("更新包不得包含用户配置、订单或密钥")
         return name
     raise UpdateError("更新包试图覆盖用户配置或本地文件")
+
+
+def validate_public_ca_bundle(value):
+    """Only the known certifi public certificate bundle, never private PEM keys."""
+    from cryptography import x509
+    labels = re.findall(rb"-----BEGIN ([^\r\n-]+)-----", value)
+    if (len(value) > 1024 * 1024 or not labels or any(label != b"CERTIFICATE" for label in labels)
+            or b"PRIVATE KEY" in value.upper()):
+        raise UpdateError("更新包中的 CA 证书文件无效或包含私钥")
+    try:
+        certificates = x509.load_pem_x509_certificates(value)
+        if len(certificates) != len(labels):
+            raise ValueError("Certificate count mismatch")
+    except ValueError as error:
+        raise UpdateError("更新包中的 CA 证书文件无效") from error
 
 
 def reject_links(path):
@@ -238,7 +256,12 @@ def unpack(package, destination):
             target = destination / name
             target.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(item) as source, target.open("xb") as stream:
-                shutil.copyfileobj(source, stream)
+                if name == PUBLIC_CA_BUNDLE:
+                    value = source.read(1024 * 1024 + 1)
+                    validate_public_ca_bundle(value)
+                    stream.write(value)
+                else:
+                    shutil.copyfileobj(source, stream)
     return [name for _item, name in members]
 
 

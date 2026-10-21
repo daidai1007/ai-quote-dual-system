@@ -21,6 +21,24 @@ from ui_typography import BODY_PX, FONT_FAMILY_QSS, SECTION_TITLE_PX
 LOGGER = logging.getLogger("ai_quote.client")
 METRICS = {"dialog_width": 550, "dialog_height": 430, "banner_inset": 10,
            "startup_delay": 1500, "health_delay": 2500}
+CHECK_BUTTON_METRICS = {"radius": 8, "inset": 10, "border": 1}
+CHECK_BUTTON_COLORS = {"text": "#0B326B", "disabled": "#5A7AAB"}
+
+
+def check_button_style():
+    """Sidebar utility action; dialog actions keep their shared button style."""
+    # Inherit navigation typography/height, including the workbench resize pass.
+    # Local fixed font/height rules would drift from the other sidebar actions.
+    c, m = DIALOG_COLORS, CHECK_BUTTON_METRICS
+    return f"""
+QPushButton#clientCheckUpdateButton {{ min-width:0; padding:0 {m['inset']-m['border']}px;
+    border:{m['border']}px solid transparent; border-radius:{m['radius']}px;
+    color:{CHECK_BUTTON_COLORS['text']}; background:transparent; text-align:left; }}
+QPushButton#clientCheckUpdateButton:hover {{ background:{c['selected']}; }}
+QPushButton#clientCheckUpdateButton:pressed {{ background:{c['hover']}; }}
+QPushButton#clientCheckUpdateButton:focus {{ border-color:{c['focus']}; }}
+QPushButton#clientCheckUpdateButton:disabled {{ color:{CHECK_BUTTON_COLORS['disabled']}; background:transparent; }}
+"""
 
 
 class UpdateTask(QThread):
@@ -152,7 +170,10 @@ class UpdateController(QObject):
         if original is not None: column.addWidget(original, 1)
         self.window.setCentralWidget(host)
         self.check_button = QPushButton("检查更新"); self.check_button.setObjectName("clientCheckUpdateButton")
-        self.check_button.setStyleSheet(button_style("secondary"))
+        self.check_button.setStyleSheet(check_button_style())
+        self.check_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.check_button.setAccessibleName("检查软件更新")
+        self.check_button.setToolTip(f"检查软件更新 · 当前版本：{CLIENT_VERSION}")
         self.check_button.clicked.connect(lambda: self.check(manual=True))
         nav = getattr(self.window, "scheme2_nav", None)
         if nav is not None and nav.layout() is not None:

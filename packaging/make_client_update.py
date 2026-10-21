@@ -9,7 +9,8 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "desktop_client"))
 from client_update_core import (ENTRY, ROOT_FILES, atomic_json, canonical, digest,
-                                reject_links, safe_member, validate_url, version_tuple)
+                                reject_links, safe_member, validate_url, version_tuple,
+                                PUBLIC_CA_BUNDLE, validate_public_ca_bundle)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 
@@ -43,7 +44,10 @@ def build(source, output, key_path, version, base_url, notes, channel="local", l
     with zipfile.ZipFile(package, "x", zipfile.ZIP_DEFLATED) as archive:
         for path in files:
             reject_links(path)
-            archive.write(path, safe_member(path.relative_to(source).as_posix()))
+            name = safe_member(path.relative_to(source).as_posix())
+            if name == PUBLIC_CA_BUNDLE:
+                validate_public_ca_bundle(path.read_bytes())
+            archive.write(path, name)
     release = {"schema": 1, "product": "AIQuoteDualSystem", "channel": channel,
                "version": version, "url": base_url.rstrip("/") + "/" + package.name,
                "size": package.stat().st_size, "sha256": digest(package), "notes": notes,

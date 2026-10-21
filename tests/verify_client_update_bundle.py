@@ -15,7 +15,7 @@ import time
 from unittest.mock import patch
 
 from update_test_support import LocalSource
-from client_update_core import ENTRY, atomic_json, cache_root, download_update, read_json
+from client_update_core import ENTRY, PUBLIC_CA_BUNDLE, atomic_json, cache_root, download_update, read_json
 
 
 def owned_children(parent):
@@ -64,6 +64,10 @@ def main(bundle, lan_http=False):
     for fail in (False, True):
         with tempfile.TemporaryDirectory(prefix='quote-frozen-update-') as temp, patch.dict(os.environ, LOCALAPPDATA=temp, QT_QPA_PLATFORM='offscreen'):
             fixture = LocalSource(Path(temp), real_exe=True, fail=fail)
+            ca_value = (Path(bundle).resolve() / PUBLIC_CA_BUNDLE).read_bytes()
+            fixture.repack([(path.relative_to(fixture.source).as_posix(), path.read_bytes())
+                            for path in fixture.source.rglob('*') if path.is_file()]
+                           + [(PUBLIC_CA_BUNDLE, ca_value)])
             if lan_http:
                 origin = f'http://192.168.50.20:{fixture.server.server_port}'
                 fixture.config.update(manifest_url=origin + '/manifest.json', lan_http_origin=origin)
@@ -92,6 +96,11 @@ def main(bundle, lan_http=False):
                 if not result_path.is_file(): raise TimeoutError('No result from frozen updater')
                 result = read_json(result_path)
                 if result['status'] != ('rolled_back' if fail else 'completed'): raise AssertionError(result)
+                installed_ca = fixture.install / PUBLIC_CA_BUNDLE
+                if fail:
+                    if installed_ca.exists(): raise AssertionError('New CA bundle not removed by rollback')
+                elif installed_ca.read_bytes() != ca_value:
+                    raise AssertionError('Public CA bundle was not installed')
                 for name, data in fixture.preserved.items():
                     if name == ENTRY or name.startswith('_internal/'): continue
                     if (fixture.install / name).read_bytes() != data: raise AssertionError('Changed user data: '+name)

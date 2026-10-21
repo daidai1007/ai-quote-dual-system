@@ -35,6 +35,7 @@ $testFiles = @(
     "tests/verify_client_updates.py",
     "tests/verify_lan_client_updates.py",
     "tests/verify_client_update_ui.py",
+    "tests/verify_first_install_config.py",
     "tests/verify_copied_quote_reprice.py",
     "tests/verify_scheme2_cost_copy.py",
     "tests/verify_quote_request_lifecycle.py",
@@ -91,9 +92,21 @@ $testFiles = @(
     "tests/verify_drawing_workflow.py",
     "tests/verify_freight_output.py"
 )
-foreach ($testFile in $testFiles) {
-    & $pythonExe $testFile
-    if ($LASTEXITCODE -ne 0) {
-        throw "Client test failed: $testFile"
+$savedUpdateConfig = $env:AI_QUOTE_UPDATE_CONFIG
+try {
+    # Business tests must not use an enabled updater from the installed client.
+    # Update-specific tests explicitly supply their own local signed fixtures.
+    $env:AI_QUOTE_UPDATE_CONFIG = Join-Path $repoRoot 'packaging\update_config.example.json'
+    foreach ($testFile in $testFiles) {
+        & $pythonExe $testFile
+        if ($LASTEXITCODE -ne 0) {
+            throw "Client test failed: $testFile"
+        }
+    }
+} finally {
+    if ($null -eq $savedUpdateConfig) {
+        Remove-Item Env:AI_QUOTE_UPDATE_CONFIG -ErrorAction SilentlyContinue
+    } else {
+        $env:AI_QUOTE_UPDATE_CONFIG = $savedUpdateConfig
     }
 }
