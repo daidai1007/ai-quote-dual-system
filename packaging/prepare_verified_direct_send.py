@@ -36,6 +36,12 @@ def main(args):
         assert verification.get(key) is True, key
     assert verification['startup']['main_window_started'] is True
     assert verification['startup']['clean_profile'] is True
+    assert verification['startup']['version'] == build['version']
+    if verification.get('live_lan_release_version', build['version']) != build['version']:
+        assert verification.get('candidate_manifest_checked') is True
+        assert verification.get('candidate_feed_local_simulation') is True
+        assert verification.get('candidate_version') == build['version']
+        assert verification.get('candidate_package_sha256') == build['source_update_sha256']
     assert verification['developer_secret_audit']['developer_secret_matches'] == 0
     assert build['developer_credentials_included'] is False and build['user_documents_included'] is False
     assert verification['update_origin'] == build['update_origin'], 'Verified server differs from release server'
@@ -96,6 +102,10 @@ def main(args):
         'installer_payload_files_verified': verification['installer_payload_files_verified'],
         'files_and_python_modules_secret_audited': verification['developer_secret_audit']['files_and_python_modules_scanned'],
         'clean_profile_startup_passed': True, 'live_lan_manifest_check_passed': True,
+        'live_lan_release_version': verification.get('live_lan_release_version'),
+        'candidate_manifest_checked': verification.get('candidate_manifest_checked', False),
+        'candidate_feed_local_simulation': verification.get('candidate_feed_local_simulation', False),
+        'published_by_this_build': False,
         'quarantined_web_download_copy_republished': False,
     }
     atomic_json(destination / '安全复核记录.json', report)

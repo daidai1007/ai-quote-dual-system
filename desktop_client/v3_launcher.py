@@ -224,6 +224,29 @@ def _scale_ui_style_text(text: str) -> str:
     return _FONT_SIZE_PATTERN.sub(scale_font, text)
 
 
+# Keep persisted/API company keys and customer-entered values unchanged. Only
+# UI literals in the recovered core need the current customer terminology.
+_CUSTOMER_UI_REPLACEMENTS = (
+    ("下单公司", "客户"),
+)
+
+
+def _customer_ui_code(code: types.CodeType) -> types.CodeType:
+    """Update legacy V3 labels/messages without editing the shipped core."""
+    def replace(value):
+        if isinstance(value, types.CodeType):
+            return _customer_ui_code(value)
+        if isinstance(value, tuple):
+            return tuple(replace(item) for item in value)
+        if isinstance(value, frozenset):
+            return frozenset(replace(item) for item in value)
+        if isinstance(value, str):
+            for old, new in _CUSTOMER_UI_REPLACEMENTS:
+                value = value.replace(old, new)
+        return value
+    return code.replace(co_consts=tuple(replace(value) for value in code.co_consts))
+
+
 def _scale_ui_code(code: types.CodeType) -> types.CodeType:
     """Apply typography scaling to styles and rich text embedded in V3 code."""
 
@@ -456,7 +479,7 @@ def load_v3_namespace() -> dict:
         "__file__": str(pathlib.Path(__file__).resolve().with_name("main.py")),
         "__package__": None,
     }
-    main_code = _scale_ui_code(marshal.loads(main_path.read_bytes()))
+    main_code = _scale_ui_code(_customer_ui_code(marshal.loads(main_path.read_bytes())))
     exec(main_code, namespace)
     _install_source_render_config(namespace)
     _install_cloud_export_validation(namespace)

@@ -26,7 +26,7 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.20.05"
+CLIENT_VERSION = "2026.10.21.01"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
@@ -357,7 +357,7 @@ def _build_page(window):
     product.addItem("全部", "")
     window.quote_scheme_filters = {
         "scheme_no": _field("请输入方案编号", "quoteSchemeNumberFilter"),
-        "company": _field("请输入下单公司", "quoteSchemeCompanyFilter"),
+        "company": _field("请输入客户", "quoteSchemeCompanyFilter"),
         "product": product,
         "creator": _field("请输入创建人", "quoteSchemeCreatorFilter"),
         "updated_from": DateFilter("quoteSchemeUpdatedFrom", "更新时间开始日期"),
@@ -387,7 +387,7 @@ def _build_page(window):
         status.addItem(label, code)
     window.quote_scheme_status_filter = status
     for column, (label, key) in enumerate((
-        ("方案编号", "scheme_no"), ("下单公司", "company"), ("产品", "product"),
+        ("方案编号", "scheme_no"), ("客户", "company"), ("产品", "product"),
     )):
         field = filter_field(label, window.quote_scheme_filters[key], "quoteSchemeField_" + key)
         grid.addWidget(field, 0, column)
@@ -419,7 +419,7 @@ def _build_page(window):
     table = SchemeTable()
     table.setObjectName("quoteSchemeTable")
     table.setHorizontalHeaderLabels([
-        "方案编号", "下单公司", "产品", "状态", "报价金额",
+        "方案编号", "客户", "产品", "状态", "报价金额",
         "创建人", "审核人", "更新时间", "操作",
     ])
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)

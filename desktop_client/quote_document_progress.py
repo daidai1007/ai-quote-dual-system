@@ -552,7 +552,7 @@ class QuoteDocumentProgress:
             self.set_stage(1, "逐行检查附件")
             self.validate(copy.deepcopy(self.window.draft_items))
             if not self.window.scheme2_company.currentText().strip():
-                raise ValueError("请选择下单公司后再导出报价单。")
+                raise ValueError("请选择客户后再导出报价单。")
             self.set_stage(1, "选择保存位置")
             self.original_export()
             active = False

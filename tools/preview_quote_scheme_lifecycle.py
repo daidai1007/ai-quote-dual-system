@@ -32,7 +32,7 @@ BADGES = {**centre.STATUS_COLORS, 'QUOTED':('#EAF2FF','#185FA5'),
 ARCHIVE_BADGE = ('#F3F5F8','#64748B')
 ARCHIVE_ROLE = Qt.ItemDataRole.UserRole+1
 ARCHIVE_FILTER = '__ARCHIVED__'
-HEADERS = ('方案编号','下单公司','产品','状态','报价金额','版本','创建人','审核人','更新时间','操作')
+HEADERS = ('方案编号','客户','产品','状态','报价金额','版本','创建人','审核人','更新时间','操作')
 LAYOUT = dict(full_columns=(166,150,104,148,108,62,78,78,136,206),
               compact_columns=(166,126,96,148,108,62,78,78,136,116),
               full_actions_width=1320, dialog_width=620, dialog_inset=20, dialog_gap=16)
@@ -282,7 +282,7 @@ class LifecyclePreview:
         amount = QLabel(f"最终报价：¥ {row['quoted_amount']:,.2f}")
         amount.setAlignment(Qt.AlignmentFlag.AlignRight)
         grid.addWidget(amount,0,1)
-        company = QLabel('下单公司：'+row['company_name'])
+        company = QLabel('客户：'+row['company_name'])
         grid.addWidget(company,1,0,1,2)
         contract = QLineEdit(row['contract_no'])
         contract.setPlaceholderText('请输入合同编号')

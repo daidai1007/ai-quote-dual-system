@@ -2,20 +2,77 @@
 from __future__ import annotations
 import argparse
 import base64
+import hashlib
+import http.client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import time
+import threading
 import uuid
+from unittest.mock import patch
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'desktop_client'), str(ROOT / 'packaging'), str(ROOT / 'tests')]
 from build_first_install import audit_no_secrets, public_update_config, secret_patterns
-from client_update_core import (ENTRY, check_release, digest, load_config, read_json, verify_manifest, atomic_json)
+from client_update_core import (ENTRY, check_release, digest, load_config, open_url, read_json, verify_manifest, atomic_json)
 from verify_client_update_bundle import owned_children, stop_owned
 from verify_review_package import verify
+
+
+def verify_candidate_feed(manifest, updater, version):
+    """Exercise the unpublished signed release over local HTTP, never publish it.
+
+    The production URL/pin/signature are unchanged. Only the TCP connection is
+    redirected to a disposable loopback server inside this test process.
+    """
+    manifest = Path(manifest).resolve()
+    envelope = read_json(manifest)
+    release = verify_manifest(envelope, updater)
+    assert release['version'] == version
+    package = manifest.parent / unquote(Path(urlsplit(release['url']).path).name)
+    assert package.stat().st_size == release['size'] and digest(package) == release['sha256']
+    content = json.dumps(envelope, ensure_ascii=False).encode('utf-8')
+    expected = urlsplit(updater['manifest_url'])
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_GET(self):
+            if self.path != expected.path:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+
+    def connect_local(connection):
+        assert (connection.host, connection.port) == (expected.hostname, expected.port or 80)
+        connection.sock = socket.create_connection(('127.0.0.1', server.server_port), connection.timeout)
+
+    try:
+        with patch.object(http.client.HTTPConnection, 'connect', connect_local):
+            assert check_release(updater, version) is None, 'Candidate must not offer itself'
+            offered = check_release(updater, '0.0.0.0')
+            assert offered is not None and verify_manifest(offered, updater) == release
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+    return {'candidate_manifest_checked': True, 'candidate_feed_local_simulation': True,
+            'candidate_version': version, 'candidate_package_sha256': release['sha256']}
 
 
 def startup(bundle, output, version):
@@ -89,15 +146,26 @@ def main(args):
     smoke = startup(bundle, output, version)
     for name, expected in config_hashes.items():
         assert digest(bundle / name) == expected, 'Startup changed initial configuration: ' + name
-    assert check_release(updater, version) is None, 'Installed current release must not offer itself'
-    offered = check_release(updater, '0.0.0.0')
-    assert offered is not None and verify_manifest(offered, updater)['version'] == version
+    with open_url(updater['manifest_url'], updater) as response:
+        live_raw = response.read(65537)
+    assert len(live_raw) <= 65536
+    live_release = verify_manifest(json.loads(live_raw.decode('utf-8')), updater)
+    assert check_release(updater, version) is None, 'Published feed must not offer a downgrade'
+    candidate = {}
+    if args.candidate_manifest:
+        candidate = verify_candidate_feed(args.candidate_manifest, updater, version)
+    else:
+        offered = check_release(updater, '0.0.0.0')
+        assert offered is not None and verify_manifest(offered, updater)['version'] == version
     # Exact installed-payload hashes plus current-source verification establish bundle identity.
     report = {'installer_sha256': digest(installer), 'installer_extraction_matches_stage': True,
               'installer_payload_files_verified': count, 'developer_secret_audit': audit,
               'business_api_key_empty': True, 'online_update_configured': True,
               'update_origin': updater['lan_http_origin'], 'manifest_url': updater['manifest_url'],
               'live_lan_signed_manifest_check': True, 'same_version_not_offered': True,
+              'live_lan_release_version': live_release['version'],
+              'live_lan_manifest_sha256': hashlib.sha256(live_raw).hexdigest(),
+              **candidate,
               'previous_version_recognizes_release': True, 'startup': smoke,
               'packaged_source': code, 'extracted_bundle': str(bundle),
               'registry_or_shortcuts_modified_by_test': False}
@@ -112,6 +180,7 @@ if __name__ == '__main__':
     parser.add_argument('--seven-zip', required=True)
     parser.add_argument('--business-config', required=True)
     parser.add_argument('--update-config', required=True, help='Trusted expected public update configuration')
+    parser.add_argument('--candidate-manifest', help='Validate an unpublished signed candidate using loopback transport')
     parser.add_argument('--private-key', required=True)
     parser.add_argument('--output', required=True)
     main(parser.parse_args())

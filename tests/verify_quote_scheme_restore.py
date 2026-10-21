@@ -164,6 +164,9 @@ class SchemeRestoreResponsiveness(unittest.TestCase):
                 before = deepcopy(w.draft_items)
                 rendered = scheme2_ui._printable_quote_html(w)
                 exported = scheme2_ui._quote_export_items_snapshot(w)
+                self.assertEqual(w.scheme2_quote_preview.item(3, 1).text(), '历史买方公司')
+                self.assertIn('历史买方公司', rendered)
+                self.assertEqual(centre._snapshot(w)['company'], '历史买方公司')
                 for index, item in enumerate(w.draft_items):
                     values = scheme2_ui._row_values(item)
                     unit, total = scheme2_ui._money(values[15]), scheme2_ui._money(values[16])

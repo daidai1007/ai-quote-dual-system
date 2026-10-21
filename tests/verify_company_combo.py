@@ -34,7 +34,7 @@ window.show_section(scheme2_ui.COST_ROUTE)
 app.processEvents()
 assert not window.scheme2_cost_page.isAncestorOf(window.scheme2_company)
 assert not hasattr(window, "scheme2_cost_company_field")
-assert all(label.text() != "下单公司" for label in window.scheme2_cost_page.findChildren(QLabel))
+assert all(label.text() != "客户" for label in window.scheme2_cost_page.findChildren(QLabel))
 # Building the cost controls must not create, locate, or depend on a buyer selector.
 cost_only_window = QWidget()
 cost_sidebar = scheme2_ui._cost_sidebar(cost_only_window)

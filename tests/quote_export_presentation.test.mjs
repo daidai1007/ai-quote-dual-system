@@ -28,6 +28,28 @@ const runExporter = (outputPath, inputPath = fixturePath) => new Promise((resolv
   });
 });
 
+test("customer metadata survives legacy payload and Excel serialization", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-customer-"));
+  try {
+    const payload = JSON.parse(await fs.readFile(fixturePath, "utf8"));
+    payload.company_name = "任务A测试客户（原下单公司名称）";
+    const inputPath = path.join(tempDir, "customer.json");
+    const outputPath = path.join(tempDir, "customer.xlsx");
+    await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+    await runExporter(outputPath, inputPath);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(outputPath);
+    for (const name of ["公式法报价单", "快速报价单"]) {
+      assert.equal(workbook.getWorksheet(name).getCell("B4").value, payload.company_name);
+    }
+    const detail = workbook.getWorksheet("成本明细");
+    assert.equal(detail.getCell("G2").value, "客户");
+    assert.equal(detail.getCell("H2").value, payload.company_name);
+  } finally {
+    await fs.rm(tempDir, {recursive: true, force: true});
+  }
+});
+
 test("formal workbook replaces only the door phrase using current door counts", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-door-remark-"));
   const inputPath = path.join(tempDir, "door-remark-input.json");

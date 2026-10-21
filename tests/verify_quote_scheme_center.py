@@ -55,7 +55,7 @@ assert window.findChild(QLabel, "quoteSchemeServerNotice").text() == "数据保�
 assert window.quote_scheme_operator_name.objectName() == "quoteSchemeOperatorName"
 assert "自填" in window.quote_scheme_operator_name.toolTip()
 assert [window.quote_scheme_table.horizontalHeaderItem(i).text() for i in range(9)] == [
-    "方案编号", "下单公司", "产品", "状态", "报价金额", "创建人", "审核人", "更新时间", "操作",
+    "方案编号", "客户", "产品", "状态", "报价金额", "创建人", "审核人", "更新时间", "操作",
 ]
 assert {"scheme_no", "company", "product", "creator", "updated_from", "updated_to"} == set(window.quote_scheme_filters)
 scheme_page = window.stack.widget(quote_scheme_center.SCHEME_ROUTE)

@@ -1422,7 +1422,7 @@ function buildFormulaCostDetailSheet() {
   sheet.getRange("B2").values = [[payload.quote_id || ""]];
   sheet.getRange("D2").values = [["报价日期"]];
   sheet.getRange("E2").values = [[payload.quote_date || ""]];
-  sheet.getRange("G2").values = [["下单公司"]];
+  sheet.getRange("G2").values = [["客户"]];
   sheet.mergeCells(`H2:${lastColumn}2`);
   sheet.getRange("H2").values = [[payload.company_name || ""]];
   sheet.mergeCells(`A3:${lastColumn}3`);

@@ -107,6 +107,14 @@ class DocumentProgress(unittest.TestCase):
         self.controller=self.window._scheme2_document_controller
         self.addCleanup(self.window.close)
 
+    def test_missing_customer_prevents_export_without_requests(self):
+        self.window.scheme2_company.setEditText('')
+        self.controller.export()
+        wait(lambda:not self.controller.busy)
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.controller.reason, '请选择客户后再导出报价单。')
+        self.assertFalse((Path(self.folder.name)/'result.xlsx').exists())
+
     def test_generate_prechecks_without_confirmation_writes(self):
         self.window.show_section(ui.COST_ROUTE)
         self.window.scheme2_cost_generate.click()

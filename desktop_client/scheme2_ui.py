@@ -150,7 +150,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.20.05"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.21.01"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -2931,7 +2931,7 @@ def _build_quote_page(window):
     title.setObjectName("scheme2PageTitle")
     header.addWidget(title)
     header.addStretch(1)
-    company_field = _inline_field("下单公司", _build_quote_company_selector(window))
+    company_field = _inline_field("客户", _build_quote_company_selector(window))
     company_field.setObjectName("scheme2QuoteCompanyField")
     company_field.setFixedWidth(QUOTE_COMPANY_FIELD_WIDTH)
     print_button = QPushButton("打印")

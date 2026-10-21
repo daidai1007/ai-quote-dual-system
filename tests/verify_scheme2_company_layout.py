@@ -36,7 +36,7 @@ label = field.findChild(QLabel, "scheme2FieldLabel")
 combo = window.scheme2_company
 assert field.width() == round(scheme2_ui.QUOTE_COMPANY_FIELD_WIDTH * window._scheme2_scale)
 assert isinstance(field.layout(), QHBoxLayout)
-assert label.text() == "下单公司" and label.buddy() is combo
+assert label.text() == "客户" and label.buddy() is combo
 assert label.geometry().right() < combo.geometry().left(), (label.geometry(), combo.geometry())
 assert label.geometry().top() < combo.geometry().bottom()
 assert combo.geometry().top() < label.geometry().bottom()
@@ -46,7 +46,7 @@ app.processEvents()
 assert combo.lineEdit().text() == "杭州拓强机械股份有限公司"
 assert "color:transparent" not in combo.lineEdit().styleSheet().replace(" ", "")
 assert not combo._scheme2_multiline_filter.eventFilter(combo, QEvent(QEvent.Type.Paint))
-assert all(label.text() != "下单公司" for label in window.scheme2_cost_page.findChildren(QLabel))
+assert all(label.text() != "客户" for label in window.scheme2_cost_page.findChildren(QLabel))
 window.close()
 app.processEvents()
 print("scheme2 quote company inline layout contract passed")

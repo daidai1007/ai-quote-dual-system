@@ -2421,13 +2421,13 @@ class MainWindow(QMainWindow):
         hint.setObjectName("navHint")
         layout.addWidget(hint)
         layout.addSpacing(8)
-        label = QLabel("下单公司")
+        label = QLabel("客户")
         label.setObjectName("companyLabel")
         layout.addWidget(label)
         self.company_combo = QComboBox()
         self.company_combo.setObjectName("companyCombo")
         self.company_combo.setEditable(True)
-        self.company_combo.setPlaceholderText("输入或选择下单公司")
+        self.company_combo.setPlaceholderText("输入或选择客户")
         self.company_combo.currentTextChanged.connect(self.request_history_match)
         layout.addWidget(self.company_combo)
         company_hint = QLabel("同公司、同柜型、同变体、同材质及相同尺寸时提示历史订单。")
@@ -3303,7 +3303,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "汇总清单为空", "请先将至少一个柜型加入汇总清单。"); return
         company = self.company_combo.currentText().strip()
         if not company:
-            QMessageBox.warning(self, "缺少下单公司", "请在左侧输入或选择下单公司。"); return
+            QMessageBox.warning(self, "缺少客户", "请在左侧输入或选择客户。"); return
         try:
             self.validate_export_environment()
         except Exception as exc:
