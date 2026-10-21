@@ -424,4 +424,5 @@ export {
   ROLES, STATUSES, TRANSITIONS, apiKeyHash, assertTransition, canReadScheme,
   createQuoteSchemeService, loadPrincipalMap, operatorNameValue, resolvePrincipal,
   resolveQuoteSchemePrincipal, summaryFromSnapshot,
+  permissionSql, writePermissionSql,
 };

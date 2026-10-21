@@ -5477,6 +5477,7 @@ ATTACHMENT_OPTIONS = {
         "KA1725DC/24V(卡固)", "KA2072HA2/B(卡固)", "KA1238HA2/B（国产）",
         "KA1725HA2/B（国产）", "KA1725DC/24V（国产）", "KA2072HA2/B（国产）",
         "SG22060HA2/220V（国产）",
+        "KA22060HA2B/220V（卡固）",
     ),
     "滤网": (
         "过滤网FU-9803A(卡固)", "过滤网FU-9804A(卡固)", "过滤网FU-9805A(卡固)",
@@ -7700,7 +7701,8 @@ def _apply_responsive(window):
     width = window.width()
     option_page = window.stack.widget(OPTION_ROUTE)
     main_scroll = window.findChild(QScrollArea, "mainScroll")
-    _set_cost_scroll_mode(window, main_scroll, route == COST_ROUTE)
+    viewport_route = route == COST_ROUTE or route == getattr(window, "quote_analysis_route", -1)
+    _set_cost_scroll_mode(window, main_scroll, viewport_route)
     # Create the fixed row before arranging cost actions so the cost grid
     # leaves its “生成报价单” button in that row.
     _ensure_scheme2_action_dock(window)
@@ -7797,11 +7799,19 @@ def _apply_responsive(window):
         # Every route must consume the available height.  Pinning the option
         # page to the top leaves a grey strip when the window grows vertically.
         host_layout.setAlignment(window.stack, Qt.AlignmentFlag(0))
-        if route == COST_ROUTE and main_scroll is not None and main_scroll.widget() is not None:
+        if viewport_route and main_scroll is not None and main_scroll.widget() is not None:
             # Size the whole canvas to the viewport before laying out the
             # stack. No growing minimum based on the previous (larger) host:
             # that used to produce the second scrollbar and clipped actions.
             canvas = main_scroll.widget()
+            if route == getattr(window, "quote_analysis_route", -1):
+                # The analytics tabs own scrolling. Prevent a legacy minimum
+                # canvas from surviving DPI/window clamping beyond the viewport.
+                canvas.setMaximumHeight(main_scroll.viewport().height())
+            else:
+                # Restore the cost route's original unconstrained canvas when
+                # switching directly from the analysis viewport.
+                canvas.setMaximumHeight(16777215)
             canvas.resize(main_scroll.viewport().size())
             if canvas.layout() is not None:
                 canvas.layout().invalidate()
@@ -7811,7 +7821,7 @@ def _apply_responsive(window):
         host_layout.invalidate()
         host_layout.activate()
         margins = host_layout.contentsMargins()
-        if route not in (OPTION_ROUTE, COST_ROUTE):
+        if route != OPTION_ROUTE and not viewport_route:
             window.stack.setMinimumHeight(max(
                 0, host.height() - margins.top() - margins.bottom()
             ))

@@ -48,7 +48,7 @@ assert "首次加入报价清单" in window.quote_scheme_page_status.text()
 
 assert window.windowTitle().endswith(quote_scheme_center.CLIENT_VERSION)
 assert window.quote_scheme_nav_button.text() == "报价方案"
-assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单", "报价方案"]
+assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单", "报价方案", "报价分析"]
 assert window.stack.widget(quote_scheme_center.SCHEME_ROUTE).objectName() == "quoteSchemeCenterPage"
 assert window.quote_scheme_page_status is not None
 assert window.findChild(QLabel, "quoteSchemeServerNotice").text() == "数据保存于服务器"

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {createQuoteAnalysisService} from './quote_analysis_service.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -969,6 +970,7 @@ const getDatabaseReadiness = async () => {
 };
 
 const quoteSchemeService = createQuoteSchemeService({ runPsql, sqlUnicodeText, sqlNumber });
+const quoteAnalysisService = createQuoteAnalysisService({runPsql,sqlUnicodeText});
 
 const quoteSchemeResponse = async (req, res, requestUrl) => {
   const principal = resolveQuoteSchemePrincipal(req, QUOTE_SCHEME_PRINCIPALS, API_KEY);
@@ -1048,6 +1050,18 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
     return json(res, 401, { error: 'unauthorized', message: 'invalid client access key' });
   }
   const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');
+  if (requestUrl.pathname === '/api/quote-analysis' || requestUrl.pathname === '/api/quote-analysis/outcomes') {
+    try {
+      const principal=resolveQuoteSchemePrincipal(req,QUOTE_SCHEME_PRINCIPALS,API_KEY);
+      if(requestUrl.pathname==='/api/quote-analysis' && req.method==='GET')
+        return json(res,200,await quoteAnalysisService.analyze(principal,Object.fromEntries(requestUrl.searchParams)));
+      if(requestUrl.pathname.endsWith('/outcomes') && req.method==='POST')
+        return json(res,200,await quoteAnalysisService.recordOutcome(principal,await readBody(req)));
+      return json(res,405,{error:'method_not_allowed'});
+    } catch(error) {
+      return json(res,error.statusCode||clientErrorStatus(error),{error:'quote_analysis_failed',message:error.message});
+    }
+  }
   if (requestUrl.pathname === '/api/quote-schemes' || requestUrl.pathname.startsWith('/api/quote-schemes/')) {
     try {
       return await quoteSchemeResponse(req, res, requestUrl);

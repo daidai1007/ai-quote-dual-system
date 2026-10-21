@@ -1,5 +1,6 @@
 """Real picker search/filter/selection regression, with no API or database."""
 import copy
+import json
 import os
 from pathlib import Path
 import sys
@@ -14,6 +15,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication,QDialog,QDialogButtonBox,QLabel,QScrollArea,QToolButton
 from dialog_style import install_dialog_style
 import scheme2_ui as ui
+from attachment_v2_client import match_catalog_attachment
 
 app=QApplication.instance() or QApplication([])
 app.setStyle('Fusion')
@@ -96,6 +98,50 @@ class PickerSearch(unittest.TestCase):
         self.assertFalse(self.dialog.search_empty.isVisible())
         self.assertTrue(all(not combo.view().isRowHidden(row) for row in range(combo.count())))
         self.assertEqual(self.dialog.collect_attachments(),before)
+
+    def test_new_ka22060_fan_order_search_selection_and_catalogue_match(self):
+        name='KA22060HA2B/220V（卡固）'
+        old_fans=('KA1238HA2/B(卡固)','KA1238DC/24V(卡固)','KA1725HA2/B(卡固)',
+                  'KA1725DC/24V(卡固)','KA2072HA2/B(卡固)','KA1238HA2/B（国产）',
+                  'KA1725HA2/B（国产）','KA1725DC/24V（国产）','KA2072HA2/B（国产）',
+                  'SG22060HA2/220V（国产）')
+        self.assertEqual(ui.ATTACHMENT_OPTIONS['风机'],(*old_fans,name))
+        self.assertEqual(ui.ATTACHMENT_OPTIONS['风机'].count(name),1)
+        self.search('KA22060')
+        self.assertEqual(self.visible_categories(),['风机'])
+        combo=self.dialog.category_combos['风机']
+        row=combo.findText(name)
+        self.assertEqual(row,combo.findText(old_fans[-1])+1)
+        self.assertFalse(combo.view().isRowHidden(row))
+        combo.showPopup();app.processEvents()
+        index=combo.model().index(row,0)
+        QTest.mouseClick(combo.view().viewport(),Qt.LeftButton,pos=combo.view().visualRect(index).center())
+        app.processEvents();combo.hidePopup()
+        selected=self.dialog.collect_attachments()
+        fan=next(item for item in selected if item['item_name']==name)
+        self.assertEqual(fan['category_level1'],'风机')
+        self.assertEqual(fan['quantity'],1)
+        self.assertTrue({'照明灯24V-0.6m','木托'}.issubset({item['item_name'] for item in selected}))
+        fixture=json.loads((ROOT/'tests/fixtures/fan_ka22060ha2b.json').read_text(encoding='utf-8'))
+        previous=dict(attachment_price_id=37,category_level1='风机',item_name='风机'+old_fans[-1],price=120)
+        before=copy.deepcopy([previous,fixture])
+        for query in ('KA22060',name,'风机 '+name):
+            self.search(query)
+            self.assertFalse(combo.view().isRowHidden(row))
+        for product in ('JS','JP','JA','JE','JM','JK','JP_WIDE_EXP','JS_WIDE_EXP'):
+            matched=match_catalog_attachment(fan,[previous,fixture],product_code=product)
+            self.assertEqual(matched['attachment_price_id'],1237)
+            self.assertIsNone(matched['model_code'])
+        self.assertEqual([previous,fixture],before)
+        self.assertEqual(match_catalog_attachment(dict(category_level1='风机',item_name=old_fans[-1]),
+                                                [previous,fixture])['attachment_price_id'],37)
+        for product in ('JS','JP','JA','JE','JM','JK','JP_WIDE_EXP','JS_WIDE_EXP'):
+            dialog=ui._SchemeAttachmentDialog([],product)
+            self.assertGreater(dialog.category_combos['风机'].findText(name),0)
+            dialog.reject();dialog.deleteLater()
+        out=ROOT/'outputs'/('attachment-picker-search-'+os.environ.get('QT_SCALE_FACTOR','1'))
+        out.mkdir(parents=True,exist_ok=True)
+        self.assertTrue(self.dialog.grab().save(str(out/'new-ka22060-fan.png')))
 
     def test_specific_option_search_can_add_beside_a_hidden_selected_option(self):
         self.search('行程')

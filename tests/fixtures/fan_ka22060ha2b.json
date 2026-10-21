@@ -1,0 +1,27 @@
+{
+  "attachment_price_id": 1237,
+  "data_version": "xlsx-7b6fcb18de6f8969-r5",
+  "category_level1": "风机",
+  "category_level2": "风机KA22060HA2B/220V",
+  "category_level3": "",
+  "item_name": "风机KA22060HA2B/220V（卡固）",
+  "model_code": null,
+  "color": null,
+  "width_mm": null,
+  "height_mm": null,
+  "depth_mm": null,
+  "price": 270,
+  "unit": "个",
+  "rules": [
+    {
+      "rule_id": 135,
+      "data_version": "xlsx-7b6fcb18de6f8969-r5",
+      "method": "FIXED",
+      "fixed_cost": 209,
+      "products": [],
+      "materials": [],
+      "formulas": {},
+      "issues": []
+    }
+  ]
+}

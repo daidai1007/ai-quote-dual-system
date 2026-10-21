@@ -115,7 +115,7 @@ class ReferenceSchemeUI(unittest.TestCase):
     def test_reference_structure_and_five_statuses(self):
         w = self.window
         self.assertEqual([b.text() for b in w.nav_buttons],
-                         ['选型配置', '成本计算', '报价单', '报价方案'])
+                         ['选型配置', '成本计算', '报价单', '报价方案', "报价分析"])
         title = w.quote_scheme_page.findChild(QLabel, 'quoteSchemeTitle')
         quote_title = w.scheme2_quote_page.findChild(QLabel, 'scheme2PageTitle')
         self.assertEqual(title.font().families(), quote_title.font().families())

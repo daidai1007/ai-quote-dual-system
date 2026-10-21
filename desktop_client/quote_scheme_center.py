@@ -136,6 +136,17 @@ def _snapshot(window):
             products.append(product)
     quote_date = str(getattr(window, "_quote_scheme_quote_date", "") or date.today().isoformat())
     payload["quote_scheme_schema_version"] = 1
+    # Preserve a stable catalogue identity when known. Free-typed names remain
+    # unassigned rather than inheriting stale combo data from another customer.
+    buyer = str(payload.get("company") or "").strip()
+    matches = [row for row in (getattr(window, "company_catalog", None) or [])
+               if str(row.get("company_name") or "").strip() == buyer and row.get("company_code")]
+    prior_customer = getattr(window, "_quote_analysis_customer", None) or {}
+    payload["analysis_customer"] = {
+        "customer_name": buyer,
+        "customer_code": (str(matches[0]["company_code"]) if len(matches) == 1 else
+                          prior_customer.get("customer_code") if prior_customer.get("customer_name") == buyer else None),
+    }
     payload["client_version"] = CLIENT_VERSION
     payload["active_route"] = int(window.stack.currentIndex())
     payload["scheme_summary"] = {
@@ -782,6 +793,7 @@ def _apply_opened_scheme(window, result, route=3, after_open=None):
         document = snapshot.get("document") if isinstance(snapshot.get("document"), dict) else {}
         window._quote_scheme_quote_date = str(document.get("quote_date") or str(result.get("created_at") or "")[:10] or date.today().isoformat())
         _apply_order_workspace_payload(window, snapshot, f"已从服务器恢复：{window._quote_scheme_id}")
+        window._quote_analysis_customer = deepcopy(snapshot.get("analysis_customer") or {})
         _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID"))
         window.show_section(route)
         window._quote_scheme_dirty_seq = 0
@@ -821,6 +833,7 @@ def _new_scheme(window):
         window._quote_scheme_save_timer.stop()
         window._quote_scheme_id = ""; window._quote_scheme_version = 0; window._quote_scheme_status = ""
         window._quote_scheme_business_version = 1
+        window._quote_analysis_customer = {}
         window._quote_scheme_quote_date = date.today().isoformat()
         window._quote_scheme_dirty_seq = 0; window._quote_scheme_saved_seq = 0
         window._quote_scheme_save_pending = False; window._quote_scheme_last_save_failed = False

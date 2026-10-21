@@ -7,6 +7,7 @@
 !api/ganged_quote_service.mjs
 !api/quote_telemetry.mjs
 !api/quote_scheme_service.mjs
+!api/quote_analysis_service.mjs
 !api/attachment_service.mjs
 !api/quick_match_override.mjs
 !api/attachment_cost.mjs

@@ -59,9 +59,9 @@ def wait_until(predicate, attempts=300):
 assert window.minimumWidth() == 1024 and window.minimumHeight() == 700
 assert window.nav_routes == (
     (1, "选型配置", "", None), (3, "成本计算", "", None),
-    (2, "报价单", "", None), (6, "报价方案", "", None),
+    (2, "报价单", "", None), (6, "报价方案", "", None), (7, "报价分析", "", None),
 )
-assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单", "报价方案"]
+assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单", "报价方案", "报价分析"]
 assert window.scheme2_nav.width() == scheme2_ui.NAV_EXPANDED_WIDTH
 assert all(button.height() == 32 for button in window.nav_buttons)
 assert window.scheme2_nav.findChild(__import__("PySide6.QtWidgets").QtWidgets.QLabel, "scheme2NavLogo").size().width() == 26

@@ -2,12 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { parseFormula, evaluateFormula, formulaVariables } from '../api/attachment_formula.mjs';
-import { calculateAttachment, attachmentTotals, selectRule, requiredParameters } from '../api/attachment_cost.mjs';
+import { calculateAttachment, attachmentTotals, selectRule, requiredParameters, PRODUCT_CODES, MATERIAL_CODES } from '../api/attachment_cost.mjs';
 const bundle = JSON.parse(fs.readFileSync(new URL('../database/attachment-v2/generated/attachment-bundle.json', import.meta.url)));
 const env = { quote_line_id: 'line-a', product_code: 'JP', width_mm: 800, height_mm: 2000, depth_mm: 600, material_code: 'SECC', density_g_cm3: 7.85, material_unit_price: 5, spray_unit_price: 10, coating_type: '橘纹', quote_date: '2026-09-10' };
 const catalog = { attachment_price_id: 1, data_version: 'v', item_name: '安装板', category_level1: '安装板', category_level2: '', price: 483.46155, unit: '件' };
 const dynamic = bundle.rules.find(r => r.source_row_no === 3);
 const fixed = { rule_id: 2, method: 'FIXED', fixed_cost: 27.56, products: [], data_version: 'v', auxiliary_list: '说明\n保留换行' };
+
+test('新增卡固 KA22060 全产品材质按目录面价270及固定成本209计算，不改写目录输入', () => {
+  // Reduced public catalogue snapshot from task C; never connects to the API/DB.
+  const fan=JSON.parse(fs.readFileSync(new URL('./fixtures/fan_ka22060ha2b.json',import.meta.url)));
+  const before=structuredClone(fan);
+  assert.equal(fan.model_code,null);
+  assert.deepEqual(fan.rules[0].products,[]);
+  assert.deepEqual(fan.rules[0].materials,[]);
+  const products=[...new Set(Object.values(PRODUCT_CODES).flat())];
+  assert.equal(products.length*MATERIAL_CODES.length,45);
+  for(const product_code of products) for(const material_code of MATERIAL_CODES) {
+    for(const quantity of [1,2]) {
+      const row=calculateAttachment({quantity},fan,fan.rules,{...env,product_code,material_code});
+      assert.equal(row.status,'FIXED');
+      assert.equal(row.face_price,270);
+      assert.equal(row.formula_unit_cost,209);
+      assert.equal(row.quick_amount,270*quantity);
+      assert.equal(row.formula_amount,209*quantity);
+      assert.deepEqual(attachmentTotals([row]),{quick_attachment_fee:270*quantity,formula_attachment_fee:209*quantity,errors:[]});
+    }
+  }
+  assert.deepEqual(fan,before);
+});
 test('完整变量识别、安全语法和错误拒绝', () => {
   assert.deepEqual(formulaVariables('(高度+底座高度)*材质密度'), ['高度','底座高度','材质密度']);
   assert.equal(evaluateFormula('材料质量*5', { 材料重量: 2 }),10);

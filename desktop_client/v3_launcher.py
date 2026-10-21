@@ -30,6 +30,7 @@ from drawing_workflow import install_drawing_workflow
 from freight_export import install_freight_export
 from scheme2_ui import install_scheme2_ui
 from quote_scheme_center import install_quote_scheme_center
+from quote_analysis import install_quote_analysis
 from client_update_ui import install_client_updates
 
 
@@ -489,6 +490,7 @@ def load_v3_namespace() -> dict:
     install_freight_export(namespace)
     install_scheme2_ui(namespace)
     install_quote_scheme_center(namespace)
+    install_quote_analysis(namespace)
     install_client_updates(namespace)
     return namespace
 
