@@ -28,6 +28,7 @@ namespace["MainWindow"].load_catalogs = lambda self: None
 window = namespace["MainWindow"]()
 window.resize(1366, 820)
 window.show()
+window._qm_entry_pending = True
 window.show_section(2)
 app.processEvents()
 

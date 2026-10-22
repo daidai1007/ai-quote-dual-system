@@ -115,9 +115,11 @@ class ReferenceSchemeUI(unittest.TestCase):
     def test_reference_structure_and_five_statuses(self):
         w = self.window
         self.assertEqual([b.text() for b in w.nav_buttons],
-                         ['选型配置', '成本计算', '报价单', '报价方案', "报价分析"])
+                         ['选型配置', '成本计算', '报价单管理', '报价方案', '报价分析', '合同管理'])
         title = w.quote_scheme_page.findChild(QLabel, 'quoteSchemeTitle')
-        quote_title = w.scheme2_quote_page.findChild(QLabel, 'scheme2PageTitle')
+        # The approved manager has its own title scale. The scheme page still
+        # follows the unchanged cost-page typography.
+        quote_title = w.scheme2_cost_page.findChild(QLabel, 'scheme2PageTitle')
         self.assertEqual(title.font().families(), quote_title.font().families())
         self.assertEqual(title.font().pixelSize(), quote_title.font().pixelSize())
         self.assertEqual(title.font().pointSizeF(), quote_title.font().pointSizeF())
@@ -192,7 +194,8 @@ class ReferenceSchemeUI(unittest.TestCase):
                 self.assertNotIn('修订', direct + menu)
                 self.assertIn('删除未使用草稿', menu)
             if row == 1:
-                self.assertEqual(direct, ['打开', '打印', '导出'])
+                self.assertEqual(direct, ['报价单', '打开', '打印'])
+                self.assertIn('导出', menu)
                 self.assertIn('归档', menu)
             if row == 3:
                 self.assertIn('恢复', menu)

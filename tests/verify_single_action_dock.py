@@ -64,6 +64,12 @@ class ScreenArea:
 
 class SingleActionDockTests(unittest.TestCase):
     def setUp(self):
+        import quote_scheme_center as centre
+        transport=patch.object(centre.QuoteSchemeWorker,'run',
+            lambda worker:worker.succeeded.emit(dict(items=[],total=0)))
+        transport.start(); self.addCleanup(transport.stop)
+        network=patch('urllib.request.urlopen',side_effect=AssertionError('External network forbidden in DPI checks'))
+        network.start(); self.addCleanup(network.stop)
         self.window = Window()
         self.window.screen = lambda: ScreenArea(1920, 1080)
         self.window.resize(1360, 800)
@@ -79,6 +85,15 @@ class SingleActionDockTests(unittest.TestCase):
     def assert_single_dock(self, route):
         w = self.window
         dock, old = w.scheme2_action_dock, getattr(w, "quote_action_dock", None)
+        if route == ui.QUOTE_ROUTE:
+            # The approved manager places document actions in its header.
+            self.assertFalse(dock.isVisibleTo(w))
+            if w.quote_management.root.currentWidget() is w.quote_management.detail_page:
+                for button in (w.scheme2_quote_print,w.scheme2_quote_export):
+                    self.assertTrue(button.isVisibleTo(w))
+                    self.assertIs(button.parentWidget(),w.quote_management.detail_page)
+                    self.assertTrue(w.rect().contains(QRect(button.mapTo(w,QPoint()),button.size())))
+            return
         self.assertTrue(dock.isVisible())
         self.assertTrue(w._quote_action_dock_retired)
         if old is not None:
@@ -169,6 +184,7 @@ class SingleActionDockTests(unittest.TestCase):
              patch.object(ui, "_print_quote", side_effect=lambda window: calls.append("print")), \
              patch.object(w, "confirm_and_export", side_effect=lambda: calls.append("export")):
             for route, button, name in cases:
+                if route == ui.QUOTE_ROUTE: w._qm_entry_pending = True
                 w.show_section(route)
                 settle()
                 button.setEnabled(True)

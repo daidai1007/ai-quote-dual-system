@@ -26,7 +26,7 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.21.01"
+CLIENT_VERSION = "2026.10.21.02"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
@@ -124,7 +124,13 @@ def _headers(window):
 
 def _snapshot(window):
     from scheme2_ui import _order_workspace_payload, _row_values
+    manager = getattr(window, 'quote_management', None)
+    if manager is not None:
+        manager.sync()
     payload = _order_workspace_payload(window)
+    if manager is not None and manager.history_version is not None:
+        payload['draft_items'] = deepcopy(window.draft_items)
+        payload['company'] = window.scheme2_company.currentText()
     items = list(payload.get("draft_items") or [])
     products = []
     quoted_amount = 0.0
@@ -297,16 +303,22 @@ def _update_page_buttons(window, page, pages):
     window.quote_scheme_page_jump.setValue(page)
 
 
-def _sync_product_filter(window):
+def _configured_product_options(window):
+    """User-facing types in the same order as the configuration catalogue."""
     source = window.product_combo
-    target = window.quote_scheme_filters["product"]
-    options = [("全部", "")]
+    options = []
     seen = set()
     for index in range(source.count()):
         label = source.itemText(index).strip()
         if source.itemData(index) is not None and label and label not in seen:
             options.append((label, label))
             seen.add(label)
+    return options
+
+
+def _sync_product_filter(window):
+    target = window.quote_scheme_filters["product"]
+    options = [("全部", ""), *_configured_product_options(window)]
     if options == [(target.itemText(i), target.itemData(i)) for i in range(target.count())]:
         return
     selected = target.currentData()
@@ -702,7 +714,8 @@ def _list_loaded(window, result):
 def _row_actions(window, scheme):
     status = str(scheme.get("status") or "DRAFT")
     scheme_no = scheme["scheme_no"]
-    actions = [("打开", lambda _checked=False: _open_scheme(window, scheme_no))]
+    actions = [("报价单", lambda _checked=False: _open_scheme(window, scheme_no, 2)),
+               ("打开", lambda _checked=False: _open_scheme(window, scheme_no))]
     if status in ("QUOTED", "ARCHIVED"):
         actions.extend([
             ("打印", lambda _checked=False: _open_scheme(window, scheme_no, 2, "print")),
@@ -724,7 +737,7 @@ def _row_actions(window, scheme):
         "DRAFT": ("打开", "复制"), "QUOTED": ("打开", "打印", "导出"),
         "REVISING": ("打开", "修订"), "ARCHIVED": ("打开", "导出"), "VOID": ("打开",),
     }.get(status, ("打开",))
-    return RowActions(actions, primary)
+    return RowActions(actions, ("报价单", *primary[:2]))
 
 
 def _selected_scheme(window):
@@ -793,6 +806,12 @@ def _apply_opened_scheme(window, result, route=3, after_open=None):
         document = snapshot.get("document") if isinstance(snapshot.get("document"), dict) else {}
         window._quote_scheme_quote_date = str(document.get("quote_date") or str(result.get("created_at") or "")[:10] or date.today().isoformat())
         _apply_order_workspace_payload(window, snapshot, f"已从服务器恢复：{window._quote_scheme_id}")
+        manager = getattr(window, 'quote_management', None)
+        if manager is not None:
+            manager.load_state(snapshot)
+            window._qm_historical_export_supported = result.get('quote_management_historical_export') is True
+            if route == 2:
+                window._qm_entry_pending = True
         window._quote_analysis_customer = deepcopy(snapshot.get("analysis_customer") or {})
         _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID"))
         window.show_section(route)
@@ -838,6 +857,9 @@ def _new_scheme(window):
         window._quote_scheme_dirty_seq = 0; window._quote_scheme_saved_seq = 0
         window._quote_scheme_save_pending = False; window._quote_scheme_last_save_failed = False
         _reset_scheme2_workspace(window)
+        manager = getattr(window, 'quote_management', None)
+        if manager is not None:
+            manager.load_state({})
         _apply_read_only(window, False)
         window.show_section(1)
     finally:
@@ -860,6 +882,7 @@ def _ensure_created(window):
 
 
 def _created(window, result):
+    window._qm_historical_export_supported = result.get('quote_management_historical_export') is True
     window._quote_scheme_id = str(result.get("scheme_no") or "")
     window._quote_scheme_version = int(result.get("lock_version") or 1)
     window._quote_scheme_business_version = int(result.get("version_no") or 1)
@@ -915,6 +938,10 @@ def _saved(window, result, scheme_no=None, sequence=None):
     if sequence is not None:
         window._quote_scheme_saved_seq = max(window._quote_scheme_saved_seq, int(sequence))
     window._quote_scheme_last_save_failed = False
+    manager = getattr(window, 'quote_management', None)
+    worker = getattr(window, '_quote_scheme_save_worker', None)
+    if manager is not None and worker is not None:
+        manager.remember_saved(worker.payload.get('snapshot'))
     stamp = str(result.get("updated_at") or QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss"))[:19].replace("T", " ")
     _set_state(window, f"{window._quote_scheme_id} · 已保存 {stamp}", "ok")
 
@@ -1001,9 +1028,18 @@ def _prepare_export(window):
             return False
     operator = _require_operator(window, True)
     if not operator: return False
+    manager = getattr(window, 'quote_management', None)
+    historical = manager.history_version if manager is not None else None
+    if historical is not None and not getattr(window, '_qm_historical_export_supported', False):
+        QMessageBox.information(window, '历史报价导出', '历史版本导出需要配套API支持。请更新API后从报价单列表重新打开；当前版本和草稿保持不变。')
+        return False
+    if manager is not None:
+        manager.show_detail()
     if not window._quote_scheme_id: return True  # Legacy unregistered workspace.
     window._quote_scheme_save_timer.stop()
     snapshot = deepcopy(_snapshot(window))
+    if historical is None and snapshot.get('quote_management', {}).get('versions'):
+        snapshot['quote_management']['versions'][-1]['sealed'] = True
     snapshot["document"]["export_registration_id"] = uuid4().hex
     window._quote_scheme_export_context = dict(
         scheme_no=window._quote_scheme_id, status=window._quote_scheme_status,
@@ -1012,6 +1048,9 @@ def _prepare_export(window):
         payload=dict(kind="XLSX", succeeded=True, expected_version=window._quote_scheme_version,
                      operator_name=operator, snapshot=snapshot, detail={"client_version": CLIENT_VERSION}),
     )
+    if historical is not None:
+        window._quote_scheme_export_context['historical'] = True
+        window._quote_scheme_export_context['payload']['historical_quote_version'] = historical
     # Freeze the exported contents until acknowledgement, including edits on
     # other routes. Cancellation restores the previous editability/autosave.
     _apply_read_only(window, True)
@@ -1120,6 +1159,9 @@ def _file_exported(window, exported_path):
 
 
 def _record_export(window, succeeded, kind="XLSX"):
+    manager = getattr(window, 'quote_management', None)
+    if manager is not None and manager.history_version is not None:
+        return  # A historical print cannot finalize the latest draft.
     if _registration_guard(window): return
     if not window._quote_scheme_id: return
     operator_name = _require_operator(window, False)
@@ -1129,7 +1171,10 @@ def _record_export(window, succeeded, kind="XLSX"):
     path = f"/api/quote-schemes/{urllib.parse.quote(window._quote_scheme_id)}/export-result"
     payload = {"kind":kind, "succeeded":bool(succeeded), "expected_version":window._quote_scheme_version,
                "operator_name":operator_name, "detail":{"client_version":CLIENT_VERSION}}
-    if succeeded: payload["snapshot"] = _snapshot(window)
+    if succeeded:
+        payload["snapshot"] = _snapshot(window)
+        if payload['snapshot'].get('quote_management',{}).get('versions'):
+            payload['snapshot']['quote_management']['versions'][-1]['sealed'] = True
     _run(window, "POST", path, payload,
          lambda result: _export_recorded(window, result) if succeeded else None,
          lambda message: _set_state(window, f"导出结果登记失败：{message}", "error"))
@@ -1138,7 +1183,7 @@ def _record_export(window, succeeded, kind="XLSX"):
 def _export_recorded(window, result, receipt=None):
     if receipt is not None:
         if window._quote_scheme_pending_export is not receipt: return
-        editable = receipt["status"] in ("DRAFT", "REVISING")
+        editable = receipt["status"] in ("DRAFT", "REVISING") and not receipt.get('historical')
         expected_status = "QUOTED" if editable else receipt["status"]
         expected_version = receipt["payload"]["expected_version"] + int(editable)
         if (not isinstance(result, dict) or result.get("recorded") is not True or result.get("formal_success") is not True
@@ -1149,14 +1194,24 @@ def _export_recorded(window, result, receipt=None):
         window._quote_scheme_pending_export = None
         window._quote_scheme_export_context = None
         window.quote_scheme_registration_retry.hide()
-        window._quote_scheme_saved_seq = max(window._quote_scheme_saved_seq, receipt["sequence"])
-        window._quote_scheme_save_pending = False
-        window._quote_scheme_last_save_failed = False
+        if not receipt.get('historical'):
+            window._quote_scheme_saved_seq = max(window._quote_scheme_saved_seq, receipt["sequence"])
+            window._quote_scheme_save_pending = False
+            window._quote_scheme_last_save_failed = False
         window._scheme2_document_controller.registration_completed(STATUS_TEXT[expected_status])
         window.scheme2_quote_print.setEnabled(receipt["print_enabled"])
     window._quote_scheme_status = str(result.get("status") or window._quote_scheme_status)
     window._quote_scheme_version = int(result.get("lock_version") or window._quote_scheme_version)
     _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID"))
+    manager = getattr(window, 'quote_management', None)
+    if manager is not None:
+        if receipt is not None and not receipt.get('historical'):
+            window._qm_state = deepcopy(receipt['payload']['snapshot'].get('quote_management') or window._qm_state)
+        if receipt is None and window._qm_state.get('versions'):
+            window._qm_state['versions'][-1]['sealed'] = True
+        if manager.history_version is not None:
+            _apply_read_only(window, True)
+        manager.refresh()
     operation = "文件已导出，方案已登记" if receipt is not None else "打印结果已登记"
     _set_state(window, f"{window._quote_scheme_id} · {operation}（{STATUS_TEXT.get(window._quote_scheme_status, window._quote_scheme_status)}）", "ok")
     if window._quote_scheme_list_worker is not None:

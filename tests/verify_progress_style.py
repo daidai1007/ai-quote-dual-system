@@ -57,6 +57,7 @@ class GreenProgress(unittest.TestCase):
         self.window.show()
         for kind, route in (('generate', ui.COST_ROUTE), ('export', ui.QUOTE_ROUTE)):
             with self.subTest(kind=kind):
+                if route == ui.QUOTE_ROUTE: self.window._qm_entry_pending = True
                 self.window.show_section(route)
                 c.begin(kind)
                 c._show_busy()

@@ -4,6 +4,20 @@ import {permissionSql, writePermissionSql, operatorNameValue} from './quote_sche
 
 const fail=(message,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const text=value=>String(value??'').trim().normalize('NFC');
+// Analysis groups immutable internal calculation codes by the same user-facing
+// product types as configuration. Never rewrite stored snapshot/outcome keys.
+const PRODUCT_TYPE_ORDER=['JA','JC','JE','JK','JM','JP','JP WIDE','JQ','JS','JS WIDE','操作台'];
+const productType=value=>{
+  const code=text(value).normalize('NFKC').toUpperCase().replace(/\s+/g,'_');
+  const wide=code.match(/^(JP|JS)_WIDE(?:_EXP)?$/);
+  if(wide)return `${wide[1]} WIDE`;
+  const legacyWide=code.match(/^(?:超宽(JP|JS)|(JP|JS)超宽(?:柜)?)$/);
+  if(legacyWide)return `${legacyWide[1]||legacyWide[2]} WIDE`;
+  if(['OP_TABLE','OP_TABLE_EXP','操作台'].includes(code))return '操作台';
+  const family=code.match(/^(JA|JC|JE|JK|JM|JP|JQ|JS)(?:_(?:SINGLE|DOUBLE|EXP))?$/);
+  return family?family[1]:text(value);
+};
+const sameProduct=(left,right)=>productType(left)===productType(right);
 const datePattern=/^\d{4}-\d{2}-\d{2}$/;
 const validDate=value=>datePattern.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value;
 const day=value=>value ? String(value).slice(0,10) : '';
@@ -22,12 +36,13 @@ const normalizeFilters=(input={})=>{
   }
   if(result.from && result.to && result.from>result.to) throw fail('开始日期不能晚于结束日期。');
   for(const key of ['customer','product','creator','status','method']) result[key]=text(input[key]);
+  result.product=productType(result.product);
   if(result.status && !['DRAFT','QUOTED','REVISING','ARCHIVED','VOID'].includes(result.status)) throw fail('无效方案状态。');
   if(result.method && !['QUICK','FORMULA'].includes(result.method)) throw fail('无效报价方式。');
   return result;
 };
 const inRange=(value,f)=>Boolean(value)&&(!f.from||day(value)>=f.from)&&(!f.to||day(value)<=f.to);
-const bandsFor=code=>(code==='JP'||code.startsWith('JP_'))
+const bandsFor=code=>(productType(code)==='JP'||productType(code)==='JP WIDE'||text(code).startsWith('JP_'))
   ? [[.75,.80],[.80,.85],[.85,.90],[.90,1]] : [[.80,.85],[.85,.90],[.90,.95],[.95,1]];
 const classify=(discount,ranges)=>ranges.findIndex(([lo,hi],i)=>discount>=lo&&(discount<hi||(i===ranges.length-1&&discount===hi)));
 const groupRates=(outcomes,product)=>{
@@ -49,7 +64,7 @@ const groupRates=(outcomes,product)=>{
 export function buildAnalysis(data,input={}) {
   const filters=normalizeFilters(input), schemes=data.schemes||[], outcomes=data.outcomes||[];
   const matches=s=>(!filters.customer||(filters.customer==='__unassigned__'?!s.customer_code:s.customer_code===filters.customer))
-    &&(!filters.product||(s.products||[]).some(p=>p.product_code===filters.product))
+    &&(!filters.product||(s.products||[]).some(p=>sameProduct(p.product_code,filters.product)))
     &&(!filters.creator||text(s.creator).includes(filters.creator))&&(!filters.status||s.status===filters.status);
   const baseSchemes=schemes.filter(s=>(!filters.creator||text(s.creator).includes(filters.creator))&&(!filters.status||s.status===filters.status));
   const allowedSchemes=schemes.filter(matches);
@@ -58,15 +73,17 @@ export function buildAnalysis(data,input={}) {
   // Selecting a product counts only that product's frozen face totals. Never
   // add the entire multi-product quote to each product subtotal.
   const amountOf=s=>filters.product ? (()=>{
-    const amounts=s.products.filter(p=>p.product_code===filters.product).map(p=>cents(p.amount));
+    const amounts=s.products.filter(p=>sameProduct(p.product_code,filters.product)).map(p=>cents(p.amount));
     return amounts.length&&amounts.every(x=>x!==null)?amounts.reduce((a,b)=>a+b,0):null;
   })() : cents(s.amount);
   const known=formal.map(amountOf).filter(n=>n!==null), total=known.reduce((a,b)=>a+b,0);
   const customers=new Map(), products=new Map(), ranks=new Map(), trend=new Map(), costs={};
   for(const s of schemes) {
     customers.set(s.customer_code||'__unassigned__',s.customer_name&&s.customer_code?s.customer_name:'客户待确认');
-    for(const p of s.products||[]) if(p.product_code) products.set(p.product_code,p.product_name||p.product_code);
+    for(const p of s.products||[]) if(p.product_code) products.set(productType(p.product_code),productType(p.product_code));
   }
+  const typeOrder=code=>{const index=PRODUCT_TYPE_ORDER.indexOf(code);return index<0?PRODUCT_TYPE_ORDER.length:index;};
+  const orderedProducts=[...products].sort(([a],[b])=>typeOrder(a)-typeOrder(b)||a.localeCompare(b));
   let costCoverage=0;
   for(const s of formal) {
     const amount=amountOf(s), key=s.customer_code||'__unassigned__';
@@ -74,7 +91,7 @@ export function buildAnalysis(data,input={}) {
     r.count++; if(amount!==null) {r.cents+=amount;r.amount_coverage++;} ranks.set(key,r);
     const t=trend.get(day(s.formal_date))||{date:day(s.formal_date),count:0,cents:0};
     t.count++;if(amount!==null)t.cents+=amount;trend.set(t.date,t);
-    for(const p of s.products||[]) if(!filters.product||p.product_code===filters.product) {
+    for(const p of s.products||[]) if(!filters.product||sameProduct(p.product_code,filters.product)) {
       if(p.costs&&Object.values(p.costs).every(v=>cents(v)!==null)) {
         costCoverage++;
         for(const [key,value] of Object.entries(p.costs)) costs[key]=(costs[key]||0)+Math.round(cents(value)*Number(p.quantity||1));
@@ -89,20 +106,20 @@ export function buildAnalysis(data,input={}) {
   // Result time and formal-quote time are deliberately independent filters.
   const decided=outcomes.filter(o=>['WON','LOST'].includes(o.result)&&schemeMap.has(o.scheme_no)
     &&inRange(o.result_date,filters)&&(!filters.customer||o.customer_code===filters.customer)
-    &&(!filters.product||o.product_code===filters.product)&&(!filters.method||o.quote_method===filters.method));
-  const product=filters.product||products.keys().next().value||'';
-  const selected=decided.filter(o=>o.product_code===product);
+    &&(!filters.product||sameProduct(o.product_code,filters.product))&&(!filters.method||o.quote_method===filters.method));
+  const product=filters.product||orderedProducts[0]?.[0]||'';
+  const selected=decided.filter(o=>sameProduct(o.product_code,product));
   const customerComparison=[...customers].map(([code,name])=>({customer_code:code,name,
-    ...groupRates(outcomes.filter(o=>schemeMap.has(o.scheme_no)&&o.customer_code===code&&o.product_code===product
+    ...groupRates(outcomes.filter(o=>schemeMap.has(o.scheme_no)&&o.customer_code===code&&sameProduct(o.product_code,product)
       &&['WON','LOST'].includes(o.result)&&inRange(o.result_date,filters)&&(!filters.method||o.quote_method===filters.method)),product)}));
-  const productComparison=[...products].map(([code,name])=>({product_code:code,name,
-    ...groupRates(outcomes.filter(o=>schemeMap.has(o.scheme_no)&&o.product_code===code
+  const productComparison=orderedProducts.map(([code,name])=>({product_code:code,name,
+    ...groupRates(outcomes.filter(o=>schemeMap.has(o.scheme_no)&&sameProduct(o.product_code,code)
       &&['WON','LOST'].includes(o.result)&&inRange(o.result_date,filters)&&(!filters.customer||o.customer_code===filters.customer)
       &&(!filters.method||o.quote_method===filters.method)),code)}));
   const selectedSchemeNos=new Set(allowedSchemes.map(s=>s.scheme_no));
   const failures=(data.failures||[]).filter(e=>selectedSchemeNos.has(e.scheme_no)&&inRange(e.date,filters));
   const detailRows=rows.map(s=>({...s,analysis_amount:money(amountOf(s))}));
-  return {filters,customers:[...customers].map(([code,name])=>({code,name})),products:[...products].map(([code,name])=>({code,name})),
+  return {filters,product_filter_mode:'family-v1',customers:[...customers].map(([code,name])=>({code,name})),products:orderedProducts.map(([code,name])=>({code,name})),
     outcomes_available:Boolean(data.outcomes_available),
     summary:{schemes:rows.length,quoted:formal.length,drafts:rows.filter(s=>s.status==='DRAFT').length,
       amount:known.length?money(total):null,average:known.length?money(Math.round(total/known.length)):null,

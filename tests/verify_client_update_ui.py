@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from update_test_support import LocalSource, ROOT
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QSettings, QTimer, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QFontDatabase, QFont
 from PySide6.QtWidgets import QApplication, QFrame, QMainWindow, QVBoxLayout, QWidget, QPushButton
@@ -196,6 +196,25 @@ class UpdateUiTests(unittest.TestCase):
 
 
 class WorkbenchIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='update-workbench-ui-')
+        self.addCleanup(self.temp.cleanup)
+        # Navigation now opens the server-backed quote list. Use a clean
+        # workspace and deterministic offline responses, not operator settings
+        # or a request still running when the close assertion executes.
+        environment = patch.dict(os.environ, {'AI_QUOTE_ORDER_CACHE_ROOT': self.temp.name})
+        environment.start(); self.addCleanup(environment.stop)
+        original_format = QSettings.defaultFormat()
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, self.temp.name)
+        self.addCleanup(QSettings.setDefaultFormat, original_format)
+        import quote_scheme_center as centre
+        transport = patch.object(centre.QuoteSchemeWorker, 'run',
+            lambda worker: worker.succeeded.emit({'items': [], 'total': 0}))
+        transport.start(); self.addCleanup(transport.stop)
+        network = patch('urllib.request.urlopen', side_effect=AssertionError('External network forbidden in workbench tests'))
+        network.start(); self.addCleanup(network.stop)
+
     def test_updater_launch_only_after_existing_close_guard_accepts(self):
         class GuardWindow(QMainWindow):
             allow_close = False
@@ -238,6 +257,7 @@ class WorkbenchIntegrationTests(unittest.TestCase):
         output = ROOT / "outputs/client-update-qa"; output.mkdir(parents=True, exist_ok=True)
         window.grab().save(str(output / f"workbench-{os.getenv('QT_SCALE_FACTOR', '1')}.png"))
         window.client_updates.dialog.hide(); window._scheme2_dirty = False
+        wait_until(lambda: not window._quote_scheme_workers)
         self.assertTrue(window.close()); app.processEvents()
 
 

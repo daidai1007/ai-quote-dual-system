@@ -67,3 +67,57 @@ test('new-scheme and formal-quote trend series use their own dates within the sa
   assert.equal(result.trend_details.length,1);
   assert.equal(result.trend_details[0].scheme_no,'A');
 });
+
+test('configuration product types group old calculation codes without changing frozen rows or keys',()=>{
+  const multi=scheme('M','customer-a',[
+    {product_code:'JP_SINGLE',amount:'10.10',quantity:1,costs:{material_cost:'1.00'}},
+    {product_code:'JP_DOUBLE',amount:'20.20',quantity:2,costs:{material_cost:'2.00'}},
+    {product_code:'JP',amount:'3.30'},
+    {product_code:'JP_WIDE_EXP',amount:'40.40'},
+    {product_code:'JQ_EXP',amount:'50.50'},
+    {product_code:'OP_TABLE_EXP',amount:'60.60'}]);
+  multi.amount='185.10';
+  const records=[outcome(multi,'.8','WON',{product_code:'JP_SINGLE',opportunity_key:'one'}),
+    outcome(multi,'.9','LOST',{product_code:'JP_DOUBLE',opportunity_key:'two'}),
+    outcome(multi,'.8','WON',{product_code:'JP_WIDE_EXP',opportunity_key:'wide'})];
+  const input={schemes:[multi],outcomes:records,outcomes_available:true};
+  const before=structuredClone(input);
+  const jp=buildAnalysis(input,{product:'JP'});
+  assert.equal(jp.product_filter_mode,'family-v1');
+  assert.equal(jp.summary.quoted,1);
+  assert.equal(jp.summary.amount,'33.60');
+  assert.equal(jp.costs.material_cost,'5.00');
+  assert.equal(jp.discount.sample,2);
+  assert.deepEqual(jp.discount.records.map(r=>r.product_code),['JP_SINGLE','JP_DOUBLE']);
+  assert.deepEqual(jp.outcome_records,records,'immutable registration keys are not rekeyed by analysis');
+  assert.equal(buildAnalysis(input,{product:'JP_SINGLE'}).summary.amount,'33.60');
+  const wide=buildAnalysis(input,{product:'JP WIDE'});
+  assert.equal(wide.summary.amount,'40.40');
+  assert.equal(wide.discount.sample,1);
+  assert.equal(wide.discount.bands[0].label,'0.75–<0.80');
+  assert.equal(buildAnalysis(input,{product:'JQ'}).summary.amount,'50.50');
+  assert.equal(buildAnalysis(input,{product:'操作台'}).summary.amount,'60.60');
+  assert.equal(buildAnalysis(input).summary.amount,'185.10');
+  assert.deepEqual(jp.products.map(p=>p.name),['JP','JP WIDE','JQ','操作台']);
+  const empty=buildAnalysis(input,{product:'JC'});
+  assert.equal(empty.summary.schemes,0);
+  assert.equal(empty.summary.amount,null);
+  assert.equal(empty.discount.product_code,'JC');
+  assert.equal(empty.discount.sample,0);
+  assert.deepEqual(input,before);
+});
+
+test('all configured types retain display order and wide variants remain independent',()=>{
+  const codes=['OP_TABLE_EXP','JS_WIDE_EXP','JS_SINGLE','JQ_EXP','JP_WIDE_EXP',
+    'JP_SINGLE','JM','JK','JE_DOUBLE','JC_EXP','JA_SINGLE'];
+  const names=['JA','JC','JE','JK','JM','JP','JP WIDE','JQ','JS','JS WIDE','操作台'];
+  const input={schemes:[scheme('M','a',codes.map(product_code=>({product_code,amount:'1.00'})))]};
+  const data=buildAnalysis(input);
+  assert.deepEqual(data.products.map(p=>p.name),names);
+  assert.deepEqual(data.discount.product_comparison.map(p=>p.name),names);
+  for(const product of names)assert.equal(buildAnalysis(input,{product}).summary.amount,'1.00');
+  for(const product of ['JP_WIDE','JP_WIDE_EXP','超宽JP','JP超宽柜','JS_WIDE','JS_WIDE_EXP','超宽JS'])
+    assert.equal(buildAnalysis(input,{product}).summary.amount,'1.00');
+  const unknown=buildAnalysis({schemes:[scheme('U','a',[{product_code:'UNKNOWN_EXP',amount:'4.00'}])]},{product:'JQ'});
+  assert.equal(unknown.summary.schemes,0,'unknown products must not be guessed into a known family');
+});

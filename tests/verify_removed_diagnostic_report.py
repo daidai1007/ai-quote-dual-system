@@ -37,7 +37,7 @@ class RemovedDiagnosticReport(unittest.TestCase):
 
     def test_sidebar_has_quote_navigation_without_report_button(self):
         labels = {button.text() for button in self.window.scheme2_nav.findChildren(QPushButton)}
-        self.assertTrue({"选型配置", "成本计算", "报价单"}.issubset(labels), labels)
+        self.assertTrue({"选型配置", "成本计算", "报价单管理"}.issubset(labels), labels)
         self.assertFalse(any("诊断报告" in label for label in labels))
         self.assert_no_report_state()
         for name in ("_DiagnosticSubmissionWorker", "_diagnostic_client_version", "_submit_diagnostic_report"):

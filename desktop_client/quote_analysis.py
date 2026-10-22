@@ -7,7 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from PySide6.QtCore import QDate, QEvent, QPointF, QRectF, Qt, QTimer, QThread, Signal
+from PySide6.QtCore import QDate, QEvent, QPointF, QRectF, Qt, QTimer, QThread, Signal, QSignalBlocker
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout,
@@ -415,9 +415,41 @@ class AnalysisPage(QWidget):
         self.position_content()
         self.customer.currentIndexChanged.connect(self.dimension_changed)
         self.product.currentIndexChanged.connect(self.dimension_changed)
+        # Mirror the asynchronously loaded option-page catalogue, not the
+        # subset of internal product codes found in past quotation snapshots.
+        self.product_sync = QTimer(self)
+        self.product_sync.setSingleShot(True)
+        self.product_sync.setInterval(0)
+        self.product_sync.timeout.connect(self.sync_product_filters)
+        model = window.product_combo.model()
+        for signal in (model.rowsInserted,model.rowsRemoved,model.modelReset,model.dataChanged):
+            signal.connect(lambda *_:self.product_sync.start())
+        self.sync_product_filters()
         main_scroll = window.findChild(QScrollArea,"mainScroll")
         if main_scroll is not None:
             main_scroll.viewport().installEventFilter(self)
+
+    def sync_product_filters(self):
+        options = [("全部产品",""),*schemes._configured_product_options(self.window)]
+        old_product = self.product.currentData()
+        detail_product = self.discount_product.currentData()
+        if not detail_product and self.data:
+            detail_product = self.data.get("discount",{}).get("product_code","")
+        with QSignalBlocker(self.product), QSignalBlocker(self.discount_product):
+            for combo,selected in ((self.product,old_product),(self.discount_product,detail_product)):
+                if options != [(combo.itemText(i),combo.itemData(i)) for i in range(combo.count())]:
+                    combo.clear()
+                    for label,code in options:combo.addItem(label,code)
+                combo.setCurrentIndex(max(0,combo.findData(selected)))
+        # If an administrator removes the selected type, do not leave old
+        # statistics visible under a now-reset 'all products' selector.
+        if old_product and self.product.currentData()!=old_product:
+            if self.worker is not None:
+                self.pending_reload=True
+                self.clear_results()
+            elif self.data:
+                if self.window.stack.currentWidget() is self:self.reload()
+                else:self.clear_results()
 
     def eventFilter(self, watched, event):
         # Window clamping and DPI changes may resize the viewport after the
@@ -752,12 +784,17 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         self.discount_scope.setText("本次未取得有效数据，未显示缓存统计。")
 
     def loaded(self,result):
+        if self.pending_reload:
+            return  # A catalogue refresh superseded this request's scope.
         if not isinstance(result,dict) or not isinstance(result.get("summary"),dict):
             self.failed("服务端返回的分析数据不完整。")
             return
+        if result.get("product_filter_mode") != "family-v1":
+            self.failed("报价分析服务的产品分类筛选尚未更新，请联系管理员部署配套 API。原报价与导出仍可使用。")
+            return
         self.data = result
         self._populate = True
-        for combo,key,all_text in ((self.customer,"customers","全部客户（汇总观察）"),(self.product,"products","全部产品")):
+        for combo,key,all_text in ((self.customer,"customers","全部客户（汇总观察）"),):
             selected = combo.currentData()
             combo.clear()
             combo.addItem(all_text,"")
@@ -765,7 +802,8 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
                 combo.addItem(str(item["name"]),str(item["code"]))
             index = combo.findData(selected)
             combo.setCurrentIndex(max(0,index))
-        for source,target in ((self.customer,self.discount_customer),(self.product,self.discount_product)):
+        self.sync_product_filters()
+        for source,target in ((self.customer,self.discount_customer),):
             target.clear()
             for i in range(source.count()):target.addItem(source.itemText(i),source.itemData(i))
             target.setCurrentIndex(source.currentIndex())

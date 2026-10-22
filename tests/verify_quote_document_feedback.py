@@ -109,6 +109,7 @@ class DocumentFeedback(unittest.TestCase):
         self.assertEqual(c.widgets['generate'][1].toolTip(), old_text, 'completed timing must not keep increasing')
 
     def test_cancelled_file_selection_hides_immediately_without_requests(self):
+        self.window._qm_entry_pending = True
         self.window.show_section(ui.QUOTE_ROUTE)
         self.window.show()
         with patch.object(base.QFileDialog, 'getSaveFileName', return_value=('', '')):
@@ -174,6 +175,7 @@ class DocumentFeedback(unittest.TestCase):
         old_show = c.show_timer
         c.end()
         old_hide = c.hide_timer
+        self.window._qm_entry_pending = True
         self.window.show_section(ui.QUOTE_ROUTE)
         c.begin('export')
         host = c.widgets['export'][0]

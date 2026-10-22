@@ -7,6 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node api/server.mjs",
+    "test:quote-management": "node --test api/quote_scheme_service.test.mjs tests/quote_management_database.test.mjs tests/quote_scheme_transition_database.test.mjs",
     "test:quote-schemes": "node --test api/quote_scheme_service.test.mjs tests/quote_scheme_transition_database.test.mjs database/migrations/quote_scheme_center_v1.contract.test.mjs",
     "test:fixed-base-products": "node --test tests/fixed_base_rule_products.test.mjs tests/attachment_cost_v2.test.mjs",
     "test:attachment-precision": "node --test tests/attachment_catalog_precision.test.mjs tests/attachment_catalog_precision_database.test.mjs tests/unit_set_pricing.test.mjs tests/size_matched_attachment_prices.test.mjs tests/popup_attachment_document.test.mjs",
@@ -18,7 +19,7 @@
     "test:client": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/run_client_tests.ps1",
     "test:performance": "node --check api/formula_template_query.mjs && node --check api/ganged_quote_service.mjs && node --check api/quote_telemetry.mjs && node --test tests/ganged_quote_service.test.mjs tests/quote_progress.test.mjs",
     "test:database:performance": "node --test tests/formula_template_database.test.mjs tests/ganged_api_database.test.mjs",
-    "verify": "npm run check && npm test && npm run test:analysis && npm run test:manual-match && npm run test:performance && npm run test:client",
+    "verify": "npm run check && npm test && npm run test:quote-management && npm run test:analysis && npm run test:manual-match && npm run test:performance && npm run test:client",
     "test:analysis": "node --check api/quote_analysis_service.mjs && node --test tests/quote_analysis.test.mjs tests/quote_analysis_database.test.mjs"
   },
   "engines": {

@@ -150,7 +150,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.21.01"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.21.02"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -2888,9 +2888,28 @@ def _refresh_quote_page(window):
                 preview.item(row, 0).setText(left_label); preview.item(row, 1).setText(left_value)
                 preview.item(row, 2).setText(right_label); preview.item(row, 3).setText(right_value)
                 preview.setSpan(row, 3, 1, 5)
+            if getattr(window, 'quote_management', None) is not None:
+                preview.clearSpans()
+                for row in (0,1):
+                    for column in range(8): preview.item(row,column).setText('')
+                preview.setSpan(0,0,2,3); preview.item(0,0).setText('报价单')
+                preview.item(0,0).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                title_font = QFont(preview.font()); title_font.setPixelSize(23); title_font.setBold(True)
+                preview.item(0,0).setFont(title_font)
+                for row,label,value in ((0,'编号',order_number),(1,'日期',quote_date)):
+                    preview.item(row,3).setText(label); preview.item(row,4).setText(value); preview.setSpan(row,4,1,4)
+                for row,left_label,left_value,right_label,right_value in meta:
+                    if row < 3: continue
+                    for column in range(8): preview.item(row,column).setText('')
+                    preview.item(row,0).setText(left_label); preview.item(row,1).setText(left_value); preview.setSpan(row,1,1,3)
+                    preview.item(row,4).setText(right_label); preview.item(row,5).setText(right_value); preview.setSpan(row,5,1,3)
+                for row in (2,8): preview.setSpan(row,0,1,8)
             headings = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价", "备注")
             for column, heading in enumerate(headings):
                 preview.item(9, column).setText(heading)
+                if getattr(window, 'quote_management', None) is not None:
+                    preview.item(9,column).setBackground(QColor('#f3f6fa'))
+                    preview.item(9,column).setForeground(QColor('#2463bd' if column in (1,5) else '#20344e'))
             total = 0.0
             for index, item in enumerate(items):
                 row = 10 + index
@@ -2907,6 +2926,11 @@ def _refresh_quote_page(window):
             preview.item(total_row, 1).setText("合计")
             preview.item(total_row, 6).setText(_money(total))
             preview.resizeRowsToContents()
+            if getattr(window, 'quote_management', None) is not None:
+                for row in (0,1): preview.setRowHeight(row,36)
+                for row in (2,8): preview.setRowHeight(row,20)
+                for row in range(3,8): preview.setRowHeight(row,32)
+                preview.setRowHeight(9,36)
             for row in range(10, 10 + len(items)):
                 preview.setRowHeight(row, max(72, preview.rowHeight(row)))
         finally:
@@ -4598,8 +4622,9 @@ def _order_workspace_payload(window):
         "option_state": _capture_scheme2_page_state(window),
         "drawing_pages": pages,
         "drawing_page_index": int(getattr(window, "_scheme2_drawing_page_index", -1)),
-        "draft_items": deepcopy(getattr(window, "draft_items", [])),
-        "company": window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else "",
+        "draft_items": deepcopy((getattr(getattr(window, 'quote_management', None), 'latest_workspace', None) or {}).get('items', getattr(window, "draft_items", []))),
+        "company": (getattr(getattr(window, 'quote_management', None), 'latest_workspace', None) or {}).get('company', window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else ""),
+        "quote_management": deepcopy(getattr(window, '_qm_state', {})),
         "active_route": int(window.stack.currentIndex()),
         "detail_item_index": detail_index,
     })
@@ -4762,6 +4787,9 @@ def _apply_order_workspace_payload(window, payload, status):
         company = str(payload.get("company") or "").strip()
         if company:
             window.scheme2_company.setCurrentText(company)
+        manager = getattr(window, 'quote_management', None)
+        if manager is not None:
+            manager.load_state(payload)
         window.refresh_summary()
         _refresh_quote_page(window)
         route = int(payload.get("active_route", OPTION_ROUTE))
@@ -7644,6 +7672,9 @@ def _position_scheme2_action_dock(window):
         return
     route = getattr(window, "stack", None).currentIndex() if getattr(window, "stack", None) is not None else -1
     visible = route in {OPTION_ROUTE, COST_ROUTE, QUOTE_ROUTE}
+    manager = getattr(window, 'quote_management', None)
+    if route == QUOTE_ROUTE and manager is not None:
+        visible = False
     dock.setVisible(visible)
     entries = getattr(window, "_scheme2_action_dock_entries", ())
     button_height = max([SCHEME2_ACTION_BUTTON_MIN_HEIGHT, *(
@@ -7701,7 +7732,8 @@ def _apply_responsive(window):
     width = window.width()
     option_page = window.stack.widget(OPTION_ROUTE)
     main_scroll = window.findChild(QScrollArea, "mainScroll")
-    viewport_route = route == COST_ROUTE or route == getattr(window, "quote_analysis_route", -1)
+    quote_management_route = route == QUOTE_ROUTE and getattr(window, 'quote_management', None) is not None
+    viewport_route = route == COST_ROUTE or route == getattr(window, "quote_analysis_route", -1) or quote_management_route
     _set_cost_scroll_mode(window, main_scroll, viewport_route)
     # Create the fixed row before arranging cost actions so the cost grid
     # leaves its “生成报价单” button in that row.
@@ -7804,7 +7836,7 @@ def _apply_responsive(window):
             # stack. No growing minimum based on the previous (larger) host:
             # that used to produce the second scrollbar and clipped actions.
             canvas = main_scroll.widget()
-            if route == getattr(window, "quote_analysis_route", -1):
+            if route == getattr(window, "quote_analysis_route", -1) or quote_management_route:
                 # The analytics tabs own scrolling. Prevent a legacy minimum
                 # canvas from surviving DPI/window clamping beyond the viewport.
                 canvas.setMaximumHeight(main_scroll.viewport().height())

@@ -304,6 +304,8 @@ class QuoteDocumentProgress:
 
     def sync_buttons(self):
         self.window.scheme2_cost_generate.setEnabled(not self.busy and bool(self.window.draft_items))
+        self.window.scheme2_quote_print.setEnabled(not self.busy and bool(self.window.draft_items)
+            and not getattr(self.window, '_quote_scheme_export_context', None))
         self.window.scheme2_quote_export.setEnabled(not self.busy and bool(self.window.draft_items))
         self.window.scheme2_cost_generate.setText("生成中…" if self.busy and self.kind == "generate" else
                                                 "重试生成" if self.reason and self.kind == "generate" else "生成报价单")
@@ -535,6 +537,9 @@ class QuoteDocumentProgress:
             self.fail("预检期间报价清单已变化，请重新生成报价单。")
             return
         self.set_stage(4, "显示报价单")
+        manager = getattr(self.window, 'quote_management', None)
+        if manager is not None:
+            manager.generated()
         self.window.show_section(self.ui.QUOTE_ROUTE)
         self.end()
 

@@ -41,6 +41,7 @@ cost_sidebar = scheme2_ui._cost_sidebar(cost_only_window)
 assert not hasattr(cost_only_window, "scheme2_company")
 cost_sidebar.deleteLater()
 cost_only_window.deleteLater()
+window._qm_entry_pending = True
 window.show_section(scheme2_ui.QUOTE_ROUTE)
 company = window.scheme2_company
 company.clear()
@@ -51,7 +52,9 @@ app.processEvents()
 assert window.scheme2_cost_sidebar.width() == scheme2_ui.COST_SIDEBAR_WIDTH == 130
 assert not window.scheme2_cost_sidebar.isAncestorOf(company)
 assert window.scheme2_quote_company_field.isAncestorOf(company)
-assert window.scheme2_quote_page.isAncestorOf(company)
+assert window.quote_management.detail_page.isAncestorOf(company)
+assert window.quote_management.root.currentWidget() is window.quote_management.detail_page
+assert company.isVisibleTo(window)
 assert company.height() == scheme2_ui.COMPANY_COMBO_HEIGHT == 56
 assert company.view().objectName() == "scheme2CompanyDropdown"
 assert company.view().minimumWidth() >= 320

@@ -56,7 +56,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(packaging_dir / 'assets' / 'AIQuoteDualSystem.ico'),
+    icon=os.environ.get('AI_QUOTE_BUILD_ICON', str(packaging_dir / 'assets' / 'AIQuoteDualSystem.ico')),
     version=str(generated_version_file),
 )
 coll = COLLECT(

@@ -98,6 +98,7 @@ class CustomerTerminology(unittest.TestCase):
                         window.draft_items = []
                         ui._apply_order_workspace_payload(window, loaded, "任务A离线恢复")
                         self.assertEqual(window.scheme2_company.currentText(), customer)
+                        expected[0]['quote_original_discount'] = 0.8
                         self.assertEqual(window.draft_items, expected)
                         self.assertEqual(ui._row_values(window.draft_items[0]), before)
                         rendered = ui._printable_quote_html(window)

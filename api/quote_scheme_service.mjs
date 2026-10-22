@@ -195,7 +195,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       SELECT scheme_id,${sqlUnicodeText(sourceNo ? 'COPIED' : 'CREATED')},status,${p.id},${sqlUnicodeText(operatorName)},
         jsonb_build_object('source_scheme_no',${sqlUnicodeText(sourceNo)},'identity_mode',${p.identityMode}) FROM created
     ) SELECT jsonb_build_object('scheme_no',scheme_no,'status',status,'version_no',version_no,
-      'lock_version',lock_version,'created_at',created_at,'updated_at',updated_at) FROM created;`);
+      'lock_version',lock_version,'created_at',created_at,'updated_at',updated_at,
+      'quote_management_historical_export',TRUE) FROM created;`);
   };
 
   const get = async (principal, schemeNo) => {
@@ -206,7 +207,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       'quoted_amount',s.quoted_amount,'creator_user_id',s.creator_user_id,'creator_name',s.creator_name_entered,
       'creator_identity_mode',s.creator_identity_mode,
       'last_editor_name',s.last_editor_name_snapshot,'lock_version',s.lock_version,
-      'created_at',s.created_at,'updated_at',s.updated_at,'snapshot',snap.snapshot_payload)
+      'created_at',s.created_at,'updated_at',s.updated_at,'snapshot',snap.snapshot_payload,
+      'quote_management_historical_export',TRUE)
       FROM calc.quote_scheme s JOIN calc.quote_scheme_snapshot snap USING(scheme_id)
       LEFT JOIN calc.quote_scheme source ON source.scheme_id=s.source_scheme_id
       WHERE s.scheme_no=${sqlUnicodeText(schemeNo)} AND ${permissionSql(principal, 's')}),
@@ -217,6 +219,10 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     const page = Math.max(1, Math.min(100000, Number(filters.page) || 1));
     const pageSize = Math.max(10, Math.min(100, Number(filters.page_size) || 20));
     const where = [permissionSql(principal, 's')];
+    const search = String(filters.search || '').trim();
+    if (search) where.push(`(s.scheme_no ILIKE ${sqlUnicodeText(`%${escapeLike(search)}%`)} ESCAPE '\\'
+      OR s.company_name ILIKE ${sqlUnicodeText(`%${escapeLike(search)}%`)} ESCAPE '\\'
+      OR s.product_summary ILIKE ${sqlUnicodeText(`%${escapeLike(search)}%`)} ESCAPE '\\')`);
     for (const [column, key] of [['scheme_no','scheme_no'],['company_name','company'],['product_summary','product'],['creator_name_entered','creator']]) {
       const value = String(filters[key] || '').trim();
       if (value) where.push(`s.${column} ILIKE ${sqlUnicodeText(`%${escapeLike(value)}%`)} ESCAPE '\\'`);
@@ -226,13 +232,17 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(filters.updated_to || ''))) where.push(`s.updated_at < (${sqlUnicodeText(filters.updated_to)}::date + interval '1 day')`);
     const predicate = where.join(' AND ');
     return query(`WITH matched AS (
-      SELECT s.*, source.scheme_no AS source_scheme_no, count(*) OVER() AS total_count
+      SELECT s.*, source.scheme_no AS source_scheme_no,
+        CASE WHEN (snap.snapshot_payload#>>'{quote_management,current}') ~ '^[1-9][0-9]?$'
+          THEN (snap.snapshot_payload#>>'{quote_management,current}')::integer ELSE s.version_no END AS quote_version,
+        count(*) OVER() AS total_count
       FROM calc.quote_scheme s LEFT JOIN calc.quote_scheme source ON source.scheme_id=s.source_scheme_id
+      LEFT JOIN calc.quote_scheme_snapshot snap ON snap.scheme_id=s.scheme_id
       WHERE ${predicate} ORDER BY s.updated_at DESC,s.scheme_id DESC
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
     ) SELECT jsonb_build_object('page',${page},'page_size',${pageSize},
       'total',COALESCE(max(total_count),0),'items',COALESCE(jsonb_agg(jsonb_build_object(
-        'scheme_no',scheme_no,'status',status,'version_no',version_no,'source_scheme_no',source_scheme_no,'source_version_no',source_version_no,
+        'scheme_no',scheme_no,'status',status,'version_no',version_no,'quote_version',quote_version,'source_scheme_no',source_scheme_no,'source_version_no',source_version_no,
         'company_name',company_name,'product_summary',product_summary,'quoted_amount',quoted_amount,
         'creator_name',creator_name_entered,'creator_identity_mode',creator_identity_mode,'last_editor_name',last_editor_name_snapshot,
         'lock_version',lock_version,'updated_at',updated_at) ORDER BY updated_at DESC,scheme_id DESC),'[]'::jsonb))::text FROM matched;`);
@@ -355,6 +365,35 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     // is evidence that a formal quote document was produced.
     const formalSuccess = input.succeeded && kind !== 'PREVIEW';
     const frozenSnapshot = formalSuccess ? snapshotValue(input) : null;
+    if (input.historical_quote_version !== undefined) {
+      const version = Number(input.historical_quote_version);
+      if (!Number.isInteger(version) || version < 1 || !formalSuccess || !Array.isArray(frozenSnapshot.draft_items)) {
+        throw Object.assign(new Error('invalid historical quote export'), {statusCode:400});
+      }
+      const p = principalValues(principal);
+      const detail = {...input.detail, historical_quote_version:version,
+        export_registration_id:frozenSnapshot.document?.export_registration_id || null};
+      const result = await query(`WITH target AS (
+        SELECT s.* FROM calc.quote_scheme s JOIN calc.quote_scheme_snapshot snap USING(scheme_id)
+        WHERE s.scheme_no=${sqlUnicodeText(schemeNo)} AND ${writePermissionSql(principal, 's')}
+          AND s.lock_version=${sqlNumber(input.expected_version)}
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE
+            WHEN jsonb_typeof(snap.snapshot_payload->'quote_management'->'versions')='array'
+            THEN snap.snapshot_payload->'quote_management'->'versions' ELSE '[]'::jsonb END) entry
+            WHERE entry->>'version'=${sqlUnicodeText(String(version))}
+              AND entry->>'version'<>snap.snapshot_payload->'quote_management'->>'current'
+              AND entry->'items'=${sqlUnicodeText(JSON.stringify(frozenSnapshot.draft_items))}::jsonb
+              AND entry->>'company'=${sqlUnicodeText(String(frozenSnapshot.company || ''))})
+        FOR UPDATE OF s),
+        logged AS (INSERT INTO calc.quote_scheme_export(scheme_id,export_kind,succeeded,actor_user_id,actor_name_snapshot,detail)
+          SELECT scheme_id,${sqlUnicodeText(kind)},TRUE,${p.id},${sqlUnicodeText(operatorName)},
+            ${sqlUnicodeText(JSON.stringify(detail))}::jsonb FROM target RETURNING scheme_id)
+        SELECT COALESCE((SELECT jsonb_build_object('recorded',TRUE,'formal_success',TRUE,
+          'historical',TRUE,'status',s.status,'lock_version',s.lock_version)
+          FROM target s JOIN logged USING(scheme_id)), '{"recorded":false}'::jsonb)::text;`);
+      if (!result?.recorded) throw Object.assign(new Error('历史报价内容或当前版本已变化，不能登记该导出。'), {statusCode:409});
+      return result;
+    }
     const summary = frozenSnapshot ? summaryFromSnapshot(frozenSnapshot) : {company:'',productSummary:'',amount:0};
     const p = principalValues(principal);
     const result = await query(`WITH target AS (SELECT s.* FROM calc.quote_scheme s WHERE s.scheme_no=${sqlUnicodeText(schemeNo)}

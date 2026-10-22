@@ -19,9 +19,9 @@ test('real PostgreSQL analytics, permissions, frozen amounts, outcome audit and 
       document:{quote_date:'2026-10-21'},analysis_customer:{customer_code:'customer-a'},draft_items:[{product_code:'JP',quantity:2,
         formula:{material_cost:10,auxiliary_cost:2,labor_cost:3,attachment_fee:4,spray_cost:5,management_fee:1},
         quote_display:{total:200.20,discount:.85,quantity:2}}]};
-    const create=async(p=owner)=>{
-      const s=await schemes.create(p,{snapshot:structuredClone(snapshot),operator_name:'测试'});
-      await schemes.exportResult(p,s.scheme_no,{expected_version:1,operator_name:'测试',kind:'XLSX',succeeded:true,snapshot:structuredClone(snapshot)});
+    const create=async(p=owner,payload=snapshot)=>{
+      const s=await schemes.create(p,{snapshot:structuredClone(payload),operator_name:'测试'});
+      await schemes.exportResult(p,s.scheme_no,{expected_version:1,operator_name:'测试',kind:'XLSX',succeeded:true,snapshot:structuredClone(payload)});
       return s.scheme_no;
     };
     const no=await create(),hidden=await create(other);
@@ -73,6 +73,36 @@ test('real PostgreSQL analytics, permissions, frozen amounts, outcome audit and 
       assert.equal(data.details[0].customer_name,'本机更名客户 A');
       assert.equal(data.details[0].formal_version,1);
       await assert.rejects(analysis.recordOutcome(owner,{...resultInput,version_no:2,expected_revision:3}),{statusCode:409});
+    });
+    await t.test('legacy codes filter by configuration type while registration and frozen snapshots keep original keys',async()=>{
+      const payload=structuredClone(snapshot);
+      payload.company='本机示例客户 B';
+      payload.analysis_customer={customer_code:'customer-b'};
+      payload.scheme_summary={company:payload.company,product_summary:'JP_SINGLE;JP_DOUBLE;JQ_EXP;JP_WIDE_EXP',quoted_amount:156.30};
+      payload.draft_items=[['JP_SINGLE',60.10,.85],['JP_DOUBLE',40.20,.9],['JQ_EXP',50.50,.9],['JP_WIDE_EXP',5.50,.8]]
+        .map(([product_code,total,discount])=>({product_code,quantity:1,quote_display:{total,discount,quantity:1}}));
+      const legacy=await create(owner,payload);
+      const frozenSql=`SELECT v.snapshot_payload::text FROM calc.quote_scheme_version v JOIN calc.quote_scheme s USING(scheme_id) WHERE s.scheme_no=${q(legacy)};`;
+      const before=pg.query(frozenSql);
+      const data=await analysis.analyze(owner,{customer:'customer-b',product:'JP'});
+      assert.equal(data.product_filter_mode,'family-v1');
+      assert.equal(data.summary.quoted,1);
+      assert.equal(data.summary.amount,'100.30');
+      assert.equal(data.details[0].analysis_amount,'100.30');
+      assert.deepEqual(data.details[0].products.map(p=>p.product_code),['JP_SINGLE','JP_DOUBLE','JQ_EXP','JP_WIDE_EXP']);
+      assert.equal((await analysis.analyze(owner,{customer:'customer-b',product:'JQ'})).summary.amount,'50.50');
+      assert.equal((await analysis.analyze(owner,{customer:'customer-b',product:'JP WIDE'})).summary.amount,'5.50');
+      assert.equal((await analysis.analyze(owner,{customer:'customer-b',product:'JC'})).summary.quoted,0);
+      const registration={scheme_no:legacy,version_no:1,customer_code:'customer-b',product_code:'JP_SINGLE',
+        opportunity_key:'LOCAL-LEGACY-TYPE',result:'WON',result_date:'2026-10-21',expected_revision:0,operator_name:'本机测试'};
+      await analysis.recordOutcome(owner,registration);
+      const decided=await analysis.analyze(owner,{customer:'customer-b',product:'JP'});
+      assert.equal(decided.discount.sample,1);
+      assert.equal(decided.discount.records[0].product_code,'JP_SINGLE');
+      assert.equal(decided.discount.records[0].discount,'0.850000');
+      await assert.rejects(analysis.recordOutcome(owner,registration),{statusCode:409});
+      await assert.rejects(analysis.recordOutcome(owner,{...registration,product_code:'JP'}),{statusCode:400});
+      assert.equal(pg.query(frozenSql),before);
     });
   } finally {await pg.close();}
 });

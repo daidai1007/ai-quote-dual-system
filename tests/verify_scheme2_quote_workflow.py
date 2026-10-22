@@ -44,7 +44,7 @@ def wait_until(predicate, attempts=500):
     raise AssertionError("timed out waiting for focused UI state")
 
 
-assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单", "报价方案", "报价分析"]
+assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单管理", "报价方案", "报价分析", "合同管理"]
 assert window.stack.widget(scheme2_ui.QUOTE_ROUTE).objectName() == "scheme2QuotePage"
 assert [button.text() for button in window.scheme2_cost_page.findChildren(QPushButton)].count("打印") == 0
 assert [button.text() for button in window.scheme2_cost_page.findChildren(QPushButton)].count("导出报价单") == 0
@@ -119,7 +119,9 @@ window.draft_items = []
 def add_and_simulate_legacy_cost_jump():
     window.draft_items.append({
         "name": "JP 测试", "product_code": "JP", "specification": "800*600*2000",
-        "quantity": 1, "formula": {"total_cost": 80}, "quick": {"total_cost": 100},
+        "quantity": 1,
+        "formula": {"material_cost":80,"auxiliary_cost":0,"labor_cost":0,"spray_cost":0,"attachment_fee":0,"total_cost":80},
+        "quick": {"total_cost": 100},
         "attachments": [],
     })
     window.stack.setCurrentIndex(scheme2_ui.COST_ROUTE)
@@ -141,7 +143,7 @@ try:
     scheme2_ui._edit_selected(window)
 finally:
     window.load_draft_item = original_load_draft_item
-assert window.attachments == [{"item_name": "照明灯/行程开关", "model_code": "220V"}]
+assert window.attachments == [{"item_name": "照明灯/行程开关", "model_code": "220V", "quote_catalog_refresh_required": True}]
 
 window.show_section(scheme2_ui.COST_ROUTE)
 def preview_checked(worker):

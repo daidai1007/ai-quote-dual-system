@@ -79,6 +79,7 @@ class ExportRegistration(unittest.TestCase):
         w._quote_scheme_dirty_seq = 3
         w._quote_scheme_saved_seq = 1
         w.quote_scheme_operator_name.setText('当前人员')
+        w._qm_entry_pending = True  # Exercise a document opened from a workflow entry.
         w.show_section(ui.QUOTE_ROUTE)
         w._quote_scheme_save_timer.stop()
         self.path = Path(self.folder.name)/'result.xlsx'

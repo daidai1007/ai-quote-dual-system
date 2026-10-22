@@ -15,7 +15,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"desktop_client"))
-from PySide6.QtCore import QTimer, QRect
+from PySide6.QtCore import QTimer, QRect, QSignalBlocker
 from PySide6.QtGui import QCloseEvent, QFontDatabase
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QDialogButtonBox
@@ -27,6 +27,7 @@ app=QApplication.instance() or QApplication([])
 QFontDatabase.addApplicationFont('C:/Windows/Fonts/msyh.ttc')
 ns=v3_launcher.load_v3_namespace()
 ns['install_application_font'](app)
+PRODUCT_TYPES=('JA','JC','JE','JK','JM','JP','JP WIDE','JQ','JS','JS WIDE','操作台')
 
 def wait(predicate):
     end=time.monotonic()+8
@@ -42,7 +43,7 @@ def response(customer='',product='JP'):
              status='QUOTED',formal_date='2026-10-21',created_date='2026-10-21',formal_version=1,can_record=True,
              amount='200.20',creator='测试',updated_at='2026-10-21',products=[dict(product_code='JP',product_name='JP',amount='200.20')])
     comparison=lambda code,name:{'name':name,'sample':30,'best':[band],code[0]:code[1]}
-    return dict(summary=dict(schemes=1,quoted=1,drafts=0,amount='200.20',average='200.20',amount_coverage=1,active_customers=1,failures=0),
+    return dict(product_filter_mode='family-v1',summary=dict(schemes=1,quoted=1,drafts=0,amount='200.20',average='200.20',amount_coverage=1,active_customers=1,failures=0),
         customers=[dict(code='A',name='本机示例客户 A'),dict(code='B',name='本机示例客户 B')],
         products=[dict(code='JP',name='JP'),dict(code='JE',name='JE')],outcomes_available=True,
         trend=[dict(date='2026-10-21',count=1)],ranking=[dict(customer_code='A',name='本机示例客户 A',amount='200.20',count=1)],
@@ -76,6 +77,10 @@ class AnalysisTests(unittest.TestCase):
                   patch.object(ui.AnalysisWorker,'start',start)):
             p.start();self.addCleanup(p.stop)
         self.window=ns['MainWindow']()
+        with QSignalBlocker(self.window.product_combo):
+            self.window.product_combo.clear()
+            self.window.product_combo.addItem('请选择产品',None)
+            for name in PRODUCT_TYPES:self.window.product_combo.addItem(name,name)
         class Screen:
             def availableGeometry(self):return QRect(0,0,1920,1080)
         self.window.screen=lambda:Screen()
@@ -103,7 +108,7 @@ class AnalysisTests(unittest.TestCase):
         self.window.draft_items=[{'name':'本机未完成产品','quick_discount':.85}]
         before=deepcopy(self.window.draft_items)
         self.load()
-        self.assertEqual([b.text() for b in self.window.nav_buttons],['选型配置','成本计算','报价单','报价方案','报价分析'])
+        self.assertEqual([b.text() for b in self.window.nav_buttons],['选型配置','成本计算','报价单管理','报价方案','报价分析','合同管理'])
         self.assertEqual(sum(b.isChecked() for b in self.window.nav_buttons),1)
         self.assertEqual(self.window.draft_items,before)
         self.assertEqual(self.page.recent.rowCount(),1)
@@ -133,6 +138,83 @@ class AnalysisTests(unittest.TestCase):
         wait(lambda:self.page.worker is None)
         self.assertEqual(self.page.customer.currentData(),'')
         self.assertEqual(self.page.product.currentData(),'')
+
+    def test_product_selectors_mirror_all_configuration_types_not_observed_codes(self):
+        self.load()
+        p=self.page
+        expected=['全部产品',*PRODUCT_TYPES]
+        for combo in (p.product,p.discount_product):
+            self.assertEqual([combo.itemText(i) for i in range(combo.count())],expected)
+            self.assertFalse(combo.isEditable())
+        source_value=self.window.product_combo.currentData()
+        # A type without historical records must remain selectable after each
+        # response, even when result.products contains only the old subset.
+        p.product.setCurrentIndex(p.product.findData('JC'))
+        wait(lambda:p.worker is None)
+        self.assertEqual(p.product.currentData(),'JC')
+        self.assertIn('product=JC',self.requests[-1][0])
+        self.assertEqual(self.window.product_combo.currentData(),source_value)
+        p.tabs.setCurrentIndex(1)
+        for name in ('JP WIDE','JQ','JS WIDE','操作台'):
+            p.discount_product.setCurrentIndex(p.discount_product.findData(name))
+            wait(lambda:p.worker is None)
+            self.assertEqual(p.product.currentData(),name)
+            self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(self.requests[-1][0]).query)['product'],[name])
+        # Capture the actual popup, not a drawing of the intended UI.
+        output=ROOT/'outputs/quote-analysis-qa'
+        output.mkdir(parents=True,exist_ok=True)
+        for label,combo in (('top',p.product),('discount',p.discount_product)):
+            combo.showPopup();app.processEvents()
+            self.assertTrue(combo.view().window().grab().save(str(output/f'products-{label}-{os.getenv("QT_SCALE_FACTOR","1")}.png')))
+            combo.hidePopup()
+        p.reset();wait(lambda:p.worker is None)
+        self.assertEqual(p.product.currentData(),'')
+        self.assertEqual([p.product.itemText(i) for i in range(p.product.count())],expected)
+
+    def test_product_selectors_follow_async_catalogue_without_query_storms(self):
+        self.load()
+        p=self.page
+        p.product.setCurrentIndex(p.product.findData('JQ'))
+        wait(lambda:p.worker is None)
+        before=len(self.requests)
+        with QSignalBlocker(self.window.product_combo):
+            self.window.product_combo.clear()
+            for name in reversed(PRODUCT_TYPES):self.window.product_combo.addItem(name,name)
+        wait(lambda:not p.product_sync.isActive())
+        self.assertEqual([p.product.itemText(i) for i in range(p.product.count())],['全部产品',*reversed(PRODUCT_TYPES)])
+        self.assertEqual(p.product.currentData(),'JQ')
+        self.assertEqual(p.discount_product.currentData(),'JQ')
+        self.assertEqual(len(self.requests),before)
+        self.window.product_combo.removeItem(self.window.product_combo.findData('JQ'))
+        wait(lambda:not p.product_sync.isActive() and p.worker is None and len(self.requests)==before+1)
+        self.assertEqual(p.product.currentData(),'')
+        self.assertNotIn('product',urllib.parse.parse_qs(urllib.parse.urlsplit(self.requests[-1][0]).query))
+
+    def test_removed_product_during_query_discards_stale_scope_and_reloads_once(self):
+        self.load()
+        p=self.page
+        p.product.setCurrentIndex(p.product.findData('JQ'))
+        wait(lambda:p.worker is None)
+        self.hold=True
+        p.reload()
+        before=len(self.requests)
+        self.window.product_combo.removeItem(self.window.product_combo.findData('JQ'))
+        wait(lambda:p.pending_reload and p.product.currentData()=='')
+        self.assertIsNone(p.data)
+        self.hold=False
+        self.held.pop()()
+        wait(lambda:p.worker is None and len(self.requests)==before+1)
+        self.assertNotIn('product',urllib.parse.parse_qs(urllib.parse.urlsplit(self.requests[-1][0]).query))
+        self.assertEqual(p.data['discount']['product_code'],'JP')
+
+    def test_old_api_product_semantics_are_not_shown_as_current_statistics(self):
+        self.load()
+        data=response();data.pop('product_filter_mode')
+        self.page.loaded(data)
+        self.assertIsNone(self.page.data)
+        self.assertIn('部署配套 API',self.page.notice.text())
+        self.assertEqual(self.page.recent.rowCount(),0)
+        self.assertFalse(self.page.record_button.isEnabled())
 
     def test_approved_layout_hierarchy_cards_charts_and_local_dimensions(self):
         self.load()
