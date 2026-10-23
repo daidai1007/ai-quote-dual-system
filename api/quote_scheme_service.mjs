@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {isNamePrincipal,quoteScopeSql,sessionOperator,currentQuotePrincipal} from './quote_access_scope.mjs';
 import {authError} from './name_login_service.mjs';
+import {snapshotWithOrderNature, snapshotOrderNature, orderNatureSql, validateOrderNature} from '../quote_order_nature.mjs';
 
 const STATUSES = Object.freeze(['DRAFT', 'QUOTED', 'REVISING', 'ARCHIVED', 'VOID']);
 const ROLES = Object.freeze(['USER', 'DEPARTMENT_MANAGER', 'ADMIN']);
@@ -79,7 +80,7 @@ const snapshotValue = (input) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     const error = new Error('snapshot must be an object'); error.statusCode = 400; throw error;
   }
-  return value;
+  return snapshotWithOrderNature(value);
 };
 
 const operatorNameValue = (input) => {
@@ -156,6 +157,9 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     identityMode: sqlUnicodeText(p.identityMode==='NAME_ONLY'?'SELF_REPORTED':p.identityMode || 'AUTHENTICATED'),
     auditMode: sqlUnicodeText(p.identityMode || 'AUTHENTICATED'),
   });
+  const natureUnchanged = (snapshot, alias='s') => `NOT EXISTS (SELECT 1 FROM calc.quote_scheme_version nature_lock
+    WHERE nature_lock.scheme_id=${alias}.scheme_id AND ${orderNatureSql('nature_lock.snapshot_payload')}<>'UNCLASSIFIED'
+      AND ${orderNatureSql('nature_lock.snapshot_payload')}<>${sqlUnicodeText(snapshotOrderNature(snapshot))})`;
 
   const create = async (principal, input, { sourceNo = null } = {}) => {
     principal=currentQuotePrincipal()||principal;
@@ -214,6 +218,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       'creator_identity_mode',s.creator_identity_mode,
       'last_editor_name',s.last_editor_name_snapshot,'lock_version',s.lock_version,
       'created_at',s.created_at,'updated_at',s.updated_at,'snapshot',snap.snapshot_payload,
+      'order_nature',${orderNatureSql('snap.snapshot_payload')},
+      'order_nature_locked',EXISTS(SELECT 1 FROM calc.quote_scheme_version nl WHERE nl.scheme_id=s.scheme_id AND ${orderNatureSql('nl.snapshot_payload')}<>'UNCLASSIFIED'),
       'quote_management_historical_export',TRUE)
       FROM calc.quote_scheme s JOIN calc.quote_scheme_snapshot snap USING(scheme_id)
       LEFT JOIN calc.quote_scheme source ON source.scheme_id=s.source_scheme_id
@@ -235,6 +241,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       if (value) where.push(`s.${column} ILIKE ${sqlUnicodeText(`%${escapeLike(value)}%`)} ESCAPE '\\'`);
     }
     if (STATUSES.includes(String(filters.status || '').toUpperCase())) where.push(`s.status=${sqlUnicodeText(String(filters.status).toUpperCase())}`);
+    if (filters.order_nature) where.push(`${orderNatureSql('snap.snapshot_payload')}=${sqlUnicodeText(validateOrderNature(filters.order_nature))}`);
     const dates = Object.fromEntries(['updated_from','updated_to'].map(key=>[key,String(filters[key] || '').trim()]));
     for (const value of Object.values(dates)) {
       if (value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number(value.slice(0,4))<1 || !Number.isFinite(Date.parse(value+'T00:00:00Z'))
@@ -252,7 +259,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       SELECT s.*, source.scheme_no AS source_scheme_no,(${writePermissionSql(principal,'s')}) AS can_write,
         CASE WHEN (snap.snapshot_payload#>>'{quote_management,current}') ~ '^[1-9][0-9]?$'
           THEN (snap.snapshot_payload#>>'{quote_management,current}')::integer ELSE s.version_no END AS quote_version,
-        count(*) OVER() AS total_count
+        ${orderNatureSql('snap.snapshot_payload')} AS order_nature,count(*) OVER() AS total_count
       FROM calc.quote_scheme s LEFT JOIN calc.quote_scheme source ON source.scheme_id=s.source_scheme_id
       LEFT JOIN calc.quote_scheme_snapshot snap ON snap.scheme_id=s.scheme_id
       WHERE ${predicate} ORDER BY s.updated_at DESC,s.scheme_id DESC
@@ -260,7 +267,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     ) SELECT jsonb_build_object('page',${page},'page_size',${pageSize},
       'total',COALESCE(max(total_count),0),'items',COALESCE(jsonb_agg(jsonb_build_object(
         'scheme_no',scheme_no,'status',status,'version_no',version_no,'quote_version',quote_version,'source_scheme_no',source_scheme_no,'source_version_no',source_version_no,
-        'company_name',company_name,'product_summary',product_summary,'quoted_amount',quoted_amount,'can_write',can_write,
+        'company_name',company_name,'product_summary',product_summary,'quoted_amount',quoted_amount,'can_write',can_write,'order_nature',order_nature,
         'creator_name',creator_name_entered,'creator_identity_mode',creator_identity_mode,'last_editor_name',last_editor_name_snapshot,
         'lock_version',lock_version,'updated_at',updated_at) ORDER BY updated_at DESC,scheme_id DESC),'[]'::jsonb))::text FROM matched;`);
   };
@@ -277,6 +284,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     const result = await query(`WITH allowed AS (
       SELECT s.* FROM calc.quote_scheme s WHERE s.scheme_no=${sqlUnicodeText(schemeNo)}
         AND ${writePermissionSql(principal, 's')} AND s.status IN ('DRAFT','REVISING')
+        AND ${natureUnchanged(snapshot)}
         AND s.lock_version=${sqlNumber(input.expected_version)} FOR UPDATE
     ), updated AS (
       UPDATE calc.quote_scheme s SET company_name=${sqlUnicodeText(summary.company)},
@@ -390,6 +398,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     // is evidence that a formal quote document was produced.
     const formalSuccess = input.succeeded && kind !== 'PREVIEW';
     const frozenSnapshot = formalSuccess ? snapshotValue(input) : null;
+    if (formalSuccess) validateOrderNature(snapshotOrderNature(frozenSnapshot), true);
     if (input.historical_quote_version !== undefined) {
       const version = Number(input.historical_quote_version);
       if (!Number.isInteger(version) || version < 1 || !formalSuccess || !Array.isArray(frozenSnapshot.draft_items)) {
@@ -408,6 +417,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
             WHERE entry->>'version'=${sqlUnicodeText(String(version))}
               AND entry->>'version'<>snap.snapshot_payload->'quote_management'->>'current'
               AND entry->'items'=${sqlUnicodeText(JSON.stringify(frozenSnapshot.draft_items))}::jsonb
+              AND COALESCE(entry->>'order_nature','UNCLASSIFIED')=${sqlUnicodeText(snapshotOrderNature(frozenSnapshot))}
               AND entry->>'company'=${sqlUnicodeText(String(frozenSnapshot.company || ''))})
         FOR UPDATE OF s),
         logged AS (INSERT INTO calc.quote_scheme_export(scheme_id,export_kind,succeeded,actor_user_id,actor_name_snapshot,detail)
@@ -422,7 +432,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     const summary = frozenSnapshot ? summaryFromSnapshot(frozenSnapshot) : {company:'',productSummary:'',amount:0};
     const p = principalValues(principal);
     const result = await query(`WITH target AS (SELECT s.* FROM calc.quote_scheme s WHERE s.scheme_no=${sqlUnicodeText(schemeNo)}
-      AND ${writePermissionSql(principal, 's')} AND s.lock_version=${sqlNumber(input.expected_version)} FOR UPDATE),
+      AND ${writePermissionSql(principal, 's')} AND s.lock_version=${sqlNumber(input.expected_version)}
+      ${formalSuccess ? `AND ${natureUnchanged(frozenSnapshot)}` : ''} FOR UPDATE),
     logged AS (INSERT INTO calc.quote_scheme_export(scheme_id,export_kind,succeeded,actor_user_id,actor_name_snapshot,detail)
       SELECT scheme_id,${sqlUnicodeText(kind)},${input.succeeded ? 'TRUE':'FALSE'},${p.id},${sqlUnicodeText(operatorName)},
         ${sqlUnicodeText(JSON.stringify(input.detail || {}))}::jsonb FROM target RETURNING scheme_id),

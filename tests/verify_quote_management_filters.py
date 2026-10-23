@@ -48,7 +48,7 @@ class QuoteFilters(unittest.TestCase):
         def run(worker):
             self.requests.append(parse_qs(urlparse(worker.url).query))
             worker.succeeded.emit(dict(total=21,items=[dict(scheme_no='BJ-20261022-000001',company_name='合成测试客户',
-                product_summary='JQ',creator_name='测试创建人',last_editor_name='测试更新人',status='QUOTED',
+                product_summary='JQ',creator_name='测试创建人',last_editor_name='测试更新人',status='QUOTED',order_nature='EXTERNAL',
                 version_no=1,lock_version=1,quoted_amount=1234.56,updated_at='2026-10-21T16:30:00+00:00')]))
         self.worker=patch.object(centre.QuoteSchemeWorker,'run',run);self.worker.start()
         self.network=patch('urllib.request.urlopen',side_effect=AssertionError('External network forbidden'));self.network.start()
@@ -103,7 +103,7 @@ class QuoteFilters(unittest.TestCase):
         self.assertEqual(self.requests[-1]['updated_to'],['2026-10-22']);self.assertNotIn('updated_from',self.requests[-1])
 
     def test_enter_catalog_refresh_and_beijing_display(self):
-        self.assertEqual(self.m.list_table.item(0,5).text(),'测试更新人\n2026-10-22 00:30:00')
+        self.assertEqual(self.m.list_table.item(0,6).text(),'测试更新人\n2026-10-22 00:30:00')
         editor=self.m.filters['company'];editor.setFocus();QTest.keyClicks(editor,'example')
         QTest.keyClick(editor,Qt.Key.Key_Return);self.loaded()
         self.assertEqual(self.requests[-1]['company'],['example']);self.assertFalse(self.w.draft_items)

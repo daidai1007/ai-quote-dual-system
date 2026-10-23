@@ -226,4 +226,31 @@ class ContractTests(unittest.TestCase):
             text=package.read('word/document.xml').decode('utf-8');self.assertIn('175.00',text);self.assertIn('350.00',text);self.assertIn('叁佰伍拾元整',text)
         self.p.method.setCurrentIndex(self.p.method.findData('FORMULA'));self.settled();self.p.generate();self.settled();self.assertEqual(self.p.record['generation_snapshot']['quote']['total'],formula_total)
 
+    def test_04_three_global_names_generate_foreign_quote_word_excel(self):
+        import name_login
+        for format in ('docx','xlsx'):
+            if not any(r['file_format']==format and r['customer_code']=='LOCAL-A' and r['configured'] for r in self.p.data['templates']):self.configure_template(format)
+        self.close_window()
+        for name in ('戴晨丽','姜艳娟','翟晓峰'):
+            request=urllib.request.Request(self.config['base']+'/api/name-login',data=json.dumps({'name':name},ensure_ascii=False).encode('utf-8'),headers={'X-AI-Quote-Key':self.config['key'],'Content-Type':'application/json'})
+            with urllib.request.urlopen(request,timeout=20) as response:session=json.load(response)
+            self.assertTrue(session['person']['can_manage_all_quotes']);name_login.set_session(session)
+            self.w=NS['MainWindow']();self.w.base_url=lambda:self.config['base'];self.w._quote_scheme_headers_factory=lambda s=session:{'X-AI-Quote-Key':self.config['key'],'Authorization':'Bearer '+s['token']}
+            self.p=self.w.contract_management;self.w._quote_scheme_save_timer.stop();self.w._history_price_timer.stop();self.w.resize(1560,960);self.w.show();self.w.show_section(self.w.contract_management_route);self.settled()
+            self.p.customer.setCurrentIndex(self.p.customer.findData('LOCAL-A'));self.p.source.setCurrentIndex(ui.index_of(self.p.source,(self.config['scheme_no'],1)));self.settled()
+            self.assertIn('全部报价 · 可操作',self.w.name_scope_label.text())
+            for format in ('docx','xlsx'):
+                with self.subTest(name=name,format=format):
+                    row=next(i for i,r in enumerate(self.p.data['templates']) if r['file_format']==format and r['customer_code']=='LOCAL-A')
+                    template=self.p.data['templates'][row];self.assertFalse(template['can_write']);self.assertTrue(template['can_use']);self.p.library.selectRow(row);self.p.use_template();self.settled()
+                    self.p.method.setCurrentIndex(self.p.method.findData('QUICK'));self.settled()
+                    for key,value in dict(contract_no='GLOBAL-'+name+'-'+format,seller_name='本机测试供方',sign_date='2026-10-23').items():self.p.inputs[key].setText(value)
+                    self.p.save_draft();self.settled();self.p.generate();self.settled();self.assertIsNotNone(self.p.output,self.p.notice.text());self.assertTrue(self.p.preview_pages,self.p.notice.text())
+                    self.assertEqual(self.p.record['generation_snapshot']['quote']['total'],650.3)
+                    target=self.folder/('global-'+name+'.'+format)
+                    with patch.object(ui.QFileDialog,'getSaveFileName',return_value=(str(target),'')):self.p.export_file()
+                    self.assertEqual(sha256(target.read_bytes()).hexdigest(),self.p.record['file_sha256'])
+                    self.p.new_contract();self.settled()
+            if name!='翟晓峰':self.close_window()
+
 if __name__=='__main__':unittest.main(verbosity=2)

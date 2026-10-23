@@ -27,6 +27,7 @@
 !api/psql_runner.mjs
 !exceljs_range_adapter.mjs
 !quote_export_contract.mjs
+!quote_order_nature.mjs
 !quick_discount_rules.mjs
 !export_dual_quote_workbook.mjs
 !attachment_snapshot_export.mjs

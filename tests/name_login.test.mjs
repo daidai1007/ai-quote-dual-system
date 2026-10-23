@@ -4,12 +4,13 @@ import {createNameLoginService,normalizeName,nameUserId,ALL_QUOTE_NAMES} from '.
 
 test('all valid names enter; only the three exact names see ALL',()=>{
   const service=createNameLoginService();
-  for(const name of ALL_QUOTE_NAMES)assert.equal(service.login({name}).person.scope,'ALL');
-  for(const name of ['张三','新人员','姜艳娟2','翟晓峰管理员','戴晨丽1'])assert.equal(service.login({name}).person.scope,'OWN');
+  for(const name of ALL_QUOTE_NAMES){const p=service.login({name}).person;assert.equal(p.scope,'ALL');assert.equal(p.can_manage_all_quotes,true);}
+  for(const name of ['张三','新人员','姜艳娟2','翟晓峰管理员','戴晨丽1']){const p=service.login({name}).person;assert.equal(p.scope,'OWN');assert.equal(p.can_manage_all_quotes,false);}
   assert.equal(normalizeName('  张三  '),'张三');
   assert.equal(nameUserId(' 张三 '),nameUserId('张三'));
   for(const name of ['',null,42,'x'.repeat(101),'张\u0000三','张\n三','\u200b张三'])assert.throws(()=>service.login({name}));
   assert.throws(()=>service.login({name:'张三',role:'ADMIN'}));
+  assert.throws(()=>service.login({name:'张三',can_manage_all_quotes:true}));
 });
 test('stable IDs, random tokens, expiry, revocation and bounded sessions',()=>{
   let now=1000;const service=createNameLoginService({now:()=>now,ttlMs:10,maxSessions:3});

@@ -33,9 +33,9 @@ QFontDatabase.addApplicationFont('C:/Windows/Fonts/msyh.ttc');NS['install_applic
 NS['MainWindow'].load_catalogs=lambda self:None
 OUT=Path(os.environ.get('AI_QUOTE_NAME_LOGIN_QA_OUTPUT') or ROOT/'.codex-tmp'/'name-login-qa');OUT.mkdir(parents=True,exist_ok=True)
 
-def person(name,all=False):
+def person(name,all=False,manage=False):
  return dict(token=hashlib.sha256(('token:'+name).encode()).hexdigest()[:43],expires_at='2030-01-01T00:00:00+00:00',
-  person=dict(user_id='name-user:'+hashlib.sha256(name.encode()).hexdigest(),display_name=name,scope='ALL' if all else 'OWN',can_view_all_quotes=all,identity_mode='NAME_ONLY'))
+  person=dict(user_id='name-user:'+hashlib.sha256(name.encode()).hexdigest(),display_name=name,scope='ALL' if all else 'OWN',can_view_all_quotes=all,can_manage_all_quotes=manage,identity_mode='NAME_ONLY'))
 def wait(predicate):
  deadline=time.monotonic()+8
  while time.monotonic()<deadline:
@@ -155,5 +155,30 @@ class LoginTests(unittest.TestCase):
   with patch.object(login.SessionWorker,'run',revoked),patch.object(login.NameLoginDialog,'exec',return_value=QDialog.DialogCode.Rejected):
    login.logout(w,NS);self.assertFalse(w.isEnabled());wait(lambda:login.session() is None)
   self.assertTrue(w._name_session_closed)
+
+ def test_canonical_owner_revision_ignores_stale_local_readonly_scope(self):
+  login.set_session(person('戴晨丽',True));w=self.window()
+  snapshot=dict(company='本机合成客户',draft_items=[],quote_management={},
+   _name_workspace_scope=dict(owner_user_id=person('旧本机身份')['person']['user_id'],read_only=True))
+  centre._apply_opened_scheme(w,dict(scheme_no='BJ-20261023-999999',status='REVISING',lock_version=1,can_write=True,snapshot=snapshot),3)
+  self.assertFalse(w._name_scope_foreign);self.assertFalse(w._quote_scheme_read_only)
+  # Directly restoring the same untrusted local workspace stays read-only.
+  ui._apply_order_workspace_payload(w,snapshot,'本机合成缓存')
+  self.assertTrue(w._name_scope_foreign);self.assertTrue(w._quote_scheme_read_only)
+
+ def test_null_legacy_permission_is_readonly_for_a_logged_in_name(self):
+  login.set_session(person('戴晨丽',True));w=self.window()
+  centre._apply_opened_scheme(w,dict(scheme_no='BJ-20261023-999998',status='REVISING',lock_version=1,can_write=None,
+   snapshot=dict(company='本机合成客户',draft_items=[],quote_management={})),3)
+  self.assertTrue(w._name_scope_foreign);self.assertTrue(w._quote_scheme_read_only)
+
+ def test_three_managers_open_foreign_revision_using_server_write_permission(self):
+  for name in ['戴晨丽','姜艳娟','翟晓峰']:
+   with self.subTest(name=name):
+    login.set_session(person(name,True,True));w=self.window()
+    self.assertIn('全部报价 · 可操作',w.name_scope_label.text())
+    centre._apply_opened_scheme(w,dict(scheme_no='BJ-20261023-999997',status='REVISING',lock_version=1,can_write=True,
+     creator_user_id=person('原始本机创建人')['person']['user_id'],snapshot=dict(company='本机合成客户',draft_items=[],quote_management={})),3)
+    self.assertFalse(w._name_scope_foreign);self.assertFalse(w._quote_scheme_read_only)
 
 if __name__=='__main__':unittest.main(verbosity=2)

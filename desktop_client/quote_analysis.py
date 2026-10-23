@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from dialog_style import DIALOG_COLORS, button_style, style_dialog
 from ui_typography import BODY_PX, FONT_FAMILY_QSS, PAGE_TITLE_PX, TABLE_PX
 import quote_scheme_center as schemes
+from quote_order_nature import LABELS as NATURE_LABELS, normalize as nature_value
 from quote_scheme_widgets import SchemeComboBox, QueryLineEdit
 
 METRICS = {"inset": 16, "gap": 10, "chart_height": 190, "table_row": 38, "field_height": 36,
@@ -362,6 +363,9 @@ class AnalysisPage(QWidget):
         self.creator.returnPressed.connect(self.reload)
         self.creator.setPlaceholderText("全部创建人")
         self.method = SchemeComboBox()
+        self.order_nature = SchemeComboBox()
+        for code, caption in (('', '全部'), *NATURE_LABELS.items()): self.order_nature.addItem(caption, code)
+        self.order_nature.setAccessibleName('分析订单性质')
         self.method.addItem("全部报价方式", "")
         self.method.addItem("快速报价", "QUICK")
         self.method.addItem("公式法", "FORMULA")
@@ -375,9 +379,9 @@ class AnalysisPage(QWidget):
         self.more_button.setObjectName("analysisLink")
         self.more_button.setCheckable(True)
         self.more_button.setToolTip("展开自定义开始日期、结束日期及报价方式")
-        self.controls = [self.period,self.date_from,self.date_to,self.customer,self.product,self.status,self.creator,self.method,self.reset_button]
+        self.controls = [self.period,self.date_from,self.date_to,self.customer,self.product,self.status,self.creator,self.method,self.order_nature,self.reset_button]
         self.filter_fields = [self.field(caption,editor) for caption,editor in
-            [("时间范围",self.period),("客户",self.customer),("产品",self.product),("方案状态",self.status),("创建人",self.creator)]]
+            [("时间范围",self.period),("客户",self.customer),("产品",self.product),("方案状态",self.status),("创建人",self.creator),("订单性质",self.order_nature)]]
         self.filter_actions = QWidget()
         actions = QHBoxLayout(self.filter_actions)
         actions.setContentsMargins(0,0,0,0)
@@ -412,6 +416,7 @@ class AnalysisPage(QWidget):
         self.position_content()
         self.customer.currentIndexChanged.connect(self.dimension_changed)
         self.product.currentIndexChanged.connect(self.dimension_changed)
+        self.order_nature.currentIndexChanged.connect(self.dimension_changed)
         # Mirror the asynchronously loaded option-page catalogue, not the
         # subset of internal product codes found in past quotation snapshots.
         self.product_sync = QTimer(self)
@@ -658,8 +663,7 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         filter_columns=5 if width>=1500 else 3 if width>=1100 else 2
         for i,field in enumerate(self.filter_fields):
             self.filter_layout.addWidget(field,i//filter_columns,i%filter_columns)
-        if filter_columns==5:self.filter_layout.addWidget(self.filter_actions,0,5,Qt.AlignmentFlag.AlignBottom)
-        else:self.filter_layout.addWidget(self.filter_actions,4//filter_columns,filter_columns-1,Qt.AlignmentFlag.AlignBottom)
+        self.filter_layout.addWidget(self.filter_actions,len(self.filter_fields)//filter_columns,len(self.filter_fields)%filter_columns,Qt.AlignmentFlag.AlignBottom)
         for i in range(6):self.filter_layout.setColumnStretch(i,1 if i<filter_columns else 0)
         while self.dashboard_grid.count():self.dashboard_grid.takeAt(0)
         if width>=1500:
@@ -694,14 +698,14 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
     def filters(self):
         result = {"customer":str(self.customer.currentData() or ""),"product":str(self.product.currentData() or ""),
                   "creator":self.creator.text().strip(),"status":str(self.status.currentData() or ""),
-                  "method":str(self.method.currentData() or "")}
+                  "method":str(self.method.currentData() or ""),"order_nature":str(self.order_nature.currentData() or "")}
         if self.period.currentIndex()!=3:
             result.update({"from":self.date_from.date().toString("yyyy-MM-dd"),"to":self.date_to.date().toString("yyyy-MM-dd")})
         return result
 
     def reset(self):
         self._populate = True
-        for combo in (self.customer,self.product,self.status,self.method,self.period):
+        for combo in (self.customer,self.product,self.status,self.method,self.period,self.order_nature):
             combo.setCurrentIndex(0)
         self.creator.clear()
         self._populate = False
@@ -815,6 +819,9 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         self.ranking.set_rows(result.get("ranking",[]))
         self.costs.set_rows(result.get("costs",{}))
         self.coverage.setText(f"金额覆盖 {summary.get('amount_coverage',0)}/{summary.get('quoted',0)} 个方案 · 完整成本 {result.get('cost_coverage',0)} 行")
+        nature_summary = result.get('order_nature_summary') or []
+        if nature_summary:
+            self.coverage.setText(self.coverage.text() + '\n' + '　'.join(f"{NATURE_LABELS[nature_value(r.get('order_nature'))]} {r['count']} 份 / {number(r.get('amount'),True)}" for r in nature_summary))
         fill(self.recent,[self.scheme_values(s) for s in result.get("recent",[])])
         for row in range(self.recent.rowCount()):
             open_button = QPushButton("打开")
@@ -832,13 +839,13 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
     @staticmethod
     def scheme_values(s):
         return (s["scheme_no"],s.get("customer_name") or "客户待确认","；".join(dict.fromkeys(p.get("product_name") or p.get("product_code","") for p in s.get("products",[]))),
-                schemes.STATUS_TEXT.get(s["status"],s["status"]),number(s.get("analysis_amount",s.get("amount")),True),s.get("creator",""),s.get("last_editor",""),s.get("updated_at",""),"")
+                schemes.STATUS_TEXT.get(s["status"],s["status"])+ ' · ' + NATURE_LABELS[nature_value(s.get('order_nature'))],number(s.get("analysis_amount",s.get("amount")),True),s.get("creator",""),s.get("last_editor",""),s.get("updated_at",""),"")
 
     def render_discount(self,result):
         d = result.get("discount",{})
         customer = self.customer.currentText()
         product = d.get("product_code","")
-        self.discount_scope.setText(f"当前查看：{customer} · {product or '暂无产品'} · 已决样本 {d.get('sample',0)} 条。按结果日期统计。")
+        self.discount_scope.setText(f"当前查看：{self.order_nature.currentText()} · {customer} · {product or '暂无产品'} · 已决样本 {d.get('sample',0)} 条。按结果日期统计。")
         self._populate=True
         self.discount_product.setCurrentIndex(max(0,self.discount_product.findData(product)))
         self._populate=False
@@ -846,6 +853,8 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         best = d.get("best",[])
         if not result.get("outcomes_available"):
             self.best.setText("尚无成交结果数据：请先由管理员启用成交登记功能。")
+        elif d.get('requires_order_nature'):
+            self.best.setText('当前包含不同订单性质，请选择内部或外部后查看折扣区间。')
         elif not d.get("sample"):
             self.best.setText("该客户与产品暂无已登记的成交或未成交记录。")
         elif not best:
@@ -884,7 +893,7 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
                     self.bands.item(row,col).setBackground(QColor('#f0f7e9'))
                 cell.setStyleSheet('background:#f0f7e9;')
         def compare(rows):
-            return [(r["name"],"；".join(b["label"] for b in r["best"]) or ("样本不足" if r["sample"] else "暂无记录"),
+            return [(r["name"],"；".join(b["label"] for b in r["best"]) or ("请选择订单性质" if r.get('requires_order_nature') else "样本不足" if r["sample"] else "暂无记录"),
                      "；".join(f"{b['rate']}%" for b in r["best"]) or "—","；".join(str(b["sample"]) for b in r["best"]) or "—",r["sample"]) for r in rows]
         fill(self.customer_comparison,compare(d.get("customer_comparison",[])))
         fill(self.product_comparison,compare(d.get("product_comparison",[])))

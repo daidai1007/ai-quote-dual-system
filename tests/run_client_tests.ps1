@@ -32,7 +32,10 @@ foreach ($requiredCoreFile in @("main.raw", "original.pyz")) {
 }
 
 $testFiles = @(
+    "tests/verify_name_login_endpoint.py",
+    "tests/verify_order_nature.py",
     "tests/verify_quote_export_customer.py",
+    "tests/verify_quote_remarks.py",
     "tests/verify_quote_management_filters.py",
     "tests/verify_name_login.py",
     "tests/verify_name_login_workflow.py",
@@ -97,6 +100,8 @@ $testFiles = @(
     "tests/verify_attachment_size_rules.py",
     "tests/verify_support_plate_defaults.py",
     "tests/verify_support_plate_cost_isolation.py",
+    "tests/verify_manual_dimension_forms.py",
+    "tests/verify_ganged_glass_reprice.py",
     "tests/verify_attachment_catalog_addition.py",
     "tests/verify_v3_program_rules.py",
     "tests/verify_generated_formula_migration.py",

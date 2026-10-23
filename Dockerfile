@@ -18,7 +18,7 @@ COPY api/server.mjs api/attachment_catalog_rules.mjs api/attachment_catalog_quer
 COPY api/formula_template_query.mjs api/ganged_quote_service.mjs api/quote_telemetry.mjs api/psql_runner.mjs api/quote_scheme_service.mjs api/quick_match_override.mjs ./api/
 COPY api/quote_analysis_service.mjs api/name_login_service.mjs api/quote_access_scope.mjs ./api/
 COPY api/contract_document.mjs api/contract_formula.mjs api/contract_quote.mjs api/contract_service.mjs ./api/
-COPY exceljs_range_adapter.mjs quote_export_contract.mjs quick_discount_rules.mjs export_dual_quote_workbook.mjs attachment_snapshot_export.mjs ./
+COPY quote_order_nature.mjs exceljs_range_adapter.mjs quote_export_contract.mjs quick_discount_rules.mjs export_dual_quote_workbook.mjs attachment_snapshot_export.mjs ./
 
 RUN chown -R node:node /app
 USER node

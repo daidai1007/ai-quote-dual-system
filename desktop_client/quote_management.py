@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogBut
     QScrollArea, QStyledItemDelegate, QStyleOptionViewItem, QStyle)
 
 import quote_management_model as model
-from quote_scheme_widgets import DateFilter, QueryLineEdit, SchemeComboBox, filter_field, METRICS
+import quote_order_nature as nature
+from quote_scheme_widgets import DateFilter, QueryLineEdit, SchemeComboBox, filter_field, METRICS, apply_light_action
 from quick_discount_rules import money, money_sum, quick_discount_category
 
 # Approved quote-management surfaces; scoped to this module, not the cost page.
@@ -339,6 +340,7 @@ class QuoteManagement:
         self.history_version = None; self.latest_workspace = None; self.pending_adjust = False
         self.edit_baseline = None
         window._qm_state = model.restore_state(None)
+        window._quote_order_nature = 'UNCLASSIFIED'
         window._qm_document_started = False
         window._qm_historical_export_supported = False
         self.root = QStackedWidget(); self.root.setObjectName('scheme2QuotePage')
@@ -377,7 +379,7 @@ class QuoteManagement:
         top = QHBoxLayout(); title = QLabel('报价单管理'); title.setObjectName('scheme2PageTitle')
         heading = QVBoxLayout(); heading.setSpacing(4); heading.addWidget(title)
         top.addLayout(heading); top.addStretch(1)
-        self.contract_button = button('生成合同', self.contract, True); self.contract_button.setEnabled(False)
+        self.contract_button = apply_light_action(button('生成合同', self.contract, True)); self.contract_button.setEnabled(False)
         top.addWidget(self.contract_button); layout.addLayout(top)
         filter_frame = QFrame(); filter_frame.setObjectName('quoteManagementCustomer')
         filters = QGridLayout(filter_frame); filters.setContentsMargins(15,12,15,12)
@@ -401,10 +403,15 @@ class QuoteManagement:
         for text, code in (('全部',''), ('草稿','DRAFT'), ('已报价','QUOTED'), ('修订中','REVISING'), ('已归档','ARCHIVED'), ('已作废','VOID')):
             self.status.addItem(text, code)
         self.status.setCurrentIndex(self.status.findData('QUOTED'))
+        self.filters['order_nature'] = SchemeComboBox()
+        for code, caption in (('', '全部'), *nature.LABELS.items()):
+            self.filters['order_nature'].addItem(caption, code)
+        self.filters['order_nature'].setAccessibleName('订单性质筛选')
         for column, (label, key) in enumerate((('报价单编号','scheme_no'), ('客户','company'), ('产品','product'), ('创建人','creator'))):
             filters.addWidget(filter_field(label, self.filters[key], 'quoteManagementField_' + key),0,column)
             filters.setColumnStretch(column,1)
         filters.addWidget(filter_field('状态', self.status, 'quoteManagementField_status'),1,0)
+        filters.addWidget(filter_field('订单性质', self.filters['order_nature'], 'quoteManagementField_order_nature'),2,0)
         dates = QHBoxLayout(); dates.setContentsMargins(0,0,0,0); dates.setSpacing(8)
         dates.addWidget(self.filters['updated_from'],1); dates.addWidget(QLabel('-'))
         dates.addWidget(self.filters['updated_to'],1)
@@ -413,7 +420,7 @@ class QuoteManagement:
         self.query_button = button('查询', lambda: self.load_list(1), True)
         self.reset_button = button('重置', self.reset_search)
         for control in (self.query_button, self.reset_button):
-            control.setFixedHeight(METRICS['field_height']); actions.addWidget(control)
+            apply_light_action(control); actions.addWidget(control)
         actions.addStretch(1)
         filters.addLayout(actions,1,3,Qt.AlignmentFlag.AlignBottom)
         for editor in (*self.filters.values(), self.status):
@@ -428,11 +435,11 @@ class QuoteManagement:
         caption.addWidget(QLabel('报价单列表')); caption.addStretch(1)
         self.selection_caption = QLabel('请选择一条报价单，再生成合同'); caption.addWidget(self.selection_caption)
         sheet.addLayout(caption)
-        self.list_table = table(('选择', '报价单编号', '客户', '状态 / 版本', '含税金额（元）', '更新人 / 时间', '操作'))
+        self.list_table = table(('选择', '报价单编号', '客户', '订单性质', '状态 / 版本', '含税金额（元）', '更新人 / 时间', '操作'))
         self.list_table.setObjectName('quoteManagementList'); self.list_table.setColumnWidth(0, 46); self.list_table.setColumnWidth(1, 210)
         self.row_group = QButtonGroup(self.list_table); self.row_group.setExclusive(True)
         self.list_table.horizontalHeader().setStretchLastSection(False)
-        for index,width in enumerate((46,205,150,115,135,160,65)): self.list_table.setColumnWidth(index,width)
+        for index,width in enumerate((46,205,150,85,115,135,160,65)): self.list_table.setColumnWidth(index,width)
         self.list_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.Stretch)
         self.list_table.itemSelectionChanged.connect(self.selection_changed)
         self.list_table.cellDoubleClicked.connect(lambda row, _column: self.open_row(row))
@@ -492,13 +499,24 @@ class QuoteManagement:
             top.addWidget(control)
         layout.addLayout(top)
         customer = QFrame(); customer.setObjectName('quoteManagementCustomer')
-        customer_layout = QHBoxLayout(customer); customer_layout.setContentsMargins(16,12,16,12)
+        customer_column = QVBoxLayout(customer); customer_column.setContentsMargins(16,12,16,12)
+        customer_layout = QHBoxLayout(); customer_column.addLayout(customer_layout)
         field = w.scheme2_quote_company_field
         if field.parentWidget() is not None and field.parentWidget().layout() is not None:
             field.parentWidget().layout().removeWidget(field)
         field.setParent(customer); customer_layout.addWidget(field,1)
-        customer_layout.addWidget(QLabel('可选择已有客户，也可输入新客户'))
+        field.setToolTip('可选择已有客户，也可输入新客户')
+        self.nature_group = QButtonGroup(customer)
+        self.nature_controls = {}
+        customer_layout.addWidget(QLabel('订单性质 *'))
+        for code in ('INTERNAL', 'EXTERNAL'):
+            control = QRadioButton(nature.LABELS[code]); control.setObjectName('quoteOrderNature' + code.title())
+            control.setAccessibleName('订单性质：' + nature.LABELS[code]); self.nature_group.addButton(control)
+            self.nature_controls[code] = control; customer_layout.addWidget(control)
+            control.clicked.connect(lambda _checked=False, code=code: self.nature_changed(code))
+        customer_layout.addStretch(1)
         customer_layout.addWidget(self.save_button); customer_layout.addWidget(self.discard_button)
+        self.nature_help = QLabel(); self.nature_help.setWordWrap(True); customer_column.addWidget(self.nature_help)
         layout.addWidget(customer)
         header = old.layout().takeAt(0)
         if header and header.layout():
@@ -543,7 +561,7 @@ class QuoteManagement:
     def sync(self):
         w = self.window
         if self.history_version is None and (self.state.get('versions') or getattr(w, '_qm_document_started', False)):
-            model.sync_latest(self.state, w.draft_items, w.scheme2_company.currentText(), self.operator(), w._quote_scheme_quote_date)
+            model.sync_latest(self.state, w.draft_items, w.scheme2_company.currentText(), self.operator(), w._quote_scheme_quote_date, nature.current(w))
         return deepcopy(self.state)
 
     def snapshot(self): return self.sync()
@@ -556,12 +574,15 @@ class QuoteManagement:
         if not source and pending and pending['scheme_no']==self.window._quote_scheme_id and self.window._quote_scheme_status=='REVISING':
             source = pending['state']
         self.window._qm_state = model.restore_state(source)
+        document = payload.get('document') or {}
+        self.window._quote_order_nature = nature.normalize(document.get('order_nature', payload.get('order_nature')))
+        self.window._quote_order_nature_locked = False
         if 'company' in payload:
             with QSignalBlocker(self.window.scheme2_company): self.window.scheme2_company.setCurrentText(str(payload.get('company') or ''))
         self.window._qm_document_started = bool(self.window.draft_items)
         if self.state['versions'] and self.state['versions'][-1].get('sealed') and self.window._quote_scheme_status == 'REVISING':
             entry = model.append_version(self.state, self.window.draft_items, self.window.scheme2_company.currentText(),
-                '创建修订版', self.operator(), self.window._quote_scheme_quote_date)
+                '创建修订版', self.operator(), self.window._quote_scheme_quote_date, nature.current(self.window))
             entry['revision_draft'] = True
         self.sync()
         if self.state['versions'] and self.window._quote_scheme_status in ('QUOTED','ARCHIVED','VOID'):
@@ -618,6 +639,7 @@ class QuoteManagement:
             if epoch != self.list_epoch: return
             self.rows = list(result.get('items') or [])
             rows = [('', q['scheme_no'] + '\n' + str(q.get('product_summary') or ''), q.get('company_name') or '未选择客户',
+                     nature.LABELS[nature.normalize(q.get('order_nature'))],
                      centre.STATUS_TEXT.get(q.get('status'), q.get('status', '')) + f"\nV{q.get('quote_version') or q.get('version_no', 1)}",
                      '—' if q.get('quoted_amount') is None else f"{float(q['quoted_amount']):,.2f}",
                      str(q.get('last_editor_name') or q.get('creator_name') or '') + '\n' + self.updated_time(q.get('updated_at')), '') for q in self.rows]
@@ -636,7 +658,7 @@ class QuoteManagement:
                     if label=='导出' and self.rows[r].get('can_write') is False:continue
                     action = button(label, lambda _=False,r=r,t=tab:self.open_row(r,t)); action.setObjectName('quoteManagementLink')
                     action_layout.addWidget(action)
-                self.list_table.setCellWidget(r, 6, actions)
+                self.list_table.setCellWidget(r, 7, actions)
             total = int(result.get('total',len(rows)))
             self.list_status.setText(f"共 {total} 份报价单 · 单选" + (f' · 第{page}页' if total>20 else ''))
             self.previous_page.setVisible(total>20 or page>1); self.previous_page.setEnabled(page>1)
@@ -657,7 +679,9 @@ class QuoteManagement:
 
     def selection_changed(self):
         index=self.list_table.currentRow()
-        self.contract_button.setEnabled(0 <= index < len(self.rows) and self.rows[index].get('can_write') is not False)
+        eligible = 0 <= index < len(self.rows) and self.rows[index].get('can_write') is not False and self.rows[index].get('order_nature') == 'EXTERNAL' and self.rows[index].get('status') in ('QUOTED','ARCHIVED','REVISING')
+        self.contract_button.setEnabled(eligible)
+        self.contract_button.setToolTip('仅外部正式报价可生成合同')
         selection = self.list_table.cellWidget(self.list_table.currentRow(), 0)
         radio = selection.findChild(QRadioButton) if selection is not None else None
         if isinstance(radio, QRadioButton): radio.setChecked(True)
@@ -675,7 +699,7 @@ class QuoteManagement:
         row = self.list_table.currentRow()
         if not 0 <= row < len(self.rows): return
         q = self.rows[row]
-        if q.get('can_write') is False:return
+        if q.get('can_write') is False or q.get('order_nature') != 'EXTERNAL':return
         amount = '—' if q.get('quoted_amount') is None else f"¥ {float(q['quoted_amount']):,.2f}"
         self.contract_source.setText(f"来源报价单：{q['scheme_no']}\n报价版本：V{q.get('quote_version') or q.get('version_no', 1)}\n客户：{q.get('company_name') or '未选择客户'}\n报价金额：{amount}")
         self.window.show_section(self.contract_route)
@@ -689,7 +713,14 @@ class QuoteManagement:
         self.heading.setText(f'报价单详情 · V{selected}' + (' · 历史只读' if self.history_version else ''))
         if getattr(w,'_name_scope_foreign',False):self.heading.setText(self.heading.text()+' · 他人报价，仅可查看')
         amount = money_sum(ui._row_values(item)[16] for item in w.draft_items)
-        self.meta.setText(f"{w._quote_scheme_id or '未登记草稿'}　　V{selected}　　{w._quote_scheme_quote_date}\n报价总额 · 含税人民币")
+        self.meta.setText(f"{w._quote_scheme_id or '未登记草稿'}　　V{selected}　　{w._quote_scheme_quote_date}　　{nature.label(w)}\n报价总额 · 含税人民币")
+        self.nature_group.setExclusive(False)
+        for code, control in self.nature_controls.items():
+            with QSignalBlocker(control): control.setChecked(code == nature.current(w))
+        self.nature_group.setExclusive(True)
+        self.nature_help.setText('正式版本的订单性质已锁定。' if nature.locked(w) else
+            '请选择内部或外部；未选择时可以保存草稿。' if nature.current(w) == 'UNCLASSIFIED' else
+            '内部报价可打印、导出，不进入合同管理。' if nature.current(w) == 'INTERNAL' else '外部正式报价可用于生成合同。')
         self.amount.setText(f'¥ {amount:,.2f}')
         readonly = w._quote_scheme_read_only or self.history_version is not None
         w.scheme2_company.setEnabled(not readonly and not getattr(w, '_scheme2_document_busy', False))
@@ -715,6 +746,7 @@ class QuoteManagement:
         self.compare(); self.preview.setHtml(ui._printable_quote_html(w))
         if self.history_version is not None:
             w.scheme2_company.setEnabled(False)
+        self.status_changed()
 
     def compare(self):
         import scheme2_ui as ui
@@ -741,15 +773,33 @@ class QuoteManagement:
         busy = getattr(w, '_scheme2_document_busy', False) or bool(w._quote_scheme_export_context)
         if getattr(w,'_name_scope_foreign',False):
             for control in (self.adjust_button,self.save_button,self.discard_button,w.scheme2_quote_print,w.scheme2_quote_export):control.setEnabled(False)
-            w.scheme2_company.setEnabled(False);return
+            w.scheme2_company.setEnabled(False)
+            for control in self.nature_controls.values(): control.setEnabled(False)
+            return
         self.adjust_button.setEnabled(bool(w.draft_items) and self.history_version is None and not busy and w._quote_scheme_status != 'VOID')
         self.save_button.setEnabled(not w._quote_scheme_read_only and self.history_version is None and not busy)
         self.discard_button.setEnabled(not w._quote_scheme_read_only and self.history_version is None and not busy)
         w.scheme2_company.setEnabled(not w._quote_scheme_read_only and self.history_version is None and not busy)
+        for control in self.nature_controls.values():
+            control.setEnabled(not w._quote_scheme_read_only and self.history_version is None and not busy and not nature.locked(w))
+        if nature.current(w) == 'UNCLASSIFIED':
+            w.scheme2_quote_print.setEnabled(False); w.scheme2_quote_export.setEnabled(False)
+
+    def nature_changed(self, code):
+        w = self.window
+        if w._quote_scheme_read_only or self.history_version is not None or nature.locked(w) or getattr(w, '_scheme2_document_busy', False): return
+        w._quote_order_nature = code
+        for version in self.state.get('versions', []):
+            if not version.get('sealed'): version['order_nature'] = code
+        self.sync(); w.refresh_summary()
+        from quote_scheme_center import _schedule_save
+        _schedule_save(w)
 
     def save(self):
         import quote_scheme_center as centre
         if self.history_version is not None or self.window._quote_scheme_read_only: return
+        from scheme2_ui import _commit_quote_text_editor
+        _commit_quote_text_editor(self.window)
         self.sync()
         if self.window._quote_scheme_id:
             centre._schedule_save(self.window); self.window._quote_scheme_save_timer.stop(); centre._save(self.window)
@@ -759,10 +809,10 @@ class QuoteManagement:
         if self.history_version is not None: return
         if snapshot is not None:
             self.edit_baseline = dict(items=deepcopy(snapshot.get('draft_items') or []),
-                company=str(snapshot.get('company') or ''), state=model.restore_state(snapshot.get('quote_management')))
+                company=str(snapshot.get('company') or ''), order_nature=nature.normalize((snapshot.get('document') or {}).get('order_nature', snapshot.get('order_nature'))), state=model.restore_state(snapshot.get('quote_management')))
         else:
             self.edit_baseline = dict(items=deepcopy(self.window.draft_items),
-                company=self.window.scheme2_company.currentText(), state=deepcopy(self.state))
+                company=self.window.scheme2_company.currentText(), order_nature=nature.current(self.window), state=deepcopy(self.state))
 
     def discard(self):
         w = self.window
@@ -770,6 +820,7 @@ class QuoteManagement:
         source = deepcopy(self.edit_baseline); w._quote_scheme_loading = True
         try:
             w.draft_items = source['items']; w._qm_state = source['state']
+            w._quote_order_nature = source['order_nature']
             with QSignalBlocker(w.scheme2_company): w.scheme2_company.setCurrentText(source['company'])
             w.refresh_summary()
         finally: w._quote_scheme_loading = False
@@ -785,7 +836,9 @@ class QuoteManagement:
                 QMessageBox.information(w, '报价只读', '请先在报价方案中恢复或修订后再调整。'); return
             operator = centre._require_operator(w, True)
             if not operator: return
-            self.pending_adjust = True
+            # Old formal quotes have no inferred classification. Open the
+            # revision detail first so the operator can classify without repricing.
+            self.pending_adjust = nature.current(w) != 'UNCLASSIFIED'
             self.revision_source = dict(scheme_no=w._quote_scheme_id,state=deepcopy(self.state))
             centre._run(w, 'POST', '/api/quote-schemes/' + urllib.parse.quote(w._quote_scheme_id) + '/revision',
                 dict(expected_version=w._quote_scheme_version, operator_name=operator),
@@ -810,7 +863,7 @@ class QuoteManagement:
             self.feedback.setText('报价未发生变化，无需生成新版本。'); dialog.deleteLater(); return
         if revision_draft:
             self.state['versions'][-1] = model.make_version(dialog.items, w.scheme2_company.currentText(), number,
-                dialog.reason.toPlainText().strip(), self.operator(), w._quote_scheme_quote_date)
+                dialog.reason.toPlainText().strip(), self.operator(), w._quote_scheme_quote_date, nature.current(w))
         else:
             model.append_version(self.state, dialog.items, w.scheme2_company.currentText(), dialog.reason.toPlainText().strip(), self.operator(), w._quote_scheme_quote_date)
         w.draft_items = deepcopy(dialog.items); w.refresh_summary(); self.tabs.setCurrentIndex(0)
@@ -827,7 +880,7 @@ class QuoteManagement:
             if w._quote_scheme_save_timer.isActive():
                 w._quote_scheme_save_timer.stop(); centre._save(w)
             self.latest_workspace = dict(items=deepcopy(w.draft_items), company=w.scheme2_company.currentText(),
-                                         read_only=w._quote_scheme_read_only, date=w._quote_scheme_quote_date)
+                                         read_only=w._quote_scheme_read_only, date=w._quote_scheme_quote_date, order_nature=nature.current(w))
         entry = self.state['versions'][number-1]
         self.history_version = number; w._qm_view_history = True; w._quote_scheme_loading = True
         try:

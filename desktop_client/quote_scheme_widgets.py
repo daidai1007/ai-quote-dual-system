@@ -31,6 +31,50 @@ FULL_COLUMN_WIDTHS = (166, 164, 206, 80, 112, 80, 98, 156, 228)
 COMPACT_COLUMN_WIDTHS = (164, 124, 168, 74, 108, 76, 92, 150, 116)
 
 
+# Approved compact action variant, based on the cost-page coefficient button.
+# Apply locally so table links, document editing and unrelated pages keep their style.
+LIGHT_ACTION = {
+    'height': 28, 'font_size': 12, 'radius': 5, 'inset': 14, 'min_width': 64,
+    'text': '#185FA5', 'background': '#E6F1FB', 'border': '#85B7EB',
+    'hover': '#D9EBFC', 'hover_border': '#659FDC', 'pressed': '#CCE3F9',
+    'disabled_text': '#98A8BA', 'disabled_background': '#F0F4F8',
+    'disabled_border': '#D1DCE7', 'focus': '#2463BD',
+}
+
+
+def apply_light_action(control, equal_width_labels=()):
+    """Keep the existing control, signals and name; change only its appearance."""
+    c = LIGHT_ACTION
+    kind = 'QComboBox' if isinstance(control, QComboBox) else 'QPushButton'
+    control.setFixedHeight(c['height'])
+    font = control.font(); font.setPixelSize(c['font_size']); control.setFont(font)
+    label = control.currentText() if isinstance(control, QComboBox) else control.text()
+    label_width = max(control.fontMetrics().horizontalAdvance(text) for text in (equal_width_labels or (label,)))
+    control.setMinimumWidth(max(c['min_width'], label_width + 2*c['inset'] + 2))
+    control.setStyleSheet(f"""
+{kind} {{ color:{c['text']}; background:{c['background']}; border:1px solid {c['border']};
+    border-radius:{c['radius']}px; padding:0 {c['inset']}px;
+    min-height:{c['height']-2}px; max-height:{c['height']-2}px;
+    font-size:{c['font_size']}px; font-weight:400; }}
+{kind}:hover:enabled {{ background:{c['hover']}; border-color:{c['hover_border']}; }}
+{kind}:pressed:enabled {{ background:{c['pressed']}; }}
+{kind}:focus {{ border-color:{c['focus']}; }}
+{kind}:disabled {{ color:{c['disabled_text']}; background:{c['disabled_background']};
+    border-color:{c['disabled_border']}; }}
+QComboBox {{ padding-right:28px; }}
+QComboBox::drop-down {{ border:0; width:24px; }}
+QComboBox::down-arrow {{ image:none; width:0; height:0; }}
+""")
+    return control
+
+
+def light_purpose_style_sheet():
+    c = LIGHT_ACTION
+    return f"""color:{c['text']}; background:{c['background']};
+border:1px solid {c['border']}; border-radius:{c['radius']}px;
+padding:6px 10px; font-size:{c['font_size']}px;"""
+
+
 def page_style_sheet():
     c, m = COLORS, METRICS
     return f"""

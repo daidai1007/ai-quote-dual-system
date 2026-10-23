@@ -46,7 +46,7 @@ test('real HTTP API requires sessions and enforces all private route scopes',{ti
   };
   const login=async name=>{const r=await req('/api/name-login',{body:{name}});assert.equal(r.status,200);return r.data;};
   const a=await login('张三'),b=await login('李四'),all=await login('姜艳娟');
-  const payload=name=>({snapshot:{company:name,scheme_summary:{company:name,product_summary:'JE',quoted_amount:100},draft_items:[]},operator_name:'伪造操作人',role:'ADMIN',scope:'ALL'});
+  const payload=name=>({snapshot:{document:{order_nature:'EXTERNAL'},company:name,scheme_summary:{company:name,product_summary:'JE',quoted_amount:100},draft_items:[]},operator_name:'伪造操作人',role:'ADMIN',scope:'ALL'});
   const one=await req('/api/quote-schemes',{token:a.token,body:payload('张客户')}),two=await req('/api/quote-schemes',{token:b.token,body:payload('李客户')});
   assert.equal(one.status,201);assert.equal(two.status,201);
   await t.test('missing, forged and old shared credentials never bypass login',async()=>{
@@ -60,8 +60,8 @@ test('real HTTP API requires sessions and enforces all private route scopes',{ti
    assert.equal((await req('/api/quote-schemes?scope=ALL&role=ADMIN',{token:a.token})).data.total,1);
    assert.equal((await req('/api/quote-schemes/'+two.data.scheme_no,{token:a.token})).status,404);
    assert.equal((await req('/api/quote-schemes/'+two.data.scheme_no+'/copy',{token:a.token,body:{expected_version:1}})).status,404);
-   assert.equal((await req('/api/quote-schemes/'+one.data.scheme_no,{token:all.token,method:'PUT',body:{...payload('改名'),expected_version:1}})).status,409);
-   const read=await req('/api/quote-schemes/'+one.data.scheme_no,{token:all.token});assert.equal(read.data.can_write,false);assert.equal(read.data.creator_name,'张三');
+   assert.equal((await req('/api/quote-schemes/'+one.data.scheme_no,{token:all.token,method:'PUT',body:{...payload('改名'),expected_version:999}})).status,409);
+   const read=await req('/api/quote-schemes/'+one.data.scheme_no,{token:all.token});assert.equal(read.data.can_write,true);assert.equal(read.data.creator_name,'张三');
    assert.equal((await req('/api/quote-schemes',{token:all.token})).data.total,2);
    assert.deepEqual((await req('/api/companies/catalog',{token:a.token})).data.items.map(x=>x.company_name),['张客户']);
   });
@@ -70,7 +70,7 @@ test('real HTTP API requires sessions and enforces all private route scopes',{ti
    pg.query(`INSERT INTO calc.quote_name_owner(resource_kind,resource_key,owner_user_id,confirmed_by_name,mapping_source)
      VALUES('QUOTE_LINE','${foreignLine}','${b.person.user_id}','local fixture','SESSION_CREATED');`);
    const before=pg.query('SELECT count(*) FROM calc.quote_scheme;');
-   for(const person of [a,all]){
+   for(const person of [a,await login('戴晨丽1')]){
     const forged=payload('forged private snapshot');
     forged.snapshot.quote_management={rows:[{quote_line_id:foreignLine}]};
     const result=await req('/api/quote-schemes',{token:person.token,body:forged});
@@ -107,6 +107,38 @@ test('real HTTP API requires sessions and enforces all private route scopes',{ti
    assert.equal(detail.data.creator_user_id,all.person.user_id);assert.equal(detail.data.can_write,true);
    assert.equal((await req('/api/quote-schemes/'+two.data.scheme_no,{token:b.token})).data.creator_user_id,b.person.user_id);
    assert.equal((await req('/api/quote-schemes',{token:b.token})).data.total,1);
+  });
+  await t.test('manager revision accepts persisted legacy references while ordinary users remain isolated',async()=>{
+   const owner=await login('戴晨丽');
+   const created=await req('/api/quote-schemes',{token:owner.token,body:payload('本机旧修订客户')});assert.equal(created.status,201);
+   const oldLine='AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',sourceLine='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+   const stored=payload('本机旧修订客户').snapshot;stored.draft_items=[{quote_line_id:oldLine,source_quote_line_id:sourceLine}];
+   const literal=v=>"convert_from(decode('"+Buffer.from(v).toString('hex')+"','hex'),'UTF8')";
+   pg.query(`UPDATE calc.quote_scheme SET status='REVISING' WHERE scheme_no=${literal(created.data.scheme_no)};
+    UPDATE calc.quote_scheme_snapshot SET snapshot_payload=${literal(JSON.stringify(stored))}::jsonb
+    WHERE scheme_id=(SELECT scheme_id FROM calc.quote_scheme WHERE scheme_no=${literal(created.data.scheme_no)});`);
+   const updated=payload('本机旧修订客户');updated.snapshot.draft_items=[{quote_line_id:oldLine.toLowerCase(),source_quote_line_id:sourceLine}];updated.expected_version=1;
+   const accepted=await req('/api/quote-schemes/'+created.data.scheme_no,{token:owner.token,method:'PUT',body:updated});assert.equal(accepted.status,200,JSON.stringify(accepted.data));
+   const detail=await req('/api/quote-schemes/'+created.data.scheme_no,{token:owner.token});assert.equal(detail.data.status,'REVISING');assert.equal(detail.data.can_write,true);
+   for(const other of [a])assert.equal((await req('/api/quote-schemes/'+created.data.scheme_no,{token:other.token,method:'PUT',body:{...updated,expected_version:2}})).status,403);
+   const forged=structuredClone(updated);forged.snapshot.draft_items[0].quote_line_id='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+   assert.equal((await req('/api/quote-schemes/'+created.data.scheme_no,{token:owner.token,method:'PUT',body:forged})).status,403);
+  });
+  await t.test('all three real sessions modify revise print and export another creators quote',async()=>{
+   for(const name of ['戴晨丽','姜艳娟','翟晓峰']){
+    const manager=await login(name),created=await req('/api/quote-schemes',{token:b.token,body:payload('跨人员本机客户')});assert.equal(created.status,201);
+    const no=created.data.scheme_no,path='/api/quote-schemes/'+no;
+    let detail=await req(path,{token:manager.token});assert.equal(detail.data.can_write,true);
+    const saved=await req(path,{token:manager.token,method:'PUT',body:{...payload('跨人员本机客户'),expected_version:detail.data.lock_version}});assert.equal(saved.status,200,JSON.stringify(saved.data));
+    detail=await req(path,{token:manager.token});
+    assert.equal((await req(path+'/export-result',{token:manager.token,body:{...payload('跨人员本机客户'),kind:'XLSX',succeeded:true,expected_version:detail.data.lock_version}})).status,200);
+    detail=await req(path,{token:manager.token});assert.equal(detail.data.creator_user_id,b.person.user_id);assert.equal(detail.data.last_editor_name,name);
+    assert.equal((await req(path+'/revision',{token:manager.token,body:{expected_version:detail.data.lock_version}})).status,200);
+    detail=await req(path,{token:manager.token});assert.equal(detail.data.status,'REVISING');
+    assert.equal((await req(path+'/export-result',{token:manager.token,body:{...payload('跨人员本机客户'),kind:'PRINT',succeeded:true,expected_version:detail.data.lock_version}})).status,200);
+    detail=await req(path,{token:manager.token});assert.equal(detail.data.status,'QUOTED');assert.equal(detail.data.creator_user_id,b.person.user_id);
+    assert.equal((await req(path,{token:a.token,method:'PUT',body:{...payload('伪造'),expected_version:detail.data.lock_version,can_manage_all_quotes:true,role:'ADMIN'}})).status,409);
+   }
   });
   await t.test('logout revokes the token',async()=>{
    assert.equal((await req('/api/name-logout',{token:a.token,body:{}})).status,200);

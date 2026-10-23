@@ -2,6 +2,8 @@ import {createHash,randomUUID} from 'node:crypto';
 import {permissionSql,writePermissionSql} from './quote_scheme_service.mjs';
 import {inspectContractTemplate,validateContractMapping,renderContractTemplate,CONTRACT_FIELDS} from './contract_document.mjs';
 import {contractQuote} from './contract_quote.mjs';
+import {snapshotOrderNature,orderNatureSql} from '../quote_order_nature.mjs';
+import {canManageAllQuotes} from './quote_access_scope.mjs';
 const error=(message,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const documentCall=(fn,...args)=>{try{return fn(...args);}catch(e){e.statusCode=400;throw e;}};
 const hash=data=>createHash('sha256').update(data).digest('hex');
@@ -15,6 +17,7 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
  const identity=p=>{if(!p?.userId||String(p.userId).startsWith('shared-client:'))throw error('合同功能需要姓名会话，请先完成姓名登录模块集成并登录；共享连接密钥不能代替人员身份',401);return p;};
  const scope=(p,alias)=>{identity(p);return all(p)?'TRUE':`${alias}.owner_user_id=${q(p.userId)}`;};
  const own=(p,alias)=>{identity(p);return `${alias}.owner_user_id=${q(p.userId)}`;};
+ const useTemplate=(p,alias)=>canManageAllQuotes(p)?'TRUE':own(p,alias);
  const audit=(p,kind,id,action,detail={})=>`INSERT INTO calc.contract_audit(resource_kind,resource_id,action,actor_user_id,actor_name,detail) VALUES(${q(kind)},${q(String(id))},${q(action)},${q(p.userId)},${q(p.displayName)},${q(JSON.stringify(detail))}::jsonb)`;
  const ready=async()=>Boolean((await query("SELECT to_jsonb(to_regclass('calc.contract_generation') IS NOT NULL AND to_regclass('calc.contract_template_version') IS NOT NULL)::text;")));
  const requireReady=async()=>{if(!await ready())throw error('合同数据库功能尚未启用，请由发布人员执行新增迁移',503);};
@@ -27,19 +30,20 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
    LEFT JOIN LATERAL(SELECT count(*) AS matches,min(company_code) AS code FROM calc.ordering_company WHERE company_name=COALESCE(NULLIF(v.snapshot_payload#>>'{scheme_summary,company}',''),s.company_name)) c ON TRUE
    WHERE s.scheme_no=${q(no)} AND v.version_no=${Number(version)} AND s.status<>'VOID' AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')}),'null'::jsonb)::text;`);
   if(!value)throw error('正式报价不可用或无权用于生成合同',404);
+  if(snapshotOrderNature(value.snapshot)!=='EXTERNAL')throw error('仅外部正式报价可用于合同；内部及待分类报价不能进入合同管理。',409);
   if(!value.customer_code)throw error('该正式报价的客户编码待确认，请先核对客户归属');
   return value;
  };
- const sourceList=async p=>query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('scheme_no',s.scheme_no,'version_no',v.version_no,'customer_name',COALESCE(NULLIF(v.snapshot_payload#>>'{scheme_summary,company}',''),s.company_name),
+ const sourceList=async p=>query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('scheme_no',s.scheme_no,'version_no',v.version_no,'order_nature','EXTERNAL','customer_name',COALESCE(NULLIF(v.snapshot_payload#>>'{scheme_summary,company}',''),s.company_name),
   'customer_code',COALESCE(NULLIF(v.snapshot_payload#>>'{analysis_customer,customer_code}',''),CASE WHEN c.matches=1 THEN c.code END),'product_summary',s.product_summary) ORDER BY s.updated_at DESC,v.version_no DESC),'[]'::jsonb)::text
   FROM calc.quote_scheme s JOIN calc.quote_scheme_version v USING(scheme_id)
   LEFT JOIN LATERAL(SELECT count(*) AS matches,min(company_code) AS code FROM calc.ordering_company WHERE company_name=COALESCE(NULLIF(v.snapshot_payload#>>'{scheme_summary,company}',''),s.company_name)) c ON TRUE
-  WHERE s.status<>'VOID' AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')};`);
- const template=async(p,id,write=false)=>{
+  WHERE s.status<>'VOID' AND ${orderNatureSql('v.snapshot_payload')}='EXTERNAL' AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')};`);
+ const template=async(p,id,write=false,use=false)=>{
   const result=await query(`SELECT COALESCE((SELECT to_jsonb(t) FROM(SELECT v.template_version_id,v.version_no,v.file_format,v.original_filename,encode(v.file_content,'base64') AS content,v.file_sha256,v.field_mapping,
   g.group_id,g.customer_code,g.customer_name,g.template_name,g.owner_user_id,g.owner_name,g.lock_version,g.enabled,g.is_default
   FROM calc.contract_template_version v JOIN calc.contract_template_group g USING(group_id)
-  WHERE v.template_version_id=${number(id)} AND ${write?own(p,'g'):scope(p,'g')}) t),'null'::jsonb)::text;`);
+  WHERE v.template_version_id=${number(id)} AND ${write?own(p,'g'):use?useTemplate(p,'g'):scope(p,'g')}) t),'null'::jsonb)::text;`);
   if(!result)throw error('合同模板不存在或无权访问',404);return result;
  };
  const listRecords=async(p,input={})=>{
@@ -57,7 +61,7 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
  const bootstrap=async p=>{
   identity(p);if(!await ready())return {ready:false,message:'合同功能尚未启用，请由发布人员执行新增迁移',sources:[],templates:[],records:[],drafts:[]};
   const sources=await sourceList(p);
-  const templates=await query(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY customer_name,template_name),'[]'::jsonb)::text FROM(SELECT g.*,v.template_version_id,v.version_no,v.file_format,v.original_filename,(v.field_mapping IS NOT NULL) AS configured,${own(p,'g')} AS can_write
+  const templates=await query(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY customer_name,template_name),'[]'::jsonb)::text FROM(SELECT g.*,v.template_version_id,v.version_no,v.file_format,v.original_filename,(v.field_mapping IS NOT NULL) AS configured,${own(p,'g')} AS can_write,${useTemplate(p,'g')} AS can_use
    FROM calc.contract_template_group g JOIN LATERAL(SELECT * FROM calc.contract_template_version v WHERE v.group_id=g.group_id ORDER BY version_no DESC LIMIT 1) v ON TRUE WHERE ${scope(p,'g')})t;`);
   const recordPage=await listRecords(p);const records=recordPage.items;
   const drafts=await query(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY updated_at DESC),'[]'::jsonb)::text FROM(SELECT draft_id,input_payload,lock_version,updated_at FROM calc.contract_generation_draft d WHERE ${own(p,'d')} ORDER BY updated_at DESC LIMIT 100)t;`);
@@ -118,7 +122,7 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
    if(typeof value!=='string'||value.length>5000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value))throw error('合同字段内容无效');data.fields[key]=value.trim();}
   return data;
  };
- const saveDraft=async(p,input)=>{identity(p);await requireReady();const data=cleanInput(input);await source(p,data.scheme_no,data.version_no);await template(p,data.template_version_id,true);
+ const saveDraft=async(p,input)=>{identity(p);await requireReady();const data=cleanInput(input);await source(p,data.scheme_no,data.version_no);await template(p,data.template_version_id,false,true);
   const id=input.draft_id?uuid(input.draft_id):randomUUID(),expected=Number(input.expected_version||0);
   const result=await query(`WITH saved AS(INSERT INTO calc.contract_generation_draft(draft_id,owner_user_id,owner_name,input_payload)
    SELECT ${q(id)}::uuid,${q(p.userId)},${q(p.displayName)},${q(JSON.stringify(data))}::jsonb WHERE ${expected}=0
@@ -131,15 +135,16 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   identity(p);await requireReady();const data=cleanInput(input),requestId=uuid(input.request_id),digest=hash(stable(data));
   const prior=await query(`SELECT COALESCE((SELECT jsonb_build_object('record_id',record_id,'input_sha256',input_sha256) FROM calc.contract_generation r WHERE request_id=${q(requestId)}::uuid AND ${own(p,'r')}),'null'::jsonb)::text;`);
   if(prior){if(prior.input_sha256!==digest)throw error('本次生成编号已对应其他内容，请新建生成操作',409);const r=await record(p,prior.record_id);return {...r,content:undefined,reused:true};}
-  const s=await source(p,data.scheme_no,data.version_no),t=await template(p,data.template_version_id,true);
+  const s=await source(p,data.scheme_no,data.version_no),t=await template(p,data.template_version_id,false,true);
   if(!t.enabled||!t.field_mapping)throw error('模板尚未配置或已停用');if(t.customer_code!==s.customer_code)throw error('客户模板与正式报价客户不一致');
   const selected=documentCall(contractQuote,s.snapshot,data.method),values={...data.fields,buyer_name:s.customer_name,total_amount:selected.total,total_upper:selected.total_upper,source_scheme_no:s.scheme_no,source_version:String(s.version_no),quote_method:data.method==='QUICK'?'快速报价':'公式报价'};
   text(values.contract_no,'客户合同编号',200);
   for(const key of ['sign_date','delivery_date'])if(values[key]&&(!/^\d{4}-\d{2}-\d{2}$/.test(values[key])||Number.isNaN(Date.parse(values[key]))||new Date(values[key]).toISOString().slice(0,10)!==values[key]))throw error('合同日期格式无效');
   const bytes=documentCall(renderContractTemplate,Buffer.from(t.content,'base64'),t.file_format,t.field_mapping,values,selected.items);
   if(bytes.length>16*1024*1024)throw error('生成合同超过16MB，请简化模板中的图片');
-  const id=randomUUID(),snapshot={scheme_no:s.scheme_no,source_version:s.version_no,template_name:t.template_name,template_version:t.version_no,template_sha256:t.file_sha256,mapping:t.field_mapping,quote:selected,fields:values,method:data.method};
-  const inserted=await query(`WITH allowed AS(SELECT s.scheme_id FROM calc.quote_scheme s JOIN calc.contract_template_group g ON g.group_id=${q(t.group_id)}::uuid WHERE s.scheme_id=${Number(s.scheme_id)} AND s.status<>'VOID' AND g.enabled AND ${own(p,'g')} AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')}),
+  const id=randomUUID(),snapshot={scheme_no:s.scheme_no,source_version:s.version_no,order_nature:'EXTERNAL',template_name:t.template_name,template_version:t.version_no,template_sha256:t.file_sha256,mapping:t.field_mapping,quote:selected,fields:values,method:data.method};
+  const inserted=await query(`WITH allowed AS(SELECT s.scheme_id FROM calc.quote_scheme s JOIN calc.contract_template_group g ON g.group_id=${q(t.group_id)}::uuid WHERE s.scheme_id=${Number(s.scheme_id)} AND s.status<>'VOID' AND g.enabled AND ${useTemplate(p,'g')} AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')}
+    AND EXISTS(SELECT 1 FROM calc.quote_scheme_version v WHERE v.scheme_id=s.scheme_id AND v.version_no=${s.version_no} AND ${orderNatureSql('v.snapshot_payload')}='EXTERNAL')),
    made AS(INSERT INTO calc.contract_generation(record_id,record_no,request_id,input_sha256,owner_user_id,owner_name,customer_code,customer_name,customer_contract_no,source_scheme_id,source_version_no,template_version_id,quote_method,generation_snapshot,file_format,file_content,file_sha256)
    SELECT ${q(id)}::uuid,'HT-'||to_char(now() AT TIME ZONE 'Asia/Shanghai','YYYYMMDD')||'-'||lpad(nextval('calc.contract_record_number')::text,6,'0'),${q(requestId)}::uuid,${q(digest)},${q(p.userId)},${q(p.displayName)},${q(s.customer_code)},${q(s.customer_name)},${q(values.contract_no)},scheme_id,${s.version_no},${number(t.template_version_id)},${q(data.method)},${q(JSON.stringify(snapshot))}::jsonb,${q(t.file_format)},decode('${bytes.toString('hex')}','hex'),${q(hash(bytes))} FROM allowed
    ON CONFLICT(owner_user_id,request_id) DO NOTHING RETURNING *),

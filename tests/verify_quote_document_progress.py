@@ -100,6 +100,7 @@ class DocumentProgress(unittest.TestCase):
             patch.dict(ns,{'application_root':lambda:Path(self.folder.name)})]
         for p in patches:p.start();self.addCleanup(p.stop)
         self.window=Window()
+        self.window._quote_order_nature='EXTERNAL'  # Explicit synthetic export classification.
         self.window._scheme2_loading_order=True
         self.window.draft_items=[copy.deepcopy(good)]
         self.window.scheme2_company.setEditText('测试公司')

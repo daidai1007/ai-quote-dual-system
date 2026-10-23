@@ -66,6 +66,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QProgressBar,
     QScrollArea,
@@ -150,7 +151,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.22.01"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.23.02"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -1000,6 +1001,23 @@ def _ganged_attachment_number(source):
         return None
 
 
+def _attachment_popup_text(source):
+    """One display identity for the cost popup and default quotation remarks."""
+    name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
+    cabinet_number = _ganged_attachment_number(source)
+    if cabinet_number is not None:
+        name = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", name)
+        name = f"柜体{cabinet_number}｜{name}"
+    is_light_switch = (str(source.get("category_level1") or "").strip() == "照明灯/行程开关"
+                       or name == "照明灯/行程开关" or name in LIGHT_SWITCH_OPTIONS)
+    if is_light_switch:
+        name = "照明灯/行程开关"
+    spec = _attachment_dimension_or_model(source)
+    if name in ATTACHMENT_MODEL_OPTIONS and not source.get("custom"):
+        spec = str(source.get("model_code") or source.get("specification") or "").strip()
+    return name, spec, is_light_switch
+
+
 class AttachmentEditor(QDialog):
     DEFAULT_SIZE = QSize(650, 315)
     MINIMUM_SIZE = QSize(480, 240)
@@ -1013,6 +1031,7 @@ class AttachmentEditor(QDialog):
         super().__init__(window)
         self.window = window
         self.item = item
+        _quote_item_remark(item)  # Recognize legacy auto text before popup rows change.
         from attachment_v2_client import confirmation_inputs
         self.original_snapshot_inputs = confirmation_inputs(item.get("attachments", []))
         # A row is already a complete cabinet/ganged set; the product's order
@@ -1146,22 +1165,8 @@ class AttachmentEditor(QDialog):
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setRowHeight(row, 42)
-        name = str(source.get("item_name") or source.get("name") or ("自定义附件" if not source else "附件"))
-        cabinet_number = _ganged_attachment_number(source)
-        if cabinet_number is not None:
-            name = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", name)
-            name = f"柜体{cabinet_number}｜{name}"
-        is_light_switch = (
-            str(source.get("category_level1") or "").strip() == "照明灯/行程开关"
-            or name == "照明灯/行程开关"
-            or name in LIGHT_SWITCH_OPTIONS
-        )
-        if is_light_switch:
-            name = "照明灯/行程开关"
-        spec = _attachment_dimension_or_model(source)
+        name, spec, is_light_switch = _attachment_popup_text(source)
         self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
-        if name in ATTACHMENT_MODEL_OPTIONS and not source.get("custom"):
-            spec = str(source.get("model_code") or source.get("specification") or "").strip()
         specification_item = QTableWidgetItem(spec)
         specification_item.setData(ROLE_DERIVED_SPEC, spec)
         if is_light_switch or (name in ATTACHMENT_MODEL_OPTIONS and not source.get("custom")):
@@ -1670,6 +1675,7 @@ class AttachmentEditor(QDialog):
                 data["selection_source"] = "QUOTE_LOCAL"
             rows.append(data)
         self.item["attachments"] = rows
+        _quote_item_remark(self.item)
         self.item.pop("cost_detail_rows", None)
         self.item.pop("quote_display", None)
         self.item["pricing_basis"] = PRICING_BASIS
@@ -2656,6 +2662,7 @@ class FaceDiscountEditor(QDialog):
 
 
 def _printable_quote_html(window, font_step=0) -> str:
+    from quote_order_nature import label as nature_label
     company = html.escape(str(getattr(window, "scheme2_company", None).currentText() if getattr(window, "scheme2_company", None) is not None else ""))
     scheme_number = str(getattr(window, "_quote_scheme_id", "") or "").strip()
     order_number = html.escape(scheme_number or str(getattr(window, "scheme2_order_number", None).text() if getattr(window, "scheme2_order_number", None) is not None else ""))
@@ -2666,9 +2673,9 @@ def _printable_quote_html(window, font_step=0) -> str:
         values = _row_values(item)
         amount = _number(values[16])
         total += amount
-        remark = str(item.get("final_remark") or _scheme2_quote_remark(item))
+        remark = _quote_item_remark(item, preserve_existing=_quote_remark_readonly(window))
         cells = (index, values[1], values[3], values[11], "台", f"{_number(values[15]):,.2f}", f"{amount:,.2f}", remark)
-        rows.append("<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in cells) + "</tr>")
+        rows.append("<tr>" + "".join(f"<td>{html.escape(str(value)).replace(chr(10), '<br>')}</td>" for value in cells) + "</tr>")
     return f"""
     <html><head><style>
     body{{font-family:'Microsoft YaHei UI';font-size:{10 + font_step}pt;color:#202B38}}
@@ -2677,7 +2684,8 @@ def _printable_quote_html(window, font_step=0) -> str:
     .meta td{{text-align:left}} .total{{font-weight:600}}
     </style></head><body><table class="meta">
     <tr><th>报价单</th><td>{order_number}</td><td colspan="6"></td></tr>
-    <tr><th>日期</th><td>{quote_date}</td><td colspan="6"></td></tr><tr><td colspan="8">&nbsp;</td></tr>
+    <tr><th>日期</th><td>{quote_date}</td><td colspan="6"></td></tr>
+    <tr><th>订单性质</th><td>{nature_label(window)}</td><td colspan="6"></td></tr><tr><td colspan="8">&nbsp;</td></tr>
     <tr><th>买方</th><td>{company}</td><th>卖方</th><td colspan="5">浙江京能电力设备有限公司</td></tr>
     <tr><th>地址</th><td></td><th>地址</th><td colspan="5">杭州临安横畈工业功能区桑园路18号</td></tr>
     <tr><th>电话</th><td></td><th>电话</th><td colspan="5">0571-88520091</td></tr>
@@ -2689,22 +2697,32 @@ def _printable_quote_html(window, font_step=0) -> str:
 
 
 def _print_quote(window):
+    from quote_order_nature import require_selected
+    if not require_selected(window): return
+    _commit_quote_text_editor(window)
     if getattr(window,'_name_scope_foreign',False):
         QMessageBox.information(window,'仅可查看','他人的报价仅可查看，不能打印或导出。');return
     if not getattr(window, "draft_items", []):
         QMessageBox.warning(window, "报价清单为空", "请先将至少一个柜型加入报价清单。")
         return
-    printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-    dialog = QPrintDialog(printer, window)
-    dialog.setWindowTitle("打印报价单")
-    if dialog.exec() != QDialog.DialogCode.Accepted:
-        return
-    document = QTextDocument(window)
-    document.setHtml(_printable_quote_html(window))
-    document.print_(printer)
-    callback = getattr(window, "quote_scheme_print_succeeded", None)
-    if callable(callback):
-        callback()
+    prepare = getattr(window, 'quote_scheme_prepare_print', None)
+    if callable(prepare) and not prepare(): return
+    try:
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dialog = QPrintDialog(printer, window)
+        dialog.setWindowTitle("打印报价单")
+        if dialog.exec() != QDialog.DialogCode.Accepted: return
+        document = QTextDocument(window)
+        document.setHtml(_printable_quote_html(window))
+        document.print_(printer)
+        if printer.printerState() == printer.PrinterState.Error:
+            QMessageBox.warning(window, '打印失败', '打印未完成，报价保持原状态，请检查打印机后重试。')
+            return
+        callback = getattr(window, "quote_scheme_print_succeeded", None)
+        if callable(callback): callback()
+    finally:
+        release = getattr(window, 'quote_scheme_export_finished', None)
+        if callable(release): release()
 
 
 def _quote_unit_price_changed(window, row, column):
@@ -2781,16 +2799,73 @@ def _quote_cell_changed(window, row, column):
         _quote_name_changed(window, row, column)
     elif column == 5:
         _quote_unit_price_changed(window, row, column)
+    elif column == 7:
+        _quote_remark_changed(window, row, column)
+
+
+def _quote_remark_changed(window, row, column):
+    if getattr(window, "_scheme2_refreshing_quote", False) or column != 7 or row < 10:
+        return
+    if (getattr(window, "_quote_scheme_read_only", False) or getattr(window, "_qm_view_history", False)
+            or getattr(window, "_name_scope_foreign", False) or getattr(window, "_scheme2_document_busy", False)):
+        _refresh_quote_page(window)
+        return
+    items = getattr(window, "draft_items", [])
+    if not 0 <= row-10 < len(items):
+        return
+    cell = window.scheme2_quote_preview.item(row, column)
+    item = items[row-10]
+    item["quote_remark_manual"] = True
+    _synchronize_export_remark(item, cell.text() if cell is not None else "")
+    window.refresh_summary()
+    _schedule_order_workspace_save(window)
+
+
+def _quote_remark_readonly(window):
+    return (getattr(window, "_quote_scheme_read_only", False) or getattr(window, "_qm_view_history", False)
+            or getattr(window, "_name_scope_foreign", False))
+
+
+def _commit_quote_text_editor(window):
+    focus = getattr(window, "focusWidget", lambda: None)()
+    if isinstance(focus, (QLineEdit, QPlainTextEdit)):
+        focus.clearFocus()
+
+
+class _QuoteRemarkDelegate(QStyledItemDelegate):
+    """Edit the complete remark in place, including multiline text and blanks."""
+    def createEditor(self, parent, option, index):
+        editor = QPlainTextEdit(parent); editor.setObjectName("scheme2QuoteRemarkEditor")
+        editor.setTabChangesFocus(True)
+        editor.setToolTip("整段备注可人工修改；Ctrl+Enter 保存，Esc 取消")
+        return editor
+
+    def setEditorData(self, editor, index):
+        editor.setPlainText(str(index.data(Qt.ItemDataRole.EditRole) or ""))
+        editor.selectAll()
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.toPlainText(), Qt.ItemDataRole.EditRole)
+
+    def eventFilter(self, editor, event):
+        if event.type() == QEvent.Type.ShortcutOverride and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            event.accept(); return True
+        if event.type() == QEvent.Type.KeyPress and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self.commitData.emit(editor); self.closeEditor.emit(editor)
+                return True
+            return False
+        return super().eventFilter(editor, event)
 
 
 def _quote_export_items_snapshot(window, items=None):
     """Freeze the exact customer-visible quote rows at export-click time."""
 
-    focus = getattr(window, "focusWidget", lambda: None)()
-    if isinstance(focus, QLineEdit):
-        focus.clearFocus()  # Commit a live table editor before freezing the draft.
+    _commit_quote_text_editor(window)
     exported = deepcopy(getattr(window, "draft_items", []) if items is None else items)
+    from quote_order_nature import current as current_nature
     for number, item in enumerate(exported, 1):
+        item['quote_order_nature'] = current_nature(window)
         item["pricing_basis"] = PRICING_BASIS
         attachment_rows = [
             row for row in item.get("attachments", []) if isinstance(row, dict)
@@ -2824,7 +2899,7 @@ def _quote_export_items_snapshot(window, items=None):
             "total": _number(values[16]),
             "attachment_face_price": values[23],
             "material_difference": values[22],
-            "remark": str(item.get("final_remark") or _scheme2_quote_remark(item)),
+            "remark": _quote_item_remark(item, preserve_existing=_quote_remark_readonly(window)),
             # Document creation consumes these completed popup rows. It must
             # not reprice them from a later catalogue or an older quote line.
             "attachment_source": "popup_v1",
@@ -2903,52 +2978,59 @@ def _refresh_quote_page(window):
                 preview.setSpan(row, 3, 1, 5)
             if getattr(window, 'quote_management', None) is not None:
                 preview.clearSpans()
-                for row in (0,1):
+                for row in (0,1,2):
                     for column in range(8): preview.item(row,column).setText('')
-                preview.setSpan(0,0,2,3); preview.item(0,0).setText('报价单')
+                preview.setSpan(0,0,3,3); preview.item(0,0).setText('报价单')
                 preview.item(0,0).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 title_font = QFont(preview.font()); title_font.setPixelSize(23); title_font.setBold(True)
                 preview.item(0,0).setFont(title_font)
-                for row,label,value in ((0,'编号',order_number),(1,'日期',quote_date)):
+                from quote_order_nature import label as nature_label
+                for row,label,value in ((0,'编号',order_number),(1,'日期',quote_date),(2,'订单性质',nature_label(window))):
                     preview.item(row,3).setText(label); preview.item(row,4).setText(value); preview.setSpan(row,4,1,4)
                 for row,left_label,left_value,right_label,right_value in meta:
                     if row < 3: continue
                     for column in range(8): preview.item(row,column).setText('')
                     preview.item(row,0).setText(left_label); preview.item(row,1).setText(left_value); preview.setSpan(row,1,1,3)
                     preview.item(row,4).setText(right_label); preview.item(row,5).setText(right_value); preview.setSpan(row,5,1,3)
-                for row in (2,8): preview.setSpan(row,0,1,8)
+                preview.setSpan(8,0,1,8)
             headings = ("序号", "名称", "规格型号(W*D*H)", "数量", "单位", "折后单价", "折后总价", "备注")
             for column, heading in enumerate(headings):
                 preview.item(9, column).setText(heading)
                 if getattr(window, 'quote_management', None) is not None:
                     preview.item(9,column).setBackground(QColor('#f3f6fa'))
-                    preview.item(9,column).setForeground(QColor('#2463bd' if column in (1,5) else '#20344e'))
+                    preview.item(9,column).setForeground(QColor('#2463bd' if column in (1,5,7) else '#20344e'))
             total = 0.0
             for index, item in enumerate(items):
                 row = 10 + index
                 values = _row_values(item)
                 amount = _number(values[16]); total += amount
-                remark = str(item.get("final_remark") or _scheme2_quote_remark(item))
+                remark = _quote_item_remark(item, preserve_existing=_quote_remark_readonly(window))
                 data = (index + 1, values[1], values[3], values[11], "台", _money(values[15]), _money(amount), remark)
                 for column, value in enumerate(data):
                     preview.item(row, column).setText(str(value))
+                if _quote_remark_readonly(window):
+                    preview.item(row, 7).setToolTip("历史版本或他人报价仅可查看；本人正式报价请按现有流程创建修订后修改备注")
                 if not getattr(window, "_quote_scheme_read_only", False):
                     preview.item(row, 1).setFlags(preview.item(row, 1).flags() | Qt.ItemFlag.ItemIsEditable)
                     preview.item(row, 5).setFlags(preview.item(row, 5).flags() | Qt.ItemFlag.ItemIsEditable)
+                    if not getattr(window, "_qm_view_history", False) and not getattr(window, "_name_scope_foreign", False) and not getattr(window, "_scheme2_document_busy", False):
+                        preview.item(row, 7).setFlags(preview.item(row, 7).flags() | Qt.ItemFlag.ItemIsEditable)
+                        preview.item(row, 7).setToolTip("双击编辑整段备注，Ctrl+Enter 保存；人工修改后以手工内容为准")
             total_row = 10 + len(items)
             preview.item(total_row, 1).setText("合计")
             preview.item(total_row, 6).setText(_money(total))
             preview.resizeRowsToContents()
             if getattr(window, 'quote_management', None) is not None:
-                for row in (0,1): preview.setRowHeight(row,36)
-                for row in (2,8): preview.setRowHeight(row,20)
+                for row in (0,1,2): preview.setRowHeight(row,32)
+                preview.setRowHeight(8,20)
                 for row in range(3,8): preview.setRowHeight(row,32)
                 preview.setRowHeight(9,36)
             for row in range(10, 10 + len(items)):
                 preview.setRowHeight(row, max(72, preview.rowHeight(row)))
         finally:
             window._scheme2_refreshing_quote = False
-    enabled = bool(getattr(window, "draft_items", [])) and not getattr(window, "_scheme2_document_busy", False)
+    from quote_order_nature import current as current_nature
+    enabled = bool(getattr(window, "draft_items", [])) and not getattr(window, "_scheme2_document_busy", False) and current_nature(window) != 'UNCLASSIFIED'
     for button in (
         getattr(window, "scheme2_quote_print", None),
         getattr(window, "scheme2_quote_export", None),
@@ -2986,6 +3068,7 @@ def _build_quote_page(window):
     preview.setAlternatingRowColors(False)
     preview.setWordWrap(True)
     preview.setTextElideMode(Qt.TextElideMode.ElideNone)
+    preview.setItemDelegateForColumn(7, _QuoteRemarkDelegate(preview))
     preview.setColumnWidth(0, 58); preview.setColumnWidth(1, 145); preview.setColumnWidth(2, 180)
     preview.setColumnWidth(3, 72); preview.setColumnWidth(4, 58); preview.setColumnWidth(5, 105)
     preview.setColumnWidth(6, 115); preview.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
@@ -4622,6 +4705,7 @@ def _json_order_value(value):
 
 
 def _order_workspace_payload(window):
+    from quote_order_nature import current as current_order_nature
     _save_current_scheme2_page(window)
     detail_item = getattr(window, "_scheme2_detail_item", None)
     detail_index = next((
@@ -4640,6 +4724,7 @@ def _order_workspace_payload(window):
         "draft_items": deepcopy((getattr(getattr(window, 'quote_management', None), 'latest_workspace', None) or {}).get('items', getattr(window, "draft_items", []))),
         "company": (getattr(getattr(window, 'quote_management', None), 'latest_workspace', None) or {}).get('company', window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else ""),
         "quote_management": deepcopy(getattr(window, '_qm_state', {})),
+        "order_nature": (getattr(getattr(window, 'quote_management', None), 'latest_workspace', None) or {}).get('order_nature', current_order_nature(window)),
         "active_route": int(window.stack.currentIndex()),
         "detail_item_index": detail_index,
     })
@@ -7059,6 +7144,8 @@ def _pause_quote_calculation(window):
 
 def _reset_scheme2_workspace(window):
     """A fresh scheme is not the per-cabinet reset, which retains selections."""
+    window._quote_order_nature = 'UNCLASSIFIED'
+    window._quote_order_nature_locked = False
     window._scheme2_workspace_epoch = getattr(window, "_scheme2_workspace_epoch", 0) + 1
     loading = getattr(window, "_scheme2_loading_order", False)
     window._scheme2_loading_order = True
@@ -7374,7 +7461,7 @@ def _restore_add_action(window):
         add_button.setEnabled(True)
 
 
-def _scheme2_quote_remark(item):
+def _scheme2_quote_remark(item, *, legacy=False):
     """Build the formal quote remark only from confirmed program fields."""
 
     product = str(
@@ -7395,12 +7482,19 @@ def _scheme2_quote_remark(item):
     color = str(item.get("display_color") or "").strip()
     attachment_names = []
     for attachment in item.get("attachments") or []:
+        if not isinstance(attachment, dict):
+            continue
         name = str(attachment.get("item_name") or attachment.get("name") or attachment.get("model_code") or "").strip()
         category = str(attachment.get("category_level1") or "").strip()
-        if "照明灯/行程开关" in (name, category):
+        if legacy and "照明灯/行程开关" in (name, category):
             model = str(attachment.get("model_code") or attachment.get("specification") or "").strip()
             if model and model != name:
                 name = f"{name}（{model}）"
+        elif not legacy:
+            name, _spec, _light = _attachment_popup_text(attachment)
+            # Remarks list names only: omit the child label, model, size and
+            # quantity, while retaining popup order and quote-local names.
+            name = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", name).strip()
         if name and name not in attachment_names:
             attachment_names.append(name)
     attachments = "、".join(attachment_names) or "无附件"
@@ -7416,6 +7510,22 @@ def _synchronize_export_remark(item, remark):
     item["notes"] = value
     item["source_ocr_remark"] = value
     item["source_reviewed_remark"] = value
+    if isinstance(item.get("quote_display"), dict):
+        item["quote_display"]["remark"] = value
+
+
+def _quote_item_remark(item, *, preserve_existing=False):
+    """Default to current popup names; a complete manual override includes blanks."""
+    if preserve_existing and "final_remark" in item:
+        return str(item.get("final_remark") or "")
+    if "quote_remark_manual" not in item:
+        prior = str(item.get("final_remark") or "").strip()
+        # Recognize the previous generated wording without erasing unrelated
+        # remarks already saved in old quotation snapshots.
+        item["quote_remark_manual"] = bool(prior and prior != _scheme2_quote_remark(item, legacy=True))
+    value = str(item.get("final_remark") or "") if item["quote_remark_manual"] else _scheme2_quote_remark(item)
+    _synchronize_export_remark(item, value)
+    return str(item["final_remark"])
 
 
 def _finish_add(window):
@@ -7443,7 +7553,10 @@ def _finish_add(window):
     item["scheme2_selected_material"] = window.material_combo.currentText().strip()
     item["scheme2_selected_surface"] = window.coating_combo.currentText().strip()
     item["display_color"] = window.scheme2_color_combo.currentText()
-    _synchronize_export_remark(item, _scheme2_quote_remark(item))
+    if editing is not None:
+        _quote_item_remark(editing)
+    item["quote_remark_manual"] = bool(editing and editing.get("quote_remark_manual"))
+    _synchronize_export_remark(item, editing.get("final_remark", "") if item["quote_remark_manual"] else _scheme2_quote_remark(item))
     pages = getattr(window, "_scheme2_drawing_pages", [])
     page_index = int(getattr(window, "_scheme2_drawing_page_index", -1))
     if 0 <= page_index < len(pages):
@@ -7620,7 +7733,11 @@ def _apply_proportional_scale(window):
         company.setFixedHeight(max(1, round(COMPANY_COMBO_HEIGHT * scale)))
     quote_company_field = getattr(window, "scheme2_quote_company_field", None)
     if quote_company_field is not None:
-        quote_company_field.setFixedWidth(max(1, round(QUOTE_COMPANY_FIELD_WIDTH * scale)))
+        if getattr(window, 'quote_management', None) is not None:
+            quote_company_field.setMinimumWidth(0); quote_company_field.setMaximumWidth(max(1, round(QUOTE_COMPANY_FIELD_WIDTH * scale)))
+            quote_company_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        else:
+            quote_company_field.setFixedWidth(max(1, round(QUOTE_COMPANY_FIELD_WIDTH * scale)))
     cost_table = getattr(window, "summary_table", None)
     if isinstance(cost_table, QTableWidget):
         cost_table.horizontalHeader().setMinimumSectionSize(max(1, round(66 * scale)))

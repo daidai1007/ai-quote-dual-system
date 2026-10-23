@@ -15,7 +15,7 @@ test('quotation filters combine, preserve ownership and include whole Shanghai d
   const service=createQuoteSchemeService({runPsql:async sql=>pg.query("SET TIME ZONE 'UTC';\n"+sql),sqlUnicodeText:q,sqlNumber:value=>String(Number(value))});
   const owner={userId:'filters-owner',role:'USER'},other={userId:'filters-other',role:'USER'};
   const make=async({person=owner,name='测试创建人',company='筛选客户',product='JQ',time='2026-10-21T16:00:00Z',quoted=true}={})=>{
-   const snapshot={company,scheme_summary:{company,product_summary:product,quoted_amount:100},draft_items:[]};
+   const snapshot={document:{order_nature:'EXTERNAL'},company,scheme_summary:{company,product_summary:product,quoted_amount:100},draft_items:[]};
    const created=await service.create(person,{operator_name:name,snapshot});
    if(quoted)await service.exportResult(person,created.scheme_no,{operator_name:name,kind:'XLSX',succeeded:true,expected_version:1,snapshot});
    pg.query(`UPDATE calc.quote_scheme SET updated_at=${q(time)}::timestamptz WHERE scheme_no=${q(created.scheme_no)};`);

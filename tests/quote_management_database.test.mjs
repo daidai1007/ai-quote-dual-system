@@ -16,10 +16,10 @@ test('historical quote export preserves latest draft, lock and frozen document',
     const other={userId:'qm-local-other',displayName:'其他人员',role:'USER'};
     const oldItems=[{name:'历史测试柜',quantity:3,quoted_total:3204}];
     const newItems=[{name:'最新测试柜',quantity:3,quoted_total:3300.03}];
-    const snapshot={company:'新客户',draft_items:newItems,
+    const snapshot={company:'新客户',draft_items:newItems,document:{order_nature:'EXTERNAL'},
       scheme_summary:{company:'新客户',product_summary:'JQ',quoted_amount:3300.03},
       quote_management:{schema:1,current:2,versions:[
-        {version:1,company:'原客户',items:oldItems}, {version:2,company:'新客户',items:newItems}]}};
+        {version:1,company:'原客户',items:oldItems,order_nature:'EXTERNAL'}, {version:2,company:'新客户',items:newItems,order_nature:'EXTERNAL'}]}};
     const created=await service.create(owner,{snapshot,operator_name:'本机测试人员'});
     const no=created.scheme_no, before=await service.get(owner,no);
     assert.equal(before.quote_management_historical_export,true);
@@ -29,7 +29,7 @@ test('historical quote export preserves latest draft, lock and frozen document',
     assert.equal((await service.list(owner,{search:'JQ'})).total,1);
     const payload={kind:'XLSX',succeeded:true,expected_version:1,historical_quote_version:1,
       operator_name:'本机测试人员',snapshot:{company:'原客户',draft_items:oldItems,
-        document:{export_registration_id:'local-history-only'},
+        document:{export_registration_id:'local-history-only',order_nature:'EXTERNAL'},
         scheme_summary:{company:'原客户',product_summary:'JQ',quoted_amount:3204}}};
     await t.test('history export logs success without finalizing latest',async()=>{
       const result=await service.exportResult(owner,no,payload);

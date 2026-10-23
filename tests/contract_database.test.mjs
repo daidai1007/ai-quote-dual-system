@@ -18,7 +18,7 @@ test('contract lifecycle on disposable loopback PostgreSQL; immutable files, own
   assert.equal((await service.bootstrap(owner)).ready,false);
   const migration=await readFile(new URL('../database/migrations/contract_templates_v1.sql',import.meta.url),'utf8');pg.query(migration);pg.query(migration);
   const quotes=createQuoteSchemeService({runPsql:async s=>pg.query(s),sqlUnicodeText:q,sqlNumber:v=>String(Number(v))});
-  const snapshot={analysis_customer:{customer_code:'LOCAL-A'},scheme_summary:{company:'本机测试客户 A',quoted_amount:650.3},draft_items:sampleQuote.items.map(r=>({name:r.name,quantity:r.quantity,attachments:[],formula:{material_cost:r.unit_price,auxiliary_cost:0,labor_cost:0,spray_cost:0,management_fee:0},formula_discount:1,quote_display:{...r}}))};
+  const snapshot={document:{order_nature:'EXTERNAL'},analysis_customer:{customer_code:'LOCAL-A'},scheme_summary:{company:'本机测试客户 A',quoted_amount:650.3},draft_items:sampleQuote.items.map(r=>({name:r.name,quantity:r.quantity,attachments:[],formula:{material_cost:r.unit_price,auxiliary_cost:0,labor_cost:0,spray_cost:0,management_fee:0},formula_discount:1,quote_display:{...r}}))};
   const created=await quotes.create(owner,{snapshot,operator_name:owner.displayName});
   await quotes.exportResult(owner,created.scheme_no,{expected_version:1,kind:'XLSX',succeeded:true,snapshot,operator_name:owner.displayName});
   const source={scheme_no:created.scheme_no,version_no:1};

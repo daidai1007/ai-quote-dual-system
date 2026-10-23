@@ -14,14 +14,12 @@ const pg=await startLocalPostgres();let child;
 try{
  pg.query("CREATE SCHEMA calc;CREATE TABLE calc.dual_quote_result(quote_id text);CREATE TABLE calc.ordering_company(company_code text,company_name text);INSERT INTO calc.ordering_company VALUES('LOCAL-A','本机测试客户 A'),('LOCAL-CUSTOMER','本机回归客户');");
  for(const migration of ['quote_scheme_center_v1.sql','quote_analysis_v1.sql','quote_name_scope_v1.sql','contract_templates_v1.sql']){
-  // Analytics migration name differs between baselines; optional and unused here.
-  if(migration==='quote_analysis_v1.sql')continue;
   pg.query(await fs.readFile(path.join(root,'database/migrations',migration),'utf8'));
  }
  const q=v=>v==null?'NULL':`'${String(v).replaceAll("'","''")}'`;
  const quotes=createQuoteSchemeService({runPsql:async s=>pg.query(s),sqlUnicodeText:q,sqlNumber:v=>String(Number(v))});
  const owner={userId:'name-user:'+createHash('sha256').update('本机人员甲').digest('hex'),displayName:'本机人员甲',role:'USER',identityMode:'NAME_ONLY',scope:'OWN',can_view_all_quotes:false};
- const snapshot={company:'本机测试客户 A',analysis_customer:{customer_code:'LOCAL-A'},scheme_summary:{company:'本机测试客户 A',quoted_amount:650.3},draft_items:sampleQuote.items.map(r=>({name:r.name,quantity:r.quantity,attachments:[],formula:{material_cost:r.unit_price,auxiliary_cost:0,labor_cost:0,spray_cost:0,management_fee:0},formula_discount:1,quote_display:{...r}}))};
+ const snapshot={document:{order_nature:'EXTERNAL'},company:'本机测试客户 A',analysis_customer:{customer_code:'LOCAL-A'},scheme_summary:{company:'本机测试客户 A',quoted_amount:650.3},draft_items:sampleQuote.items.map(r=>({name:r.name,quantity:r.quantity,attachments:[],formula:{material_cost:r.unit_price,auxiliary_cost:0,labor_cost:0,spray_cost:0,management_fee:0},formula_discount:1,quote_display:{...r}}))};
  const created=await quotes.create(owner,{snapshot,operator_name:owner.displayName});
  await quotes.exportResult(owner,created.scheme_no,{expected_version:1,kind:'XLSX',succeeded:true,snapshot,operator_name:owner.displayName});
  const listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));

@@ -10,7 +10,7 @@ const literal=value=>value==null?'NULL':`'${String(value).replaceAll("'","''")}'
 const owner={userId:'local-owner',displayName:'测试人员',departmentId:'local-dept',role:'USER'};
 const other={userId:'local-other',displayName:'其他人员',departmentId:'other-dept',role:'USER'};
 const admin={userId:'local-admin',displayName:'测试管理员',departmentId:null,role:'ADMIN'};
-const snapshot={company:'本机测试公司',draft_items:[{product_code:'JE_SINGLE',quantity:2,quoted_total:120}],
+const snapshot={document:{order_nature:'EXTERNAL'},company:'本机测试公司',draft_items:[{product_code:'JE_SINGLE',quantity:2,quoted_total:120}],
   scheme_summary:{company:'本机测试公司',product_summary:'JE',quoted_amount:120}};
 
 test('quote-scheme transitions execute real SQL and retain all protection rules', {timeout:180000}, async t=>{
@@ -44,7 +44,7 @@ test('quote-scheme transitions execute real SQL and retain all protection rules'
     await t.test('formal export acknowledges QUOTED and preserves the unique receipt for timeout recovery',async()=>{
       const initial=await create();
       const no=initial.scheme_no;
-      const receipt={...structuredClone(snapshot),document:{scheme_no:no,version_no:1,
+      const receipt={...structuredClone(snapshot),document:{order_nature:'EXTERNAL',scheme_no:no,version_no:1,
         quote_date:'2026-10-19',client_version:'offline-test',export_registration_id:'local-export-receipt-1'}};
       const payload={kind:'XLSX',succeeded:true,expected_version:1,operator_name:'实际导出人员',snapshot:receipt};
       await assert.rejects(()=>service.exportResult(owner,no,{...payload,operator_name:''}),e=>e.statusCode===400);
@@ -81,7 +81,7 @@ test('quote-scheme transitions execute real SQL and retain all protection rules'
       const no=initial.scheme_no;
       assert.equal(initial.version_no,2);
       const receipt={...structuredClone(snapshot),draft_items:[{product_code:'JP',quantity:3}],
-        document:{scheme_no:no,version_no:2,export_registration_id:'local-revision-receipt'}};
+        document:{order_nature:'EXTERNAL',scheme_no:no,version_no:2,export_registration_id:'local-revision-receipt'}};
       const result=await service.exportResult(owner,no,{kind:'XLSX',succeeded:true,
         expected_version:initial.lock_version,operator_name:'修订导出人员',snapshot:receipt});
       assert.equal(result.status,'QUOTED');

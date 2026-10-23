@@ -96,8 +96,9 @@ class GlassReprice(unittest.TestCase):
             while not editor.table.cellWidget(index, editor.COL_AMOUNT).isEnabled() and time.monotonic() < deadline:
                 app.processEvents()
                 time.sleep(.001)
-            self.assertEqual(editor.table.item(index, editor.COL_FORMULA_AMOUNT).text(), f"{height*width/1e6*55*3:.2f}")
-            self.assertEqual(editor.table.cellWidget(index, editor.COL_AMOUNT).value(), 300)
+            # Popup amounts are per cabinet set; order quantity is applied later.
+            self.assertEqual(editor.table.item(index, editor.COL_FORMULA_AMOUNT).text(), f"{height*width/1e6*55:.2f}")
+            self.assertEqual(editor.table.cellWidget(index, editor.COL_AMOUNT).value(), 100)
             self.assertEqual(self.warnings, [])
             self.assertEqual(editor.table.item(index, editor.COL_SPECIFICATION).text(), f"宽 {width} × 高 {height} mm")
             self.assertFalse(editor.table.cellWidget(index, editor.COL_AMOUNT).property("pending"))

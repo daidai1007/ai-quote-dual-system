@@ -21,12 +21,12 @@ from PySide6.QtWidgets import (
 from quote_scheme_widgets import (
     DateFilter, METRICS, PAGE_SIZES, PageJump, QueryLineEdit, RowActions,
     SchemeComboBox, SchemePage, SchemeTable, ServerNotice, StatusBadgeDelegate,
-    filter_field, page_style_sheet,
+    filter_field, page_style_sheet, apply_light_action,
 )
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.22.01"
+CLIENT_VERSION = "2026.10.23.02"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
@@ -125,11 +125,13 @@ def _headers(window):
 
 
 def _snapshot(window):
+    from quote_order_nature import current as current_order_nature
     from scheme2_ui import _order_workspace_payload, _row_values
     manager = getattr(window, 'quote_management', None)
     if manager is not None:
         manager.sync()
     payload = _order_workspace_payload(window)
+    payload['order_nature'] = current_order_nature(window)
     if manager is not None and manager.history_version is not None:
         payload['draft_items'] = deepcopy(window.draft_items)
         payload['company'] = window.scheme2_company.currentText()
@@ -163,6 +165,7 @@ def _snapshot(window):
         "quoted_amount": round(quoted_amount, 2),
     }
     payload["document"] = {
+        "order_nature": current_order_nature(window),
         "scheme_no": str(getattr(window, "_quote_scheme_id", "") or ""),
         "version_no": int(getattr(window, "_quote_scheme_business_version", 1) or 1),
         "quote_date": quote_date,
@@ -441,6 +444,7 @@ def _build_page(window):
     actions.setSpacing(METRICS["action_gap"])
     for button in (query, reset, create):
         button.setObjectName("scheme2PrimaryAction")
+        apply_light_action(button, _FilterActionButton.LABELS)
         actions.addWidget(button, 1)
     grid.addLayout(actions, 1, 3, Qt.AlignmentFlag.AlignBottom)
     for column, stretch in enumerate((10, 10, 16, 12)):
@@ -810,19 +814,25 @@ def _apply_read_only(window, read_only):
 def _apply_opened_scheme(window, result, route=3, after_open=None):
     from scheme2_ui import _apply_order_workspace_payload
     snapshot = deepcopy(result.get("snapshot") or {})
+    # Local workspace hints cannot override the canonical API permission.
+    # Direct local workspace restoration retains its own read-only guards.
+    snapshot.pop('_name_workspace_scope', None)
     window._quote_scheme_loading = True
     try:
         window._quote_scheme_id = str(result.get("scheme_no") or "")
         window._quote_scheme_version = int(result.get("lock_version") or 1)
         window._quote_scheme_business_version = int(result.get("version_no") or 1)
         window._quote_scheme_status = str(result.get("status") or "DRAFT")
-        window._name_scope_foreign = result.get('can_write') is False
+        from name_login import user_id
+        window._name_scope_foreign = (result.get('can_write') is not True if user_id()
+                                      else result.get('can_write') is False)
         document = snapshot.get("document") if isinstance(snapshot.get("document"), dict) else {}
         window._quote_scheme_quote_date = str(document.get("quote_date") or str(result.get("created_at") or "")[:10] or date.today().isoformat())
         _apply_order_workspace_payload(window, snapshot, f"已从服务器恢复：{window._quote_scheme_id}")
         manager = getattr(window, 'quote_management', None)
         if manager is not None:
             manager.load_state(snapshot)
+            window._quote_order_nature_locked = result.get('order_nature_locked') is True
             window._qm_historical_export_supported = result.get('quote_management_historical_export') is True
             if route == 2:
                 window._qm_entry_pending = True
@@ -1038,7 +1048,11 @@ def _registration_guard(window):
     return True
 
 
-def _prepare_export(window):
+def _prepare_export(window, kind="XLSX"):
+    from quote_order_nature import require_selected
+    if not require_selected(window): return False
+    from scheme2_ui import _commit_quote_text_editor
+    _commit_quote_text_editor(window)
     if getattr(window,'_name_scope_foreign',False):
         QMessageBox.information(window,'仅可查看','他人的报价仅可查看，不能打印、导出或登记。');return False
     if window._quote_scheme_pending_export:
@@ -1069,7 +1083,7 @@ def _prepare_export(window):
         scheme_no=window._quote_scheme_id, status=window._quote_scheme_status,
         sequence=window._quote_scheme_dirty_seq, read_only=window._quote_scheme_read_only,
         print_enabled=window.scheme2_quote_print.isEnabled(),
-        payload=dict(kind="XLSX", succeeded=True, expected_version=window._quote_scheme_version,
+        payload=dict(kind=kind, succeeded=True, expected_version=window._quote_scheme_version,
                      operator_name=operator, snapshot=snapshot, detail={"client_version": CLIENT_VERSION}),
     )
     if historical is not None:
@@ -1096,8 +1110,9 @@ def _registration_notice(window):
     receipt = getattr(window, "_quote_scheme_pending_export", None)
     if receipt is None: return
     label = window.quote_scheme_operation_status
-    label.setText("文件已导出，正在登记报价方案…" if window._quote_scheme_registration_busy else
-                  "文件已导出，方案登记失败。请重试方案登记，无需重新导出文件。")
+    printed = receipt['payload']['kind'] == 'PRINT'
+    label.setText(('已打印，正在登记报价方案…' if printed else "文件已导出，正在登记报价方案…") if window._quote_scheme_registration_busy else
+                  ('已打印，方案登记失败。请重试登记，无需重复打印。' if printed else "文件已导出，方案登记失败。请重试方案登记，无需重新导出文件。"))
     label.setStyleSheet(window.quote_scheme_save_status.styleSheet())
     label.setToolTip(receipt.get("error") or f"文件已导出：{receipt['path']}")
     label.show()
@@ -1107,9 +1122,10 @@ def _registration_failed(window, receipt, message):
     if window._quote_scheme_pending_export is not receipt: return
     window._quote_scheme_registration_busy = False
     window.quote_scheme_registration_retry.setEnabled(True)
-    detail = f"文件已导出：{receipt['path']}\n方案登记失败：{message}\n请重试登记，无需重新导出文件。"
+    printed = receipt['payload']['kind'] == 'PRINT'
+    detail = f'已打印\n方案登记失败：{message}\n请重试登记，无需重复打印。' if printed else f"文件已导出：{receipt['path']}\n方案登记失败：{message}\n请重试登记，无需重新导出文件。"
     receipt["error"] = detail
-    _set_state(window, "文件已导出，方案登记失败。请重试登记，无需重新导出文件。", "error")
+    _set_state(window, '已打印，方案登记失败。请重试登记，无需重复打印。' if printed else "文件已导出，方案登记失败。请重试登记，无需重新导出文件。", "error")
     _registration_notice(window)
     window._scheme2_document_controller.registration_failed(detail)
     _apply_read_only(window, True)
@@ -1176,13 +1192,18 @@ def _file_exported(window, exported_path):
     receipt["path"] = str(exported_path)
     window._quote_scheme_pending_export = receipt
     window.pending_export_path = None
-    window.set_export_busy(False, "文件已导出，正在登记报价方案…")
+    printed = receipt['payload']['kind'] == 'PRINT'
+    window.set_export_busy(False, "已打印，正在登记报价方案…" if printed else "文件已导出，正在登记报价方案…")
     window.quote_scheme_registration_retry.show()
-    window.quote_scheme_registration_retry.setToolTip(f"文件已导出：{exported_path}；重试不会重新生成文件。")
+    window.quote_scheme_registration_retry.setToolTip('已打印；重试仅登记结果，不会重复打印。' if printed else f"文件已导出：{exported_path}；重试不会重新生成文件。")
     _register_export(window, receipt)
 
 
 def _record_export(window, succeeded, kind="XLSX"):
+    context = window._quote_scheme_export_context
+    if succeeded and kind == 'PRINT' and context is not None and context['payload']['kind'] == 'PRINT':
+        _file_exported(window, '')
+        return
     manager = getattr(window, 'quote_management', None)
     if manager is not None and manager.history_version is not None:
         return  # A historical print cannot finalize the latest draft.
@@ -1225,6 +1246,8 @@ def _export_recorded(window, result, receipt=None):
         window._scheme2_document_controller.registration_completed(STATUS_TEXT[expected_status])
         window.scheme2_quote_print.setEnabled(receipt["print_enabled"])
     window._quote_scheme_status = str(result.get("status") or window._quote_scheme_status)
+    if receipt is not None and not receipt.get('historical'):
+        window._quote_order_nature_locked = True
     window._quote_scheme_version = int(result.get("lock_version") or window._quote_scheme_version)
     _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID"))
     manager = getattr(window, 'quote_management', None)
@@ -1236,7 +1259,7 @@ def _export_recorded(window, result, receipt=None):
         if manager.history_version is not None:
             _apply_read_only(window, True)
         manager.refresh()
-    operation = "文件已导出，方案已登记" if receipt is not None else "打印结果已登记"
+    operation = "文件已导出，方案已登记" if receipt is not None and receipt['payload']['kind'] != 'PRINT' else "打印结果已登记"
     _set_state(window, f"{window._quote_scheme_id} · {operation}（{STATUS_TEXT.get(window._quote_scheme_status, window._quote_scheme_status)}）", "ok")
     if window._quote_scheme_list_worker is not None:
         window._quote_scheme_reload_after_registration = True
@@ -1267,6 +1290,7 @@ def install_quote_scheme_center(namespace):
         window._quote_scheme_registration_busy = False
         window._quote_scheme_reload_after_registration = False
         window.quote_scheme_prepare_export = lambda: _prepare_export(window)
+        window.quote_scheme_prepare_print = lambda: _prepare_export(window, 'PRINT')
         window.quote_scheme_export_finished = lambda: _release_export(window)
         window._quote_scheme_page = 1; window._quote_scheme_read_only = False
         window._quote_scheme_save_timer = QTimer(window); window._quote_scheme_save_timer.setSingleShot(True)

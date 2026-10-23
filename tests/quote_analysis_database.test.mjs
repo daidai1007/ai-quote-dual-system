@@ -16,7 +16,7 @@ test('real PostgreSQL analytics, permissions, frozen amounts, outcome audit and 
     const deps={runPsql:async sql=>pg.query(sql),sqlUnicodeText:q,sqlNumber:v=>String(Number(v))};
     const schemes=createQuoteSchemeService(deps),analysis=createQuoteAnalysisService(deps);
     const snapshot={company:'本机示例客户 A',scheme_summary:{company:'本机示例客户 A',product_summary:'JP',quoted_amount:200.20},
-      document:{quote_date:'2026-10-21'},analysis_customer:{customer_code:'customer-a'},draft_items:[{product_code:'JP',quantity:2,
+      document:{quote_date:'2026-10-21',order_nature:'EXTERNAL'},analysis_customer:{customer_code:'customer-a'},draft_items:[{product_code:'JP',quantity:2,
         formula:{material_cost:10,auxiliary_cost:2,labor_cost:3,attachment_fee:4,spray_cost:5,management_fee:1},
         quote_display:{total:200.20,discount:.85,quantity:2}}]};
     const create=async(p=owner,payload=snapshot)=>{

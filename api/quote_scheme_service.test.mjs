@@ -115,7 +115,7 @@ test('formal export freezes a server-canonical document snapshot only on the fir
   const principal={userId:'shared-client:abc',displayName:'共享报价客户端',departmentId:null,role:'ADMIN',identityMode:'SELF_REPORTED'};
   await service.exportResult(principal,'BJ-20261016-000001',{
     operator_name:'王师傅',kind:'XLSX',succeeded:true,expected_version:1,
-    snapshot:{draft_items:[],document:{scheme_no:'伪造编号',version_no:999}},
+    snapshot:{draft_items:[],document:{scheme_no:'伪造编号',version_no:999,order_nature:'EXTERNAL'}},
   });
   const sql=calls.at(-1);
   assert.match(sql,/jsonb_build_object\('scheme_no',scheme_no,'version_no',version_no\)/);

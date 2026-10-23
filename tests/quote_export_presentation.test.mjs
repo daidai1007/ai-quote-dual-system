@@ -285,6 +285,32 @@ test("quick public quote uses the click-time UI snapshot verbatim", async () => 
   }
 });
 
+test("both quotation sheets preserve cleared and multiline manual remarks", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-manual-remarks-"));
+  try {
+    for (const [index, remark] of ["", "人工备注 <A>&B\n第二行说明"].entries()) {
+      const payload = JSON.parse(await fs.readFile(fixturePath, "utf8"));
+      const item = payload.items[0];
+      for (const key of ["final_remark", "notes", "source_ocr_remark", "source_reviewed_remark"]) item[key] = remark;
+      item.quote_remark_manual = true;
+      item.quote_display = {name:"合成备注测试柜",specification:"600*230*400",quantity:1,unit:"台",
+        unit_price:448.44,total:448.44,discount:0.8,remark};
+      payload.items = [item];
+      const inputPath = path.join(tempDir, `input-${index}.json`);
+      const outputPath = path.join(tempDir, `output-${index}.xlsx`);
+      await fs.writeFile(inputPath, JSON.stringify(payload), "utf8");
+      await runExporter(outputPath, inputPath);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(outputPath);
+      for (const sheetName of ["公式法报价单", "快速报价单"]) {
+        assert.equal(String(workbook.getWorksheet(sheetName).getCell("H11").value ?? ""), remark);
+      }
+    }
+  } finally {
+    await fs.rm(tempDir, {recursive:true,force:true});
+  }
+});
+
 test("ganged quick export keeps the click-time attachment amount", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-ganged-ui-snapshot-"));
   const inputPath = path.join(tempDir, "ganged-ui-snapshot.json");

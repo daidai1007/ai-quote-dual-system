@@ -89,7 +89,8 @@ test('configuration product types group old calculation codes without changing f
   assert.equal(jp.costs.material_cost,'5.00');
   assert.equal(jp.discount.sample,2);
   assert.deepEqual(jp.discount.records.map(r=>r.product_code),['JP_SINGLE','JP_DOUBLE']);
-  assert.deepEqual(jp.outcome_records,records,'immutable registration keys are not rekeyed by analysis');
+  assert.deepEqual(jp.outcome_records.map(({order_nature,...row})=>row),records,'immutable registration keys are not rekeyed by analysis');
+  assert.ok(jp.outcome_records.every(row=>row.order_nature==='UNCLASSIFIED'));
   assert.equal(buildAnalysis(input,{product:'JP_SINGLE'}).summary.amount,'33.60');
   const wide=buildAnalysis(input,{product:'JP WIDE'});
   assert.equal(wide.summary.amount,'40.40');

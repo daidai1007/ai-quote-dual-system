@@ -93,11 +93,12 @@ def attachment_unit_price(item, index, value):
     item.pop('cost_detail_rows', None)
 
 
-def make_version(items, company, number, reason='', operator='', quote_date=''):
+def make_version(items, company, number, reason='', operator='', quote_date='', order_nature='UNCLASSIFIED'):
     import scheme2_ui as ui
     frozen = deepcopy(items)
     original_discounts(frozen)
-    return dict(version=number, items=frozen, company=str(company), reason=str(reason),
+    from quote_order_nature import normalize
+    return dict(version=number, items=frozen, company=str(company), reason=str(reason), order_nature=normalize(order_nature),
                 operator=str(operator), quote_date=str(quote_date),
                 updated_at=datetime.now().isoformat(timespec='seconds'),
                 amount=money_sum(ui._row_values(item)[16] for item in frozen), sealed=False)
@@ -115,14 +116,14 @@ def restore_state(value):
     return deepcopy(value)
 
 
-def sync_latest(state, items, company, operator='', quote_date=''):
+def sync_latest(state, items, company, operator='', quote_date='', order_nature='UNCLASSIFIED'):
     if not items:
         return state
     original_discounts(items)
     versions = state.setdefault('versions', [])
     number = len(versions) or 1
     prior = versions[-1] if versions else {}
-    entry = make_version(items, company, number, prior.get('reason', '首次报价'), operator, quote_date)
+    entry = make_version(items, company, number, prior.get('reason', '首次报价'), operator, quote_date, order_nature)
     entry['sealed'] = bool(prior.get('sealed'))
     if prior.get('revision_draft'):
         entry['revision_draft'] = True
@@ -134,12 +135,14 @@ def sync_latest(state, items, company, operator='', quote_date=''):
     return state
 
 
-def append_version(state, items, company, reason, operator='', quote_date=''):
+def append_version(state, items, company, reason, operator='', quote_date='', order_nature=None):
     if not reason.strip():
         raise ValueError('请填写调价原因。')
     if len(state['versions']) >= MAX_VERSIONS:
         raise ValueError('报价版本超过50份，请新建报价方案。')
-    entry = make_version(items, company, len(state['versions']) + 1, reason, operator, quote_date)
+    if order_nature is None:
+        order_nature = (state['versions'][-1] if state['versions'] else {}).get('order_nature')
+    entry = make_version(items, company, len(state['versions']) + 1, reason, operator, quote_date, order_nature)
     state['versions'].append(entry)
     state['current'] = entry['version']
     return entry

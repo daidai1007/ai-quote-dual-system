@@ -31,7 +31,7 @@ from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 import quote_scheme_center as schemes
 from quote_analysis import COLORS, label, table, fill
 from quote_management import PAGE_STYLE, button
-from quote_scheme_widgets import SchemeComboBox, QueryLineEdit
+from quote_scheme_widgets import SchemeComboBox, QueryLineEdit, apply_light_action, light_purpose_style_sheet
 from scheme2_ui import QUOTE_ROUTE
 
 METRICS = dict(margin=20, gap=12, left_min=340, left_max=640, preview_width=760,
@@ -93,9 +93,9 @@ def install_contract_snapshot():
     def snapshot(window):
         payload=prior_snapshot(window)
         return freeze_contract_quote(window,payload) if getattr(window,'_contract_freeze_requested',False) else payload
-    def prepare(window):
+    def prepare(window, kind='XLSX'):
         window._contract_freeze_requested=True
-        try:return prior_prepare(window)
+        try:return prior_prepare(window, kind)
         except (ValueError,KeyError,TypeError) as error:
             schemes._release_export(window)
             if getattr(window,'_quote_scheme_dirty_seq',0)>getattr(window,'_quote_scheme_saved_seq',0):window._quote_scheme_save_timer.start(500)
@@ -129,6 +129,18 @@ def show_message(parent,title,text):
 
 def scrollable(widget):
     result=QScrollArea();result.setWidgetResizable(True);result.setWidget(widget);return result
+
+
+class OptionalFeedback(QLabel):
+    """Collapse empty feedback without suppressing validation or operation results."""
+    def __init__(self, name):
+        super().__init__(); self.setObjectName(name); self.setTextFormat(Qt.TextFormat.PlainText); self.setWordWrap(True); self.hide()
+
+    def setText(self, text):
+        super().setText(text); self.setVisible(bool(text.strip()))
+
+    def clear(self):
+        self.setText('')
 
 
 class ContractTextEdit(QPlainTextEdit):
@@ -295,8 +307,14 @@ class ContractManagement(QWidget):
         self.request_id=str(uuid4()); self.draft=None; self.record=None; self.output=None; self.preview_pages=[]
         self.temp_dirs=[]; self.current_quote=None; self.mapping=None; self.populating=False; self.historical=False
         root=QVBoxLayout(self); root.setContentsMargins(*[METRICS['margin']]*4); root.setSpacing(METRICS['gap'])
-        top=QHBoxLayout(); titles=QVBoxLayout(); titles.addWidget(label('合同管理','scheme2PageTitle')); titles.addWidget(label('使用客户合同模板，填入已确定报价并按原格式输出','contractNote')); top.addLayout(titles,1); top.addWidget(button('重新加载',self.reload)); top.addWidget(button('上传客户模板',self.upload,True)); root.addLayout(top)
-        self.notice=label('选择正式报价与客户模板，生成后核对实际文件。','contractNotice'); root.addWidget(self.notice)
+        top=QHBoxLayout(); top.addWidget(label('合同管理','scheme2PageTitle'),1)
+        self.reload_button=apply_light_action(button('重新加载',self.reload))
+        self.upload_button=apply_light_action(button('上传客户模板',self.upload,True))
+        top.addWidget(self.reload_button); top.addWidget(self.upload_button); root.addLayout(top)
+        self.purpose=label('使用客户合同模板，填入已确定报价并按原格式输出','contractPurpose')
+        self.purpose.setWordWrap(False)
+        self.purpose.setStyleSheet(light_purpose_style_sheet()); root.addWidget(self.purpose,0,Qt.AlignmentFlag.AlignLeft)
+        self.notice=OptionalFeedback('contractNote'); root.addWidget(self.notice)
         self.tabs=QTabWidget(); root.addWidget(self.tabs,1)
         self.generate_page=QWidget(); self.tabs.addTab(self.generate_page,'生成合同')
         self.build_generate(); self.build_library(); self.build_records()
@@ -306,7 +324,7 @@ class ContractManagement(QWidget):
     def build_generate(self):
         body=QVBoxLayout(self.generate_page); body.setContentsMargins(0,12,0,0)
         middle=QWidget();content=QVBoxLayout(middle);content.setContentsMargins(0,0,0,0);content.setSpacing(12);self.middle_scroll=scrollable(middle);body.addWidget(self.middle_scroll,1)
-        choose,box=card('选择客户模板与报价','仅使用本人有权使用的正式报价版本；请明确选择报价方式。')
+        choose,box=card('选择客户模板与报价')
         choices=QGridLayout(); self.customer=SchemeComboBox(); self.source=SchemeComboBox(); self.template=SchemeComboBox(); self.method=SchemeComboBox()
         for caption,code in (('请选择采用报价',''),('快速报价','QUICK'),('公式报价','FORMULA')): self.method.addItem(caption,code)
         for i,(title,control) in enumerate((('客户',self.customer),('客户合同模板',self.template),('正式报价 / 版本',self.source),('采用报价',self.method))):
@@ -316,26 +334,26 @@ class ContractManagement(QWidget):
         self.template.currentIndexChanged.connect(self.template_changed); self.method.currentIndexChanged.connect(self.selection_changed)
         self.splitter=QSplitter(); content.addWidget(self.splitter,1)
         self.left=QScrollArea(); self.left.setWidgetResizable(True); left=QWidget(); leftbox=QVBoxLayout(left); leftbox.setContentsMargins(0,0,0,0); leftbox.setSpacing(12); self.left.setWidget(left); self.splitter.addWidget(self.left)
-        source,sourcebox=card('已确定报价信息','合同价格取自所选正式报价，修改金额请先修订并确认报价。')
-        self.source_info=label('尚未选择正式报价','contractNote'); sourcebox.addWidget(self.source_info)
+        source,sourcebox=card('已确定报价信息')
+        self.source_info=OptionalFeedback('contractNote'); sourcebox.addWidget(self.source_info)
         self.items=table(('产品','规格','数量','单位','合同单价','金额'),'contractItems'); self.items.setMinimumHeight(130);self.items.horizontalHeader().setMinimumSectionSize(36)
         for col,width in enumerate((110,130,48,44,96,96)):
             self.items.horizontalHeader().setSectionResizeMode(col,QHeaderView.ResizeMode.Interactive);self.items.setColumnWidth(col,width)
         self.items.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch);sourcebox.addWidget(self.items)
         self.amount=label('¥ —','contractAmount'); self.upper=label('人民币大写：—','contractNote'); sourcebox.addWidget(self.amount); sourcebox.addWidget(self.upper); leftbox.addWidget(source)
-        form,formbox=card('补充合同信息','只填写模板需要的字段；未明确的税费不能自动补为 0。')
+        form,formbox=card('补充合同信息')
         self.form=QFormLayout(); self.inputs={}
         for key,title in MANUAL_FIELDS.items():
             control=QueryLineEdit(); control.setPlaceholderText('按双方确认内容填写' if key not in ('sign_date','delivery_date') else 'YYYY-MM-DD')
             control.textEdited.connect(self.field_edited); self.inputs[key]=control; self.form.addRow(title,control)
         formbox.addLayout(self.form); actions=QHBoxLayout(); actions.addWidget(button('配置填入位置',self.configure_selected)); actions.addWidget(button('查看来源报价',self.open_source)); actions.addStretch(); formbox.addLayout(actions); leftbox.addWidget(form); leftbox.addStretch()
-        right,rightbox=card('合同预览','预览来自本次生成的实际 Word / Excel 文件。'); self.preview_info=label('尚未生成文件','contractNote'); rightbox.addWidget(self.preview_info)
+        right,rightbox=card('合同预览'); self.preview_info=OptionalFeedback('contractNote'); rightbox.addWidget(self.preview_info)
         self.preview_scroll=QScrollArea(); self.preview_scroll.setWidgetResizable(True);self.preview_scroll.viewport().installEventFilter(self); self.tray=QWidget(); self.tray.setObjectName('contractPaperTray'); self.pagebox=QVBoxLayout(self.tray); self.pagebox.setAlignment(Qt.AlignmentFlag.AlignHCenter|Qt.AlignmentFlag.AlignTop); self.preview_scroll.setWidget(self.tray); self.placeholder=label('生成合同后，在这里核对实际文件\n原有条款、签章区域和分页均需确认。','contractNote'); self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter); self.pagebox.addWidget(self.placeholder); rightbox.addWidget(self.preview_scroll,1)
         tools=QHBoxLayout(); self.original_button=button('打开原文件',self.open_original); self.print_button=button('打印预览文件',self.print_file); tools.addWidget(self.original_button); tools.addWidget(self.print_button); tools.addWidget(button('新建合同',self.new_contract)); tools.addStretch(); rightbox.addLayout(tools); self.splitter.addWidget(right); self.splitter.setSizes([520,700]); self.splitter.setChildrenCollapsible(False)
-        footer=QHBoxLayout(); self.feedback=label('生成记录不会自动标记成交或签约。','contractNote'); footer.addWidget(self.feedback,1)
-        self.drafts=SchemeComboBox();self.drafts.setMaximumWidth(180); self.drafts.addItem('打开生成草稿',None); self.drafts.activated.connect(self.open_draft); footer.addWidget(self.drafts)
+        footer=QHBoxLayout(); footer.addStretch(1)
+        self.drafts=apply_light_action(SchemeComboBox());self.drafts.setMaximumWidth(180); self.drafts.addItem('打开生成草稿',None); self.drafts.activated.connect(self.open_draft); footer.addWidget(self.drafts)
         self.save_button=button('保存生成草稿',self.save_draft); self.generate_button=button('生成合同',self.generate,True); self.export_button=button('输出原文件',self.export_file,True)
-        for control in (self.save_button,self.generate_button,self.export_button): footer.addWidget(control)
+        for control in (self.save_button,self.generate_button,self.export_button): footer.addWidget(apply_light_action(control))
         body.addLayout(footer); self.sync_actions()
 
     def build_library(self):
@@ -420,6 +438,7 @@ class ContractManagement(QWidget):
         elif self.pending_scheme: self.apply_pending()
 
     def received(self,result):
+        result={**result,'sources':[row for row in result.get('sources',[]) if row.get('order_nature')=='EXTERNAL']}
         self.data=result; self.loaded=bool(result.get('ready')); self.render_data(); self.apply_pending()
         self.notice.setText('已加载合同模板与记录。' if self.loaded else result.get('message','合同服务尚未启用。'))
 
@@ -461,9 +480,9 @@ class ContractManagement(QWidget):
         for r in self.data.get('sources',[]):
             if r.get('customer_code')==code:self.source.addItem(r['scheme_no']+' / 正式 V'+str(r['version_no']),(r['scheme_no'],r['version_no']))
         for r in self.data.get('templates',[]):
-            if r['customer_code']==code and r.get('can_write') and r['enabled']:
+            if r['customer_code']==code and r.get('can_use',r.get('can_write')) and r['enabled']:
                 self.template.addItem(r['template_name']+' · '+r['file_format'].upper()+' · V'+str(r['version_no'])+(' · 待配置' if not r['configured'] else ''),r['template_version_id'])
-        default=next((r for r in self.data.get('templates',[]) if r['customer_code']==code and r.get('can_write') and r['enabled'] and r['configured'] and r['is_default']),None)
+        default=next((r for r in self.data.get('templates',[]) if r['customer_code']==code and r.get('can_use',r.get('can_write')) and r['enabled'] and r['configured'] and r['is_default']),None)
         if default:self.template.setCurrentIndex(self.template.findData(default['template_version_id']))
         self.populating=False; self.selection_changed()
         if default:self.template_changed()
@@ -473,7 +492,7 @@ class ContractManagement(QWidget):
 
     def invalidate(self,*_):
         if hasattr(self,'choices_card'):self.choices_card.show();self.history_banner.hide()
-        self.record=None; self.output=None; self.historical=False; self.request_id=str(uuid4()); self.preview_pages=[]; self.preview_info.setText('内容已变化，请重新生成后核对文件。')
+        self.record=None; self.output=None; self.historical=False; self.request_id=str(uuid4()); self.preview_pages=[]; self.preview_info.clear()
         while self.pagebox.count():
             item=self.pagebox.takeAt(0)
             if item.widget():item.widget().deleteLater()
@@ -481,7 +500,7 @@ class ContractManagement(QWidget):
 
     def selection_changed(self,*_):
         if self.populating:return
-        self.invalidate(); self.current_quote=None; fill(self.items,[]); self.amount.setText('¥ —'); self.upper.setText('人民币大写：—'); self.source_info.setText('尚未选择正式报价')
+        self.invalidate(); self.current_quote=None; fill(self.items,[]); self.amount.setText('¥ —'); self.upper.setText('人民币大写：—'); self.source_info.clear()
         selected=self.source.currentData(); method=self.method.currentData()
         if selected and method:
             selection=(selected,method)
@@ -674,7 +693,7 @@ class ContractManagement(QWidget):
 
     def use_template(self):
         t=self.selected_template(True)
-        if not t or not t.get('can_write') or not t['enabled']:self.notice.setText('请选择本人可用模板。');return
+        if not t or not t.get('can_use',t.get('can_write')) or not t['enabled']:self.notice.setText('请选择有权使用的可用模板。');return
         self.customer.setCurrentIndex(self.customer.findData(t['customer_code']));self.template.setCurrentIndex(self.template.findData(t['template_version_id']));self.tabs.setCurrentIndex(0)
 
     def template_versions(self):
@@ -749,7 +768,6 @@ class ContractManagement(QWidget):
     def resizeEvent(self,event):
         super().resizeEvent(event)
         if hasattr(self,'splitter'):self.splitter.setOrientation(Qt.Orientation.Vertical if self.width()<820 else Qt.Orientation.Horizontal)
-        if hasattr(self,'feedback'):self.feedback.setVisible(self.width()>=920)
 
     def shutdown(self):
         for worker in list(self.workers):worker.requestInterruption();worker.wait(65000)
@@ -787,6 +805,9 @@ def install_contract_management(namespace):
         def contract():
             row=manager.list_table.currentRow()
             if 0<=row<len(manager.rows):
+                selected=manager.rows[row]
+                if selected.get('order_nature') != 'EXTERNAL' or selected.get('can_write') is False:
+                    page.notice.setText('仅外部正式报价可生成合同。');return
                 page.pending_scheme=manager.rows[row]['scheme_no'];page.source_info.setText('待加载来源报价：'+page.pending_scheme);window.show_section(route)
         manager.contract=contract;manager.contract_source=page.source_info
         manager.contract_button.clicked.disconnect();manager.contract_button.clicked.connect(contract)

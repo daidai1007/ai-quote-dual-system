@@ -2,6 +2,7 @@
  * writes only the separate, audited outcome table, never prices or quote state. */
 import {permissionSql, writePermissionSql, operatorNameValue} from './quote_scheme_service.mjs';
 import {sessionOperator} from './quote_access_scope.mjs';
+import {orderNature,orderNatureSql,validateOrderNature,ORDER_NATURES} from '../quote_order_nature.mjs';
 
 const fail=(message,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const text=value=>String(value??'').trim().normalize('NFC');
@@ -38,6 +39,8 @@ const normalizeFilters=(input={})=>{
   if(result.from && result.to && result.from>result.to) throw fail('开始日期不能晚于结束日期。');
   for(const key of ['customer','product','creator','status','method']) result[key]=text(input[key]);
   result.product=productType(result.product);
+  result.order_nature=text(input.order_nature);
+  if(result.order_nature)validateOrderNature(result.order_nature);
   if(result.status && !['DRAFT','QUOTED','REVISING','ARCHIVED','VOID'].includes(result.status)) throw fail('无效方案状态。');
   if(result.method && !['QUICK','FORMULA'].includes(result.method)) throw fail('无效报价方式。');
   return result;
@@ -63,10 +66,13 @@ const groupRates=(outcomes,product)=>{
 };
 
 export function buildAnalysis(data,input={}) {
-  const filters=normalizeFilters(input), schemes=data.schemes||[], outcomes=data.outcomes||[];
+  const filters=normalizeFilters(input), schemes=(data.schemes||[]).map(s=>({...s,order_nature:orderNature(s.order_nature)}));
+  const schemeNatures=new Map(schemes.map(s=>[s.scheme_no,s.order_nature]));
+  const outcomes=(data.outcomes||[]).map(o=>({...o,order_nature:orderNature(o.order_nature??schemeNatures.get(o.scheme_no))}));
+  const natureMatches=row=>!filters.order_nature||row.order_nature===filters.order_nature;
   const matches=s=>(!filters.customer||(filters.customer==='__unassigned__'?!s.customer_code:s.customer_code===filters.customer))
     &&(!filters.product||(s.products||[]).some(p=>sameProduct(p.product_code,filters.product)))
-    &&(!filters.creator||text(s.creator).includes(filters.creator))&&(!filters.status||s.status===filters.status);
+    &&(!filters.creator||text(s.creator).includes(filters.creator))&&(!filters.status||s.status===filters.status)&&natureMatches(s);
   const baseSchemes=schemes.filter(s=>(!filters.creator||text(s.creator).includes(filters.creator))&&(!filters.status||s.status===filters.status));
   const allowedSchemes=schemes.filter(matches);
   const rows=allowedSchemes.filter(s=>inRange(s.formal_date||s.created_date,filters));
@@ -105,16 +111,22 @@ export function buildAnalysis(data,input={}) {
   }
   const schemeMap=new Map(baseSchemes.filter(s=>s.status!=='VOID').map(s=>[s.scheme_no,s]));
   // Result time and formal-quote time are deliberately independent filters.
-  const decided=outcomes.filter(o=>['WON','LOST'].includes(o.result)&&schemeMap.has(o.scheme_no)
+  const decided=outcomes.filter(o=>['WON','LOST'].includes(o.result)&&schemeMap.has(o.scheme_no)&&natureMatches(o)
     &&inRange(o.result_date,filters)&&(!filters.customer||o.customer_code===filters.customer)
     &&(!filters.product||sameProduct(o.product_code,filters.product))&&(!filters.method||o.quote_method===filters.method));
   const product=filters.product||orderedProducts[0]?.[0]||'';
   const selected=decided.filter(o=>sameProduct(o.product_code,product));
+  const classifiedRates=(values,code)=>{
+    const grouped=ORDER_NATURES.map(order_nature=>({order_nature,...groupRates(values.filter(o=>o.order_nature===order_nature),code)}));
+    const mixed=grouped.filter(g=>g.sample).length>1;
+    return {...(mixed?{bands:[],best:[],sample:values.length,minimum_sample:20}:groupRates(values,code)),
+      requires_order_nature:mixed,by_order_nature:grouped};
+  };
   const customerComparison=[...customers].map(([code,name])=>({customer_code:code,name,
-    ...groupRates(outcomes.filter(o=>schemeMap.has(o.scheme_no)&&o.customer_code===code&&sameProduct(o.product_code,product)
+    ...classifiedRates(outcomes.filter(o=>schemeMap.has(o.scheme_no)&&natureMatches(o)&&o.customer_code===code&&sameProduct(o.product_code,product)
       &&['WON','LOST'].includes(o.result)&&inRange(o.result_date,filters)&&(!filters.method||o.quote_method===filters.method)),product)}));
   const productComparison=orderedProducts.map(([code,name])=>({product_code:code,name,
-    ...groupRates(outcomes.filter(o=>schemeMap.has(o.scheme_no)&&sameProduct(o.product_code,code)
+    ...classifiedRates(outcomes.filter(o=>schemeMap.has(o.scheme_no)&&natureMatches(o)&&sameProduct(o.product_code,code)
       &&['WON','LOST'].includes(o.result)&&inRange(o.result_date,filters)&&(!filters.customer||o.customer_code===filters.customer)
       &&(!filters.method||o.quote_method===filters.method)),code)}));
   const selectedSchemeNos=new Set(allowedSchemes.map(s=>s.scheme_no));
@@ -122,6 +134,11 @@ export function buildAnalysis(data,input={}) {
   const detailRows=rows.map(s=>({...s,analysis_amount:money(amountOf(s))}));
   return {filters,product_filter_mode:'family-v1',customers:[...customers].map(([code,name])=>({code,name})),products:orderedProducts.map(([code,name])=>({code,name})),
     outcomes_available:Boolean(data.outcomes_available),
+    order_nature_summary:ORDER_NATURES.map(order_nature=>{
+      const quotes=formal.filter(s=>s.order_nature===order_nature),values=quotes.map(amountOf).filter(v=>v!==null);
+      return {order_nature,count:rows.filter(s=>s.order_nature===order_nature).length,
+        amount:quotes.length&&!values.length?null:money(values.reduce((a,b)=>a+b,0)),amount_coverage:values.length};
+    }),
     summary:{schemes:rows.length,quoted:formal.length,drafts:rows.filter(s=>s.status==='DRAFT').length,
       amount:known.length?money(total):null,average:known.length?money(Math.round(total/known.length)):null,
       amount_coverage:known.length,active_customers:new Set(formal.map(s=>s.customer_code).filter(Boolean)).size,failures:failures.length},
@@ -129,9 +146,9 @@ export function buildAnalysis(data,input={}) {
     ranking:[...ranks.values()].sort((a,b)=>b.cents-a.cents||b.amount_coverage-a.amount_coverage).slice(0,5).map(r=>({...r,amount:r.amount_coverage?money(r.cents):null})),
     costs:Object.fromEntries(Object.entries(costs).map(([k,v])=>[k,money(v)])),cost_coverage:costCoverage,
     details:detailRows,trend_details:allowedSchemes.filter(s=>s.status!=='VOID'&&(inRange(s.formal_date,filters)||inRange(s.created_date,filters)))
-      .map(s=>({...s,analysis_amount:money(amountOf(s))})),outcome_records:outcomes.filter(o=>schemeMap.has(o.scheme_no)),
+      .map(s=>({...s,analysis_amount:money(amountOf(s))})),outcome_records:outcomes.filter(o=>schemeMap.has(o.scheme_no)&&natureMatches(o)),
     recent:detailRows.toSorted((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at))).slice(0,50),
-    failures:failures.slice(0,20),discount:{product_code:product,...groupRates(selected,product),customer_comparison:customerComparison,product_comparison:productComparison,
+    failures:failures.slice(0,20),discount:{product_code:product,...classifiedRates(selected,product),customer_comparison:customerComparison,product_comparison:productComparison,
       records:selected.map(o=>({...o}))}};
 }
 
@@ -163,6 +180,7 @@ export function createQuoteAnalysisService({runPsql,sqlUnicodeText:q}) {
         CASE WHEN formal_version IS NOT NULL THEN payload#>>'{scheme_summary,quoted_amount}' ELSE s.quoted_amount::text END AS amount,
         COALESCE(NULLIF(payload#>>'{analysis_customer,customer_code}',''), CASE WHEN catalog.matches=1 THEN catalog.code END) AS customer_code,
         COALESCE(catalog.current_name,s.company_name) AS customer_name,formal_version,
+        ${orderNatureSql('s.payload')} AS order_nature,
         ${compactItemsSql('s.payload')} AS products,${writePermissionSql(principal,'s')} AS can_record
       FROM permitted s LEFT JOIN LATERAL (SELECT count(*) AS matches,min(company_code) AS code,min(company_name) AS current_name
         FROM calc.ordering_company c WHERE CASE WHEN NULLIF(s.payload#>>'{analysis_customer,customer_code}','') IS NOT NULL
@@ -172,8 +190,9 @@ export function createQuoteAnalysisService({runPsql,sqlUnicodeText:q}) {
       'outcome_id',o.outcome_id,'revision',o.revision,'scheme_no',s.scheme_no,'version_no',o.version_no,
       'customer_code',o.customer_code,'product_code',o.product_code,'opportunity_key',o.opportunity_key,
       'result',o.result,'result_date',to_char(o.result_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'),
-      'discount',o.discount::text,'quote_method',o.quote_method)),'[]'::jsonb)::text
+      'discount',o.discount::text,'quote_method',o.quote_method,'order_nature',${orderNatureSql('v.snapshot_payload')})),'[]'::jsonb)::text
       FROM calc.quote_analysis_outcome o JOIN calc.quote_scheme s USING(scheme_id)
+      LEFT JOIN calc.quote_scheme_version v ON v.scheme_id=o.scheme_id AND v.version_no=o.version_no
       WHERE ${permissionSql(principal,'s')};`) : [];
     const failures=await query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('scheme_no',s.scheme_no,
       'date',to_char(e.created_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'),'kind',e.export_kind)),'[]'::jsonb)::text

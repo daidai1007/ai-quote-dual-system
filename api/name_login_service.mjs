@@ -14,8 +14,8 @@ export function createNameLoginService({now=Date.now,ttlMs=12*60*60*1000,maxSess
   const sessions=new Map(),rates=new Map();
   const clean=()=>{const time=now();for(const [key,s]of sessions)if(s.expires<=time)sessions.delete(key);for(const [key,r]of rates)if(r.until<=time)rates.delete(key);};
   const principal=name=>Object.freeze({userId:nameUserId(name),displayName:name,role:'USER',departmentId:null,
-    identityMode:'NAME_ONLY',can_view_all_quotes:ALL_QUOTE_NAMES.includes(name),scope:ALL_QUOTE_NAMES.includes(name)?'ALL':'OWN'});
-  const publicIdentity=p=>({user_id:p.userId,display_name:p.displayName,identity_mode:'NAME_ONLY',scope:p.scope,can_view_all_quotes:p.can_view_all_quotes});
+    identityMode:'NAME_ONLY',can_view_all_quotes:ALL_QUOTE_NAMES.includes(name),can_manage_all_quotes:ALL_QUOTE_NAMES.includes(name),scope:ALL_QUOTE_NAMES.includes(name)?'ALL':'OWN'});
+  const publicIdentity=p=>({user_id:p.userId,display_name:p.displayName,identity_mode:'NAME_ONLY',scope:p.scope,can_view_all_quotes:p.can_view_all_quotes,can_manage_all_quotes:p.can_manage_all_quotes});
   const login=(input,address='local')=>{
     clean();const name=normalizeName(input?.name);
     if(Object.keys(input).some(k=>k!=='name'))throw authError('登录仅接受姓名。',400);

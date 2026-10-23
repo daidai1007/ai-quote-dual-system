@@ -153,7 +153,7 @@ class ExportCustomer(unittest.TestCase):
 
     def test_historical_version_exports_its_customer_then_restores_latest(self):
         w=self.window;items=deepcopy(w.draft_items)
-        versions=[model.make_version(items,name,i+1,'合成历史版本','测试人员','2026-10-22')
+        versions=[model.make_version(items,name,i+1,'合成历史版本','测试人员','2026-10-22','EXTERNAL')
                   for i,name in enumerate((OLD,NEW))]
         for version in versions:version['sealed']=True
         w._qm_state=dict(schema=1,current=2,versions=versions)

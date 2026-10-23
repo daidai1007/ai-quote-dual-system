@@ -7,7 +7,7 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
-import {wordTemplate,mapped} from './helpers/contract_fixtures.mjs';
+import {wordTemplate,excelTemplate,mapped} from './helpers/contract_fixtures.mjs';
 
 test('real name session protects contract metadata, writes and original Office output',{timeout:180000},async t=>{
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'contract-name-http-'));const state=path.join(directory,'host.json');
@@ -52,12 +52,26 @@ test('real name session protects contract metadata, writes and original Office o
    for(const route of ['/api/contracts/records/'+record.record_id,'/api/contracts/records/'+record.record_id+'/file','/api/contracts/templates/'+configured.data.template_version_id])assert.equal((await request(route,{token:other.token})).status,404);
    assert.equal((await request('/api/contracts/generate',{token:other.token,body:{...input,request_id:randomUUID(),role:'ADMIN',owner_user_id:owner.person.user_id}})).status,404);
   });
-  await t.test('ALL reads metadata without modifying or exporting other people’s contracts',async()=>{
-   const list=await request('/api/contracts/bootstrap',{token:all.token});assert.equal(list.data.records.length,1);assert.equal(list.data.templates[0].can_write,false);assert.equal(list.data.sources.length,0);
+  await t.test('three global operators generate Word and Excel from another creators quote and template',async()=>{
+   const list=await request('/api/contracts/bootstrap',{token:all.token});assert.equal(list.data.records.length,1);assert.equal(list.data.templates[0].can_write,false);assert.equal(list.data.templates[0].can_use,true);assert.equal(list.data.sources.length,1);
    assert.equal((await request('/api/contracts/records/'+record.record_id,{token:all.token})).data.generation_snapshot.quote.total,650.3);
    assert.equal((await request('/api/contracts/records/'+record.record_id+'/file',{token:all.token})).status,404);
    assert.equal((await request('/api/contracts/templates/'+configured.data.template_version_id+'/settings',{token:all.token,body:{expected_version:2,enabled:false,is_default:false}})).status,404);
-   assert.equal((await request('/api/contracts/generate',{token:all.token,body:{...input,request_id:randomUUID()}})).status,404);
+   const xupload=await request('/api/contracts/templates',{token:owner.token,body:{scheme_no:config.scheme_no,version_no:1,customer_code:'LOCAL-A',template_name:'本机跨人员Excel合同',filename:'local.xlsx',format:'xlsx',content:excelTemplate().toString('base64')}});assert.equal(xupload.status,201);
+   const xi=await request('/api/contracts/templates/'+xupload.data.template_version_id,{token:owner.token});
+   const xc=await request('/api/contracts/templates/'+xupload.data.template_version_id+'/configure',{token:owner.token,body:{expected_version:1,mapping:mapped(xi.data.inspection,'xlsx')}});assert.equal(xc.status,200);
+   for(const name of ['戴晨丽','姜艳娟','翟晓峰']){
+    const manager=await login(name);
+    for(const [format,templateId]of [['docx',input.template_version_id],['xlsx',xc.data.template_version_id]]){
+     const payload={...input,template_version_id:templateId,request_id:randomUUID(),fields:{...input.fields,contract_no:'GLOBAL-'+name+'-'+format}};
+     const draft=await request('/api/contracts/drafts',{token:manager.token,body:payload});assert.equal(draft.status,200,JSON.stringify(draft.data));
+     const generated=await request('/api/contracts/generate',{token:manager.token,body:payload});assert.equal(generated.status,200,JSON.stringify(generated.data));assert.equal(generated.data.generation_snapshot.quote.total,650.3);
+     const detail=await request('/api/contracts/records/'+generated.data.record_id,{token:manager.token});assert.equal(detail.data.owner_user_id,manager.person.user_id);
+     const file=await request('/api/contracts/records/'+generated.data.record_id+'/file',{token:manager.token,binary:true});assert.equal(file.status,200);assert.equal(createHash('sha256').update(file.data).digest('hex'),generated.data.file_sha256);
+     assert.equal((await request('/api/contracts/records/'+generated.data.record_id+'/file',{token:other.token})).status,404);
+    }
+    const quote=await request('/api/quote-schemes/'+config.scheme_no,{token:manager.token});assert.equal(quote.data.creator_user_id,owner.person.user_id);
+   }
   });
   await t.test('idempotency and revoked sessions keep existing files protected',async()=>{
    assert.equal((await request('/api/contracts/generate',{token:owner.token,body:input})).data.record_id,record.record_id);

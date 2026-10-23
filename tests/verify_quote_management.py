@@ -76,7 +76,7 @@ class ManagementTests(unittest.TestCase):
             self.requests.append((worker.method, path, deepcopy(worker.payload)))
             if worker.method == 'GET' and path.endswith('/quote-schemes'):
                 result = dict(items=[dict(scheme_no='BJ-20261021-000001', company_name='测试客户',
-                    status='DRAFT', quoted_amount=4004, version_no=1, lock_version=1)], total=1)
+                    status='QUOTED', order_nature='EXTERNAL', quoted_amount=4004, version_no=1, lock_version=1)], total=1)
             elif worker.method == 'PUT':
                 self.saved = deepcopy(worker.payload['snapshot'])
                 result = dict(saved=True, lock_version=worker.payload['expected_version']+1)
@@ -90,6 +90,7 @@ class ManagementTests(unittest.TestCase):
         screen = Mock(wraps=APP.primaryScreen()); screen.availableGeometry.return_value = QRect(0,0,4096,2160)
         self.screen_patch = patch.object(NS['MainWindow'], 'screen', return_value=screen); self.screen_patch.start()
         self.window = NS['MainWindow'](); self.w = self.window
+        self.w._quote_order_nature = 'EXTERNAL'
         self.w.quote_scheme_operator_name.setText('测试操作人')
         self.w._quote_scheme_loading = True
         self.w._quote_scheme_id = 'BJ-20261021-000001'; self.w._quote_scheme_version = 1

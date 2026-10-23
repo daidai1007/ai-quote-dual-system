@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -18,7 +18,7 @@ if not core.is_dir():
     raise RuntimeError("AI_QUOTE_V3_CORE_ROOT must point to the verified V3 core")
 
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtCore import QTimer  # noqa: E402
+from PySide6.QtCore import QTimer, Qt, QRect  # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 from pypdf import PdfWriter  # noqa: E402
 
@@ -30,6 +30,11 @@ app = QApplication.instance() or QApplication([])
 namespace = v3_launcher.load_v3_namespace()
 namespace["AttachmentDialog"].load_catalog = lambda self, url: None
 namespace["MainWindow"].load_catalogs = lambda self: None
+# Keep the requested desktop window sizes independent of offscreen QScreen defaults.
+screen = Mock(wraps=app.primaryScreen())
+screen.availableGeometry.return_value = QRect(0, 0, 4096, 2160)
+screen_patch = patch.object(namespace["MainWindow"], "screen", return_value=screen)
+screen_patch.start()
 window = namespace["MainWindow"]()
 window.show()
 app.processEvents()
@@ -160,7 +165,13 @@ quote_text = " ".join(
     if window.scheme2_quote_preview.item(row, column) is not None
 )
 assert "报价单" in quote_text and "100.00" in quote_text
+assert not window.scheme2_quote_print.isEnabled() and not window.scheme2_quote_export.isEnabled()
+assert window.scheme2_quote_preview.item(10, 7).flags() & Qt.ItemFlag.ItemIsEditable
+assert window.quote_management.nature_controls["EXTERNAL"].isEnabled()
+window.quote_management.nature_controls["EXTERNAL"].click()
+app.processEvents()
 assert window.scheme2_quote_print.isEnabled() and window.scheme2_quote_export.isEnabled()
 
 window.close()
+screen_patch.stop()
 print("SCHEME2_QUOTE_WORKFLOW=PASS")

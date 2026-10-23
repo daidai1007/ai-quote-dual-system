@@ -1114,6 +1114,11 @@ def confirmation_payload(payload, *, validate=False):
     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
         return payload
     output = copy.deepcopy(payload)
+    natures = {item['quote_order_nature'] for item in output['items']
+               if isinstance(item, dict) and item.get('quote_order_nature') is not None}
+    if output.get('order_nature') is not None: natures.add(output['order_nature'])
+    if len(natures) > 1: raise ValueError('报价明细的订单性质不一致，请重新核对。')
+    if natures: output['order_nature'] = next(iter(natures))
     for line_number, item in enumerate(output["items"], 1):
         if not isinstance(item, dict) or item.get("attachment_contract") != 2:
             continue

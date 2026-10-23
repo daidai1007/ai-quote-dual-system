@@ -69,8 +69,11 @@ class SessionWorker(QThread):
 
 class NameLoginDialog(QDialog):
     def __init__(self,base_url,headers,parent=None,expected_user=None):
-        super().__init__(parent);self.base_url=base_url;self.headers=headers;self.expected_user=expected_user
         self.value=None;self.worker=None
+        super().__init__(parent)
+        # Initial API_URL is the full calculation endpoint; name switching passes a root.
+        self.base_url=str(base_url).strip().split('/api/',1)[0].rstrip('/')
+        self.headers=headers;self.expected_user=expected_user
         self.setWindowTitle('输入姓名');self.setMinimumWidth(420)
         outer=QVBoxLayout(self);outer.setSpacing(DIALOG_METRICS['spacing'])
         outer.addWidget(QLabel('姓名'))
@@ -131,8 +134,10 @@ def install_name_login(namespace):
         editor.setText(person['display_name']);editor.setReadOnly(True)
         window.quote_scheme_operator_button.clicked.disconnect()
         window.quote_scheme_operator_button.clicked.connect(lambda:switch_or_renew(window,namespace))
-        window.quote_scheme_operator_button.setText(person['display_name']+' · '+('全部报价' if person['scope']=='ALL' else '仅本人报价'))
-        window.quote_scheme_operator_button.setToolTip('当前姓名及数据查看范围；点击重新登录或切换姓名。仅姓名识别，不能证明真实身份。')
+        scope_text=('全部报价 · 可操作' if person.get('can_manage_all_quotes') is True
+                    else '全部报价' if person['scope']=='ALL' else '仅本人报价')
+        window.quote_scheme_operator_button.setText(person['display_name']+' · '+scope_text)
+        window.quote_scheme_operator_button.setToolTip('当前姓名及报价操作范围；点击重新登录或切换姓名。仅姓名识别，不能证明真实身份。')
         # Identity is visible outside the scheme page too.
         badge=QLabel(window.quote_scheme_operator_button.text());badge.setWordWrap(True)
         switch=QPushButton('切换姓名');switch.setToolTip('重新登录或切换姓名');switch.clicked.connect(lambda:switch_or_renew(window,namespace))

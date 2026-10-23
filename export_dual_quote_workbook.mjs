@@ -9,6 +9,7 @@
  */
 import ExcelJS from "@excel.js/exceljs";
 import fs from "node:fs/promises";
+import {documentWithOrderNature,orderNatureLabel} from './quote_order_nature.mjs';
 import path from "node:path";
 import {addAttachmentSnapshotSheet} from "./attachment_snapshot_export.mjs";
 import {
@@ -37,7 +38,7 @@ import {
 
 const [inputPath, outputPath] = process.argv.slice(2);
 if (!inputPath || !outputPath) throw new Error("usage: export_dual_quote_workbook.mjs input.json output.xlsx");
-const payload = JSON.parse(await fs.readFile(inputPath, "utf8"));
+const payload = documentWithOrderNature(JSON.parse(await fs.readFile(inputPath, "utf8")));
 if (!Array.isArray(payload.items) || payload.items.length === 0) {
   throw new Error("报价清单为空，无法生成正式报价单");
 }
@@ -860,6 +861,8 @@ function fillSheet(sheet, method) {
   // The fixed template labels the date in D2 and merges E2:G2 for its value.
   // Always populate that visible value cell; use today's date as a safe fallback.
   sheet.getRange("E2").values = [[payload.quote_date || today]];
+  sheet.getRange('D3').values = [['订单性质']];
+  sheet.getRange('E3').values = [[orderNatureLabel(payload.order_nature)]];
   sheet.getRange("B4").values = [[payload.company_name || ""]];
   let subtotal = 0;
   items.forEach((item, index) => {
@@ -1420,6 +1423,8 @@ function buildFormulaCostDetailSheet() {
   sheet.getRange("A1").values = [["公式法报价成本明细"]];
   sheet.getRange("A2").values = [["报价编号"]];
   sheet.getRange("B2").values = [[payload.quote_id || ""]];
+  sheet.getRange('A4').values = [['订单性质']];
+  sheet.getRange('B4').values = [[orderNatureLabel(payload.order_nature)]];
   sheet.getRange("D2").values = [["报价日期"]];
   sheet.getRange("E2").values = [[payload.quote_date || ""]];
   sheet.getRange("G2").values = [["客户"]];
@@ -1591,7 +1596,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
       assertRow(actual.slice(0, 5), expected.slice(0, 5), `${sheetName} row ${row} identity`);
       assertClose(actual[5], expected[5], `${sheetName} row ${row} unit price`);
       assertClose(actual[6], expected[6], `${sheetName} row ${row} amount`);
-      if (actual[7] !== expected[7]) throw new Error(`${sheetName} row ${row} remark changed`);
+      if (String(actual[7] ?? "") !== expected[7]) throw new Error(`${sheetName} row ${row} remark changed`);
     });
     const subtotalRow = 11 + items.length;
     if (rangePlainValues(sheet, `B${subtotalRow}`)[0][0] !== "合计") {

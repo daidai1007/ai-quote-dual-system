@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {documentWithOrderNature} from '../quote_order_nature.mjs';
 import {createNameLoginService} from './name_login_service.mjs';
 import {withQuotePrincipal,currentQuotePrincipal,createPrivateQuoteGuard,resourceScopeSql,quoteScopeSql,ownerInsertSql,q} from './quote_access_scope.mjs';
 import {createContractService} from './contract_service.mjs';
@@ -722,6 +723,7 @@ SELECT COALESCE((SELECT jsonb_build_object('saved', TRUE, 'history_id', history_
 // values are stored together only for presentation/export; their source
 // calculations remain independent database systems.
 const confirmQuoteSql = (input) => {
+  input = documentWithOrderNature(input, true);
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('JSON body is required');
   if (!input.quote_id || !input.company_name || !Array.isArray(input.items) || !input.items.length) {
     throw new Error('quote_id, company_name and at least one item are required');
@@ -739,6 +741,7 @@ const confirmQuoteSql = (input) => {
     quote_date: quoteDate,
     company_code: companyCode,
     company_name: input.company_name,
+    order_nature: input.order_nature,
     items: normalizedItems,
   };
   const historyRows = normalizedItems.map((item, index) => {
@@ -880,6 +883,8 @@ const readBody = async (req, maxBytes = MAX_REQUEST_BYTES) => {
   const pathname = new URL(req.url, 'http://local').pathname;
   if (pathname === '/api/name-login') return parsed;
   const input = sanitizeJsonValue(parsed);
+  if (['/api/quotes/confirm','/api/quotes/confirm-check','/api/quotes/export'].includes(pathname))
+    Object.assign(input, documentWithOrderNature(input, true));
   // Validate calculation input before the ownership guard reserves identifiers.
   const validateCalculation = value => {
     const normalized = normalizeProductVariant(validateRequest(value));
@@ -1238,7 +1243,7 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
   }
   if (req.method === 'POST' && req.url === '/api/quotes/confirm') {
     try {
-      const input = await attachmentService.hydrateDocument(await readBody(req));
+      const input = await attachmentService.hydrateDocument(documentWithOrderNature(await readBody(req), true));
       const output = await runPsql(confirmQuoteSql(input));
       return json(res, 200, output ? JSON.parse(output) : { confirmed: false });
     } catch (error) {
@@ -1247,7 +1252,7 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
   }
   if (req.method === 'POST' && req.url === '/api/quotes/confirm-check') {
     try {
-      const input = await attachmentService.hydrateDocument(await readBody(req));
+      const input = await attachmentService.hydrateDocument(documentWithOrderNature(await readBody(req), true));
       // Exercise the real inserts, constraints and UTF-8/jsonb conversion,
       // then roll everything back. This endpoint is used by the desktop
       // client's export preflight and by regression tests.
@@ -1354,7 +1359,7 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
       if (!Array.isArray(input.items) || input.items.length === 0) {
         return json(res, 400, { error: 'quote_export_failed', message: 'items are required' });
       }
-      const hydratedInput=await attachmentService.hydrateDocument(input);
+      const hydratedInput=await attachmentService.hydrateDocument(documentWithOrderNature(input, true));
       const enrichedInput = await enrichExportCostDetails(hydratedInput);
       const workbook = await runWorkbookExporter(enrichedInput);
       res.writeHead(200, {

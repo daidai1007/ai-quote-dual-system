@@ -16,6 +16,7 @@ from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 import verify_quote_scheme_export_registration as reg
+from verify_quote_export_customer import workbook_cell
 from PySide6.QtCore import QThread, QTimer
 from PySide6.QtTest import QTest
 from quote_request_context import stamp_quote_response
@@ -33,6 +34,12 @@ def wait(predicate):
 
 class FullWorkflow(unittest.TestCase):
     def test_product_to_actual_xlsx_with_analysis_installed(self):
+        self.run_classified_workflow('EXTERNAL')
+
+    def test_internal_product_to_actual_xlsx_with_analysis_installed(self):
+        self.run_classified_workflow('INTERNAL')
+
+    def run_classified_workflow(self, nature):
         harness=reg.ExportRegistration()
         harness.setUp()
         self.addCleanup(harness.doCleanups)
@@ -94,6 +101,13 @@ class FullWorkflow(unittest.TestCase):
         w.scheme2_cost_generate.click()
         wait(lambda:not harness.controller.busy)
         self.assertEqual(w.stack.currentIndex(),ui.QUOTE_ROUTE)
+        w._quote_order_nature='UNCLASSIFIED'; w.quote_management.sync(); w.refresh_summary()
+        self.assertFalse(w.scheme2_quote_print.isEnabled())
+        self.assertFalse(w.scheme2_quote_export.isEnabled())
+        w.quote_management.nature_controls[nature].click()
+        w._quote_scheme_save_timer.stop()
+        self.assertEqual(w._quote_order_nature,nature)
+        self.assertEqual(w.scheme2_quote_preview.item(2,4).text(),'内部' if nature=='INTERNAL' else '外部')
         visible_unit=w.scheme2_quote_preview.item(10,5).text().replace(',','')
         visible_total=w.scheme2_quote_preview.item(10,6).text().replace(',','')
         self.assertEqual(float(visible_unit),175)
@@ -121,6 +135,12 @@ class FullWorkflow(unittest.TestCase):
         self.assertTrue(w._quote_scheme_read_only)
         self.assertEqual(exported[0]['items'][0]['quote_display']['total'],350)
         saved=harness.server['snapshot']
+        self.assertEqual(saved['document']['order_nature'],nature)
+        self.assertEqual(saved['quote_management']['versions'][-1]['order_nature'],nature)
+        for sheet in ('快速报价单','公式法报价单'):
+            self.assertEqual(workbook_cell(harness.path,sheet,'D3'),'订单性质')
+            self.assertEqual(workbook_cell(harness.path,sheet,'E3'),'内部' if nature=='INTERNAL' else '外部')
+        self.assertEqual(workbook_cell(harness.path,'成本明细','B4'),'内部' if nature=='INTERNAL' else '外部')
         self.assertEqual(saved['scheme_summary']['quoted_amount'],350)
         self.assertEqual(saved['analysis_customer']['customer_code'],'LOCAL-CUSTOMER')
         with ZipFile(harness.path) as package:
@@ -150,6 +170,10 @@ class FullWorkflow(unittest.TestCase):
         # restore path and compare the visible, print and next-export values.
         import quote_scheme_center as schemes
         schemes._apply_opened_scheme(w,dict(harness.server,snapshot=deepcopy(saved),version_no=1),route=ui.QUOTE_ROUTE)
+        self.assertEqual(w._quote_order_nature,nature)
+        self.assertIn('订单性质',ui._printable_quote_html(w))
+        self.assertIn('内部' if nature=='INTERNAL' else '外部',ui._printable_quote_html(w))
+        self.assertTrue(all(not b.isEnabled() for b in w.quote_management.nature_controls.values()))
         self.assertEqual(float(w.scheme2_quote_preview.item(10,5).text().replace(',','')),175)
         self.assertEqual(float(w.scheme2_quote_preview.item(10,6).text().replace(',','')),350)
         self.assertEqual(ui._quote_export_items_snapshot(w)[0]['quote_display']['total'],350)

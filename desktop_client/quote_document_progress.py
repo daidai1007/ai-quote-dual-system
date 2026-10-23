@@ -238,7 +238,9 @@ class QuoteDocumentProgress:
         self.registration_retry = retry
         self.reason, self.issues = '', []
         self.widgets['export'][1].setMaximum(6)
-        self.set_stage(6, '文件已导出，正在登记方案')
+        printed = (getattr(self.window, '_quote_scheme_pending_export', None) or {}).get('payload', {}).get('kind') == 'PRINT'
+        self.printed_receipt = printed
+        self.set_stage(6, '已打印，正在登记方案' if printed else '文件已导出，正在登记方案')
         self.widgets['export'][0].show()
         self.sync_buttons()
 
@@ -246,7 +248,8 @@ class QuoteDocumentProgress:
         self.fail(message)
 
     def registration_completed(self, status_text):
-        self.success_text = f'✓ 文件已导出，方案已登记（{status_text}）'
+        printed = getattr(self, 'printed_receipt', False)
+        self.success_text = f'✓ {"已打印" if printed else "文件已导出"}，方案已登记（{status_text}）'
         self.reason, self.issues = '', []
         self.registration_retry = None
         self.end()
@@ -309,6 +312,10 @@ class QuoteDocumentProgress:
         self.window.scheme2_quote_export.setEnabled(not self.busy and bool(self.window.draft_items))
         if getattr(self.window,'_name_scope_foreign',False):
             self.window.scheme2_quote_print.setEnabled(False);self.window.scheme2_quote_export.setEnabled(False)
+        from quote_order_nature import current
+        if current(self.window) == 'UNCLASSIFIED':
+            self.window.scheme2_quote_print.setEnabled(False)
+            self.window.scheme2_quote_export.setEnabled(bool(getattr(self.window, '_quote_scheme_pending_export', None)) and not self.busy)
         self.window.scheme2_cost_generate.setText("生成中…" if self.busy and self.kind == "generate" else
                                                 "重试生成" if self.reason and self.kind == "generate" else "生成报价单")
         self.window.scheme2_quote_export.setText("登记中…" if self.busy and self.file_exported else
@@ -335,6 +342,14 @@ class QuoteDocumentProgress:
             host.hide()
         self.refresh()
         self.sync_buttons()
+        if self.kind == 'generate':
+            # Rebuild editable cell flags only after a successful generation.
+            if self.state == 'success':
+                self.ui._refresh_quote_page(self.window)
+            # The detail page was refreshed while busy; restore its action guards.
+            manager = getattr(self.window, 'quote_management', None)
+            if manager is not None:
+                manager.status_changed()
         if self.state in ('failed', 'success'):
             self.widgets[self.feedback_kind][0].show()
         if self.state == 'success':
