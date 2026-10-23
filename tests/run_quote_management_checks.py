@@ -13,6 +13,9 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = (
+    'verify_quote_export_customer.py',
+    'verify_quote_management_filters.py',
+    'verify_name_login.py', 'verify_name_login_workflow.py',
     'verify_quote_management.py', 'verify_quote_unit_rounding.py',
     'verify_scheme2_formal_quote.py', 'verify_quote_document_progress.py',
     'verify_quote_document_feedback.py', 'verify_quote_scheme_export_registration.py',

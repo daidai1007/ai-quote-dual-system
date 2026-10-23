@@ -307,6 +307,8 @@ class QuoteDocumentProgress:
         self.window.scheme2_quote_print.setEnabled(not self.busy and bool(self.window.draft_items)
             and not getattr(self.window, '_quote_scheme_export_context', None))
         self.window.scheme2_quote_export.setEnabled(not self.busy and bool(self.window.draft_items))
+        if getattr(self.window,'_name_scope_foreign',False):
+            self.window.scheme2_quote_print.setEnabled(False);self.window.scheme2_quote_export.setEnabled(False)
         self.window.scheme2_cost_generate.setText("生成中…" if self.busy and self.kind == "generate" else
                                                 "重试生成" if self.reason and self.kind == "generate" else "生成报价单")
         self.window.scheme2_quote_export.setText("登记中…" if self.busy and self.file_exported else

@@ -95,7 +95,7 @@ export const startLocalPostgres = async () => {
     if (!identifier || query('SELECT system_identifier FROM pg_control_system();') !== identifier) {
       throw new Error('Local test PostgreSQL cluster identity did not match');
     }
-    return {query,close};
+    return {query,close,connection:{host:'127.0.0.1',port,user,database:'postgres',psql:path.join(bin,executable('psql'))}};
   } catch (error) {
     await close();
     throw error;

@@ -7,7 +7,7 @@ from copy import deepcopy
 from types import MethodType
 import urllib.parse
 
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer, QEventLoop
+from PySide6.QtCore import QDate, QDateTime, QTimeZone, QSignalBlocker, Qt, QTimer, QEventLoop
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogBut
     QScrollArea, QStyledItemDelegate, QStyleOptionViewItem, QStyle)
 
 import quote_management_model as model
+from quote_scheme_widgets import DateFilter, QueryLineEdit, SchemeComboBox, filter_field, METRICS
 from quick_discount_rules import money, money_sum, quick_discount_category
 
 # Approved quote-management surfaces; scoped to this module, not the cost page.
@@ -375,21 +376,52 @@ class QuoteManagement:
         layout.setContentsMargins(24,23,24,24); layout.setSpacing(18)
         top = QHBoxLayout(); title = QLabel('报价单管理'); title.setObjectName('scheme2PageTitle')
         heading = QVBoxLayout(); heading.setSpacing(4); heading.addWidget(title)
-        heading.addWidget(QLabel('查询报价单、编辑草稿、打印导出与版本管理'))
         top.addLayout(heading); top.addStretch(1)
         self.contract_button = button('生成合同', self.contract, True); self.contract_button.setEnabled(False)
         top.addWidget(self.contract_button); layout.addLayout(top)
         filter_frame = QFrame(); filter_frame.setObjectName('quoteManagementCustomer')
         filters = QGridLayout(filter_frame); filters.setContentsMargins(15,12,15,12)
-        self.search = QLineEdit(); self.search.setPlaceholderText('报价单编号 / 客户')
-        self.status = QComboBox()
+        filters.setHorizontalSpacing(METRICS['filter_gap']); filters.setVerticalSpacing(METRICS['filter_gap'])
+        self.filters = {}
+        for key, label in (('scheme_no','报价单编号'), ('company','客户'), ('creator','创建人')):
+            editor = QueryLineEdit(); editor.setPlaceholderText('请输入' + label)
+            editor.setObjectName('quoteManagementFilter_' + key); editor.setAccessibleName(label)
+            self.filters[key] = editor
+        self.filters['product'] = SchemeComboBox()
+        self.filters['product'].setAccessibleName('产品筛选')
+        self.filters['updated_from'] = DateFilter('quoteManagementUpdatedFrom', '更新时间开始日期')
+        self.filters['updated_to'] = DateFilter('quoteManagementUpdatedTo', '更新时间结束日期')
+        self.product_sync = QTimer(self.list_page); self.product_sync.setSingleShot(True)
+        self.product_sync.timeout.connect(self.sync_filter_products)
+        source = self.window.product_combo.model()
+        for signal in (source.rowsInserted, source.rowsRemoved, source.modelReset, source.dataChanged):
+            signal.connect(lambda *_: self.product_sync.start())
+        self.sync_filter_products()
+        self.status = SchemeComboBox(); self.status.setAccessibleName('状态筛选')
         for text, code in (('全部',''), ('草稿','DRAFT'), ('已报价','QUOTED'), ('修订中','REVISING'), ('已归档','ARCHIVED'), ('已作废','VOID')):
             self.status.addItem(text, code)
-        filters.addWidget(QLabel('报价单编号 / 客户'), 0,0); filters.addWidget(QLabel('状态'),0,1)
-        filters.addWidget(self.search,1,0); filters.addWidget(self.status,1,1)
-        filters.addWidget(button('查询', lambda: self.load_list(1), True),1,2)
-        filters.addWidget(button('重置', self.reset_search),1,3)
-        filters.setColumnStretch(0,1); layout.addWidget(filter_frame)
+        self.status.setCurrentIndex(self.status.findData('QUOTED'))
+        for column, (label, key) in enumerate((('报价单编号','scheme_no'), ('客户','company'), ('产品','product'), ('创建人','creator'))):
+            filters.addWidget(filter_field(label, self.filters[key], 'quoteManagementField_' + key),0,column)
+            filters.setColumnStretch(column,1)
+        filters.addWidget(filter_field('状态', self.status, 'quoteManagementField_status'),1,0)
+        dates = QHBoxLayout(); dates.setContentsMargins(0,0,0,0); dates.setSpacing(8)
+        dates.addWidget(self.filters['updated_from'],1); dates.addWidget(QLabel('-'))
+        dates.addWidget(self.filters['updated_to'],1)
+        filters.addWidget(filter_field('更新时间', dates, 'quoteManagementField_updated'),1,1,1,2)
+        actions = QHBoxLayout(); actions.setContentsMargins(0,0,0,0); actions.setSpacing(METRICS['action_gap'])
+        self.query_button = button('查询', lambda: self.load_list(1), True)
+        self.reset_button = button('重置', self.reset_search)
+        for control in (self.query_button, self.reset_button):
+            control.setFixedHeight(METRICS['field_height']); actions.addWidget(control)
+        actions.addStretch(1)
+        filters.addLayout(actions,1,3,Qt.AlignmentFlag.AlignBottom)
+        for editor in (*self.filters.values(), self.status):
+            editor.setMinimumWidth(0 if not isinstance(editor,DateFilter) else 96)
+            editor.setFixedHeight(METRICS['field_height'])
+            editor.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Fixed)
+            if isinstance(editor,QLineEdit):editor.returnPressed.connect(lambda: self.load_list(1))
+        layout.addWidget(filter_frame)
         self.list_sheet = QFrame(); self.list_sheet.setObjectName('quoteManagementSheet')
         sheet = QVBoxLayout(self.list_sheet); sheet.setContentsMargins(0,0,0,0); sheet.setSpacing(0)
         caption = QHBoxLayout(); caption.setContentsMargins(16,13,16,13)
@@ -416,7 +448,16 @@ class QuoteManagement:
             control.hide(); footer.addWidget(control)
         layout.addLayout(footer); layout.addStretch(1)
         self.fit_list()
-        self.search.returnPressed.connect(lambda: self.load_list(1))
+
+    def sync_filter_products(self):
+        from quote_scheme_center import _configured_product_options
+        target = self.filters['product']; options = [('全部',''), *_configured_product_options(self.window)]
+        if options == [(target.itemText(i),target.itemData(i)) for i in range(target.count())]:return
+        selected = target.currentData()
+        with QSignalBlocker(target):
+            target.clear()
+            for label,value in options:target.addItem(label,value)
+            target.setCurrentIndex(max(0,target.findData(selected)))
 
     def fit_list(self):
         # Content-sized like the approved sheet; long lists scroll within the
@@ -548,33 +589,51 @@ class QuoteManagement:
         self.window.show_section(2)
 
     def reset_search(self):
-        self.search.clear(); self.status.setCurrentIndex(0); self.load_list(1)
+        for editor in self.filters.values():
+            if isinstance(editor,QLineEdit):editor.clear()
+            else:editor.setCurrentIndex(0)
+        self.status.setCurrentIndex(self.status.findData('QUOTED')); self.load_list(1)
+
+    def list_filters(self, page):
+        values = {key: editor.text().strip() if isinstance(editor,QLineEdit) else str(editor.currentData() or '')
+                  for key,editor in self.filters.items()}
+        for key in ('updated_from','updated_to'):
+            if values[key] and (len(values[key]) != 10 or not QDate.fromString(values[key],'yyyy-MM-dd').isValid()):
+                raise ValueError('更新时间请输入 YYYY-MM-DD 格式的有效日期，或通过日历选择。')
+        if values['updated_from'] and values['updated_to'] and values['updated_from'] > values['updated_to']:
+            raise ValueError('开始日期不能晚于结束日期，请重新选择更新时间范围。')
+        values.update(page=page,page_size=20,status=self.status.currentData() or '')
+        return {key:value for key,value in values.items() if value != ''}
 
     def load_list(self, page=1):
         import quote_scheme_center as centre
+        try: query = self.list_filters(page)
+        except ValueError as error:
+            self.list_status.setText(str(error)); return
         self.list_epoch += 1; epoch = self.list_epoch
         self.page_number = page; self.rows = []; fill(self.list_table, [])
         self.contract_button.setEnabled(False); self.list_status.setText('正在加载报价单…')
         self.selection_caption.setText('请选择一条报价单，再生成合同'); self.retry_list.hide(); self.fit_list()
-        query = dict(page=page, page_size=20, status=self.status.currentData() or '')
-        text = self.search.text().strip()
-        query['search'] = text
         def loaded(result):
             if epoch != self.list_epoch: return
             self.rows = list(result.get('items') or [])
             rows = [('', q['scheme_no'] + '\n' + str(q.get('product_summary') or ''), q.get('company_name') or '未选择客户',
                      centre.STATUS_TEXT.get(q.get('status'), q.get('status', '')) + f"\nV{q.get('quote_version') or q.get('version_no', 1)}",
                      '—' if q.get('quoted_amount') is None else f"{float(q['quoted_amount']):,.2f}",
-                     str(q.get('last_editor_name') or q.get('creator_name') or '') + '\n' + str(q.get('updated_at') or '')[:19], '') for q in self.rows]
+                     str(q.get('last_editor_name') or q.get('creator_name') or '') + '\n' + self.updated_time(q.get('updated_at')), '') for q in self.rows]
             fill(self.list_table, rows)
             for r in range(len(rows)):
                 self.list_table.setRowHeight(r, 80)
                 radio = QRadioButton(); radio.setAccessibleName('选择报价单 ' + self.rows[r]['scheme_no'])
                 radio.clicked.connect(lambda _=False,r=r: self.list_table.selectRow(r))
                 self.row_group.addButton(radio)
-                self.list_table.setCellWidget(r, 0, radio)
+                selection = QWidget(); selection_layout = QHBoxLayout(selection)
+                selection_layout.setContentsMargins(0,0,0,0)
+                selection_layout.addWidget(radio,0,Qt.AlignmentFlag.AlignCenter)
+                self.list_table.setCellWidget(r, 0, selection)
                 actions = QWidget(); action_layout = QVBoxLayout(actions); action_layout.setContentsMargins(8,6,8,6); action_layout.setSpacing(2)
                 for label, tab in (('查看',0),('导出',4)):
+                    if label=='导出' and self.rows[r].get('can_write') is False:continue
                     action = button(label, lambda _=False,r=r,t=tab:self.open_row(r,t)); action.setObjectName('quoteManagementLink')
                     action_layout.addWidget(action)
                 self.list_table.setCellWidget(r, 6, actions)
@@ -589,9 +648,18 @@ class QuoteManagement:
                 self.list_status.setText('报价单加载失败，请重试。'); self.list_status.setToolTip(str(message)); self.retry_list.show()
         centre._run(self.window, 'GET', '/api/quote-schemes?' + urllib.parse.urlencode(query), None, loaded, failed)
 
+    @staticmethod
+    def updated_time(value):
+        stamp = QDateTime.fromString(str(value or ''),Qt.DateFormat.ISODateWithMs)
+        if not stamp.isValid():stamp = QDateTime.fromString(str(value or ''),Qt.DateFormat.ISODate)
+        # Match the business date used by the server-side date range.
+        return stamp.toTimeZone(QTimeZone(b'Asia/Shanghai')).toString('yyyy-MM-dd HH:mm:ss') if stamp.isValid() else str(value or '')[:19]
+
     def selection_changed(self):
-        self.contract_button.setEnabled(0 <= self.list_table.currentRow() < len(self.rows))
-        radio = self.list_table.cellWidget(self.list_table.currentRow(), 0)
+        index=self.list_table.currentRow()
+        self.contract_button.setEnabled(0 <= index < len(self.rows) and self.rows[index].get('can_write') is not False)
+        selection = self.list_table.cellWidget(self.list_table.currentRow(), 0)
+        radio = selection.findChild(QRadioButton) if selection is not None else None
         if isinstance(radio, QRadioButton): radio.setChecked(True)
         if 0 <= self.list_table.currentRow() < len(self.rows):
             q = self.rows[self.list_table.currentRow()]
@@ -607,6 +675,7 @@ class QuoteManagement:
         row = self.list_table.currentRow()
         if not 0 <= row < len(self.rows): return
         q = self.rows[row]
+        if q.get('can_write') is False:return
         amount = '—' if q.get('quoted_amount') is None else f"¥ {float(q['quoted_amount']):,.2f}"
         self.contract_source.setText(f"来源报价单：{q['scheme_no']}\n报价版本：V{q.get('quote_version') or q.get('version_no', 1)}\n客户：{q.get('company_name') or '未选择客户'}\n报价金额：{amount}")
         self.window.show_section(self.contract_route)
@@ -618,6 +687,7 @@ class QuoteManagement:
         self.sync()
         selected = self.history_version or len(self.state['versions']) or 1
         self.heading.setText(f'报价单详情 · V{selected}' + (' · 历史只读' if self.history_version else ''))
+        if getattr(w,'_name_scope_foreign',False):self.heading.setText(self.heading.text()+' · 他人报价，仅可查看')
         amount = money_sum(ui._row_values(item)[16] for item in w.draft_items)
         self.meta.setText(f"{w._quote_scheme_id or '未登记草稿'}　　V{selected}　　{w._quote_scheme_quote_date}\n报价总额 · 含税人民币")
         self.amount.setText(f'¥ {amount:,.2f}')
@@ -669,6 +739,9 @@ class QuoteManagement:
         if hasattr(w, 'quote_scheme_save_status'):
             self.feedback.setText(w.quote_scheme_save_status.text())
         busy = getattr(w, '_scheme2_document_busy', False) or bool(w._quote_scheme_export_context)
+        if getattr(w,'_name_scope_foreign',False):
+            for control in (self.adjust_button,self.save_button,self.discard_button,w.scheme2_quote_print,w.scheme2_quote_export):control.setEnabled(False)
+            w.scheme2_company.setEnabled(False);return
         self.adjust_button.setEnabled(bool(w.draft_items) and self.history_version is None and not busy and w._quote_scheme_status != 'VOID')
         self.save_button.setEnabled(not w._quote_scheme_read_only and self.history_version is None and not busy)
         self.discard_button.setEnabled(not w._quote_scheme_read_only and self.history_version is None and not busy)
@@ -705,6 +778,7 @@ class QuoteManagement:
     def adjust(self):
         import quote_scheme_center as centre
         w = self.window
+        if getattr(w,'_name_scope_foreign',False):return
         if self.history_version is not None or getattr(w, '_scheme2_document_busy', False): return
         if w._quote_scheme_read_only:
             if w._quote_scheme_status != 'QUOTED':

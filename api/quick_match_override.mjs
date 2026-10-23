@@ -1,6 +1,7 @@
 // Manual catalogue-size selection. Automatic matching and perimeter pricing
 // remain owned by calc.match_quick_quote; never accept a client-supplied price.
 import {randomUUID} from 'node:crypto';
+import {ownerInsertSql} from './quote_access_scope.mjs';
 import {sqlValue} from './attachment_service.mjs';
 import {normalizeQuickDoorVariantInput} from './door_variant_rules.mjs';
 
@@ -105,6 +106,7 @@ export function createQuickMatchOverrideService({runPsql}) {
     // or reinserting old selections through current catalogue validation.
     const persisted = await query(`BEGIN;
       SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='25s';
+      ${ownerInsertSql('QUOTE_LINE',sqlValue(lineId))}
       INSERT INTO calc.attachment_quote_line(quote_line_id,quote_id,product_code,environment_snapshot)
       VALUES(${sqlValue(lineId)}::uuid,${sqlValue(saved.quote_id)},
         ${sqlValue(environment.product_code)},${jsonSql(next)});

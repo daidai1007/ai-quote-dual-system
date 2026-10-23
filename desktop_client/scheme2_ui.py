@@ -150,7 +150,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.21.02"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.22.01"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -310,7 +310,7 @@ def _start_export_validation(window):
 
 
 def _sync_export_company(window):
-    """Copy the visible Scheme-2 company into the legacy export controller."""
+    """Copy the visible buyer without reusing an edited combo's stale code."""
 
     visible = getattr(window, "scheme2_company", None)
     export_combo = getattr(window, "company_combo", None)
@@ -318,17 +318,28 @@ def _sync_export_company(window):
         return
     text = visible.currentText().strip()
     data = visible.currentData()
-    index = export_combo.findData(data) if data is not None else -1
-    if index < 0 and text:
-        index = export_combo.findText(text, Qt.MatchFlag.MatchFixedString)
+    # Editable QComboBox keeps currentData() from its old selected row even
+    # after the user types a different customer. Only a matching row label
+    # can authorize reusing that code, and the export label must agree too.
+    matches = [i for i in range(export_combo.count())
+               if text and export_combo.itemText(i).strip() == text]
+    index = -1
+    if text and data is not None and visible.itemText(visible.currentIndex()).strip() == text:
+        candidate = export_combo.findData(data)
+        if candidate in matches:
+            index = candidate
+    if index < 0 and matches:
+        index = matches[0]
     with QSignalBlocker(export_combo):
         if index >= 0:
             export_combo.setCurrentIndex(index)
-        elif export_combo.isEditable():
+        else:
+            export_combo.setCurrentIndex(-1)
+            if text and not export_combo.isEditable():
+                export_combo.addItem(text)
+                export_combo.setCurrentIndex(export_combo.count() - 1)
+        if export_combo.isEditable():
             export_combo.setEditText(text)
-        elif text:
-            export_combo.addItem(text, data)
-            export_combo.setCurrentIndex(export_combo.count() - 1)
 
 
 class _Scheme2PageRecognitionWorker(QThread):
@@ -2678,6 +2689,8 @@ def _printable_quote_html(window, font_step=0) -> str:
 
 
 def _print_quote(window):
+    if getattr(window,'_name_scope_foreign',False):
+        QMessageBox.information(window,'仅可查看','他人的报价仅可查看，不能打印或导出。');return
     if not getattr(window, "draft_items", []):
         QMessageBox.warning(window, "报价清单为空", "请先将至少一个柜型加入报价清单。")
         return
@@ -3905,8 +3918,9 @@ def _build_cost_page(window):
     detail_header_layout.setContentsMargins(12, 6, 12, 6)
     detail_title = QLabel("所选条目明细")
     detail_title.setObjectName("scheme2CostSelectionTitle")
-    detail_context = QLabel("请选择表格中的条目")
+    detail_context = QLabel()
     detail_context.setObjectName("scheme2CostSelectionContext")
+    detail_context.hide()
     detail_header_layout.addWidget(detail_title)
     detail_header_layout.addWidget(detail_context)
     detail_header_layout.addStretch(1)
@@ -4280,7 +4294,8 @@ def _sync_cost_selection_detail(window):
             product = table.item(row, 2)
             context.setText(f"{name.text() if name else '—'} · {product.text() if product else '—'}")
         else:
-            context.setText("请选择表格中的条目")
+            context.clear()
+        context.setVisible(has_item)
     for column, label in values.items():
         cell = table.item(row, column) if has_item else None
         label.setText(cell.text() if cell is not None else "—")
@@ -4790,6 +4805,13 @@ def _apply_order_workspace_payload(window, payload, status):
         manager = getattr(window, 'quote_management', None)
         if manager is not None:
             manager.load_state(payload)
+        from name_login import user_id
+        cached_scope=payload.get('_name_workspace_scope') or {}
+        if not isinstance(cached_scope,dict):cached_scope={}
+        if user_id() and (cached_scope.get('read_only') or (cached_scope.get('owner_user_id') and cached_scope['owner_user_id']!=user_id())):
+            window._name_scope_foreign=True
+            from quote_scheme_center import _apply_read_only
+            _apply_read_only(window,True)
         window.refresh_summary()
         _refresh_quote_page(window)
         route = int(payload.get("active_route", OPTION_ROUTE))
@@ -4884,11 +4906,20 @@ def _load_order_workspace(window):
             if local_payload is None:
                 window.scheme2_order_number.setToolTip("未找到该订单号的已保存进度")
             return
+        from name_login import user_id
+        if user_id() is not None:
+            payload=deepcopy(payload)
+            payload['_name_workspace_scope']=dict(owner_user_id=result.get('owner_user_id'),read_only=bool(result.get('legacy_read_only')))
         try:
             _save_local_order_workspace(order_number, payload)
         except OSError:
             pass
         _apply_order_workspace_payload(window, payload, "订单进度已恢复并同步到本机")
+        from name_login import user_id
+        if user_id() is not None:
+            window._name_scope_foreign=bool(result.get('legacy_read_only') or (result.get('owner_user_id') and result['owner_user_id']!=user_id()))
+            from quote_scheme_center import _apply_read_only
+            _apply_read_only(window,window._name_scope_foreign or window._quote_scheme_status in ('QUOTED','ARCHIVED','VOID'))
 
     worker.succeeded.connect(loaded)
     def failed(_message):
@@ -7733,7 +7764,7 @@ def _apply_responsive(window):
     option_page = window.stack.widget(OPTION_ROUTE)
     main_scroll = window.findChild(QScrollArea, "mainScroll")
     quote_management_route = route == QUOTE_ROUTE and getattr(window, 'quote_management', None) is not None
-    viewport_route = route == COST_ROUTE or route == getattr(window, "quote_analysis_route", -1) or quote_management_route
+    viewport_route = route == COST_ROUTE or route == getattr(window, "quote_analysis_route", -1) or route == getattr(window, "contract_management_route", -1) or quote_management_route
     _set_cost_scroll_mode(window, main_scroll, viewport_route)
     # Create the fixed row before arranging cost actions so the cost grid
     # leaves its “生成报价单” button in that row.
@@ -7836,7 +7867,7 @@ def _apply_responsive(window):
             # stack. No growing minimum based on the previous (larger) host:
             # that used to produce the second scrollbar and clipped actions.
             canvas = main_scroll.widget()
-            if route == getattr(window, "quote_analysis_route", -1) or quote_management_route:
+            if route == getattr(window, "quote_analysis_route", -1) or route == getattr(window, "contract_management_route", -1) or quote_management_route:
                 # The analytics tabs own scrolling. Prevent a legacy minimum
                 # canvas from surviving DPI/window clamping beyond the viewport.
                 canvas.setMaximumHeight(main_scroll.viewport().height())

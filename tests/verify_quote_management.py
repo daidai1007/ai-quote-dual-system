@@ -218,7 +218,7 @@ class ManagementTests(unittest.TestCase):
         self.assertFalse(self.w._quote_scheme_read_only)
         self.w._quote_scheme_save_timer.stop()
 
-    def test_list_contract_placeholder_and_scheme_entry(self):
+    def test_list_contract_entry_and_scheme_return(self):
         self.saved = centre._snapshot(self.w)
         self.m.show_list(); wait(lambda: self.m.list_table.rowCount() == 1)
         self.assertFalse(self.m.contract_button.isEnabled())
@@ -226,10 +226,13 @@ class ManagementTests(unittest.TestCase):
         self.m.contract_button.click()
         self.assertEqual(self.w.stack.currentIndex(), self.m.contract_route)
         self.assertIn('BJ-20261021-000001', self.m.contract_source.text())
+        # The real contract page protects navigation while its bootstrap is active.
+        page = self.w.contract_management
+        wait(lambda: not page.busy and not page.workers and not page.queue)
         centre._open_scheme(self.w, 'BJ-20261021-000001', 2)
         wait(lambda: self.w.stack.currentIndex() == 2 and self.m.root.currentWidget() == self.m.detail_page)
         self.assertEqual(self.m.tabs.currentIndex(), 0)
-        self.assertEqual([b.text() for b in self.w.nav_buttons][:4], ['选型配置','成本计算','报价单管理','报价方案'])
+        self.assertEqual([b.text() for b in self.w.nav_buttons], ['选型配置','成本计算','报价单管理','合同管理','报价方案','报价分析'])
 
     def test_adjustment_uses_original_real_xlsx_renderer(self):
         self.make_adjustment()

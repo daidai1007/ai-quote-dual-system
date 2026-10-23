@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import {isNamePrincipal,quoteScopeSql,sessionOperator,currentQuotePrincipal} from './quote_access_scope.mjs';
+import {authError} from './name_login_service.mjs';
 
 const STATUSES = Object.freeze(['DRAFT', 'QUOTED', 'REVISING', 'ARCHIVED', 'VOID']);
 const ROLES = Object.freeze(['USER', 'DEPARTMENT_MANAGER', 'ADMIN']);
@@ -49,16 +51,9 @@ const resolvePrincipal = (req, principalMap) => {
 };
 
 const resolveQuoteSchemePrincipal = (req, principalMap, sharedApiKey = '') => {
-  const key = String(req?.headers?.['x-ai-quote-key'] || '');
-  const mapped = principalMap.get(apiKeyHash(key));
-  if (mapped) return Object.freeze({...mapped, identityMode:'AUTHENTICATED'});
-  if (String(sharedApiKey || '') && key === String(sharedApiKey)) {
-    return Object.freeze({
-      userId:`shared-client:${apiKeyHash(key).slice(0, 24)}`,
-      displayName:'共享报价客户端', departmentId:null, role:'ADMIN', identityMode:'SELF_REPORTED',
-    });
-  }
-  return resolvePrincipal(req, principalMap);
+  const principal=currentQuotePrincipal();
+  if(!isNamePrincipal(principal))throw authError();
+  return principal;
 };
 
 const assertTransition = (from, to) => {
@@ -69,7 +64,9 @@ const assertTransition = (from, to) => {
   }
 };
 
-const canReadScheme = (principal, scheme) => principal.role === 'ADMIN'
+const canReadScheme = (principal, scheme) => isNamePrincipal(principal)
+  ? principal.can_view_all_quotes===true || (scheme.effective_owner_user_id||scheme.creator_user_id)===principal.userId
+  : principal.role === 'ADMIN'
   || String(scheme.creator_user_id) === principal.userId
   || Boolean(scheme.shared)
   || (principal.role === 'DEPARTMENT_MANAGER' && principal.departmentId
@@ -120,6 +117,8 @@ const summaryFromSnapshot = (snapshot) => {
 };
 
 const permissionSql = (principal, alias = 's') => {
+  principal=currentQuotePrincipal()||principal;
+  if(isNamePrincipal(principal))return quoteScopeSql(principal,alias);
   const uid = `convert_from(decode('${Buffer.from(principal.userId).toString('hex')}', 'hex'), 'UTF8')`;
   const dept = principal.departmentId
     ? `convert_from(decode('${Buffer.from(principal.departmentId).toString('hex')}', 'hex'), 'UTF8')`
@@ -133,6 +132,8 @@ const permissionSql = (principal, alias = 's') => {
 };
 
 const writePermissionSql = (principal, alias = 's') => {
+  principal=currentQuotePrincipal()||principal;
+  if(isNamePrincipal(principal))return quoteScopeSql(principal,alias,true);
   if (principal.role === 'ADMIN') return 'TRUE';
   const uid = `convert_from(decode('${Buffer.from(principal.userId).toString('hex')}', 'hex'), 'UTF8')`;
   const own = `${alias}.creator_user_id = ${uid}`;
@@ -152,10 +153,13 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
   };
   const principalValues = (p) => ({
     id: sqlUnicodeText(p.userId), name: sqlUnicodeText(p.displayName), dept: sqlUnicodeText(p.departmentId),
-    identityMode: sqlUnicodeText(p.identityMode || 'AUTHENTICATED'),
+    identityMode: sqlUnicodeText(p.identityMode==='NAME_ONLY'?'SELF_REPORTED':p.identityMode || 'AUTHENTICATED'),
+    auditMode: sqlUnicodeText(p.identityMode || 'AUTHENTICATED'),
   });
 
   const create = async (principal, input, { sourceNo = null } = {}) => {
+    principal=currentQuotePrincipal()||principal;
+    input=sessionOperator(principal,input);
     const snapshot = snapshotValue(input);
     const operatorName = operatorNameValue(input);
     const summary = summaryFromSnapshot(snapshot);
@@ -193,16 +197,18 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     ), audit AS (
       INSERT INTO calc.quote_scheme_audit (scheme_id,action,to_status,actor_user_id,actor_name_snapshot,detail)
       SELECT scheme_id,${sqlUnicodeText(sourceNo ? 'COPIED' : 'CREATED')},status,${p.id},${sqlUnicodeText(operatorName)},
-        jsonb_build_object('source_scheme_no',${sqlUnicodeText(sourceNo)},'identity_mode',${p.identityMode}) FROM created
+        jsonb_build_object('source_scheme_no',${sqlUnicodeText(sourceNo)},'identity_mode',${p.auditMode}) FROM created
     ) SELECT jsonb_build_object('scheme_no',scheme_no,'status',status,'version_no',version_no,
       'lock_version',lock_version,'created_at',created_at,'updated_at',updated_at,
       'quote_management_historical_export',TRUE) FROM created;`);
   };
 
   const get = async (principal, schemeNo) => {
+    principal=currentQuotePrincipal()||principal;
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     return query(`SELECT COALESCE((SELECT jsonb_build_object(
       'found',TRUE,'scheme_no',s.scheme_no,'status',s.status,'version_no',s.version_no,
+      'can_write',(${writePermissionSql(principal,'s')}),
       'source_scheme_no',source.scheme_no,'source_version_no',s.source_version_no,'company_name',s.company_name,'product_summary',s.product_summary,
       'quoted_amount',s.quoted_amount,'creator_user_id',s.creator_user_id,'creator_name',s.creator_name_entered,
       'creator_identity_mode',s.creator_identity_mode,
@@ -216,6 +222,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
   };
 
   const list = async (principal, filters = {}) => {
+    principal=currentQuotePrincipal()||principal;
     const page = Math.max(1, Math.min(100000, Number(filters.page) || 1));
     const pageSize = Math.max(10, Math.min(100, Number(filters.page_size) || 20));
     const where = [permissionSql(principal, 's')];
@@ -228,11 +235,21 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       if (value) where.push(`s.${column} ILIKE ${sqlUnicodeText(`%${escapeLike(value)}%`)} ESCAPE '\\'`);
     }
     if (STATUSES.includes(String(filters.status || '').toUpperCase())) where.push(`s.status=${sqlUnicodeText(String(filters.status).toUpperCase())}`);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(String(filters.updated_from || ''))) where.push(`s.updated_at >= ${sqlUnicodeText(filters.updated_from)}::date`);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(String(filters.updated_to || ''))) where.push(`s.updated_at < (${sqlUnicodeText(filters.updated_to)}::date + interval '1 day')`);
+    const dates = Object.fromEntries(['updated_from','updated_to'].map(key=>[key,String(filters[key] || '').trim()]));
+    for (const value of Object.values(dates)) {
+      if (value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number(value.slice(0,4))<1 || !Number.isFinite(Date.parse(value+'T00:00:00Z'))
+        || new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)) {
+        throw Object.assign(new Error('更新时间请输入 YYYY-MM-DD 格式的有效日期。'),{statusCode:400});
+      }
+    }
+    if (dates.updated_from && dates.updated_to && dates.updated_from > dates.updated_to)
+      throw Object.assign(new Error('开始日期不能晚于结束日期。'),{statusCode:400});
+    // Inclusive calendar dates follow the same Shanghai business clock as the UI.
+    if (dates.updated_from) where.push(`s.updated_at >= (${sqlUnicodeText(dates.updated_from)}::date::timestamp AT TIME ZONE 'Asia/Shanghai')`);
+    if (dates.updated_to) where.push(`s.updated_at < ((${sqlUnicodeText(dates.updated_to)}::date + 1)::timestamp AT TIME ZONE 'Asia/Shanghai')`);
     const predicate = where.join(' AND ');
     return query(`WITH matched AS (
-      SELECT s.*, source.scheme_no AS source_scheme_no,
+      SELECT s.*, source.scheme_no AS source_scheme_no,(${writePermissionSql(principal,'s')}) AS can_write,
         CASE WHEN (snap.snapshot_payload#>>'{quote_management,current}') ~ '^[1-9][0-9]?$'
           THEN (snap.snapshot_payload#>>'{quote_management,current}')::integer ELSE s.version_no END AS quote_version,
         count(*) OVER() AS total_count
@@ -243,12 +260,14 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     ) SELECT jsonb_build_object('page',${page},'page_size',${pageSize},
       'total',COALESCE(max(total_count),0),'items',COALESCE(jsonb_agg(jsonb_build_object(
         'scheme_no',scheme_no,'status',status,'version_no',version_no,'quote_version',quote_version,'source_scheme_no',source_scheme_no,'source_version_no',source_version_no,
-        'company_name',company_name,'product_summary',product_summary,'quoted_amount',quoted_amount,
+        'company_name',company_name,'product_summary',product_summary,'quoted_amount',quoted_amount,'can_write',can_write,
         'creator_name',creator_name_entered,'creator_identity_mode',creator_identity_mode,'last_editor_name',last_editor_name_snapshot,
         'lock_version',lock_version,'updated_at',updated_at) ORDER BY updated_at DESC,scheme_id DESC),'[]'::jsonb))::text FROM matched;`);
   };
 
   const save = async (principal, schemeNo, input) => {
+    principal=currentQuotePrincipal()||principal;
+    input=sessionOperator(principal,input);
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     const snapshot = snapshotValue(input);
     const operatorName = operatorNameValue(input);
@@ -287,6 +306,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
   };
 
   const transition = async (principal, schemeNo, action, expectedVersion, operatorNameInput) => {
+    principal=currentQuotePrincipal()||principal;
+    if(isNamePrincipal(principal))operatorNameInput=principal.displayName;
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     const config = {
       archive: { from: ['QUOTED'], to: 'ARCHIVED' }, restore: { from: ['ARCHIVED'], to: 'QUOTED' },
@@ -318,6 +339,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
   };
 
   const revision = async (principal, schemeNo, expectedVersion, operatorNameInput) => {
+    principal=currentQuotePrincipal()||principal;
+    if(isNamePrincipal(principal))operatorNameInput=principal.displayName;
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     if (!positiveVersion(expectedVersion)) throw Object.assign(new Error('expected_version is required'), { statusCode: 400 });
     const operatorName = operatorNameValue({operator_name:operatorNameInput});
@@ -354,6 +377,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
   };
 
   const exportResult = async (principal, schemeNo, input) => {
+    principal=currentQuotePrincipal()||principal;
+    input=sessionOperator(principal,input);
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     const kind = String(input.kind || 'XLSX').toUpperCase();
     if (!['PRINT','PREVIEW','XLSX'].includes(kind) || typeof input.succeeded !== 'boolean') {
@@ -445,6 +470,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
   };
 
   const removeDraft = async (principal, schemeNo, expectedVersion, operatorNameInput) => {
+    principal=currentQuotePrincipal()||principal;
+    if(isNamePrincipal(principal))operatorNameInput=principal.displayName;
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     if (!positiveVersion(expectedVersion)) throw Object.assign(new Error('expected_version is required'), { statusCode: 400 });
     operatorNameValue({operator_name:operatorNameInput});

@@ -115,7 +115,7 @@ class ReferenceSchemeUI(unittest.TestCase):
     def test_reference_structure_and_five_statuses(self):
         w = self.window
         self.assertEqual([b.text() for b in w.nav_buttons],
-                         ['选型配置', '成本计算', '报价单管理', '报价方案', '报价分析', '合同管理'])
+                         ['选型配置', '成本计算', '报价单管理', '合同管理', '报价方案', '报价分析'])
         title = w.quote_scheme_page.findChild(QLabel, 'quoteSchemeTitle')
         # The approved manager has its own title scale. The scheme page still
         # follows the unchanged cost-page typography.

@@ -315,9 +315,6 @@ class AnalysisPage(QWidget):
         title_column = QVBoxLayout()
         title_column.setSpacing(2)
         title_column.addWidget(label("报价分析", "analysisTitle"))
-        subtitle=label("报价概览 · 产品折扣与成交表现", "analysisSubtitle")
-        subtitle.setWordWrap(False)
-        title_column.addWidget(subtitle)
         heading.addLayout(title_column)
         heading.addStretch(1)
         self.record_button = QPushButton("登记成交结果")
@@ -480,7 +477,6 @@ QWidget#quoteAnalysisPage {{ background:{COLORS['bg']}; font-family:{FONT_FAMILY
 QWidget#quoteAnalysisPage QWidget {{ font-size:13px; }}
 QWidget#quoteAnalysisPage QLabel {{ font-size:12px; background:transparent; color:{COLORS['secondary']}; }}
 QWidget#quoteAnalysisPage QLabel#analysisTitle {{ font-size:20px; color:{COLORS['deep']}; font-weight:600; }}
-QWidget#quoteAnalysisPage QLabel#analysisSubtitle {{ font-size:12px; color:{COLORS['muted']}; }}
 QWidget#quoteAnalysisPage QLabel#analysisNotice {{ color:{COLORS['secondary']}; padding:8px 11px; background:#edf3fa; border-left:3px solid #8aadd5; }}
 QWidget#quoteAnalysisPage QLabel#analysisFieldLabel {{ color:#49617e; }}
 QWidget#quoteAnalysisPage QLabel#analysisSectionTitle {{ font-size:15px; color:{COLORS['deep']}; font-weight:600; }}
@@ -546,8 +542,6 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         column.setContentsMargins(0,0,0,0)
         column.setSpacing(10)
         column.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.basis = label("统计口径：已报价方案按正式报价时间，草稿按创建时间。金额读取正式报价快照，不随当前价格变化。")
-        column.addWidget(self.basis)
         self.kpi_layout = QGridLayout()
         self.kpi_layout.setSpacing(10)
         self.kpis = {}
@@ -729,6 +723,8 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         self.record_button.setEnabled(not busy and bool(self.data and self.data.get("outcomes_available")))
 
     def request(self,path,payload=None,success=None):
+        from name_login import window_is_current
+        if not window_is_current(self.window):return False
         if self.worker is not None:
             return False
         worker = AnalysisWorker(self.window,path,payload)
@@ -779,11 +775,15 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         self.record_button.setEnabled(False)
 
     def failed(self,message):
+        from name_login import window_is_current
+        if not window_is_current(self.window):return
         self.clear_results()
         self.notice.setText(str(message)+" 点击“查询”重新加载。")
         self.discount_scope.setText("本次未取得有效数据，未显示缓存统计。")
 
     def loaded(self,result):
+        from name_login import window_is_current
+        if not window_is_current(self.window):return
         if self.pending_reload:
             return  # A catalogue refresh superseded this request's scope.
         if not isinstance(result,dict) or not isinstance(result.get("summary"),dict):
@@ -1006,6 +1006,7 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         result_date.setCalendarPopup(True)
         result_date.setDisplayFormat("yyyy-MM-dd")
         actor = QLineEdit(schemes._operator_name(self.window))
+        actor.setReadOnly(bool(getattr(self.window,'_name_user_id',None)))
         actor.setMaxLength(100)
         for caption,widget in (("正式报价",scheme),("产品",product),("商机/订单编号",opportunity),("成交结果",result),("结果日期",result_date),("操作人",actor)):
             form.addRow(caption,widget)

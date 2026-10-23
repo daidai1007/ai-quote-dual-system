@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtGui import QFontDatabase
 import scheme2_ui as ui
 import v3_launcher
+import quote_scheme_center
 
 app = QApplication.instance() or QApplication([])
 namespace = v3_launcher.load_v3_namespace()
@@ -25,10 +27,14 @@ Window.refresh_formula_inputs = lambda self, *args: None
 
 class RemovedDiagnosticReport(unittest.TestCase):
     def setUp(self):
+        transport=patch.object(quote_scheme_center.QuoteSchemeWorker,'run',lambda worker:worker.succeeded.emit({'items':[],'total':0}));transport.start();self.addCleanup(transport.stop)
         self.window = Window()
         self.window._scheme2_loading_order = True
         self.window._scheme2_dirty = False
-        self.addCleanup(self.window.close)
+        def close():
+            for worker in list(self.window._quote_scheme_workers):worker.wait(1000)
+            app.processEvents();self.window.close()
+        self.addCleanup(close)
 
     def assert_no_report_state(self):
         for name in ("scheme2_diagnostic_button", "_scheme2_diagnostic_api_url",

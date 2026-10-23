@@ -108,7 +108,7 @@ class AnalysisTests(unittest.TestCase):
         self.window.draft_items=[{'name':'本机未完成产品','quick_discount':.85}]
         before=deepcopy(self.window.draft_items)
         self.load()
-        self.assertEqual([b.text() for b in self.window.nav_buttons],['选型配置','成本计算','报价单管理','报价方案','报价分析','合同管理'])
+        self.assertEqual([b.text() for b in self.window.nav_buttons],['选型配置','成本计算','报价单管理','合同管理','报价方案','报价分析'])
         self.assertEqual(sum(b.isChecked() for b in self.window.nav_buttons),1)
         self.assertEqual(self.window.draft_items,before)
         self.assertEqual(self.page.recent.rowCount(),1)

@@ -19,6 +19,9 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel  # noqa: E402
 
 import v3_launcher  # noqa: E402
 import scheme2_ui  # noqa: E402
+import quote_scheme_center
+from PySide6.QtTest import QTest
+quote_scheme_center.QuoteSchemeWorker.run=lambda worker:worker.succeeded.emit({'items':[],'total':0})
 
 
 app = QApplication.instance() or QApplication([])
@@ -48,6 +51,8 @@ assert combo.lineEdit().text() == "杭州拓强机械股份有限公司"
 assert "color:transparent" not in combo.lineEdit().styleSheet().replace(" ", "")
 assert not combo._scheme2_multiline_filter.eventFilter(combo, QEvent(QEvent.Type.Paint))
 assert all(label.text() != "客户" for label in window.scheme2_cost_page.findChildren(QLabel))
+for worker in list(window._quote_scheme_workers):worker.wait(1000)
+app.processEvents()
 window.close()
 app.processEvents()
 print("scheme2 quote company inline layout contract passed")

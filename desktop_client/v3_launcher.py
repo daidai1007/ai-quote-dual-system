@@ -32,6 +32,8 @@ from scheme2_ui import install_scheme2_ui
 from quote_scheme_center import install_quote_scheme_center
 from quote_analysis import install_quote_analysis
 from quote_management import install_quote_management
+from name_login import install_name_transport, install_name_login
+from contract_management import install_contract_management
 from client_update_ui import install_client_updates
 
 
@@ -484,6 +486,7 @@ def load_v3_namespace() -> dict:
     main_code = _scale_ui_code(_customer_ui_code(marshal.loads(main_path.read_bytes())))
     exec(main_code, namespace)
     _install_source_render_config(namespace)
+    install_name_transport(namespace)
     _install_cloud_export_validation(namespace)
     install_recognition_repair(namespace)
     install_layout_refresh(namespace)
@@ -493,7 +496,9 @@ def load_v3_namespace() -> dict:
     install_quote_scheme_center(namespace)
     install_quote_analysis(namespace)
     install_quote_management(namespace)
+    install_contract_management(namespace)
     install_client_updates(namespace)
+    install_name_login(namespace)
     return namespace
 
 

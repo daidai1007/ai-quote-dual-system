@@ -97,7 +97,8 @@ def buttons_with_text(root, captions: set[str]):
 
 
 namespace = v3_launcher.load_v3_namespace()
-assert namespace["API_URL"] == "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual"
+assert namespace["API_URL"] == (os.environ.get("AI_QUOTE_API_URL") or "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual")
+assert v3_launcher._DEFAULT_RENDER_API_URL == "https://ai-quote-dual-test.onrender.com/api/quotes/calculate-dual"
 
 remark_builder = namespace["build_standardized_quote_remark"]
 manual_remark = "手工录入，碳钢喷塑RAL7035橘纹，前双开门后背板，配风机1个。"
@@ -1462,12 +1463,12 @@ try:
     window.show()
     app.processEvents()
     assert [button.text() for button in window.nav_buttons] == [
-        "选型配置", "成本计算", "报价单管理", "报价方案", "报价分析", "合同管理",
+        "选型配置", "成本计算", "报价单管理", "合同管理", "报价方案", "报价分析",
     ]
     assert window.nav_routes == (
         (1, "选型配置", "", None), (3, "成本计算", "", None),
-        (2, "报价单管理", "", None), (6, "报价方案", "", None), (7, "报价分析", "", None),
-        (window.quote_management.contract_route, "合同管理", "", None),
+        (2, "报价单管理", "", None), (window.quote_management.contract_route, "合同管理", "", None),
+        (6, "报价方案", "", None), (7, "报价分析", "", None),
     )
     pages = {
         1: "scheme2OptionPage", 3: "scheme2CostPage",
@@ -1488,9 +1489,9 @@ try:
         "辅材成本", "人工成本", "附件成本", "喷涂费用", "管理费用", "运费",
         "成本总价", "毛利率", "自制件重量", "成本明细",
     ]
-    assert window.quote_scheme_nav_button is window.nav_buttons[-3]
-    assert window.quote_analysis_nav_button is window.nav_buttons[-2]
-    assert window.quote_management.contract_nav is window.nav_buttons[-1]
+    assert window.quote_scheme_nav_button is window.nav_buttons[-2]
+    assert window.quote_analysis_nav_button is window.nav_buttons[-1]
+    assert window.quote_management.contract_nav is window.nav_buttons[3]
     assert window.quote_scheme_operator_name is not window.quote_scheme_filters["creator"]
     assert window.findChild(QLabel, "quoteSchemeServerNotice").text() == "数据保存于服务器"
     assert window.quote_scheme_table.columnCount() == 9

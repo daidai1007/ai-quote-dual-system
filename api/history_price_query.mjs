@@ -1,4 +1,5 @@
 const MAX_MATCH_TEXT_LENGTH = 500;
+import {currentQuotePrincipal,resourceScopeSql} from './quote_access_scope.mjs';
 
 const requiredExactText = (input, key) => {
   const value = input?.[key];
@@ -32,6 +33,7 @@ WITH raw_matches AS (
          h.tax_included_unit_price
   FROM calc."历史价格" h
   WHERE h.customer_name = ${sqlUnicodeText(match.company_name)}
+    AND ${resourceScopeSql(currentQuotePrincipal(),'HISTORY_PRICE','h.source_row_no::text')}
     AND h.specification = ${sqlUnicodeText(match.specification)}
     AND h.cabinet_type = ${sqlUnicodeText(match.cabinet_type)}
 ), grouped_matches AS (

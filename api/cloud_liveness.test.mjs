@@ -71,7 +71,7 @@ test('Docker-compatible server starts and serves a database-free health check', 
       RENDER: 'true',
       PORT: String(port),
       AI_QUOTE_API_KEY: 'cloud-test-key',
-      DATABASE_URL: 'postgresql://test:test@example.neon.tech/quote_test?sslmode=require',
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:9/quote_test?sslmode=disable',
     },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -119,10 +119,19 @@ test('Docker-compatible server starts and serves a database-free health check', 
   const protectedResponse = await fetch(`http://127.0.0.1:${port}/api/health/database`);
   assert.equal(protectedResponse.status, 401);
 
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/name-login`, {
+    method: 'POST',
+    headers: {'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key'},
+    body: JSON.stringify({name: 'Cloud regression user'}),
+  });
+  assert.equal(loginResponse.status, 200);
+  const sessionHeaders = {'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key',
+    authorization: `Bearer ${(await loginResponse.json()).token}`};
+
   await t.test('removed report upload endpoint returns 404 without contacting the database', async () => {
     const removed = await fetch(`http://127.0.0.1:${port}/api/diagnostics/reports`, {
       method: 'POST',
-      headers: {'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key'},
+      headers: sessionHeaders,
       body: JSON.stringify({confirmed_by_operator: true, report: {quote_items: [], events: []}}),
     });
     assert.equal(removed.status, 404);
@@ -131,21 +140,21 @@ test('Docker-compatible server starts and serves a database-free health check', 
 
   const attachmentValidation = await fetch(`http://127.0.0.1:${port}/api/attachments/catalog`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    headers: sessionHeaders,
     body: JSON.stringify({ item_name: '', price: -1 }),
   });
   assert.equal(attachmentValidation.status, 400);
 
   const malformedJson = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    headers: sessionHeaders,
     body: '{',
   });
   assert.equal(malformedJson.status, 400);
 
   const arrayPayload = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    headers: sessionHeaders,
     body: '[]',
   });
   assert.equal(arrayPayload.status, 400);
@@ -161,7 +170,7 @@ test('Docker-compatible server starts and serves a database-free health check', 
   ]) {
     const response = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+      headers: sessionHeaders,
       body: JSON.stringify({ ...validQuoteInput, quote_id: `${validQuoteInput.quote_id}-${field}`, attachments: [attachment] }),
     });
     assert.equal(response.status, 400, `invalid attachment ${field} returned ${response.status}`);
@@ -169,7 +178,7 @@ test('Docker-compatible server starts and serves a database-free health check', 
 
   const arrayHistoryPayload = await fetch(`http://127.0.0.1:${port}/api/company-history`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    headers: sessionHeaders,
     body: JSON.stringify({
       company_code: 'TEST', product_code: 'js_single', material_code: 'SECC',
       width_mm: 1000, height_mm: 1800, depth_mm: 600, payload: [],
@@ -179,7 +188,7 @@ test('Docker-compatible server starts and serves a database-free health check', 
 
   const doorValidation = await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-ai-quote-key': 'cloud-test-key' },
+    headers: sessionHeaders,
     body: JSON.stringify({
       quote_id: 'TEST-INVALID-DOOR', product_code: 'JS_SINGLE', material_code: 'SECC',
       width_mm: 1000, height_mm: 1800, depth_mm: 600,

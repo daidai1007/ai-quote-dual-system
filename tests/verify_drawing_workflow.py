@@ -178,7 +178,7 @@ class DrawingWorkflowTests(unittest.TestCase):
 
     def test_navigation_and_shared_candidate(self):
         self.assertEqual([b.text() for b in self.w.nav_buttons],
-                         ['选型配置', '成本计算', '报价单管理', '报价方案', '报价分析', '合同管理'])
+                         ['选型配置', '成本计算', '报价单管理', '合同管理', '报价方案', '报价分析'])
         self.assertEqual(self.w.stack.currentWidget().objectName(), 'scheme2OptionPage')
         self.assertTrue(self.w.quote_drawing_preview.isVisible())
         item = candidate('png')

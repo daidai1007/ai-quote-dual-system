@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
+import {withQuotePrincipal} from './quote_access_scope.mjs';
+import {createNameLoginService} from './name_login_service.mjs';
 import {
   apiKeyHash, assertTransition, canReadScheme, createQuoteSchemeService, loadPrincipalMap,
   operatorNameValue, resolvePrincipal, resolveQuoteSchemePrincipal, summaryFromSnapshot,
@@ -18,12 +20,13 @@ test('identity comes only from the authenticated API key',()=>{
   assert.throws(()=>resolvePrincipal({headers:{'x-ai-quote-key':'unknown'},body:{user_id:'a1'}},principals),/身份尚未配置/);
 });
 
-test('shared client compatibility uses a server-derived principal and keeps entered name non-authoritative',()=>{
-  const principal=resolveQuoteSchemePrincipal({headers:{'x-ai-quote-key':'shared-key'}},principals,'shared-key');
-  assert.equal(principal.displayName,'共享报价客户端');
-  assert.equal(principal.identityMode,'SELF_REPORTED');
-  assert.match(principal.userId,/^shared-client:[0-9a-f]{24}$/);
-  assert.notEqual(principal.userId,'张工');
+test('shared and mapped keys cannot substitute for a name session',()=>{
+  const request={headers:{'x-ai-quote-key':'shared-key'}};
+  assert.throws(()=>resolveQuoteSchemePrincipal(request,principals,'shared-key'),{statusCode:401});
+  assert.throws(()=>resolveQuoteSchemePrincipal({headers:{'x-ai-quote-key':'admin-key'}},principals),{statusCode:401});
+  const sessions=createNameLoginService(),value=sessions.login({name:'张工'});
+  const person=sessions.requireSession({headers:{authorization:'Bearer '+value.token}});
+  assert.equal(withQuotePrincipal(person,()=>resolveQuoteSchemePrincipal(request,principals,'shared-key')),person);
 });
 
 test('operator name is required, normalized and bounded',()=>{
@@ -145,9 +148,10 @@ test('autosave enforces editable status and optimistic lock on the server',async
   assert.doesNotMatch(sql,/creator_user_id='forged-client-user'/);
 });
 
-test('HTTP routes use the shared-client compatibility resolver and forward entered operator names',async()=>{
+test('HTTP routes require name sessions; service authoritatively replaces entered names',async()=>{
   const source=await readFile(new URL('./server.mjs',import.meta.url),'utf8');
-  assert.match(source,/resolveQuoteSchemePrincipal\(req, QUOTE_SCHEME_PRINCIPALS, API_KEY\)/);
+  assert.match(source,/nameSessions.requireSession\(req\)/);
+  assert.match(source,/const principal = req.namePrincipal/);
   assert.match(source,/snapshot: source\.snapshot, operator_name: input\.operator_name/);
   assert.match(source,/schemeNo, input\.expected_version, input\.operator_name/);
   assert.match(source,/schemeNo, action, input\.expected_version, input\.operator_name/);

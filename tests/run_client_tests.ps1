@@ -32,6 +32,13 @@ foreach ($requiredCoreFile in @("main.raw", "original.pyz")) {
 }
 
 $testFiles = @(
+    "tests/verify_quote_export_customer.py",
+    "tests/verify_quote_management_filters.py",
+    "tests/verify_name_login.py",
+    "tests/verify_name_login_workflow.py",
+    "tests/verify_contract_identity.py",
+    "tests/verify_contract_management.py",
+    "tests/verify_contract_office_preview.py",
     "tests/verify_quote_management.py",
     "tests/verify_quote_analysis.py",
     "tests/verify_quote_analysis_full_workflow.py",
@@ -99,7 +106,12 @@ $testFiles = @(
     "tests/verify_freight_output.py"
 )
 $savedUpdateConfig = $env:AI_QUOTE_UPDATE_CONFIG
+$savedApiUrl = $env:AI_QUOTE_API_URL
+$savedApiKey = $env:AI_QUOTE_API_KEY
 try {
+    # Never let a UI fixture fall through to the installed online connection.
+    $env:AI_QUOTE_API_URL = 'http://127.0.0.1:9/api/quotes/calculate-dual'
+    $env:AI_QUOTE_API_KEY = 'local-test-only'
     # Business tests must not use an enabled updater from the installed client.
     # Update-specific tests explicitly supply their own local signed fixtures.
     $env:AI_QUOTE_UPDATE_CONFIG = Join-Path $repoRoot 'packaging\update_config.example.json'
@@ -110,6 +122,8 @@ try {
         }
     }
 } finally {
+    if ($null -eq $savedApiUrl) { Remove-Item Env:AI_QUOTE_API_URL -ErrorAction SilentlyContinue } else { $env:AI_QUOTE_API_URL = $savedApiUrl }
+    if ($null -eq $savedApiKey) { Remove-Item Env:AI_QUOTE_API_KEY -ErrorAction SilentlyContinue } else { $env:AI_QUOTE_API_KEY = $savedApiKey }
     if ($null -eq $savedUpdateConfig) {
         Remove-Item Env:AI_QUOTE_UPDATE_CONFIG -ErrorAction SilentlyContinue
     } else {

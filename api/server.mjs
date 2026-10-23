@@ -1,4 +1,7 @@
 import http from 'node:http';
+import {createNameLoginService} from './name_login_service.mjs';
+import {withQuotePrincipal,currentQuotePrincipal,createPrivateQuoteGuard,resourceScopeSql,quoteScopeSql,ownerInsertSql,q} from './quote_access_scope.mjs';
+import {createContractService} from './contract_service.mjs';
 import {createQuoteAnalysisService} from './quote_analysis_service.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -616,12 +619,12 @@ SELECT jsonb_build_object(
   'source', 'postgresql'
 )::text;`;
 
-const companyCatalogSql = `
+const companyCatalogSql = () => `
 SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.company_name, x.company_code), '[]'::jsonb)::text
 FROM (
   SELECT company_code, company_name, contact_name, contact_phone, company_address
-  FROM calc.ordering_company
-  WHERE is_active = TRUE
+  FROM calc.ordering_company c
+  WHERE c.is_active = TRUE AND (${currentQuotePrincipal()?.can_view_all_quotes?'TRUE':`EXISTS(SELECT 1 FROM calc.quote_scheme s WHERE s.company_name=c.company_name AND ${quoteScopeSql(currentQuotePrincipal(),'s')}) OR EXISTS(SELECT 1 FROM calc.company_quote_history h WHERE h.company_id=c.company_id AND ${resourceScopeSql(currentQuotePrincipal(),'COMPANY_HISTORY','h.history_id::text')})`})
 ) x;`;
 
 const historyMatchSql = (input) => {
@@ -650,6 +653,7 @@ SELECT COALESCE((
   FROM calc.company_quote_history h
   JOIN calc.ordering_company c ON c.company_id = h.company_id
   WHERE c.company_code = ${sqlUnicodeText(input.company_code)}
+    AND ${resourceScopeSql(currentQuotePrincipal(),'COMPANY_HISTORY','h.history_id::text')}
     AND h.product_code = ${sqlUnicodeText(productCode)}
     AND h.material_code = ${sqlUnicodeText(input.material_code)}
     AND COALESCE(h.variant_code, '') = COALESCE(${sqlUnicodeText(input.variant_code ?? '')}, '')
@@ -706,6 +710,9 @@ WITH company AS (
          ${sqlUnicodeText(JSON.stringify(payload))}::jsonb
   FROM company
   RETURNING history_id, quote_id
+), scoped AS (
+  INSERT INTO calc.quote_name_owner(resource_kind,resource_key,owner_user_id,confirmed_by_name,mapping_source)
+  SELECT 'COMPANY_HISTORY',history_id::text,${q(currentQuotePrincipal()?.userId)},${q(currentQuotePrincipal()?.displayName)},'SESSION_CREATED' FROM inserted RETURNING 1
 )
 SELECT COALESCE((SELECT jsonb_build_object('saved', TRUE, 'history_id', history_id, 'quote_id', quote_id) FROM inserted),
                 '{"saved":false,"reason":"company_not_found"}'::jsonb)::text;`;
@@ -787,6 +794,9 @@ WITH c AS (
   )
   JOIN c ON TRUE
   RETURNING history_id
+), scoped AS (
+  INSERT INTO calc.quote_name_owner(resource_kind,resource_key,owner_user_id,confirmed_by_name,mapping_source)
+  SELECT 'COMPANY_HISTORY',history_id::text,${q(currentQuotePrincipal()?.userId)},${q(currentQuotePrincipal()?.displayName)},'SESSION_CREATED' FROM hist RETURNING 1
 )
 SELECT jsonb_build_object(
   'confirmed', TRUE, 'quote_id', (SELECT quote_id FROM doc),
@@ -804,15 +814,20 @@ const orderNumberValue = (input) => {
 
 const loadOrderWorkspaceSql = (input) => {
   const orderNumber = orderNumberValue(input);
+  const principal=currentQuotePrincipal();
+  const owner=String(input.owner_user_id||principal.userId);
+  if(owner!==principal.userId&&!principal.can_view_all_quotes)throw Object.assign(new Error('无权读取该工作区。'),{statusCode:403});
   return `
 SELECT COALESCE((
   SELECT jsonb_build_object(
-    'found', TRUE, 'order_number', order_number, 'payload', workspace_payload,
+    'found', TRUE, 'order_number', order_number, 'payload', workspace_payload,'owner_user_id',owner_user_id,
     'updated_at', updated_at
   )
-  FROM calc.client_order_workspace
-  WHERE order_number = ${sqlUnicodeText(orderNumber)}
-), jsonb_build_object('found', FALSE, 'order_number', ${sqlUnicodeText(orderNumber)}))::text;`;
+  FROM calc.quote_name_workspace
+  WHERE order_number = ${sqlUnicodeText(orderNumber)} AND owner_user_id=${q(owner)}
+), (SELECT jsonb_build_object('found',TRUE,'order_number',order_number,'payload',workspace_payload,'updated_at',updated_at,'legacy_read_only',TRUE)
+    FROM calc.client_order_workspace WHERE order_number=${q(orderNumber)} AND ${principal.can_view_all_quotes?'TRUE':'FALSE'}),
+    jsonb_build_object('found', FALSE, 'order_number', ${sqlUnicodeText(orderNumber)}))::text;`;
 };
 
 const saveOrderWorkspaceSql = (input) => {
@@ -821,9 +836,9 @@ const saveOrderWorkspaceSql = (input) => {
     throw new Error('payload must be an object');
   }
   return `
-INSERT INTO calc.client_order_workspace (order_number, workspace_payload, updated_at)
-VALUES (${sqlUnicodeText(orderNumber)}, ${sqlUnicodeText(JSON.stringify(input.payload))}::jsonb, now())
-ON CONFLICT (order_number) DO UPDATE SET
+INSERT INTO calc.quote_name_workspace (owner_user_id,order_number, workspace_payload, updated_at)
+VALUES (${q(currentQuotePrincipal().userId)},${sqlUnicodeText(orderNumber)}, ${sqlUnicodeText(JSON.stringify(input.payload))}::jsonb, now())
+ON CONFLICT (owner_user_id,order_number) DO UPDATE SET
   workspace_payload = EXCLUDED.workspace_payload,
   updated_at = now()
 RETURNING jsonb_build_object(
@@ -831,7 +846,7 @@ RETURNING jsonb_build_object(
 )::text;`;
 };
 
-const readBody = (req, maxBytes = MAX_REQUEST_BYTES) => new Promise((resolve, reject) => {
+const parseBody = (req, maxBytes = MAX_REQUEST_BYTES) => new Promise((resolve, reject) => {
   const chunks = [];
   let byteLength = 0;
   let failed = false;
@@ -850,13 +865,36 @@ const readBody = (req, maxBytes = MAX_REQUEST_BYTES) => new Promise((resolve, re
     if (failed) return;
     try {
       const data = Buffer.concat(chunks).toString('utf8');
-      resolve(sanitizeJsonValue(JSON.parse(data || '{}')));
+      resolve(JSON.parse(data || '{}'));
     } catch {
       reject(new Error('request body must be valid UTF-8 JSON'));
     }
   });
   req.on('error', reject);
 });
+
+const readBody = async (req, maxBytes = MAX_REQUEST_BYTES) => {
+  // Await in the request's identity context. IncomingMessage event callbacks do
+  // not inherit the AsyncLocalStorage context where listeners were registered.
+  const parsed = await parseBody(req, maxBytes);
+  const pathname = new URL(req.url, 'http://local').pathname;
+  if (pathname === '/api/name-login') return parsed;
+  const input = sanitizeJsonValue(parsed);
+  // Validate calculation input before the ownership guard reserves identifiers.
+  const validateCalculation = value => {
+    const normalized = normalizeProductVariant(validateRequest(value));
+    attachmentStatements(normalized);
+    dateValue(normalized.quote_date);
+    return normalized;
+  };
+  if (['/api/quotes/calculate-dual', '/api/attachments/snapshot-ganged'].includes(pathname)) {
+    validateCalculation(input);
+  } else if (pathname === '/api/quotes/calculate-ganged') {
+    const batch = validateGangedBatch(input, validateCalculation);
+    if (batch.attachment) validateCalculation(batch.attachment);
+  }
+  return privateQuoteGuard.beforeBody(req, input);
+};
 
 const runWorkbookExporter = async (payload) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-quote-export-'));
@@ -971,9 +1009,12 @@ const getDatabaseReadiness = async () => {
 
 const quoteSchemeService = createQuoteSchemeService({ runPsql, sqlUnicodeText, sqlNumber });
 const quoteAnalysisService = createQuoteAnalysisService({runPsql,sqlUnicodeText});
+const nameSessions=createNameLoginService();
+const privateQuoteGuard=createPrivateQuoteGuard({runPsql});
+const contractService = createContractService({runPsql,sqlUnicodeText});
 
 const quoteSchemeResponse = async (req, res, requestUrl) => {
-  const principal = resolveQuoteSchemePrincipal(req, QUOTE_SCHEME_PRINCIPALS, API_KEY);
+  const principal = req.namePrincipal;
   const pathname = requestUrl.pathname;
   const parts = pathname.split('/').filter(Boolean);
   const schemeNo = parts[2] ? decodeURIComponent(parts[2]) : '';
@@ -1050,9 +1091,43 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
     return json(res, 401, { error: 'unauthorized', message: 'invalid client access key' });
   }
   const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');
+  if(requestUrl.pathname==='/api/name-login'&&req.method==='POST'){
+    try{return json(res,200,nameSessions.login(await readBody(req),req.socket.remoteAddress));}
+    catch(error){return json(res,error.statusCode||400,{error:'name_login_failed',message:error.message});}
+  }
+  try{
+    req.namePrincipal=nameSessions.requireSession(req);
+    if(requestUrl.pathname==='/api/name-session'&&req.method==='GET')return json(res,200,nameSessions.describe(req));
+    if(requestUrl.pathname==='/api/name-logout'&&req.method==='POST')return json(res,200,nameSessions.logout(req));
+  }catch(error){return json(res,error.statusCode||401,{error:'name_session_required',message:'请先输入姓名登录；会话可能已失效，旧客户端需升级后使用。'});}
+  return withQuotePrincipal(req.namePrincipal,async()=>{
+  if (requestUrl.pathname.startsWith('/api/contracts/')) {
+    try {
+      const principal=req.namePrincipal;
+      const parts=requestUrl.pathname.split('/').filter(Boolean),resource=parts[2],id=parts[3],action=parts[4];
+      if(req.method==='GET'&&resource==='bootstrap') return json(res,200,await contractService.bootstrap(principal));
+      if(req.method==='POST'&&resource==='quote') return json(res,200,await contractService.quote(principal,await readBody(req)));
+      if(req.method==='POST'&&resource==='templates'&&!id) return json(res,201,await contractService.upload(principal,await readBody(req)));
+      if(req.method==='GET'&&resource==='templates'&&id&&!action) return json(res,200,await contractService.inspect(principal,id));
+      if(req.method==='GET'&&resource==='templates'&&action==='versions') return json(res,200,await contractService.versions(principal,id));
+      if(req.method==='POST'&&resource==='templates'&&action==='configure') return json(res,200,await contractService.configure(principal,id,await readBody(req)));
+      if(req.method==='POST'&&resource==='templates'&&action==='settings') return json(res,200,await contractService.setTemplate(principal,id,await readBody(req)));
+      if(req.method==='POST'&&resource==='drafts') return json(res,200,await contractService.saveDraft(principal,await readBody(req)));
+      if(req.method==='POST'&&resource==='generate') return json(res,200,await contractService.generate(principal,await readBody(req)));
+      if(req.method==='GET'&&resource==='records'&&!id) return json(res,200,await contractService.listRecords(principal,Object.fromEntries(requestUrl.searchParams)));
+      if(req.method==='GET'&&resource==='records'&&id&&action==='file') {
+        const file=await contractService.download(principal,id);
+        res.writeHead(200,{'Content-Type':file.format==='docx'?'application/vnd.openxmlformats-officedocument.wordprocessingml.document':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Length':file.bytes.length,'Content-Disposition':`attachment; filename="${file.filename}"`,'X-Content-SHA256':file.sha256,'Cache-Control':'no-store'});
+        return res.end(file.bytes);
+      }
+      if(req.method==='GET'&&resource==='records'&&id) {const record=await contractService.record(principal,id);return json(res,200,{...record,content:undefined});}
+      return json(res,404,{error:'contract_route_not_found'});
+    } catch(error) {const status=error.statusCode||clientErrorStatus(error);return json(res,status,{error:'contract_request_failed',message:status>=500&&status!==503?'合同处理失败，请稍后重试或联系管理员。':error.message});}
+  }
   if (requestUrl.pathname === '/api/quote-analysis' || requestUrl.pathname === '/api/quote-analysis/outcomes') {
     try {
-      const principal=resolveQuoteSchemePrincipal(req,QUOTE_SCHEME_PRINCIPALS,API_KEY);
+      const principal=req.namePrincipal;
       if(requestUrl.pathname==='/api/quote-analysis' && req.method==='GET')
         return json(res,200,await quoteAnalysisService.analyze(principal,Object.fromEntries(requestUrl.searchParams)));
       if(requestUrl.pathname.endsWith('/outcomes') && req.method==='POST')
@@ -1087,7 +1162,7 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
   }
   if (req.method === 'GET' && req.url === '/api/companies/catalog') {
     try {
-      const output = await runPsql(companyCatalogSql);
+      const output = await runPsql(companyCatalogSql());
       return json(res, 200, { items: output ? JSON.parse(output) : [], source: 'postgresql' });
     } catch (error) {
       return json(res, 500, { error: 'company_catalog_failed', message: error.message });
@@ -1328,6 +1403,7 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
       message: error.message,
     });
   }
+  });
 }));
 
 server.listen(PORT, HOST, () => {

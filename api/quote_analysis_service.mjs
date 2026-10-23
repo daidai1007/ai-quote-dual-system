@@ -1,6 +1,7 @@
 /** Read-only analysis of permission-scoped frozen quotations. Outcome recording
  * writes only the separate, audited outcome table, never prices or quote state. */
 import {permissionSql, writePermissionSql, operatorNameValue} from './quote_scheme_service.mjs';
+import {sessionOperator} from './quote_access_scope.mjs';
 
 const fail=(message,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const text=value=>String(value??'').trim().normalize('NFC');
@@ -181,6 +182,7 @@ export function createQuoteAnalysisService({runPsql,sqlUnicodeText:q}) {
   };
   const analyze=async(principal,filters)=>{normalizeFilters(filters);return buildAnalysis(await read(principal),filters);};
   const recordOutcome=async(principal,input)=>{
+    input=sessionOperator(principal,input);
     const operator=operatorNameValue(input), scheme=text(input.scheme_no), product=text(input.product_code);
     const customer=text(input.customer_code), opportunity=text(input.opportunity_key), result=text(input.result);
     const revision=Number(input.expected_revision??0), version=Number(input.version_no), resultDate=text(input.result_date);

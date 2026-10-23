@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import {ownerInsertSql} from './quote_access_scope.mjs';
 import { performance } from 'node:perf_hooks';
 import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
@@ -232,7 +233,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     const result={...applyAttachmentTotals(base,previewed.attachments,input.freight_fee??input.freight??0),quote_id:input.quote_id,quote_line_id:lineId};
     const environment={...previewed.environment,model_code:input.model_code||'',quote_result:{...result,attachments:undefined}};
     const rows=previewed.attachments;
-    const commands=[`INSERT INTO calc.attachment_quote_line(quote_line_id,quote_id,product_code,environment_snapshot)
+    const commands=[ownerInsertSql('QUOTE_LINE',sqlValue(lineId)),`INSERT INTO calc.attachment_quote_line(quote_line_id,quote_id,product_code,environment_snapshot)
       VALUES(${sqlValue(lineId)}::uuid,${sqlValue(input.quote_id)},${sqlValue(input.product_code)},${sqlJson(environment)});`];
     for(const row of rows){
       const values={quote_line_id:lineId,quote_id:input.quote_id,product_code:input.product_code,attachment_price_id:row.attachment_price_id,

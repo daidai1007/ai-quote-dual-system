@@ -44,7 +44,7 @@ def wait_until(predicate, attempts=500):
     raise AssertionError("timed out waiting for focused UI state")
 
 
-assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单管理", "报价方案", "报价分析", "合同管理"]
+assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单管理", "合同管理", "报价方案", "报价分析"]
 assert window.stack.widget(scheme2_ui.QUOTE_ROUTE).objectName() == "scheme2QuotePage"
 assert [button.text() for button in window.scheme2_cost_page.findChildren(QPushButton)].count("打印") == 0
 assert [button.text() for button in window.scheme2_cost_page.findChildren(QPushButton)].count("导出报价单") == 0
