@@ -14,7 +14,7 @@ import { normalizeDoorVariantInput, normalizeQuickDoorVariantInput } from './doo
 import { historyPriceMatchSql } from './history_price_query.mjs';
 import { resolveRuntimeConfig } from './runtime_config.mjs';
 import { runPsqlCommand } from './psql_runner.mjs';
-import { createAttachmentService } from './attachment_service.mjs';
+import { createAttachmentService, attachmentInput } from './attachment_service.mjs';
 import { createQuickMatchOverrideService } from './quick_match_override.mjs';
 import { applyCabinetMaterial, createCabinetMaterialService } from './cabinet_material_service.mjs';
 import { applyCabinetSpray, createCabinetSprayService } from './cabinet_spray_service.mjs';
@@ -883,7 +883,18 @@ const readBody = async (req, maxBytes = MAX_REQUEST_BYTES) => {
   // Validate calculation input before the ownership guard reserves identifiers.
   const validateCalculation = value => {
     const normalized = normalizeProductVariant(validateRequest(value));
-    attachmentStatements(normalized);
+    // V2 resolves catalogue identity and prices by ID, not client-supplied names.
+    // Keep validation before ownership claims, using the same input contract as calculation.
+    if (normalized.attachment_contract === 2 || pathname === '/api/attachments/snapshot-ganged') {
+      try {
+        normalized.attachments.forEach(attachmentInput);
+      } catch (error) {
+        error.statusCode = 400;
+        throw error;
+      }
+    } else {
+      attachmentStatements(normalized);
+    }
     dateValue(normalized.quote_date);
     return normalized;
   };

@@ -22,7 +22,7 @@
     "verify": "npm run check && npm test && npm run test:quote-management && npm run test:analysis && npm run test:manual-match && npm run test:performance && npm run test:contracts && npm run test:name-scope && npm run test:contracts-integration && npm run test:client",
     "test:analysis": "node --check api/quote_analysis_service.mjs && node --test tests/quote_analysis.test.mjs tests/quote_analysis_database.test.mjs",
     "test:contracts": "node --test tests/contract_document.test.mjs tests/contract_database.test.mjs",
-    "test:name-scope": "node --test --test-concurrency=2 tests/name_login.test.mjs tests/name_scope_database.test.mjs tests/name_scope_http.test.mjs",
+    "test:name-scope": "node --test --test-concurrency=2 tests/name_login.test.mjs tests/name_scope_database.test.mjs tests/name_scope_http.test.mjs tests/attachment_request_validation_http.test.mjs",
     "test:contracts-integration": "node --test tests/contract_name_scope_http.test.mjs"
   },
   "engines": {
