@@ -28,6 +28,7 @@ from types import MethodType
 import zipfile
 from decimal import Decimal
 from progress_style import progress_color_style
+from freight_state import self_made_weight, sync_item_freight, AUTO_FREIGHT_BASIS
 from cost_detail_export import write_cost_detail_xlsx
 from quote_request_context import check_quote_response, quote_request_is_current, retire_quote_request, settle_quote_request
 
@@ -507,24 +508,8 @@ def _material_difference_amount(item):
 
 
 def _self_made_weight(item):
-    """One cabinet/set: cabinet billable material plus current popup weights.
-
-    Attachment weight_kg is per piece and already follows its own material
-    rule. Neither cabinet waste nor the ganged count is applied a second time.
-    Keep this display statistic separate from material pricing and freight.
-    """
-    cabinet = _number(_formula(item).get("corrected_material_weight_kg"))
-    weights = [cabinet if math.isfinite(cabinet) and cabinet >= 0 else 0.0]
-    for row in item.get("attachments", []) or []:
-        if not isinstance(row, dict) or row.get("status") in ("ERROR", "PENDING_MANUAL") or row.get("pending_manual_dimensions"):
-            continue
-        weight = _number(row.get("weight_kg"))
-        quantity = _number(row.get("quantity", 1), 1)
-        if not math.isfinite(weight) or weight < 0 or not math.isfinite(quantity):
-            continue
-        sign = -1 if quantity < 0 or _number(row.get("attachment_price_sign", 1), 1) == -1 else 1
-        weights.append(weight * abs(quantity) * sign)
-    return max(0.0, math.fsum(weights))
+    """Same full-precision per-set weight used by automatic freight."""
+    return float(self_made_weight(item))
 
 
 def _recalculate_item_management(item):
@@ -597,7 +582,7 @@ def _row_values(item):
         _number(formula.get("management_fee")),
         freight, quantity, f"{len(attachments)} 项 ›", face_base, discount,
         quote, quote_total, formula_unit, cost_total,
-        f"{gross_margin:.2%}", f"{billable_weight:.2f}", "明细 ›",
+        f"{gross_margin:.2%}", _money(billable_weight), "明细 ›",
         material_difference,
         money_sum(_popup_quick_amount(row) for row in attachments),
     )
@@ -2661,20 +2646,25 @@ class FaceDiscountEditor(QDialog):
         super().accept()
 
 
-def _printable_quote_html(window, font_step=0) -> str:
+def _printable_quote_html(window, font_step=0, document=None) -> str:
     from quote_order_nature import label as nature_label
     company = html.escape(str(getattr(window, "scheme2_company", None).currentText() if getattr(window, "scheme2_company", None) is not None else ""))
     scheme_number = str(getattr(window, "_quote_scheme_id", "") or "").strip()
     order_number = html.escape(scheme_number or str(getattr(window, "scheme2_order_number", None).text() if getattr(window, "scheme2_order_number", None) is not None else ""))
     quote_date = str(getattr(window, "_quote_scheme_quote_date", "") or date.today().isoformat())
+    if document is not None:
+        company = html.escape(document['customer'])
+        order_number = html.escape(document['scheme_no'] + f" · V{document['quote_version']}")
+        quote_date = document['quote_date']
     rows = []
     total = 0.0
-    for index, item in enumerate(getattr(window, "draft_items", []), 1):
-        values = _row_values(item)
-        amount = _number(values[16])
+    for index, item in enumerate(document['items'] if document is not None else getattr(window, "draft_items", []), 1):
+        values = _row_values(item) if document is None else None
+        amount = _number(values[16]) if values is not None else item['total']
         total += amount
-        remark = _quote_item_remark(item, preserve_existing=_quote_remark_readonly(window))
-        cells = (index, values[1], values[3], values[11], "台", f"{_number(values[15]):,.2f}", f"{amount:,.2f}", remark)
+        remark = _quote_item_remark(item, preserve_existing=_quote_remark_readonly(window)) if document is None else item['remark']
+        cells = ((index, values[1], values[3], values[11], "台", f"{_number(values[15]):,.2f}", f"{amount:,.2f}", remark)
+                 if document is None else (index,item['name'],item['specification'],item['quantity'],item['unit'],f"{item['unit_price']:,.2f}",f"{amount:,.2f}",remark))
         rows.append("<tr>" + "".join(f"<td>{html.escape(str(value)).replace(chr(10), '<br>')}</td>" for value in cells) + "</tr>")
     return f"""
     <html><head><style>
@@ -2827,9 +2817,13 @@ def _quote_remark_readonly(window):
 
 
 def _commit_quote_text_editor(window):
+    """Commit editors and current automatic charges before freezing a document."""
     focus = getattr(window, "focusWidget", lambda: None)()
     if isinstance(focus, (QLineEdit, QPlainTextEdit)):
         focus.clearFocus()
+    if not _quote_remark_readonly(window):
+        changed = [sync_item_freight(item) for item in getattr(window, 'draft_items', [])]
+        if any(changed): window.refresh_summary()
 
 
 class _QuoteRemarkDelegate(QStyledItemDelegate):
@@ -2865,6 +2859,7 @@ def _quote_export_items_snapshot(window, items=None):
     exported = deepcopy(getattr(window, "draft_items", []) if items is None else items)
     from quote_order_nature import current as current_nature
     for number, item in enumerate(exported, 1):
+        if not _quote_remark_readonly(window): sync_item_freight(item)
         item['quote_order_nature'] = current_nature(window)
         item["pricing_basis"] = PRICING_BASIS
         attachment_rows = [
@@ -2947,15 +2942,15 @@ def _call_core_confirm_and_export_with_snapshot(window, callback):
         window.draft_items = original_items
 
 
-def _refresh_quote_page(window):
+def _refresh_quote_page(window, document=None):
     preview = getattr(window, "scheme2_quote_preview", None)
     if isinstance(preview, QTableWidget):
-        items = getattr(window, "draft_items", [])
-        company = window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else ""
-        order_number = str(getattr(window, "_quote_scheme_id", "") or "") or (
+        items = document['items'] if document is not None else getattr(window, "draft_items", [])
+        company = document['customer'] if document is not None else window.scheme2_company.currentText() if hasattr(window, "scheme2_company") else ""
+        order_number = document['scheme_no'] if document is not None else str(getattr(window, "_quote_scheme_id", "") or "") or (
             window.scheme2_order_number.text() if hasattr(window, "scheme2_order_number") else ""
         )
-        quote_date = str(getattr(window, "_quote_scheme_quote_date", "") or date.today().isoformat())
+        quote_date = document['quote_date'] if document is not None else str(getattr(window, "_quote_scheme_quote_date", "") or date.today().isoformat())
         window._scheme2_refreshing_quote = True
         try:
             preview.clearSpans()
@@ -3002,10 +2997,11 @@ def _refresh_quote_page(window):
             total = 0.0
             for index, item in enumerate(items):
                 row = 10 + index
-                values = _row_values(item)
-                amount = _number(values[16]); total += amount
-                remark = _quote_item_remark(item, preserve_existing=_quote_remark_readonly(window))
-                data = (index + 1, values[1], values[3], values[11], "台", _money(values[15]), _money(amount), remark)
+                values = _row_values(item) if document is None else None
+                amount = _number(values[16]) if values is not None else item['total']; total += amount
+                remark = _quote_item_remark(item, preserve_existing=_quote_remark_readonly(window)) if document is None else item['remark']
+                data = ((index + 1, values[1], values[3], values[11], "台", _money(values[15]), _money(amount), remark)
+                        if document is None else (index+1,item['name'],item['specification'],item['quantity'],item['unit'],_money(item['unit_price']),_money(amount),remark))
                 for column, value in enumerate(data):
                     preview.item(row, column).setText(str(value))
                 if _quote_remark_readonly(window):
@@ -3039,6 +3035,18 @@ def _refresh_quote_page(window):
             button.setEnabled(enabled)
 
 
+def _new_quote_document_table():
+    """Shared visible document geometry for workspaces and received formal versions."""
+    preview = QTableWidget(0, 8)
+    preview.setObjectName("scheme2QuotePreview")
+    preview.horizontalHeader().hide(); preview.verticalHeader().hide()
+    preview.setAlternatingRowColors(False); preview.setWordWrap(True)
+    preview.setTextElideMode(Qt.TextElideMode.ElideNone)
+    for column,width in enumerate((58,145,180,72,58,105,115)): preview.setColumnWidth(column,width)
+    preview.horizontalHeader().setSectionResizeMode(7,QHeaderView.ResizeMode.Stretch)
+    return preview
+
+
 def _build_quote_page(window):
     page = QWidget()
     page.setObjectName("scheme2QuotePage")
@@ -3061,17 +3069,8 @@ def _build_quote_page(window):
     header.addWidget(print_button)
     header.addWidget(export_button)
     layout.addLayout(header)
-    preview = QTableWidget(0, 8)
-    preview.setObjectName("scheme2QuotePreview")
-    preview.horizontalHeader().hide()
-    preview.verticalHeader().hide()
-    preview.setAlternatingRowColors(False)
-    preview.setWordWrap(True)
-    preview.setTextElideMode(Qt.TextElideMode.ElideNone)
+    preview = _new_quote_document_table()
     preview.setItemDelegateForColumn(7, _QuoteRemarkDelegate(preview))
-    preview.setColumnWidth(0, 58); preview.setColumnWidth(1, 145); preview.setColumnWidth(2, 180)
-    preview.setColumnWidth(3, 72); preview.setColumnWidth(4, 58); preview.setColumnWidth(5, 105)
-    preview.setColumnWidth(6, 115); preview.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
     layout.addWidget(preview, 1)
     print_button.clicked.connect(lambda: _print_quote(window))
     export_button.clicked.connect(lambda: window.confirm_and_export())
@@ -4075,7 +4074,8 @@ def _build_cost_page(window):
     down.clicked.connect(lambda: window.move_selected_item(1))
     duplicate.clicked.connect(lambda: _duplicate_selected(window))
     edit.clicked.connect(lambda: _edit_selected(window))
-    back.clicked.connect(lambda: window.show_section(OPTION_ROUTE))
+    back.clicked.connect(lambda: window.quote_management.delivery.show_inbox()
+                         if _received_cost_view(window) else window.show_section(OPTION_ROUTE))
     generate.clicked.connect(lambda: window._scheme2_document_controller.generate())
     undo.clicked.connect(lambda: _undo_delete(window))
     compact_key.currentIndexChanged.connect(lambda: _sync_compact_control(window))
@@ -4173,6 +4173,7 @@ def _delete_selected(window):
 
 
 def _undo_delete(window):
+    if _received_cost_view(window): return
     deleted = getattr(window, "_scheme2_deleted", None)
     if deleted is None:
         return
@@ -4281,6 +4282,7 @@ def _edit_selected(window):
 
 
 def _cost_cell_changed(window, row, column):
+    if _received_cost_view(window): return
     # Read-only protection may redraw, so first ignore our own table updates.
     if getattr(window, "_scheme2_refreshing", False) or column not in EDITABLE_COLUMNS:
         return
@@ -4304,6 +4306,7 @@ def _cost_cell_changed(window, row, column):
     item = items[row]
     if column == 19:
         item["freight_fee"] = money(value)
+        item.update(freight_mode='MANUAL', freight_basis=AUTO_FREIGHT_BASIS)
     elif column == 4:
         item["quantity"] = max(1, int(value))
         drawing_ref = getattr(window, "_draft_drawing_refs", {}).get(id(item))
@@ -4316,6 +4319,9 @@ def _cost_cell_changed(window, row, column):
 
 
 def _cost_cell_clicked(window, row, column):
+    if _received_cost_view(window):
+        if column == 23: window.quote_management.delivery.show_cost_detail(row)
+        return
     if getattr(window, "_quote_scheme_read_only", False) and column in (2, 5):
         return
     items = getattr(window, "draft_items", [])
@@ -4336,6 +4342,7 @@ def _cost_cell_clicked(window, row, column):
 
 
 def _sync_sidebar(window):
+    if _received_cost_view(window): return
     if not hasattr(window, "scheme2_defaults") or not hasattr(window, "scheme2_cost_controls"):
         return
     item = _selected_item(window)
@@ -4364,6 +4371,8 @@ def _sync_sidebar(window):
 
 
 def _sync_cost_selection_detail(window):
+    if _received_cost_view(window):
+        window.quote_management.delivery.sync_cost_selection(); return
     values = getattr(window, "scheme2_cost_selection_values", None)
     if not isinstance(values, dict):
         return
@@ -4417,7 +4426,13 @@ def _select_cost_item_for_current_material(window):
         _sync_sidebar(window)
 
 
+def _received_cost_view(window):
+    return bool(getattr(getattr(getattr(window,'quote_management',None),'delivery',None),'cost_active',False))
+
+
 def _refresh_cost_table(window):
+    if _received_cost_view(window):
+        window.quote_management.delivery.render_cost(); return
     table = window.summary_table
     items = getattr(window, "draft_items", [])
     selected = _selected_row(window)
@@ -4442,6 +4457,7 @@ def _refresh_cost_table(window):
         table.setRowCount(len(items) + 1)
         for row, item in enumerate(items):
             _repair_missing_material_prices(item, getattr(window, "scheme2_defaults", None))
+            if not _quote_remark_readonly(window): sync_item_freight(item)
             _recalculate_item_management(item)
             canonical = list(_row_values(item))
             canonical[0] = row + 1
@@ -4466,6 +4482,9 @@ def _refresh_cost_table(window):
                 cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
                 if column == 21:
                     cell.setForeground(QColor("#D97706"))
+                if column == 19:
+                    mode = '自动' if item.get('freight_mode') == 'AUTO' and item.get('freight_basis') == AUTO_FREIGHT_BASIS else '人工/已保存'
+                    cell.setToolTip(f"当前运费：{mode}。默认每套自制件重量×1元/kg；双击可改人工金额，不参与折扣，总运费再乘订单数量。")
                 if column == 22:
                     cell.setToolTip("单台／单套重量（kg）=柜体含损耗计价重量＋当前附件单件重量×附件自身数量；扣减安装板按减项统计。\n无有效重量数据的附件不计入；底部汇总再乘订单数量。")
                 table.setItem(row, column, cell)
@@ -4965,6 +4984,7 @@ def _manual_save_order_workspace(window):
 
 
 def _schedule_order_workspace_save(window):
+    if _received_cost_view(window): return
     return
 
 
@@ -8517,8 +8537,9 @@ def install_scheme2_ui(namespace):
             index = OPTION_ROUTE
         previous_index = window.stack.currentIndex()
         if index == COST_ROUTE:
-            window.refresh_summary()
-            if previous_index != COST_ROUTE:
+            if _received_cost_view(window): window.quote_management.delivery.render_cost()
+            else: window.refresh_summary()
+            if previous_index != COST_ROUTE and not _received_cost_view(window):
                 _select_cost_item_for_current_material(window)
         elif index == QUOTE_ROUTE:
             _refresh_quote_page(window)

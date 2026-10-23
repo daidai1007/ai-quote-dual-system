@@ -43,7 +43,8 @@ class FreightOutputTests(unittest.TestCase):
                     material_code='SECC', coating_type='平光', single_door_count=1,
                     double_door_count=0, quantity=quantity, freight_fee=freight,
                     formula=result['formula_cost'], quick=result['quick_quote'],
-                    formula_discount=1, quick_discount=1, attachments=[], notes='保留原备注')
+                    formula_discount=1, quick_discount=1, attachments=[], notes='保留原备注',
+                    final_remark='保留原备注', quote_remark_manual=True)
 
     def test_auto_manual_recalculate_reset_and_totals(self):
         self.amounts(0)
@@ -130,8 +131,11 @@ class FreightOutputTests(unittest.TestCase):
             self.assertEqual(len(self.w.draft_items), count + 1)
             item = self.w.draft_items[-1]
             self.assertEqual(item['freight_fee'], amount)
+            self.assertEqual(item['freight_mode'], mode)
+            self.assertEqual(item['freight_basis'], 'self_made_weight_v1')
             self.amounts(0)
             self.assertEqual(self.w.freight_state.mode, 'AUTO')
+            self.w._draft_drawing_refs.clear()
             self.w.load_draft_item(item)
             self.amounts(amount)
             self.assertEqual(self.w.freight_state.mode, mode)

@@ -519,6 +519,7 @@ class QuoteDocumentProgress:
         if getattr(self.window, '_quote_scheme_pending_export', None):
             QMessageBox.information(self.window, '方案待登记', '文件已导出，请先重试方案登记，无需重新生成报价单。')
             return
+        self.ui._commit_quote_text_editor(self.window)
         self.begin("generate")
         trace = self.trace
         def current():

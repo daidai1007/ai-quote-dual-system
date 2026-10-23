@@ -116,6 +116,9 @@ def install_name_transport(namespace):
     namespace['_name_connection_headers']=original
 
 def critical_tasks(window):
+    manager = getattr(window, 'quote_management', None)
+    delivery = getattr(manager, 'delivery', None)
+    if getattr(window, '_quote_delivery_output_pending', None) or getattr(delivery, 'pending_send', None): return True
     if getattr(window,'_quote_scheme_pending_export',None) or getattr(window,'_quote_scheme_export_context',None):return True
     if getattr(window,'_scheme2_document_busy',False):return True
     return any(worker.isRunning() for worker in window.findChildren(QThread))

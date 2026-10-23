@@ -19,12 +19,13 @@
     "test:client": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/run_client_tests.ps1",
     "test:performance": "node --check api/formula_template_query.mjs && node --check api/ganged_quote_service.mjs && node --check api/quote_telemetry.mjs && node --test tests/ganged_quote_service.test.mjs tests/quote_progress.test.mjs",
     "test:database:performance": "node --test tests/formula_template_database.test.mjs tests/ganged_api_database.test.mjs",
-    "verify": "npm run check && npm test && npm run test:quote-management && npm run test:analysis && npm run test:manual-match && npm run test:performance && npm run test:contracts && npm run test:name-scope && npm run test:contracts-integration && npm run test:order-nature && npm run test:client",
+    "verify": "npm run check && npm test && npm run test:quote-management && npm run test:analysis && npm run test:manual-match && npm run test:performance && npm run test:contracts && npm run test:name-scope && npm run test:contracts-integration && npm run test:order-nature && npm run test:quote-delivery && npm run test:client",
     "test:analysis": "node --check api/quote_analysis_service.mjs && node --test tests/quote_analysis.test.mjs tests/quote_analysis_database.test.mjs",
     "test:contracts": "node --test tests/contract_document.test.mjs tests/contract_database.test.mjs",
     "test:name-scope": "node --test --test-concurrency=2 tests/name_login.test.mjs tests/name_scope_database.test.mjs tests/name_scope_http.test.mjs tests/attachment_request_validation_http.test.mjs",
     "test:contracts-integration": "node --test tests/contract_name_scope_http.test.mjs",
-    "test:order-nature": "node --check quote_order_nature.mjs && node --test tests/order_nature.test.mjs tests/order_nature_http.test.mjs"
+    "test:order-nature": "node --check quote_order_nature.mjs && node --test tests/order_nature.test.mjs tests/order_nature_http.test.mjs",
+    "test:quote-delivery": "node --check api/quote_delivery_document.mjs && node --check api/quote_delivery_service.mjs && node --test tests/quote_delivery.test.mjs tests/quote_delivery_http.test.mjs"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

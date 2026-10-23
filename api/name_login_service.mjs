@@ -31,5 +31,6 @@ export function createNameLoginService({now=Date.now,ttlMs=12*60*60*1000,maxSess
   const requireSession=req=>{clean();const token=tokenOf(req),session=token&&sessions.get(digest(token));if(!session)throw authError();return session.p;};
   const describe=req=>{const p=requireSession(req),s=sessions.get(digest(tokenOf(req)));return {person:publicIdentity(p),expires_at:new Date(s.expires).toISOString()};};
   const logout=req=>{requireSession(req);sessions.delete(digest(tokenOf(req)));return {logged_out:true};};
-  return {login,requireSession,describe,logout};
+  const activePeople=()=>{clean();return [...new Map([...sessions.values()].map(s=>[s.p.userId,{userId:s.p.userId,displayName:s.p.displayName}])).values()];};
+  return {login,requireSession,describe,logout,activePeople};
 }

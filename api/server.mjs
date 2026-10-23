@@ -3,6 +3,7 @@ import {documentWithOrderNature} from '../quote_order_nature.mjs';
 import {createNameLoginService} from './name_login_service.mjs';
 import {withQuotePrincipal,currentQuotePrincipal,createPrivateQuoteGuard,resourceScopeSql,quoteScopeSql,ownerInsertSql,q} from './quote_access_scope.mjs';
 import {createContractService} from './contract_service.mjs';
+import {createQuoteDeliveryService} from './quote_delivery_service.mjs';
 import {createQuoteAnalysisService} from './quote_analysis_service.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -1026,6 +1027,7 @@ const getDatabaseReadiness = async () => {
 const quoteSchemeService = createQuoteSchemeService({ runPsql, sqlUnicodeText, sqlNumber });
 const quoteAnalysisService = createQuoteAnalysisService({runPsql,sqlUnicodeText});
 const nameSessions=createNameLoginService();
+const quoteDeliveryService=createQuoteDeliveryService({runPsql,activePeople:nameSessions.activePeople});
 const privateQuoteGuard=createPrivateQuoteGuard({runPsql});
 const contractService = createContractService({runPsql,sqlUnicodeText});
 
@@ -1152,6 +1154,25 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
     } catch(error) {
       return json(res,error.statusCode||clientErrorStatus(error),{error:'quote_analysis_failed',message:error.message});
     }
+  }
+  if (requestUrl.pathname === '/api/quote-deliveries' || requestUrl.pathname.startsWith('/api/quote-deliveries/')) {
+    res.setHeader('Cache-Control','no-store');
+    try {
+      const parts=requestUrl.pathname.split('/').filter(Boolean),id=parts[2],action=parts[3],p=req.namePrincipal;
+      if(parts.length===2&&req.method==='GET')return json(res,200,await quoteDeliveryService.list(p,Object.fromEntries(requestUrl.searchParams)));
+      if(parts.length===2&&req.method==='POST')return json(res,201,await quoteDeliveryService.send(p,await readBody(req)));
+      if(id==='colleagues'&&parts.length===3&&req.method==='GET')return json(res,200,await quoteDeliveryService.colleagues(p));
+      if(id==='versions'&&parts.length===3&&req.method==='GET')return json(res,200,await quoteDeliveryService.versions(p,requestUrl.searchParams.get('scheme_no')));
+      if(id&&parts.length===3&&req.method==='GET')return json(res,200,await quoteDeliveryService.open(p,id));
+      if(id&&action==='xlsx'&&parts.length===4&&req.method==='GET'){
+        const file=await quoteDeliveryService.workbook(p,id);
+        res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Length':file.bytes.length,
+          'Content-Disposition':`attachment; filename="${file.filename}"`,'X-Quote-Document-SHA256':file.document_sha256,'X-Content-SHA256':file.sha256});
+        return res.end(file.bytes);
+      }
+      if(id&&action==='outputs'&&parts.length===4&&req.method==='POST')return json(res,200,await quoteDeliveryService.output(p,id,await readBody(req)));
+      return json(res,404,{error:'quote_delivery_route_not_found'});
+    }catch(error){const status=error.statusCode||503;return json(res,status,{error:'quote_delivery_failed',message:status>=500&&status!==503?'发送服务暂时不可用，请稍后重试。':status===503&&!error.statusCode?'发送服务暂时不可用，请稍后重试。':error.message});}
   }
   if (requestUrl.pathname === '/api/quote-schemes' || requestUrl.pathname.startsWith('/api/quote-schemes/')) {
     try {

@@ -82,6 +82,13 @@ def freeze_contract_quote(window,snapshot):
         base=money_sum([cost[k] for k in ('material_cost','auxiliary_cost','labor_cost','spray_cost','management_fee')]+[formula_attachment_line_amount(r) for r in eligible if not attachment_excluded_from_discount(r)])
         unit=money_sum([money_product(base,float(item.get('formula_discount') or 1)),*[formula_attachment_line_amount(r) for r in eligible if attachment_excluded_from_discount(r)],max(0,float(item.get('freight_fee',item.get('freight',0)) or 0))])
         item['quote_display'].update(formula_unit_price=unit,formula_total=money_product(unit,item['quote_display']['quantity']))
+        # Freeze the existing cost-page values now; recipient viewing must not
+        # run the latest cost formulas or catalogue against an older document.
+        values=scheme2_ui._row_values(item)
+        item['quote_cost_display']={'schema':1,'values':{
+            heading:(scheme2_ui._money(values[scheme2_ui.COST_DISPLAY_ORDER[column]])
+                     if column in scheme2_ui.MONEY_COLUMNS else str(values[scheme2_ui.COST_DISPLAY_ORDER[column]]))
+            for column,heading in enumerate(scheme2_ui.HEADERS)}}
     snapshot['contract_quote_snapshot']={'schema':1,'items':items}
     return snapshot
 

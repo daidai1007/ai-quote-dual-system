@@ -1,9 +1,9 @@
-"""V3 drawing/quote presentation state. Existing API and quote math are untouched."""
+"""V3 drawing/quote presentation and per-set automatic/manual freight state."""
 from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QSplitter, QSizePolicy, QStackedWidget, QWidget,
 )
-from freight_state import FreightState, billable_weight, money
+from freight_state import FreightState, money, self_made_weight, AUTO_FREIGHT_BASIS, sync_item_freight
 from quote_drawing_preview import QuoteDrawingPreview, normalized_path, resolve_document
 
 # The recovered core still reserves these numeric slots.  They are controller
@@ -99,7 +99,7 @@ def update_freight_mode(window):
     window.freight_auto_button.setVisible(not automatic)
     window.freight_spin.setToolTip(
         '填写每台柜体或每套并柜的运费；最终运费＝运费×柜型数量，且不参与折扣。\n'
-        '自动运费＝服务最终计价材料重量×1元/kg；尚未取得重量时为0.00元。'
+        '自动运费＝每套自制件重量×1元/kg；人工修改后采用手工金额。'
     )
 
 
@@ -196,6 +196,14 @@ def install_drawing_workflow(namespace):
     original_refresh_totals = cls.refresh_discounted_totals
 
     def refresh_totals(window):
+        state = getattr(window, 'freight_state', None)
+        current = getattr(window, 'current_result', None)
+        if state is not None and current and not getattr(window, '_freight_restoring', False):
+            weight = self_made_weight({'formula':current.get('formula') or current.get('formula_cost'),
+                                      'attachments':getattr(window, 'attachments', [])})
+            if weight != state.weight:
+                state.update_weight(weight)
+                if state.mode == 'AUTO': set_freight_value(window)
         result = original_refresh_totals(window)
         if hasattr(window, 'freight_spin'):
             refresh_freight_amounts(window)
@@ -261,7 +269,8 @@ def install_drawing_workflow(namespace):
         result = original_show(window, payload, *args, **kwargs)
         current = window.current_result
         if current is not None and current is not previous:
-            window.freight_state.update_weight(billable_weight(payload))
+            window.freight_state.update_weight(self_made_weight({'formula':current.get('formula') or current.get('formula_cost'),
+                'attachments':getattr(window, 'attachments', [])}))
             if hasattr(window, 'quote_right_stack'):
                 set_freight_value(window)
                 current['input_signature'] = window.quote_input_signature()
@@ -330,7 +339,11 @@ def install_drawing_workflow(namespace):
         freight = FreightState(window.freight_state.mode, window.freight_state.weight, window.freight_state.value)
         result = original_add(window, *args, **kwargs)
         if len(window.draft_items) > count:
-            window._draft_drawing_refs[id(window.draft_items[-1])] = (drawing, freight)
+            item = window.draft_items[-1]
+            item.update(freight_mode=freight.mode, freight_basis=AUTO_FREIGHT_BASIS)
+            sync_item_freight(item)
+            window._draft_drawing_refs[id(item)] = (drawing, freight)
+            window.refresh_summary()
         return result
 
     cls.add_current_to_summary = add
@@ -349,7 +362,10 @@ def install_drawing_workflow(namespace):
         finally:
             window._freight_restoring = False
         window.active_drawing = drawing
-        if freight:
+        if item.get('freight_basis') == AUTO_FREIGHT_BASIS and item.get('freight_mode') in ('AUTO', 'MANUAL'):
+            window.freight_state = FreightState(item['freight_mode'], self_made_weight(item), money(item.get('freight_fee', 0)))
+            if item['freight_mode'] == 'AUTO': window.freight_state.automatic()
+        elif freight:
             window.freight_state = FreightState(freight.mode, freight.weight, freight.value)
         else:
             window.freight_state = FreightState()

@@ -372,6 +372,8 @@ class QuoteManagement:
         window.scheme2_company.currentTextChanged.connect(lambda *_: self.customer_changed())
         self.status_timer = QTimer(window); self.status_timer.setInterval(300)
         self.status_timer.timeout.connect(self.status_changed); self.status_timer.start()
+        from quote_delivery import QuoteDelivery
+        self.delivery = QuoteDelivery(self)
 
     def build_list(self):
         layout = QVBoxLayout(self.list_page)
@@ -768,6 +770,7 @@ class QuoteManagement:
 
     def status_changed(self):
         w = self.window
+        if hasattr(self, 'delivery'): self.delivery.refresh()
         if hasattr(w, 'quote_scheme_save_status'):
             self.feedback.setText(w.quote_scheme_save_status.text())
         busy = getattr(w, '_scheme2_document_busy', False) or bool(w._quote_scheme_export_context)
@@ -923,6 +926,8 @@ def install_quote_management(namespace):
     def section(window, index):
         manager = getattr(window, 'quote_management', None)
         if manager is None: return prior_section(window, index)
+        delivery=getattr(manager,'delivery',None)
+        if delivery is not None and delivery.cost_active and index != 3: delivery.leave_cost(refresh=False)
         if getattr(window, '_scheme2_document_busy', False) and (index != 2 or getattr(window._scheme2_document_controller, 'kind', '') != 'generate'):
             return
         if index == manager.contract_route:

@@ -38,3 +38,5 @@
 !api/contract_formula.mjs
 !api/contract_quote.mjs
 !api/contract_service.mjs
+!api/quote_delivery_document.mjs
+!api/quote_delivery_service.mjs

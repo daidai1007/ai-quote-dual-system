@@ -1,4 +1,4 @@
-"""Client-only freight policy; never substitutes an estimated material weight."""
+"""Per-set self-made weight freight; manual and legacy amounts remain explicit."""
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -27,6 +27,63 @@ def billable_weight(result):
         return value if value.is_finite() and value >= 0 else None
     except (InvalidOperation, ValueError, TypeError):
         return None
+
+
+AUTO_FREIGHT_BASIS = 'self_made_weight_v1'
+
+
+def _finite(value, default=Decimal(0)):
+    try:
+        number = Decimal(str(value))
+        return number if number.is_finite() else default
+    except (InvalidOperation, ValueError, TypeError):
+        return default
+
+
+def self_made_weight(item):
+    """One set: cabinet billable weight plus completed attachment piece weights.
+
+    Child counts, order quantity and cabinet waste are already represented by
+    the accepted cabinet/attachment results; never apply them a second time.
+    """
+    if not isinstance(item, dict):
+        return Decimal(0)
+    formula = item.get('formula')
+    if not isinstance(formula, dict): formula = item.get('formula_cost')
+    if not isinstance(formula, dict): formula = {}
+    cabinet = _finite(formula.get('corrected_material_weight_kg'))
+    if formula.get('corrected_material_weight_kg') is None and item.get('ganged_cabinet_results'):
+        cabinet = billable_weight(item) or Decimal(0)
+    total = max(Decimal(0), cabinet)
+    for row in item.get('attachments') or []:
+        if (not isinstance(row, dict) or row.get('status') in ('ERROR', 'PENDING_MANUAL')
+                or row.get('pending_manual_dimensions')):
+            continue
+        weight, quantity = _finite(row.get('weight_kg')), _finite(row.get('quantity', 1), None)
+        if weight < 0 or quantity is None:
+            continue
+        sign = -1 if quantity < 0 or _finite(row.get('attachment_price_sign', 1), Decimal(1)) == -1 else 1
+        total += weight * abs(quantity) * sign
+    return max(Decimal(0), total)
+
+
+def automatic_item_freight(item):
+    return isinstance(item, dict) and item.get('freight_mode') == 'AUTO' and item.get('freight_basis') == AUTO_FREIGHT_BASIS
+
+
+def sync_item_freight(item):
+    """Only explicitly opted-in editable rows follow weight; legacy quotes stay put."""
+    if not automatic_item_freight(item):
+        return False
+    value = float(money(self_made_weight(item)))
+    if item.get('freight_fee') != value:
+        item['freight_fee'] = value
+        if 'freight' in item:
+            item['freight'] = value
+        item.pop('cost_detail_rows', None)
+        item.pop('quote_display', None)
+        return True
+    return False
 
 
 @dataclass

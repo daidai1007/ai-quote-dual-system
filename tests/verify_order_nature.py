@@ -165,7 +165,7 @@ class OrderNatureTests(unittest.TestCase):
         output.mkdir(parents=True, exist_ok=True)
         for width,height in ((1511,986),(1024,768)):
             self.w.resize(width,height);app.processEvents();self.m.root.setCurrentWidget(self.m.detail_page)
-            self.assertEqual(self.m.tabs.count(),5)
+            self.assertEqual(self.m.tabs.count(),6)  # Existing five tabs plus the approved send log.
             for control in (*self.m.nature_controls.values(),self.m.save_button,self.m.discard_button):
                 self.assertTrue(control.parentWidget().rect().contains(control.geometry()),control.objectName())
             field=self.w.scheme2_quote_company_field

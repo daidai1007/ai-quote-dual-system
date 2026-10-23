@@ -33,6 +33,7 @@ foreach ($requiredCoreFile in @("main.raw", "original.pyz")) {
 
 $testFiles = @(
     "tests/verify_name_login_endpoint.py",
+    "tests/verify_quote_delivery.py",
     "tests/verify_order_nature.py",
     "tests/verify_quote_export_customer.py",
     "tests/verify_quote_remarks.py",
@@ -108,6 +109,7 @@ $testFiles = @(
     "tests/verify_v3_layout_refresh.py",
     "tests/verify_removed_recognition_workbench.py",
     "tests/verify_drawing_workflow.py",
+    "tests/verify_weight_freight.py",
     "tests/verify_freight_output.py"
 )
 $savedUpdateConfig = $env:AI_QUOTE_UPDATE_CONFIG

@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = (
+    'verify_weight_freight.py',
     'verify_quote_remarks.py',
     'verify_light_action_ui.py', 'verify_order_nature.py',
     'verify_quote_export_customer.py',
