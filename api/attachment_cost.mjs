@@ -132,6 +132,7 @@ export function calculateAttachment(selection, catalog, rules, environment) {
     if (!rule) { result.status = 'QUICK_ONLY'; result.status_text = '仅快速报价'; return result; }
     Object.assign(result, { rule_id: rule.rule_id, rule_version: rule.data_version, rule_materials: rule.materials || [], auxiliary_list: rule.auxiliary_list ?? '', rule_source_row: rule.source_row_no, calculation_notes: rule.notes || '', formulas: rule.formulas });
     result.required_parameters = requiredParameters(rule);
+    result.cost_method = rule.method === 'FIXED' ? 'FIXED' : 'FORMULA';
     if (rule.issues?.length) throw new Error(`源规则待确认：${rule.issues.join('；')}`);
     if (rule.method === 'FIXED') {
       result.formula_unit_cost = number(rule.fixed_cost, '固定成本');

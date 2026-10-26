@@ -111,7 +111,7 @@ class DeliveryTests(unittest.TestCase):
     def test_01_actual_send_dialog_inbox_pdf_excel_and_workspace_isolation(self):
         owner=self.new_window(self.owner);m=owner.quote_management
         schemes._open_scheme(owner,self.config['scheme_no'],route=2);self.settled(owner)
-        m.delivery.start_send();self.settled(owner);dialog=m.delivery.send_dialog
+        m.delivery.send_button.click();self.settled(owner);dialog=m.delivery.send_dialog
         self.assertIsNotNone(dialog);self.assertTrue(dialog.isVisible());self.assertIn('本机接收乙',dialog.choices)
         out=ROOT/'.codex-tmp/quote-delivery-qa';out.mkdir(parents=True,exist_ok=True)
         self.assertEqual(m.amount.text(),'¥ 650.30')
@@ -285,6 +285,175 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(w.stack.currentIndex(),ui.COST_ROUTE);self.assertEqual(w.summary_table.item(0,13).text(),'175.00')
         self.assertEqual(w.draft_items,own);self.assertIn('V1',d.cost_meta.text())
         w.show_section(ui.OPTION_ROUTE);self.assertFalse(d.cost_active);self.assertEqual(w.draft_items,own)
+
+
+    def test_10_received_price_breakdowns_are_frozen_and_never_recalculated(self):
+        import scheme2_ui as ui
+        snap=deepcopy(self.api('/api/quote-schemes/'+self.config['scheme_no'])['snapshot'])
+        first=snap['draft_items'][0]
+        first['quote_cost_display']={'schema':1,'values':{'固定报价':'25.00','折扣面价':'150.00'},
+            'price_breakdown':{'schema':1,'basis':'per_unit_set_v1',
+                'fixed':{'rows':[dict(category='运费',original=25,discount=1,amount=25)],'total':25},
+                'discounted':{'rows':[dict(category='柜体',original=300,discount=.5,amount=150)],'total':150},'total':175}}
+        created=self.api('/api/quote-schemes',{'snapshot':snap});no=created['scheme_no']
+        self.api('/api/quote-schemes/'+no+'/export-result',dict(expected_version=1,kind='XLSX',succeeded=True,snapshot=snap))
+        sent=self.api('/api/quote-deliveries',dict(request_id=str(uuid4()),scheme_no=no,source_version_no=1,quote_version=1,recipient_names=['本机接收乙'],note='冻结分项'))
+        row=self.api('/api/quote-deliveries?mode=sent&scheme_no='+no)['items'][0]
+        source=self.api('/api/quote-schemes/'+no)
+        revised=self.api('/api/quote-schemes/'+no+'/revision',dict(expected_version=source['lock_version']))
+        changed=deepcopy(snap);changed['quote_management']={'schema':1,'current':2,'versions':[]}
+        changed['draft_items'][0]['quote_cost_display']['price_breakdown']['fixed']['total']=999
+        self.api('/api/quote-schemes/'+no+'/export-result',dict(expected_version=revised['lock_version'],kind='XLSX',succeeded=True,snapshot=changed))
+        w=self.new_window(self.recipient);d=w.quote_management.delivery;before=deepcopy(w.draft_items)
+        d.open_received(row['delivery_id'],'cost');self.settled(w)
+        self.assertEqual(w.summary_table.item(0,7).text(),'25.00')
+        self.assertEqual(w.summary_table.item(0,24).text(),'150.00')
+        opened=[]
+        def inspect(dialog):
+            opened.append([dialog.table.item(dialog.table.rowCount()-1,c).text() for c in range(4)])
+            return QDialog.DialogCode.Accepted
+        with (patch.object(ui,'_cost_price_components',side_effect=AssertionError('Received costs must not recalculate')),
+              patch.object(ui.QuickPriceBreakdownDialog,'exec',inspect)):
+            for column in (7,24):
+                link=w.scheme2_cost_selection_values[column]
+                self.assertTrue(link.isEnabled())
+                self.assertEqual(link.text(),w.summary_table.item(0,column).text())
+                link.click()
+            ui._cost_cell_clicked(w,1,7)
+        self.assertEqual([r[3] for r in opened],['25.00','150.00','未记录'])
+        self.assertEqual(w.draft_items,before)
+
+
+    def test_11_received_formula_attachment_details_use_frozen_saved_categories(self):
+        import scheme2_ui as ui
+        from PySide6.QtWidgets import QTableWidget
+        snap=deepcopy(self.api('/api/quote-schemes/'+self.config['scheme_no'])['snapshot'])
+        first=snap['draft_items'][0]
+        first['quote_cost_display']={'schema':1,'values':{'材料成本':'100.00','喷涂费用':'12.00','辅材成本':'8.00','人工成本':'20.00','附件成本':'30.00'}}
+        first['cost_detail_rows']=[dict(type=label,name='合成附件－'+label,base_amount=value,factor=1,note='附件公式成本分项')
+            for label,value in [('材料成本',80),('喷涂费用',12),('辅材成本',8),('人工成本',20)]]
+        created=self.api('/api/quote-schemes',{'snapshot':snap});no=created['scheme_no']
+        self.api('/api/quote-schemes/'+no+'/export-result',dict(expected_version=1,kind='XLSX',succeeded=True,snapshot=snap))
+        self.api('/api/quote-deliveries',dict(request_id=str(uuid4()),scheme_no=no,source_version_no=1,quote_version=1,recipient_names=['本机接收乙'],note='公式成本拆分'))
+        row=self.api('/api/quote-deliveries?mode=sent&scheme_no='+no)['items'][0]
+        w=self.new_window(self.recipient);d=w.quote_management.delivery;before=deepcopy(w.draft_items)
+        d.open_received(row['delivery_id'],'cost');self.settled(w)
+        self.assertEqual(w.summary_table.item(0,16).text(),'30.00')
+        captured=[]
+        def inspect(dialog):
+            grid=dialog.findChild(QTableWidget)
+            captured.extend([[grid.item(r,c).text() for c in range(grid.columnCount())] for r in range(grid.rowCount())])
+            return QDialog.DialogCode.Accepted
+        with patch.object(delivery_ui.QDialog,'exec',inspect):d.show_cost_detail(0)
+        self.assertEqual([row[2] for row in captured],['80.00','12.00','8.00','20.00'])
+        self.assertEqual(w.draft_items,before)
+    def sender_window(self):
+        w=self.new_window(self.owner);m=w.quote_management
+        schemes._open_scheme(w,self.config['scheme_no'],route=2);self.settled(w)
+        self.assertEqual(w._quote_scheme_status,'QUOTED')
+        self.assertTrue(m.delivery.send_button.isEnabled())
+        return w,m,m.delivery
+
+    def test_10_versions_error_remains_visible_after_save_status_refresh(self):
+        w,m,d=self.sender_window()
+        with patch.object(d,'request',side_effect=lambda method,suffix,payload,success,failure:failure('同事发送功能尚未开通')):
+            d.send_button.click()
+        m.status_changed();APP.processEvents()
+        self.assertIsNone(d.send_dialog);self.assertTrue(d.send_status.isVisible())
+        self.assertIn('同事发送功能尚未开通',d.send_status.text())
+        self.assertTrue(d.send_button.isEnabled());self.assertEqual(d.send_button.text(),'发送给同事')
+        self.assertEqual(m.detail_page.layout().indexOf(d.send_status),2)
+
+    def test_11_quoted_without_sendable_version_explains_registration(self):
+        w,m,d=self.sender_window()
+        with patch.object(d,'request',side_effect=lambda method,suffix,payload,success,failure:success({'items':[]})) as request:
+            d.send_button.click()
+        m.status_changed();APP.processEvents()
+        self.assertEqual(request.call_count,1);self.assertIsNone(d.send_dialog)
+        self.assertTrue(d.send_status.isVisible());self.assertIn('V1',d.send_status.text())
+        self.assertIn('请联系管理员核对正式版本数据',d.send_status.text())
+
+    def test_12_colleagues_error_is_visible_and_retry_opens_dialog(self):
+        w,m,d=self.sender_window();request=d.request
+        def fail_people(method,suffix,payload,success,failure):
+            if suffix=='/colleagues':return failure('姓名会话已失效，请重新登录。')
+            return request(method,suffix,payload,success,failure)
+        with patch.object(d,'request',side_effect=fail_people):
+            d.send_button.click();self.settled(w)
+        m.status_changed();self.assertTrue(d.send_status.isVisible())
+        self.assertIn('会话已失效',d.send_status.text());self.assertIsNone(d.send_dialog)
+        d.send_button.click();self.settled(w)
+        self.assertIsNotNone(d.send_dialog);self.assertTrue(d.send_dialog.isVisible())
+        self.assertTrue(d.send_status.isHidden());self.assertFalse(d.send_loading)
+
+    def test_13_pending_send_check_survives_refresh_and_prevents_duplicate(self):
+        w,m,d=self.sender_window();callbacks=[]
+        with patch.object(d,'request',side_effect=lambda method,suffix,payload,success,failure:callbacks.append((success,failure))) as request:
+            d.send_button.click();m.status_changed();APP.processEvents()
+            self.assertTrue(d.send_loading);self.assertFalse(d.send_button.isEnabled())
+            self.assertEqual(d.send_button.text(),'正在核对…');self.assertTrue(d.send_status.isVisible())
+            d.send_button.click();d.start_send();self.assertEqual(request.call_count,1)
+            callbacks[0][1]('本机模拟超时')
+        self.assertFalse(d.send_loading);self.assertTrue(d.send_button.isEnabled())
+        self.assertIn('本机模拟超时',d.send_status.text())
+
+    def test_14_source_change_hides_old_feedback_and_ignores_old_response(self):
+        w,m,d=self.sender_window();callbacks=[]
+        original_no=w._quote_scheme_id
+        try:
+            with patch.object(d,'request',side_effect=lambda method,suffix,payload,success,failure:callbacks.append((success,failure))) as request:
+                d.send_button.click();w._quote_scheme_id='BJ-20261026-999999'
+                callbacks[0][0]({'items':[]});m.status_changed()
+                self.assertEqual(request.call_count,1);self.assertIsNone(d.send_dialog)
+                self.assertFalse(d.send_loading);self.assertTrue(d.send_status.isHidden())
+        finally:w._quote_scheme_id=original_no
+
+    def test_15_request_setup_error_is_visible_and_does_not_lock_button(self):
+        w,m,d=self.sender_window()
+        with patch.object(d,'request',side_effect=RuntimeError('旧姓名请求已停止，请重新操作。')):
+            d.send_button.click()
+        m.status_changed();self.assertTrue(d.send_status.isVisible())
+        self.assertIn('旧姓名请求已停止',d.send_status.text());self.assertFalse(d.send_loading)
+        self.assertTrue(d.send_button.isEnabled())
+
+    def test_16_void_and_foreign_quotes_still_cannot_send(self):
+        w,m,d=self.sender_window()
+        with patch.object(d,'request') as request:
+            w._name_scope_foreign=True;d.refresh();d.send_button.click();d.start_send()
+            self.assertFalse(d.send_button.isEnabled());request.assert_not_called()
+            w._name_scope_foreign=False;w._quote_scheme_status='VOID';d.refresh()
+            d.send_button.click();d.start_send();request.assert_not_called()
+
+    def test_17_real_http_error_is_visible_after_refresh(self):
+        w,m,d=self.sender_window();request=d.request
+        def invalid_endpoint(method,suffix,payload,success,failure):
+            return request(method,'/invalid-version-probe',payload,success,failure)
+        with patch.object(d,'request',side_effect=invalid_endpoint):
+            d.send_button.click();self.settled(w)
+        m.status_changed();self.assertIsNone(d.send_dialog)
+        self.assertTrue(d.send_status.isVisible());self.assertIn('请求标识无效',d.send_status.text())
+        self.assertFalse(d.send_loading);self.assertTrue(d.send_button.isEnabled())
+
+    def test_18_unexpected_version_response_is_visible(self):
+        w,m,d=self.sender_window()
+        with patch.object(d,'request',side_effect=lambda method,suffix,payload,success,failure:success({'items':[{}]})):
+            d.send_button.click()
+        m.status_changed();self.assertIsNone(d.send_dialog)
+        self.assertIn('正式版本数据格式异常',d.send_status.text())
+        self.assertTrue(d.send_status.isVisible());self.assertFalse(d.send_loading)
+
+
+    def test_19_legacy_quoted_unclassified_explains_revision_without_writes(self):
+        w,m,d=self.sender_window();w._quote_order_nature='UNCLASSIFIED'
+        before=deepcopy(w.draft_items)
+        with patch.object(d,'request') as request:
+            d.send_button.click();m.status_changed()
+            request.assert_not_called()
+        self.assertIsNone(d.send_dialog);self.assertTrue(d.send_status.isVisible())
+        self.assertIn('待分类',d.send_status.text());self.assertIn('创建修订版',d.send_status.text())
+        self.assertEqual(w._quote_order_nature,'UNCLASSIFIED');self.assertEqual(w.draft_items,before)
+        self.assertFalse(d.send_loading);self.assertTrue(d.send_button.isEnabled())
+
 
 
 if __name__=='__main__': unittest.main(verbosity=2)

@@ -32,7 +32,8 @@ catalog_row = {
 item = {
     "quantity": 1,
     "attachments": [catalog_row],
-    "formula": {"attachment_fee": 8, "total_cost": 108},
+    "formula": {"material_cost":100,"auxiliary_cost":0,"labor_cost":0,"spray_cost":0,
+                "attachment_fee": 8, "total_cost": 108},
     "quick": {"attachment_fee": 20, "total_cost": 220},
     "attachment_confirmation_inputs": [{
         "attachment_price_id": 34, "quantity": 2,
@@ -52,7 +53,7 @@ def check_editor(quantity, cost, amount):
     editor = scheme2_ui.AttachmentEditor(window, item)
     assert editor.table.cellWidget(0, editor.COL_QUANTITY).value() == quantity
     assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == f"{cost:.2f}"
-    assert editor.table.cellWidget(0, editor.COL_AMOUNT).value() == amount
+    assert float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")) == amount
     return editor
 
 
@@ -70,20 +71,20 @@ for cabinets in (3, 2, 1, 3):
 # including after repeated edits and manual price changes.
 editor = check_editor(2, 8, 20)
 quantity_editor = editor.table.cellWidget(0, editor.COL_QUANTITY)
-amount_editor = editor.table.cellWidget(0, editor.COL_AMOUNT)
+amount_editor = editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT)
 quantity_editor.setValue(3)
-assert amount_editor.value() == 30
+assert amount_editor.value() == 10
 assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "12.00"
-amount_editor.setValue(108)
+amount_editor.setValue(36)
 quantity_editor.setValue(4)
-assert amount_editor.value() == 144
+assert amount_editor.value() == 36
 assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "16.00"
 editor.accept()
 assert item["attachments"][0]["quantity"] == 4
 assert item["attachments"][0]["quick_amount"] == 144
 assert item["formula"]["total_cost"] == 116
 assert item["quick"]["total_cost"] == 344
-assert scheme2_ui._row_values(item)[18] == 348
+assert scheme2_ui._row_values(item)[18] == 368.88  # (100 + 16) × 1.06 × 3
 set_cabinet_quantity(2)
 check_editor(4, 16, 144).reject()
 
@@ -113,14 +114,14 @@ editor = scheme2_ui.AttachmentEditor(window, item)
 for row in (0, 1):
     assert editor.table.cellWidget(row, editor.COL_QUANTITY).value() == 1
     assert editor.table.item(row, editor.COL_FORMULA_AMOUNT).text() == "4.00"
-    assert editor.table.cellWidget(row, editor.COL_AMOUNT).value() == 10
+    assert float(editor.table.item(row, editor.COL_AMOUNT).text().replace(",", "")) == 10
 assert editor.table.cellWidget(2, editor.COL_QUANTITY).value() == 2
-assert editor.table.cellWidget(2, editor.COL_FORMULA_AMOUNT).value() == 20
-assert editor.table.cellWidget(2, editor.COL_AMOUNT).value() == 24
+assert float(editor.table.item(2, editor.COL_FORMULA_AMOUNT).text().replace(",", "")) == 20
+assert float(editor.table.item(2, editor.COL_AMOUNT).text().replace(",", "")) == 24
 editor.table.cellWidget(2, editor.COL_QUANTITY).setValue(3)
 editor.table.cellWidget(2, editor.COL_QUANTITY).setValue(4)
-assert editor.table.cellWidget(2, editor.COL_FORMULA_AMOUNT).value() == 40
-assert editor.table.cellWidget(2, editor.COL_AMOUNT).value() == 48
+assert float(editor.table.item(2, editor.COL_FORMULA_AMOUNT).text().replace(",", "")) == 40
+assert float(editor.table.item(2, editor.COL_AMOUNT).text().replace(",", "")) == 48
 editor.accept()
 assert item["attachments"][2]["quantity"] == 4
 assert item["attachments"][2]["formula_amount"] == 40

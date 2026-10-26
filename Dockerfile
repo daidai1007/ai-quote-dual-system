@@ -21,6 +21,7 @@ COPY api/contract_document.mjs api/contract_formula.mjs api/contract_quote.mjs a
 COPY api/quote_delivery_document.mjs api/quote_delivery_service.mjs ./api/
 COPY api/jp_auxiliary_weight.mjs ./api/
 COPY quote_order_nature.mjs exceljs_range_adapter.mjs quote_export_contract.mjs quick_discount_rules.mjs export_dual_quote_workbook.mjs attachment_snapshot_export.mjs ./
+COPY attachment_cost_allocation.mjs ./
 
 RUN chown -R node:node /app
 USER node

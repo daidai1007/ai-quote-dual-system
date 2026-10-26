@@ -193,7 +193,7 @@ class WheelEditing(unittest.TestCase):
         ui._quote_item_remark(item)
         before = copy.deepcopy(item)
         dialog = self.show_widget(ui.AttachmentEditor(self.window, item))
-        for column in (dialog.COL_QUANTITY, dialog.COL_FORMULA_AMOUNT, dialog.COL_AMOUNT):
+        for column in (dialog.COL_QUANTITY, dialog.COL_UNIT_COST, dialog.COL_UNIT_AMOUNT):
             control = dialog.table.cellWidget(0, column)
             original = control.value()
             if column != dialog.COL_QUANTITY:
@@ -202,7 +202,7 @@ class WheelEditing(unittest.TestCase):
             wheel(control.lineEdit(), 120)
             self.assertEqual(control.value(), original)
         self.assertEqual(item, before)
-        amount = dialog.table.cellWidget(0, dialog.COL_AMOUNT)
+        amount = dialog.table.cellWidget(0, dialog.COL_UNIT_AMOUNT)
         QTest.mouseDClick(amount.lineEdit(), Qt.MouseButton.LeftButton)
         QTest.keyClicks(amount.lineEdit(), "90")
         QTest.keyClick(amount.lineEdit(), Qt.Key.Key_Return)

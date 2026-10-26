@@ -195,7 +195,7 @@ class DraftAttachmentRepriceId(unittest.TestCase):
                        quantity=2, attachment_price_sign=1, manual_inputs={})]
         self.item["attachment_confirmation_inputs"] = copy.deepcopy(frozen)
         editor = ui.AttachmentEditor(self.window, self.item)
-        editor.table.cellWidget(0, editor.COL_AMOUNT).setValue(150)
+        editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT).setValue((150) / (abs(editor.table.cellWidget(0, editor.COL_QUANTITY).value()) or 1))
         editor.accept()
         source = self.item["attachments"][0]
         self.assertEqual(source["attachment_price_id"], catalog[1]["attachment_price_id"])
@@ -207,7 +207,7 @@ class DraftAttachmentRepriceId(unittest.TestCase):
         self.assertEqual(requests, [])
         fresh = ui.AttachmentEditor(self.window, {"attachments": [{**catalog[1], "quantity": 2,
                                              "formula_amount": 10, "quick_amount": 42}]})
-        self.assertEqual(fresh.table.cellWidget(0, fresh.COL_AMOUNT).value(), 42)
+        self.assertEqual(float(fresh.table.item(0, fresh.COL_AMOUNT).text().replace(",", "")), 42)
         fresh.close()
         editor.close()
 
@@ -262,7 +262,7 @@ class DraftAttachmentRepriceId(unittest.TestCase):
             "quick_amount":0, "quick_amount_override":0, "computer_tray_auto_match":True}]
         editor = ui.AttachmentEditor(self.window, self.item)
         self.addCleanup(editor.close)
-        self.assertEqual(editor.table.columnCount(), 5)
+        self.assertEqual(editor.table.columnCount(), 7)
         self.assertEqual(editor.table.item(0, editor.COL_NAME).text(), "电脑托盘")
         self.assertIsNone(editor.table.cellWidget(0, editor.COL_SPECIFICATION))
         for tray in trays:
@@ -279,7 +279,7 @@ class DraftAttachmentRepriceId(unittest.TestCase):
             self.assertEqual(source["attachment_price_id"], tray["attachment_price_id"])
             self.assertFalse(source["computer_tray_auto_match"])
             self.assertNotIn("quick_amount_override", source)
-            self.assertEqual(editor.table.cellWidget(0, editor.COL_AMOUNT).value(), tray["face_price"] * 2)
+            self.assertEqual(float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")), tray["face_price"] * 2)
             self.assertEqual(editor.table.item(0, editor.COL_FORMULA_AMOUNT).text(), "10.00")
             self.assertEqual(requests[-1][1]["attachments"][0]["attachment_price_id"], tray["attachment_price_id"])
         editor.accept()

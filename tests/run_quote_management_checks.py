@@ -13,10 +13,18 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = (
+    'verify_front_rear_doors.py',
+    'verify_attachment_unit_prices.py',
+    'verify_copied_attachment_names.py', 'verify_copied_quote_reprice.py',
+    'verify_cost_selection_detail.py', 'verify_scheme2_cost_combined_layout.py',
+    'verify_attachment_cost_allocation.py','verify_formula_attachment_allocation_ui.py',
+    'verify_quote_version_comparison.py','verify_quote_version_comparison_ui.py',
+    'verify_cost_price_breakdown.py', 'verify_cost_price_breakdown_ui.py',
     'verify_quote_version_history.py',
     'verify_weight_freight.py',
     'verify_jp_auxiliary_weight.py', 'verify_jp_auxiliary_weight_workflow.py',
     'verify_quote_remarks.py',
+    'verify_quote_remark_format.py', 'verify_quote_remark_format_runtime.py', 'verify_scheme2_quote_remark.py',
     'verify_light_action_ui.py', 'verify_order_nature.py',
     'verify_quote_export_customer.py',
     'verify_quote_management_filters.py',

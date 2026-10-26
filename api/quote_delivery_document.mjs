@@ -8,22 +8,44 @@ export const displayVersion=(snapshot,fallback)=>{
   if(!Number.isSafeInteger(value)||value<1)throw Object.assign(Error('正式报价版本无效。'),{statusCode:409});
   return value;
 };
-export const COST_HEADERS=['序号','名称','产品','尺寸','数量','已选附件','附件面价','面价','材料差价','折扣系数','报价','报价总价','成本单价','材料成本','辅材成本','人工成本','附件成本','喷涂费用','管理费用','运费','成本总价','毛利率','自制件重量','成本明细'];
+// Retain the old wire column for older clients; the new cost UI omits it.
+export const COST_HEADERS=['序号','名称','产品','尺寸','数量','已选附件','附件面价','面价','材料差价','折扣系数','报价','报价总价','成本单价','材料成本','辅材成本','人工成本','附件成本','喷涂费用','管理费用','运费','成本总价','毛利率','自制件重量','成本明细','固定报价','折扣面价'];
 const numeric=value=>value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value))?Number(value):null;
 const detailKeys=['type','name','spec','formula','quantity','unit','unit_price','base_amount','factor','amount','note'];
+function priceBreakdown(saved,face){
+  if(saved?.schema!==1||saved.basis!=='per_unit_set_v1')return null;
+  const cents=value=>Math.round(Number(value)*100);
+  const result={schema:1,basis:saved.basis};
+  for(const key of ['fixed','discounted']){
+    const group=saved[key];
+    if(!Array.isArray(group?.rows)||group.rows.length>1000||numeric(group.total)===null)return null;
+    const rows=[];
+    for(const row of group.rows){
+      if(!row||typeof row.category!=='string'||!row.category.trim()||
+        ['original','discount','amount'].some(k=>numeric(row[k])===null))return null;
+      rows.push({category:row.category.slice(0,200),original:numeric(row.original),discount:numeric(row.discount),amount:numeric(row.amount)});
+    }
+    if(rows.reduce((total,row)=>total+cents(row.amount),0)!==cents(group.total))return null;
+    result[key]={rows,total:numeric(group.total)};
+  }
+  if(cents(result.fixed.total)+cents(result.discounted.total)!==cents(face.unit_price))return null;
+  result.total=face.unit_price;
+  return result;
+}
 function costSnapshot(snapshot,quote){
   const source=snapshot.contract_quote_snapshot?.items||snapshot.draft_items;
   return {schema:1,headers:COST_HEADERS,items:quote.items.map((face,index)=>{
     const item=source[index]||{},f=item.formula||{},saved=item.quote_cost_display;
     const values={序号:index+1,名称:face.name,产品:String(item.product_code||item.product_name||''),尺寸:face.specification,数量:face.quantity,
       已选附件:(item.attachments||[]).map(a=>String(a.item_name||a.model_code||'')).filter(Boolean).join('、'),
-      附件面价:numeric(item.quote_display?.attachment_face_price),面价:numeric(item.quick?.base_price),材料差价:numeric(item.quote_display?.material_difference),
+      附件面价:numeric(item.quote_display?.attachment_face_price),面价:numeric(item.quick?.base_price),固定报价:null,折扣面价:null,材料差价:numeric(item.quote_display?.material_difference),
       折扣系数:numeric(item.quick_discount),报价:face.unit_price,报价总价:face.total,成本单价:numeric(f.total_cost),
       材料成本:numeric(f.material_cost),辅材成本:numeric(f.auxiliary_cost),人工成本:numeric(f.labor_cost),附件成本:numeric(f.attachment_fee),
       喷涂费用:numeric(f.spray_cost),管理费用:numeric(f.management_fee),运费:numeric(item.freight_fee??item.freight),
       成本总价:null,毛利率:null,自制件重量:numeric(item.self_made_weight),成本明细:'查看'};
     const columns=COST_HEADERS.map(key=>saved?.schema===1&&Object.hasOwn(saved.values||{},key)?saved.values[key]:values[key]);
     return {columns:columns.map(value=>typeof value==='number'?numeric(value):typeof value==='string'?value.slice(0,5000):null),
+      price_breakdown:priceBreakdown(saved?.price_breakdown,face),
       details:Array.isArray(item.cost_detail_rows)?item.cost_detail_rows.filter(r=>r&&typeof r==='object').map(r=>Object.fromEntries(detailKeys.filter(k=>Object.hasOwn(r,k)).map(k=>[k,typeof r[k]==='string'?r[k].slice(0,5000):numeric(r[k])]))):[]};
   })};
 }

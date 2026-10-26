@@ -37,7 +37,7 @@ class QuoteRemarks(unittest.TestCase):
                  quantity=3,status='FIXED',formula_amount=6,quick_amount=12,attachment_price_id=9),
             dict(item_name='风机',model_code='SECOND-MODEL',quantity=2,status='FIXED',
                  formula_amount=4,quick_amount=8,attachment_price_id=10),
-            dict(item_name='照明灯',category_level1='照明灯/行程开关',specification='SPECIAL-SPEC',quantity=1,
+            dict(item_name='照明灯',category_level1='照明灯/行程开关',specification='照明灯220V长款',quantity=1,
                  status='FIXED',formula_amount=3,quick_amount=6,attachment_price_id=11),
             dict(item_name='人工附加件',custom=True,quantity=1,formula_amount=2,custom_cost=2,
                  quick_amount=4,unit_price_override=4),
@@ -78,7 +78,7 @@ class QuoteRemarks(unittest.TestCase):
         self.assertEqual(ui._row_values(self.w.draft_items[0])[15:17],expected_prices)
         return saved
 
-    def test_default_names_and_quantities_match_each_popup_row(self):
+    def test_default_names_models_and_per_cabinet_quantities_match_popup_rows(self):
         item=self.w.draft_items[0]
         dialog=ui.AttachmentEditor(self.w,item)
         names=list(dict.fromkeys(dialog.table.item(row,0).text() for row in range(dialog.table.rowCount())))
@@ -86,25 +86,27 @@ class QuoteRemarks(unittest.TestCase):
         dialog.accept()
         actual=self.w.scheme2_quote_preview.item(10,7).text()
         self.assertEqual(item['quantity'],2)
-        self.assertIn('风机×6、风机×4、照明灯/行程开关×2、人工附加件×2',actual)
-        for excluded in ('MODEL-NOT-IN-REMARK','SECOND-MODEL','SPECIAL-SPEC','120'):
-            self.assertNotIn(excluded,actual)
+        for included in ('配MODEL-NOT-IN-REMARK风机3只','配SECOND-MODEL风机2只',
+                         '配照明灯220V长款1套','配人工附加件1件'):
+            self.assertIn(included,actual)
+        self.assertNotIn('120',actual)  # Not an explicit requested specification.
         dialog=ui.AttachmentEditor(self.w,item)
         dialog.table.item(0,0).setText('弹窗更名附件')
         dialog.table.cellWidget(0,dialog.COL_QUANTITY).setValue(4)
         dialog.table.removeRow(1);dialog.accept()
-        self.assertIn('弹窗更名附件×8',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertIn('弹窗更名附件4件',self.w.scheme2_quote_preview.item(10,7).text())
         self.assertNotIn('风机',self.w.scheme2_quote_preview.item(10,7).text())
         self.screenshot('01-default-popup-names.png')
 
-    def test_popup_quantities_times_order_count_save_reopen_print_and_export(self):
+    def test_popup_per_cabinet_quantities_save_reopen_print_and_export(self):
         item=self.w.draft_items[0];item['quantity']=7
         dialog=ui.AttachmentEditor(self.w,item)
         dialog.table.cellWidget(0,dialog.COL_QUANTITY).setValue(4)
         dialog.table.cellWidget(3,dialog.COL_QUANTITY).setValue(6)
         dialog.accept();self.w._quote_scheme_save_timer.stop()
         expected=self.w.scheme2_quote_preview.item(10,7).text()
-        self.assertIn('风机×28、风机×14、照明灯/行程开关×7、人工附加件×42',expected)
+        for phrase in ('风机4只','风机2只','照明灯220V长款1套','人工附加件6件'):
+            self.assertIn(phrase,expected)
         self.assertEqual(item['attachments'][0]['quantity'],4)
         self.m.save();wait(lambda:self.w._quote_scheme_save_worker is None)
         self.assertEqual(self.server['snapshot']['draft_items'][0]['final_remark'],expected)
@@ -119,13 +121,15 @@ class QuoteRemarks(unittest.TestCase):
         wait(lambda:not self.w._quote_scheme_workers)
         from pypdf import PdfReader
         printed=''.join(''.join(page.extract_text() for page in PdfReader(pdf).pages).split())
-        self.assertIn('风机×28、风机×14、照明灯/行程开关×7、人工附加件×42',printed)
+        for phrase in ('风机4只','风机2只','人工附加件6件'):
+            self.assertIn(phrase,printed)
         self.assertEqual(self.posts()[-1]['kind'],'PRINT')
         self.assert_outputs(expected)
         self.screenshot('04-attachment-quantities.png')
 
     def test_ganged_and_negative_board_counts_match_popup_without_cancelling_rows(self):
         item=self.w.draft_items[0];item['quantity']=9
+        item['ganged_cabinet_count']=2
         item['attachments']=[
             dict(item_name='内门',ganged_inner_door_match=True,ganged_cabinet_index=0,quantity=2),
             dict(item_name='内门',ganged_inner_door_match=True,ganged_cabinet_index=1,quantity=3),
@@ -137,44 +141,49 @@ class QuoteRemarks(unittest.TestCase):
         dialog=ui.AttachmentEditor(self.w,item)
         counts=[dialog.table.cellWidget(r,dialog.COL_QUANTITY).value() for r in range(dialog.table.rowCount())]
         self.assertEqual(counts,[2,3,-2,1,-3])
-        self.assertIn('内门×18、内门×27、安装板×-18（扣减）、安装板×9、安装板×-27（扣减）',ui._scheme2_quote_remark(item))
+        actual=ui._scheme2_quote_remark(item)
+        for phrase in ('内门2件（柜体1，单台）','内门3件（柜体2，单台）',
+                       '扣减安装板2块（每组）','配安装板1块（每组）','扣减安装板3块（每组）'):
+            self.assertIn(phrase,actual)
         self.assertEqual(item['attachments'],before['attachments'])
         dialog.reject()
 
-    def test_cost_page_order_count_change_updates_total_counts_only(self):
+    def test_cost_page_order_count_change_does_not_change_per_cabinet_remarks(self):
         item=self.w.draft_items[0];attachments=deepcopy(item['attachments'])
+        expected=self.w.scheme2_quote_preview.item(10,7).text()
         self.w.summary_table.item(0,4).setText('5');app.processEvents()
         self.assertEqual(item['quantity'],5)
-        self.assertIn('风机×15、风机×10、照明灯/行程开关×5、人工附加件×5',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),expected)
         self.assertEqual(item['attachments'],attachments)
         self.w.refresh_summary();self.w.refresh_summary()
-        self.assertIn('风机×15、风机×10',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),expected)
         self.w.summary_table.item(0,4).setText('2');app.processEvents()
-        self.assertIn('风机×6、风机×4',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),expected)
         self.assertEqual(item['attachments'],attachments)
 
-    def test_historical_default_totals_follow_its_own_order_count(self):
+    def test_historical_default_keeps_per_cabinet_counts(self):
         item=self.w.draft_items[0];item['quantity']=2;self.w.refresh_summary()
         first=deepcopy(self.w.draft_items)
         item['quantity']=5;self.w.refresh_summary()
         self.m.state['versions']=[versions.make_version(first,'合成测试客户',1,'首次','合成人员','2026-10-26'),
                                   versions.make_version(self.w.draft_items,'合成测试客户',2,'修订','合成人员','2026-10-26')]
         self.m.view_version(1)
-        self.assertIn('风机×6、风机×4',self.w.scheme2_quote_preview.item(10,7).text())
-        self.assertIn('风机×6、风机×4',ui._printable_quote_html(self.w))
-        self.assertIn('风机×6、风机×4',ui._quote_export_items_snapshot(self.w)[0]['quote_display']['remark'])
+        for actual in (self.w.scheme2_quote_preview.item(10,7).text(),ui._printable_quote_html(self.w),
+                       ui._quote_export_items_snapshot(self.w)[0]['quote_display']['remark']):
+            self.assertIn('风机3只',actual)
+            self.assertIn('风机2只',actual)
         self.m.restore_latest();self.w._quote_scheme_save_timer.stop()
-        self.assertIn('风机×15、风机×10',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertIn('风机3只',self.w.scheme2_quote_preview.item(10,7).text())
 
     def test_old_names_only_and_current_auto_text_remain_automatic(self):
         item=self.w.draft_items[0]
         for prior in (ui._scheme2_quote_remark(item,include_quantities=False),ui._scheme2_quote_remark(item)):
             item.pop('quote_remark_manual',None);ui._synchronize_export_remark(item,prior)
-            self.assertIn('风机×6、风机×4',ui._quote_item_remark(item))
+            self.assertIn('风机3只',ui._quote_item_remark(item))
             self.assertFalse(item['quote_remark_manual'])
         dialog=ui.AttachmentEditor(self.w,item)
         dialog.table.cellWidget(0,dialog.COL_QUANTITY).setValue(8);dialog.accept()
-        self.assertIn('风机×16、风机×4',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertIn('风机8只',self.w.scheme2_quote_preview.item(10,7).text())
 
     def test_full_manual_text_saves_reopens_prints_and_exports(self):
         text='人工备注：附件按双方确认内容交付 <A>&B\n第二行可以修改整段说明。'
@@ -231,7 +240,7 @@ class QuoteRemarks(unittest.TestCase):
         item=self.w.draft_items[0]
         legacy=ui._scheme2_quote_remark(item,legacy=True)
         item.pop('quote_remark_manual');ui._synchronize_export_remark(item,legacy)
-        self.assertNotIn('SPECIAL-SPEC',ui._quote_item_remark(item))
+        self.assertIn('照明灯220V长款',ui._quote_item_remark(item))
         self.assertFalse(item['quote_remark_manual'])
         item.pop('quote_remark_manual');ui._synchronize_export_remark(item,'原有人工备注')
         self.assertEqual(ui._quote_item_remark(item),'原有人工备注')

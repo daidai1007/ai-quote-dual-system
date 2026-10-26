@@ -1,0 +1,10 @@
+{
+  "formula":{"material_cost":100,"spray_cost":10,"auxiliary_cost":20,"labor_cost":30,"attachment_fee":62,"management_fee":13.8,"total_cost":235.8},
+  "attachments":[
+    {"item_name":"合成公式附件","status":"CALCULATED","cost_method":"FORMULA","calculation_notes":"公式成本","quantity":2,"formula_unit_cost":30,"formula_amount":60,"quick_amount":100,"material_cost":20,"spray_cost":3,"auxiliary_cost":2,"labor_cost":5,"attachment_price_id":9},
+    {"item_name":"合成固定附件","status":"FIXED","cost_method":"FIXED","quantity":3,"formula_unit_cost":4,"formula_amount":12,"quick_amount":24,"attachment_price_id":10},
+    {"item_name":"安装板","status":"CALCULATED","cost_method":"FORMULA","quantity":1,"attachment_price_sign":-1,"formula_unit_cost":10,"formula_amount":-10,"quick_amount":-20,"material_cost":5,"spray_cost":1,"auxiliary_cost":1,"labor_cost":3,"attachment_price_id":11},
+    {"item_name":"合成快速独有","status":"QUICK_ONLY","quantity":1,"formula_amount":null,"quick_amount":9,"attachment_price_id":12}
+  ],
+  "expected":{"material_cost":135,"spray_cost":15,"auxiliary_cost":23,"labor_cost":37,"attachment_fee":12,"management_fee":13.8}
+}

@@ -74,8 +74,8 @@ class ApiAmounts(unittest.TestCase):
         source = dict(item_name="并柜件",category_level1="安装附件",attachment_price_id=1101,
                       quantity=2,quick_amount=120,formula_amount=62.96,matched_price=60)
         item, editor = self.editor([source], quantity=3)
-        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),120)
-        editor.table.cellWidget(0,editor.COL_AMOUNT).setValue(210)
+        self.assertEqual(float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")),120)
+        editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT).setValue((210) / (abs(editor.table.cellWidget(0, editor.COL_QUANTITY).value()) or 1))
         editor.accept()
         row = item["attachments"][0]
         self.assertEqual(row["quick_amount_override"],210)
@@ -85,8 +85,8 @@ class ApiAmounts(unittest.TestCase):
         reopened_item = {**item,"attachments":[row]}
         reopened = ui.AttachmentEditor(self.window,reopened_item)
         self.addCleanup(reopened.close)
-        self.assertEqual(reopened.table.cellWidget(0,reopened.COL_AMOUNT).value(),210)
-        reopened.table.cellWidget(0,reopened.COL_AMOUNT).setValue(0)
+        self.assertEqual(float(reopened.table.item(0, reopened.COL_AMOUNT).text().replace(",", "")),210)
+        reopened.table.cellWidget(0, reopened.COL_UNIT_AMOUNT).setValue((0) / (abs(reopened.table.cellWidget(0, reopened.COL_QUANTITY).value()) or 1))
         reopened.accept()
         zero = reopened_item["attachments"][0]
         self.assertEqual(zero["attachment_price_id"],1101)
@@ -99,7 +99,7 @@ class ApiAmounts(unittest.TestCase):
                       quick_amount=0,quick_amount_override=0,custom_amount_edited=False,
                       matched_price=483.46155,face_price=483.46155,formula_amount=162.41)
         item, editor = self.editor([source])
-        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),483.46)
+        self.assertEqual(float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")),483.46)
         editor.accept()
         self.assertNotIn("quick_amount_override",item["attachments"][0])
         self.assertFalse(item["attachments"][0]["custom_amount_edited"])
@@ -127,11 +127,11 @@ class ApiAmounts(unittest.TestCase):
         self.assertEqual(ui.AttachmentEditor._display_amounts(source),(10,0))
         source = dict(item_name="临时附件",custom=True,quantity=1,formula_amount=10,quick_amount=12)
         item, editor = self.editor([source])
-        editor.table.cellWidget(0,editor.COL_FORMULA_AMOUNT).setValue(20)
-        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),24)
-        editor.table.cellWidget(0,editor.COL_AMOUNT).setValue(30)
-        editor.table.cellWidget(0,editor.COL_FORMULA_AMOUNT).setValue(25)
-        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),30)
+        editor.table.cellWidget(0, editor.COL_UNIT_COST).setValue((20) / (abs(editor.table.cellWidget(0, editor.COL_QUANTITY).value()) or 1))
+        self.assertEqual(float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")),24)
+        editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT).setValue((30) / (abs(editor.table.cellWidget(0, editor.COL_QUANTITY).value()) or 1))
+        editor.table.cellWidget(0, editor.COL_UNIT_COST).setValue((25) / (abs(editor.table.cellWidget(0, editor.COL_QUANTITY).value()) or 1))
+        self.assertEqual(float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")),30)
         editor.accept()
         self.assertEqual(item["attachments"][0]["quick_amount"],30)
 

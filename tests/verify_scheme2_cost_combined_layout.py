@@ -67,9 +67,12 @@ class CostCombinedLayout(unittest.TestCase):
         self.assertGreater(table.viewport().width(), 600)
         table.selectRow(1)
         ui._sync_cost_selection_detail(self.window)
-        self.assertEqual(self.window.scheme2_cost_selection_context.text(), "二号柜 · JS")
+        self.assertEqual(self.window.scheme2_cost_selection_context.text(), "二号柜 · 1300*600*1800")
         for column, label in self.window.scheme2_cost_selection_values.items():
-            self.assertEqual(label.text(), table.item(1, column).text(), ui.HEADERS[column])
+            text = table.item(1, column).text()
+            if column == 22: text += ' kg'
+            if column == 5: text = text.removesuffix(' ›')
+            self.assertEqual(label.text(), text, ui.HEADERS[column])
 
     def test_coefficient_dialog_cancel_does_not_modify_pricing(self):
         self.window.summary_table.selectRow(0)

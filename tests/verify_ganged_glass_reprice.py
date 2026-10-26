@@ -93,15 +93,15 @@ class GlassReprice(unittest.TestCase):
                       "quick_amount_override": 0}
             editor._reprice_row(index, source, editor.table.item(index, editor.COL_SPECIFICATION))
             deadline = time.monotonic() + 2
-            while not editor.table.cellWidget(index, editor.COL_AMOUNT).isEnabled() and time.monotonic() < deadline:
+            while not editor.table.cellWidget(index, editor.COL_UNIT_AMOUNT).isEnabled() and time.monotonic() < deadline:
                 app.processEvents()
                 time.sleep(.001)
             # Popup amounts are per cabinet set; order quantity is applied later.
             self.assertEqual(editor.table.item(index, editor.COL_FORMULA_AMOUNT).text(), f"{height*width/1e6*55:.2f}")
-            self.assertEqual(editor.table.cellWidget(index, editor.COL_AMOUNT).value(), 100)
+            self.assertEqual(float(editor.table.item(index, editor.COL_AMOUNT).text().replace(",", "")), 100)
             self.assertEqual(self.warnings, [])
             self.assertEqual(editor.table.item(index, editor.COL_SPECIFICATION).text(), f"宽 {width} × 高 {height} mm")
-            self.assertFalse(editor.table.cellWidget(index, editor.COL_AMOUNT).property("pending"))
+            self.assertFalse(editor.table.cellWidget(index, editor.COL_UNIT_AMOUNT).property("pending"))
             self.assertEqual(self.requests[-1]["ganged_cabinets"], CHILDREN)
         editor.accept()
         self.assertTrue(self.item['attachment_snapshot_dirty'])

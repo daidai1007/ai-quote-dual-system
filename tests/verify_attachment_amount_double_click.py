@@ -30,7 +30,7 @@ class AmountDoubleClick(unittest.TestCase):
         self.dialog = ui.AttachmentEditor(self.owner, self.item)
         self.dialog.show()
         app.processEvents()
-        self.amount = self.dialog.table.cellWidget(0, self.dialog.COL_AMOUNT)
+        self.amount = self.dialog.table.cellWidget(0, self.dialog.COL_UNIT_AMOUNT)
         self.addCleanup(self.owner.close)
         self.addCleanup(self.dialog.close)
 
@@ -45,7 +45,7 @@ class AmountDoubleClick(unittest.TestCase):
         QTest.keyClicks(line, '99')
         self.assertTrue(line.isReadOnly())
         self.assertFalse(self.amount.property('schemeEditing'))
-        self.assertEqual(self.amount.value(), 120)
+        self.assertEqual(self.amount.value(), 60)
         self.begin_edit()
         self.assertFalse(line.isReadOnly())
         self.assertTrue(self.amount.property('schemeEditing'))
@@ -62,11 +62,11 @@ class AmountDoubleClick(unittest.TestCase):
         self.assertEqual(self.amount.value(), 210)
         self.dialog.accept()
         row = self.item['attachments'][0]
-        self.assertEqual(row['quick_amount_override'], 210)
+        self.assertEqual(row['quick_amount_override'], 420)
         self.assertEqual(row['formula_amount'], 62.96)
         reopened = ui.AttachmentEditor(self.owner, self.item)
         self.addCleanup(reopened.close)
-        self.assertEqual(reopened.table.cellWidget(0,reopened.COL_AMOUNT).value(), 210)
+        self.assertEqual(float(reopened.table.item(0, reopened.COL_AMOUNT).text().replace(",", "")), 420)
 
     def test_focus_out_hides_edit_box_and_keeps_manual_zero(self):
         self.begin_edit()
@@ -84,7 +84,7 @@ class AmountDoubleClick(unittest.TestCase):
         source = dict(item_name='玻璃门', attachment_price_id=102, quantity=1,
                       pending_manual_dimensions=['玻璃门高度'], status='PENDING_MANUAL')
         self.dialog.add_row(source)
-        pending = self.dialog.table.cellWidget(1,self.dialog.COL_AMOUNT)
+        pending = self.dialog.table.cellWidget(1, self.dialog.COL_UNIT_AMOUNT)
         QTest.mouseDClick(pending.lineEdit(),Qt.MouseButton.LeftButton)
         self.assertFalse(pending.isEnabled())
         self.assertTrue(pending.lineEdit().isReadOnly())
@@ -92,8 +92,8 @@ class AmountDoubleClick(unittest.TestCase):
 
     def test_custom_cost_link_survives_amount_edit_box(self):
         self.dialog.add_row(dict(custom=True,item_name='临时附件',quantity=1,formula_amount=10,quick_amount=12))
-        cost = self.dialog.table.cellWidget(1,self.dialog.COL_FORMULA_AMOUNT)
-        amount = self.dialog.table.cellWidget(1,self.dialog.COL_AMOUNT)
+        cost = self.dialog.table.cellWidget(1, self.dialog.COL_UNIT_COST)
+        amount = self.dialog.table.cellWidget(1, self.dialog.COL_UNIT_AMOUNT)
         cost.setValue(60)
         self.assertEqual(amount.value(),72)
         QTest.mouseDClick(amount.lineEdit(),Qt.MouseButton.LeftButton)

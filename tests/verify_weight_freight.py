@@ -33,7 +33,8 @@ class WeightFreight(unittest.TestCase):
             single_door_count=1,double_door_count=0)
         item['formula']['corrected_material_weight_kg']=42.5
         item['attachments']=[dict(item_name='侧板',quantity=2,weight_kg=2.5,
-            attachment_price_id=99,status='CALCULATED',formula_unit_cost=10,formula_amount=20,quick_amount=20)]
+            attachment_price_id=99,status='CALCULATED',formula_unit_cost=10,formula_amount=20,quick_amount=20,
+            material_cost=6,spray_cost=1,auxiliary_cost=1,labor_cost=2)]
         self.w.refresh_summary();self.w._quote_scheme_save_timer.stop()
         self.m.show_detail();app.processEvents()
 

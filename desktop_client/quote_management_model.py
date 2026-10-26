@@ -128,8 +128,13 @@ def same_document(left, right):
     """Compare editable content, excluding rebuilt presentation caches/metadata."""
     def content(version):
         items = [{key: value for key, value in item.items()
-                  if key not in ('quote_display', 'quote_cost_display', 'cost_detail_rows')}
+                  if key not in ('quote_display', 'quote_cost_display', 'cost_detail_rows','preserve_legacy_cost_classes')}
                  for item in version.get('items') or []]
+        for item in items:
+            # Classification is a derived cache, not a repricing/version edit.
+            for field in ('formula','formula_base'):
+                if isinstance(item.get(field),dict):
+                    item[field]={key:value for key,value in item[field].items() if key!='cost_allocation'}
         return items, version.get('company', ''), version.get('order_nature', 'UNCLASSIFIED')
     return content(left) == content(right)
 
@@ -142,6 +147,13 @@ def sync_latest(state, items, company, operator='', quote_date='', order_nature=
     number = len(versions) or 1
     prior = versions[-1] if versions else {}
     if prior.get('sealed') or prior.get('confirmed'):
+        if prior.get('confirmed') and not prior.get('sealed') and same_document(prior,dict(items=items,company=company,order_nature=order_nature)):
+            # Enrich the current unsealed record before formal output, leaving
+            # sealed versions, prices, authors and timestamps untouched.
+            for saved,current in zip(prior.get('items') or [],items):
+                allocation=(current.get('formula') or {}).get('cost_allocation')
+                if allocation and allocation.get('complete'):
+                    saved.setdefault('formula',{})['cost_allocation']=deepcopy(allocation)
         return state
     entry = make_version(items, company, number, prior.get('reason', '首次报价'), operator, quote_date, order_nature)
     if (prior.get('revision_draft') and len(versions) > 1

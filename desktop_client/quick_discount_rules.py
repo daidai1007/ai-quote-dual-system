@@ -147,6 +147,8 @@ def formula_attachment_excluded(item: Mapping[str, Any] | None) -> bool:
 
 
 def formula_attachment_line_amount(item):
+    if (item or {}).get("formula_cost_edited") is True and item.get("status") not in ("ERROR", "PENDING_MANUAL"):
+        return money_product(item["formula_unit_cost_override"], item.get("quantity", 1), item.get("attachment_price_sign", 1))
     if (item or {}).get("custom") is True:
         if item.get("formula_amount") is None:
             raise ValueError("人工新增附件公式成本未完成，不能汇总")

@@ -181,7 +181,7 @@ class SupportPlateRuntime(unittest.TestCase):
                 self.assertFalse(selected.get("custom_amount_edited"))
                 self.assertNotIn("quick_amount_override", selected)
                 self.assertEqual(selected["face_price"], row["price"])
-                self.assertAlmostEqual(editor.table.cellWidget(0, editor.COL_AMOUNT).value(), round(row["price"] * 2, 2))
+                self.assertAlmostEqual(float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")), round(row["price"] * 2, 2))
             editor.accept()
             self.assertEqual(self.item["attachments"][0]["model_code"], SUPPORT_PLATE_DEFAULT_MODELS[name])
             self.assertEqual(v2.selected_input(self.item["attachments"][0])["attachment_price_id"], rows[0]["attachment_price_id"])

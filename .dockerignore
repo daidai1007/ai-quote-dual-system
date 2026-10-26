@@ -41,3 +41,4 @@
 !api/quote_delivery_document.mjs
 !api/quote_delivery_service.mjs
 !api/jp_auxiliary_weight.mjs
+!attachment_cost_allocation.mjs

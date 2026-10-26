@@ -21,7 +21,7 @@ item = {
     "quick": {"attachment_fee": 10, "total_cost": 200},
 }
 editor = scheme2_ui.AttachmentEditor(window, item)
-assert editor.table.horizontalHeaderItem(4).text() == "金额"
+assert editor.table.horizontalHeaderItem(editor.COL_AMOUNT).text() == "面价"
 assert "快速金额" not in [editor.table.horizontalHeaderItem(column).text() for column in range(editor.table.columnCount())]
 quantity = editor.table.cellWidget(0, editor.COL_QUANTITY)
 assert quantity.minimum() < 0
@@ -40,7 +40,7 @@ assert item["formula"]["total_cost"] == 88
 temporary_item = {"attachments": [], "formula": {"attachment_fee": 0, "total_cost": 0}, "quick": {"attachment_fee": 0, "total_cost": 0}}
 temporary_editor = scheme2_ui.AttachmentEditor(window, temporary_item)
 temporary_editor.add_row()
-assert temporary_editor.table.columnCount() == 5
+assert temporary_editor.table.columnCount() == 7
 assert "单价" not in [temporary_editor.table.horizontalHeaderItem(column).text() for column in range(temporary_editor.table.columnCount())]
 temporary_quantity = temporary_editor.table.cellWidget(0, temporary_editor.COL_QUANTITY)
 assert temporary_quantity.minimum() > 0

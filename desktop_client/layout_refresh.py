@@ -180,6 +180,7 @@ from quick_discount_rules import (
     quick_order_line_breakdown,
 )
 from attachment_category_browser import (
+    attachment_names_manual_only,
     ATTACHMENT_SELECTION_SOURCE_KEY,
     AUTOMATIC_SELECTION_SOURCE,
     DOOR_TRANSFORMATION_RULE_PREFIX,
@@ -246,6 +247,7 @@ from attachment_category_browser import (
 )
 from ganged_cabinet_rules import (
     cascade_door_counts,
+    door_positions_for_counts,
     ganged_split_count,
     parse_ganged_specification,
     subcabinet_specification,
@@ -2155,6 +2157,9 @@ def _sync_main_door_combo_options(window, *, locked: bool = False) -> None:
         return
     _set_default_door_combination(window)
     _configure_door_combo_options(window, single, double, locked=locked)
+    sync = getattr(window, '_sync_door_position_controls', None)
+    if callable(sync):
+        sync()
 
 
 def _current_door_counts(window) -> tuple[int, int] | None:
@@ -2226,7 +2231,7 @@ def _sync_door_count_default_quantities(
             if not isinstance(item, dict) or default_rule_for_item(item) != rule:
                 continue
             selection_source = attachment_selection_source(item)
-            if selection_source not in ("", AUTOMATIC_SELECTION_SOURCE):
+            if selection_source not in ("", AUTOMATIC_SELECTION_SOURCE) and not attachment_names_manual_only(window):
                 continue
             try:
                 old_quantity = int(item.get("quantity", 1))
@@ -2326,6 +2331,9 @@ def _sync_door_transform_defaults(window) -> bool:
     """Reapply door transformations only after a real family/count change."""
 
     current = _door_transform_context(window)
+    if attachment_names_manual_only(window):
+        window.attachment_door_transform_context = current
+        return False
     previous = getattr(window, "attachment_door_transform_context", None)
     if current is None or previous is None or tuple(previous) == current:
         return False
@@ -2670,6 +2678,8 @@ def _sync_ganged_specification(window, text: str) -> bool:
         row["single_door_count"] = counts[0]
         row["double_door_count"] = counts[1]
         row["door_selection_mode"] = mode
+        front, rear = door_positions_for_counts(*counts, old.get('door_position'))
+        row['door_position'] = dict(front=front, rear=rear)
         rows.append(row)
     window.ganged_cabinets = rows
     window.ganged_cabinet_count = len(rows)
@@ -6433,6 +6443,27 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
 
     def prepare_default_selections(self) -> int:
         matches = build_default_matches(self)
+        if attachment_names_manual_only(self):
+            # A copied logical name has no old catalogue ID/model to precheck.
+            # Resolve that same choice, without adding any default choices.
+            from attachment_v2_client import match_catalog_attachment, preserve_copied_attachment_name
+            selections=[]
+            for source in getattr(self,'attachments',[]):
+                if source.get('custom'):
+                    selections.append(source)
+                    continue
+                matched=match_catalog_attachment(source,getattr(self,'catalog',[]),
+                    target_dimensions=target_dimensions(self),product_code=selected_product_code(self))
+                if matched is not None:
+                    selected={**matched,**source,'attachment_price_id':matched.get('attachment_price_id'),
+                        'catalog_version':matched.get('catalog_version')}
+                    if matched.get('model_code') is not None:
+                        selected['model_code']=matched['model_code']
+                    selections.append(preserve_copied_attachment_name(source,selected))
+                else:
+                    selections.append(source)
+            self.attachments=selections
+            return 0
         normalize_selection_origins(self, matches)
         # Installation boards keep their size-matching helper for an explicit
         # operator selection, but a calculated match is never an automatic
@@ -6531,6 +6562,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 rematched.append(selected)
                 continue
             matched["quantity"] = selected.get("quantity", 1)
+            if selected.get('copied_attachment_name'):
+                matched['item_name'] = selected['copied_attachment_name']
+                matched['copied_attachment_name'] = selected['copied_attachment_name']
             for key in (
                 ATTACHMENT_SELECTION_SOURCE_KEY,
                 GANGED_FIXED_BASE_MATCH_KEY,
@@ -7799,6 +7833,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 "attachment_price_id",
                 "category_level1", "category_level2", "category_level3",
                 "attachment_price_sign",
+                "copied_attachment_name",
                 ATTACHMENT_SELECTION_SOURCE_KEY,
                 GANGED_FIXED_BASE_MATCH_KEY,
                 GANGED_FIXED_BASE_INDEX_KEY,
@@ -7911,7 +7946,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             getattr(parent, "attachment_door_transform_context", None)
             if parent is not None else None
         )
-        if previous_transform_context is not None and tuple(previous_transform_context) != current_transform_context:
+        if (not attachment_names_manual_only(self) and previous_transform_context is not None
+                and tuple(previous_transform_context) != current_transform_context):
             self.attachments = [
                 item for item in getattr(self, "attachments", [])
                 if not (
@@ -8046,6 +8082,7 @@ def install_layout_refresh(namespace: dict) -> None:
     original_quote_input_signature = getattr(main_window, "quote_input_signature", None)
     original_product_changed = getattr(main_window, "product_changed", None)
     original_door_counts_changed = getattr(main_window, "door_counts_changed", None)
+    original_set_door_counts = main_window.set_door_counts
     original_product_catalog_loaded = getattr(main_window, "product_catalog_loaded", None)
     original_history_match_loaded = getattr(main_window, "history_match_loaded", None)
     original_selected_product_code = getattr(main_window, "selected_product_code", None)
@@ -8445,6 +8482,14 @@ def install_layout_refresh(namespace: dict) -> None:
                 )
             return result
         main_window.product_changed = product_changed_with_default_door
+    def set_door_counts_with_positions(self, single, double):
+        result = original_set_door_counts(self, single, double)
+        sync = getattr(self, '_sync_door_position_controls', None)
+        if callable(sync):
+            sync()
+        return result
+
+    main_window.set_door_counts = set_door_counts_with_positions
     if callable(original_door_counts_changed):
         def door_counts_changed_with_product_rules(self, source):
             previous_door_counts = getattr(
@@ -8464,6 +8509,9 @@ def install_layout_refresh(namespace: dict) -> None:
                 _render_ganged_cabinet_table(self)
             _sync_door_limiter_default_quantity(self, previous_door_counts)
             _sync_door_transform_defaults(self)
+            sync = getattr(self, '_sync_door_position_controls', None)
+            if callable(sync):
+                sync()
             return result
         main_window.door_counts_changed = door_counts_changed_with_product_rules
     if callable(original_refresh_formula_inputs):

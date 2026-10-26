@@ -38,6 +38,13 @@ export const moneyProduct = (...values) => {
   }, [1n, 0]);
   return Number(roundedCents(coefficient, scale)) / 100;
 };
+// Exact intermediate sum for saved component allocation; no cent rounding yet.
+export const decimalSum = values => {
+  const parts=Array.from(values,decimal),scale=Math.max(0,...parts.map(p=>p[1]));
+  const coefficient=parts.reduce((sum,[value,places])=>sum+value*10n**BigInt(scale-places),0n);
+  const text=String(coefficient<0n?-coefficient:coefficient).padStart(scale+1,'0');
+  return (coefficient<0n?'-':'')+(scale?text.slice(0,-scale)+'.'+text.slice(-scale):text);
+};
 
 // Formula totals exclude freight itself, but freight participates in the fee.
 // Old management/total snapshots are derived data, never pricing inputs.
@@ -180,6 +187,8 @@ export function effectiveAttachmentLineAmount(
 }
 
 export function formulaAttachmentLineAmount(item = {}) {
+  if(item.formula_cost_edited===true && !['ERROR','PENDING_MANUAL'].includes(item.status))
+    return moneyProduct(item.formula_unit_cost_override,item.quantity??1,item.attachment_price_sign??1);
   if(item.custom===true) {
     if(item.formula_amount==null||!Number.isFinite(Number(item.formula_amount)))
       throw new Error('人工新增附件公式成本未完成，不能汇总');

@@ -43,9 +43,9 @@ editor = scheme2_ui.AttachmentEditor(parent, item)
 editor.show()
 app.processEvents()
 
-assert editor.table.columnCount() == 5
-assert [editor.table.horizontalHeaderItem(column).text() for column in range(5)] == [
-    "名称", "尺寸 / 规格", "数量", "成本", "金额",
+assert editor.table.columnCount() == 7
+assert [editor.table.horizontalHeaderItem(column).text() for column in range(7)] == [
+    "名称", "尺寸 / 规格", "数量", "成本单价", "成本", "面价单价", "面价",
 ]
 assert editor.table.item(0, 1).text() == "BASE-800"
 assert editor.table.item(1, 1).text() == "高 2000 × 深 600 mm"
@@ -58,11 +58,11 @@ assert scheme2_ui._attachment_dimension_or_model({
     "manual_inputs": {"分段板高度": 150},
 }) == "宽 800 × 高 150 mm"
 cost_editor = editor.table.cellWidget(0, 3)
-amount_editor = editor.table.cellWidget(0, 4)
+amount_editor = editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT)
 assert isinstance(cost_editor, QDoubleSpinBox)
-assert type(amount_editor) is QDoubleSpinBox
+assert isinstance(amount_editor, QDoubleSpinBox)
 assert amount_editor.lineEdit().textMargins().right() == 0
-assert editor.size().width() == 650 and editor.size().height() == 315
+assert editor.size().width() == 900 and editor.size().height() == 315
 original_size = editor.size()
 parent.resize(1800, 1000)
 app.processEvents()

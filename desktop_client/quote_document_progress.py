@@ -164,6 +164,9 @@ class QuoteDocumentProgress:
         self.phase_times = []
         self.step, self.label = 0, ""
         self.window._scheme2_document_busy = True
+        sync_doors = getattr(self.window, '_sync_door_position_controls', None)
+        if callable(sync_doors):
+            sync_doors()
         self.disabled_controls = [(control, control.isEnabled()) for control in (
             self.window.summary_table, self.window.scheme2_quote_preview, self.window.scheme2_cost_sidebar,
             *self.window.scheme2_cost_action_buttons[:-2])]
@@ -186,6 +189,9 @@ class QuoteDocumentProgress:
         for control, enabled in getattr(self, 'disabled_controls', []):
             control.setEnabled(enabled)
         self.disabled_controls = []
+        sync_doors = getattr(self.window, '_sync_door_position_controls', None)
+        if callable(sync_doors):
+            sync_doors()
 
     def _stop_feedback_timers(self):
         for name in ('show_timer', 'hide_timer'):

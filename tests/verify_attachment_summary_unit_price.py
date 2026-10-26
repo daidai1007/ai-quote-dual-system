@@ -72,7 +72,7 @@ assert dialog.table.cellWidget(2, 5).value() == 20
 assert dialog.table.item(2, 4).text() == '80.00'
 for index, expected in ((0, 20), (1, 40)):
     single = ui.AttachmentEditor(window, window.draft_items[index])
-    assert single.table.cellWidget(0, single.COL_AMOUNT).value() == expected
+    assert float(single.table.item(0, single.COL_AMOUNT).text().replace(",", "")) == expected
     single.reject()
 price.setValue(25)
 second_price.setValue(25)
@@ -114,7 +114,7 @@ assert window.draft_items[2] == custom_before[2]
 for index in (0, 1):
     assert window.draft_items[index]['formula'] == custom_before[index]['formula']
     single = ui.AttachmentEditor(window, window.draft_items[index])
-    assert single.table.cellWidget(0, single.COL_AMOUNT).value() == (30 if index == 0 else 20)
+    assert float(single.table.item(0, single.COL_AMOUNT).text().replace(",", "")) == (30 if index == 0 else 20)
     single.reject()
 custom_dialog.accept()
 window.close()

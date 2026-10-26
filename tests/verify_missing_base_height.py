@@ -115,11 +115,11 @@ class MissingBaseHeight(unittest.TestCase):
         self.addCleanup(editor.close)
         pending = editor.table.item(0, editor.COL_NAME).data(ui.ROLE_ROW)
         self.assertEqual(pending["manual_inputs"]["底座高度"],100)
-        self.assertTrue(editor.table.cellWidget(0, editor.COL_AMOUNT).isEnabled())
+        self.assertTrue(editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT).isEnabled())
         errors = []
         with patch.object(ui._SchemeDimensionEditor,"exec",side_effect=AssertionError("must not prompt")):
             editor._reprice_row(0,pending)
-        wait_for(lambda: editor.table.cellWidget(0, editor.COL_AMOUNT).isEnabled())
+        wait_for(lambda: editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT).isEnabled())
         calculated = editor.table.item(0, editor.COL_NAME).data(ui.ROLE_ROW)
         self.assertEqual(calculated["attachment_price_id"], catalog[1]["attachment_price_id"])
         self.assertEqual(calculated["manual_inputs"], {"底座高度":100})

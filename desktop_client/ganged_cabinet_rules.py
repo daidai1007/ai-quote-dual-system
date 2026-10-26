@@ -6,6 +6,30 @@ from collections.abc import Iterable
 import re
 
 
+# Presentation only: API/formula/BOM parameters remain the two legacy counts.
+DOOR_POSITION_COUNTS = {
+    ('SINGLE', 'PANEL'): (1, 0),
+    ('SINGLE', 'SINGLE'): (2, 0),
+    ('SINGLE', 'DOUBLE'): (1, 1),
+    ('DOUBLE', 'PANEL'): (0, 1),
+    ('DOUBLE', 'SINGLE'): (1, 1),
+    ('DOUBLE', 'DOUBLE'): (0, 2),
+}
+
+
+def door_counts_for_positions(front, rear):
+    return DOOR_POSITION_COUNTS[(front, rear)]
+
+
+def door_positions_for_counts(single, double, saved=None):
+    counts = int(single), int(double)
+    if isinstance(saved, dict):
+        choice = saved.get('front'), saved.get('rear')
+        if DOOR_POSITION_COUNTS.get(choice) == counts:
+            return choice
+    return next((choice for choice, value in DOOR_POSITION_COUNTS.items() if value == counts), ('SINGLE', 'PANEL'))
+
+
 _NUMBER = r"\d+(?:\.\d+)?"
 _DIMENSION_SEPARATOR = r"[×xX*/]"
 _GANGED_SPECIFICATION = re.compile(
@@ -93,6 +117,9 @@ def cascade_door_counts(
     for index in range(start, len(output)):
         output[index]["single_door_count"] = int(single_count)
         output[index]["double_door_count"] = int(double_count)
+        saved = output[index].get('door_position')
+        if isinstance(saved, dict) and DOOR_POSITION_COUNTS.get((saved.get('front'), saved.get('rear'))) != (int(single_count), int(double_count)):
+            output[index].pop('door_position', None)
     return output
 
 

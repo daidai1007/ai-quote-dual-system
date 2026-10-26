@@ -27,7 +27,8 @@ ns['install_application_font'](app)
 Window,Worker,ExportWorker=ns['MainWindow'],ns['ApiWorker'],ns['WorkbookExportWorker']
 good=dict(name='JP测试柜',product_code='JP',material_code='SECC',quantity=2,
   specification='800*600*1800',attachments=[dict(item_name='固定底座',attachment_price_id=99,
-  quantity=1,status='CALCULATED',formula_amount=20,quick_amount=0)],
+  quantity=1,status='CALCULATED',formula_amount=20,quick_amount=0,
+  material_cost=12,spray_cost=2,auxiliary_cost=2,labor_cost=4)],
   attachment_contract=2,quote_line_id='11111111-1111-4111-8111-111111111111',
   formula={'material_cost':80,'auxiliary_cost':0,'labor_cost':0,'spray_cost':0,'total_cost':100},quick={'total_cost':200})
 
@@ -67,6 +68,7 @@ class DocumentProgress(unittest.TestCase):
                     costs=[dict(selection, item_name='安装板' if selection['attachment_price_id']==1 else
                         '分段板' if '分段板高度' in selection['manual_inputs'] else '玻璃门', status='CALCULATED',
                         formula_unit_cost=8.8,formula_amount=8.8*selection['quantity']*selection.get('attachment_price_sign',1),
+                        material_cost=8.8,spray_cost=0,auxiliary_cost=0,labor_cost=0,
                         quick_amount=250.26*selection['quantity']*selection.get('attachment_price_sign',1))
                         for selection in worker.test_payload['attachments']]
                     worker.succeeded.emit(dict(attachments=costs,attachment_contract=2,
@@ -270,7 +272,7 @@ class DocumentProgress(unittest.TestCase):
     def edited_glass(self):
         item=self.window.draft_items[0]
         row=dict(item_name='玻璃门',attachment_price_id=1192,quantity=1,status='CALCULATED',
-            formula_amount=8.8,quick_amount=250.26,
+            formula_amount=8.8,quick_amount=250.26,material_cost=8.8,spray_cost=0,auxiliary_cost=0,labor_cost=0,
             manual_inputs={'玻璃门宽度':400,'玻璃门高度':400})
         item['attachments']=[row]
         item['attachment_confirmation_inputs']=v2.confirmation_inputs([{**row,'manual_inputs':{}}])
@@ -362,7 +364,7 @@ class DocumentProgress(unittest.TestCase):
         self.addCleanup(editor.close)
         source={**row,'manual_inputs':{'分段板高度':150}}
         editor._reprice_row(0,source,editor.table.item(0,editor.COL_SPECIFICATION))
-        wait(lambda:editor.table.cellWidget(0,editor.COL_AMOUNT).isEnabled())
+        wait(lambda:editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT).isEnabled())
         editor.accept()
         self.assertTrue(item['attachment_snapshot_dirty'])
         self.assertEqual(item['attachment_confirmation_inputs'],old_inputs)
@@ -378,7 +380,7 @@ class DocumentProgress(unittest.TestCase):
     def test_negative_board_quantity_recalculates_and_generates_with_deduction_contract(self):
         item,row=self.edited_glass()
         row.update(item_name='安装板',category_level1='安装板',attachment_price_id=1,
-                   formula_unit_cost=8.8,manual_inputs={})
+                   formula_unit_cost=8.8,material_cost=8.8,spray_cost=0,auxiliary_cost=0,labor_cost=0,manual_inputs={})
         item['quick']['total_cost']=1250.26
         item['attachment_confirmation_inputs']=v2.confirmation_inputs([row])
         editor=ui.AttachmentEditor(self.window,item)

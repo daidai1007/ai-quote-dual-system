@@ -146,12 +146,13 @@ test('real DB: exact catalogue audit, ordinary/ganged save, refresh and popup-dr
       assert.equal(sql("SELECT pg_get_functiondef('calc.guard_attachment_selection_v2()'::regprocedure);"),guardBefore);
     });
 
-    await t.test('confirmed popup manual sale/cost/zero survive catalogue changes and both Excel sheets for ordinary/ganged quantity 1/10',async()=>{
+    await t.test('legacy explicit manual cost and popup sale/zero survive catalogue changes and both Excel sheets for ordinary/ganged quantity 1/10',async()=>{
       const before=frozen(ordinary),beforeGanged=frozen(ganged);
       sql(`UPDATE calc.attachment_price SET quick_face_price=999.123456 WHERE attachment_price_id=${base.attachment_price_id};`);
       for(const [kind,result,request] of [['ordinary',ordinary,input],['ganged',ganged,gangedInput]]){
         for(const sale of [333.33,0]) for(const quantity of [1,10]){
           const rows=[{...result.attachments[0],quantity:3,formula_amount:75.25,
+            formula_cost_edited:true,formula_unit_cost_override:75.25/3,
             quick_amount:sale,quick_amount_override:sale,custom_amount_edited:true}];
           const item=documentItem(request,result,rows,quantity);
           queries.length=0;

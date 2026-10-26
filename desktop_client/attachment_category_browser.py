@@ -10,6 +10,15 @@ from ganged_cabinet_rules import parse_ganged_specification
 
 
 CATEGORY_KEYS = ("category_level1", "category_level2", "category_level3")
+
+
+def attachment_names_manual_only(owner):
+    """Copied-order selection owns its names; sizing and pricing stay live."""
+    if getattr(owner, '_attachment_names_manual_only', False):
+        return True
+    parent = getattr(owner, 'parentWidget', lambda: None)()
+    return bool(getattr(parent, '_attachment_names_manual_only', False))
+
 LEVEL1_ORDER = (
     "侧板",
     "安装板",

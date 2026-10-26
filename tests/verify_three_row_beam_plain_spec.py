@@ -46,7 +46,7 @@ selector.setCurrentIndex(selector.findData("JP760280"))
 app.processEvents()
 assert editor.table.cellWidget(0, editor.COL_SPECIFICATION) is None
 assert specification.text() == "JP760280"
-assert editor.table.cellWidget(0, editor.COL_AMOUNT).value() == 80
+assert float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")) == 80
 assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "32.00"
 editor.accept()
 assert item["attachments"][0]["model_code"] == "JP760280"

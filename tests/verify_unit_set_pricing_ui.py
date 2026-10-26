@@ -38,7 +38,7 @@ def product(quantity=1):
         freight_fee=3, attachments=[dict(item_name='JP控制柜侧板', attachment_price_id=101,
             quantity=1, quick_amount=12, matched_price=10, formula_amount=5, formula_unit_cost=5)],
         quick=dict(base_price=100, attachment_fee=12, total_cost=112),
-        formula=dict(attachment_fee=5, total_cost=65))
+        formula=dict(material_cost=40,auxiliary_cost=10,labor_cost=5,spray_cost=5,management_fee=0,attachment_fee=5,total_cost=65))
 
 
 class UnitSetPricing(unittest.TestCase):
@@ -50,6 +50,7 @@ class UnitSetPricing(unittest.TestCase):
         self.item = product(10)
         self.window.draft_items = [self.item]
         self.window.refresh_summary()
+        (ROOT/'outputs').mkdir(exist_ok=True)
 
     def editor(self, item=None):
         dialog = ui.AttachmentEditor(self.window, item or self.item)
@@ -58,7 +59,7 @@ class UnitSetPricing(unittest.TestCase):
 
     def test_new_column_and_batch_quantity_do_not_change_unit_set_popup(self):
         table = self.window.summary_table
-        self.assertEqual(ui.HEADERS[5:8], ('已选附件', '附件面价', '面价'))
+        self.assertEqual(ui.HEADERS[5:8], ('已选附件', '附件面价', '固定报价'))
         face = ui.HEADERS.index('附件面价')
         self.assertEqual(table.item(0, face).text(), '12.00')
         self.assertFalse(table.item(0, face).flags() & Qt.ItemFlag.ItemIsEditable)
@@ -67,7 +68,7 @@ class UnitSetPricing(unittest.TestCase):
         table.item(0, ui.HEADERS.index('数量')).setText('20')
         dialog = self.editor()
         self.assertEqual(dialog.table.cellWidget(0, dialog.COL_QUANTITY).value(), 1)
-        self.assertEqual(dialog.table.cellWidget(0, dialog.COL_AMOUNT).value(), 12)
+        self.assertEqual(float(dialog.table.item(0, dialog.COL_AMOUNT).text().replace(",", "")), 12)
         self.assertEqual(dialog.table.item(0, dialog.COL_FORMULA_AMOUNT).text(), '5.00')
         self.assertEqual(self.item['attachments'], before)
         self.assertEqual(ui._row_values(self.item)[16], 115 * 20)
@@ -76,7 +77,7 @@ class UnitSetPricing(unittest.TestCase):
         self.item.update(ganged_cabinet_count=4, ganged_cabinets=[{}] * 4)
         dialog = self.editor()
         dialog.table.cellWidget(0, dialog.COL_QUANTITY).setValue(10)
-        self.assertEqual(dialog.table.cellWidget(0, dialog.COL_AMOUNT).value(), 120)
+        self.assertEqual(float(dialog.table.item(0, dialog.COL_AMOUNT).text().replace(",", "")), 120)
         self.assertEqual(dialog.table.item(0, dialog.COL_FORMULA_AMOUNT).text(), '50.00')
         dialog.accept()
         self.assertEqual(self.item['quantity'], 10)
@@ -87,13 +88,13 @@ class UnitSetPricing(unittest.TestCase):
 
     def test_manual_amount_and_zero_survive_reopening_without_batch_division(self):
         dialog = self.editor()
-        dialog.table.cellWidget(0, dialog.COL_AMOUNT).setValue(77.77)
+        dialog.table.cellWidget(0, dialog.COL_UNIT_AMOUNT).setValue((77.77) / (abs(dialog.table.cellWidget(0, dialog.COL_QUANTITY).value()) or 1))
         dialog.accept()
         self.assertEqual(self.item['attachments'][0]['quick_amount_override'], 77.77)
         self.assertEqual(self.item['attachments'][0]['formula_amount'], 5)
         reopened = self.editor()
-        self.assertEqual(reopened.table.cellWidget(0, reopened.COL_AMOUNT).value(), 77.77)
-        reopened.table.cellWidget(0, reopened.COL_AMOUNT).setValue(0)
+        self.assertEqual(float(reopened.table.item(0, reopened.COL_AMOUNT).text().replace(",", "")), 77.77)
+        reopened.table.cellWidget(0, reopened.COL_UNIT_AMOUNT).setValue((0) / (abs(reopened.table.cellWidget(0, reopened.COL_QUANTITY).value()) or 1))
         reopened.accept()
         self.assertEqual(ui._row_values(self.item)[23], 0)
         self.assertEqual(self.item['attachments'][0]['quick_amount_override'], 0)
@@ -104,10 +105,10 @@ class UnitSetPricing(unittest.TestCase):
         dialog = self.editor()
         quantity = dialog.table.cellWidget(0, dialog.COL_QUANTITY)
         quantity.setValue(2)
-        self.assertEqual(dialog.table.cellWidget(0, dialog.COL_AMOUNT).value(), .67)
+        self.assertEqual(float(dialog.table.item(0, dialog.COL_AMOUNT).text().replace(",", "")), .67)
         quantity.setValue(3)
-        self.assertEqual(dialog.table.cellWidget(0, dialog.COL_AMOUNT).value(), 1)
-        self.assertEqual(dialog.table.cellWidget(0, dialog.COL_FORMULA_AMOUNT).value(), 1)
+        self.assertEqual(float(dialog.table.item(0, dialog.COL_AMOUNT).text().replace(",", "")), 1)
+        self.assertEqual(float(dialog.table.item(0, dialog.COL_FORMULA_AMOUNT).text().replace(",", "")), 1)
 
     def test_pending_reprice_blocks_confirmation_and_ignores_superseded_callback(self):
         callbacks = []
@@ -125,7 +126,7 @@ class UnitSetPricing(unittest.TestCase):
         self.assertFalse(dialog.table.cellWidget(0, dialog.COL_QUANTITY).isEnabled())
         callbacks[1][0]({**source, 'quick_amount': 15})
         self.assertTrue(dialog.table.cellWidget(0, dialog.COL_QUANTITY).isEnabled())
-        self.assertEqual(dialog.table.cellWidget(0, dialog.COL_AMOUNT).value(), 15)
+        self.assertEqual(float(dialog.table.item(0, dialog.COL_AMOUNT).text().replace(",", "")), 15)
         dialog.accept()
         self.assertEqual(self.item['attachments'][0]['quick_amount'], 15)
 
@@ -223,9 +224,13 @@ class UnitSetPricing(unittest.TestCase):
 
     def test_actual_ui_snapshot_survives_server_hydration_and_excel_roundtrip(self):
         self.item.update(attachment_contract=2, quote_line_id='11111111-1111-4111-8111-111111111111')
-        self.item['attachments'][0].update(catalog_version='test', status='CALCULATED')
-        self.item['attachments'][0].update(quick_amount=15, quick_amount_override=15, custom_amount_edited=True)
-        self.item['quick'].update(attachment_fee=15, total_cost=115)
+        self.item['attachments'][0].update(catalog_version='test', status='CALCULATED',cost_method='FORMULA',
+            material_cost=2,spray_cost=1,auxiliary_cost=1,labor_cost=1)
+        editor = self.editor()
+        editor.table.cellWidget(0, editor.COL_UNIT_COST).setValue(3)
+        editor.table.cellWidget(0, editor.COL_UNIT_AMOUNT).setValue(7.5)
+        editor.table.cellWidget(0, editor.COL_QUANTITY).setValue(2)
+        editor.accept()
         self.window.refresh_summary()
         frozen = ui._quote_export_items_snapshot(self.window)
         environment = {key: self.item[key] for key in ('product_code', 'material_code', 'width_mm', 'height_mm',
@@ -245,7 +250,8 @@ class UnitSetPricing(unittest.TestCase):
         self.assertEqual(response.returncode, 0, response.stderr)
         body = json.loads(response.stdout)
         self.assertEqual(body['items'][0]['quick']['attachment_fee'], 15)
-        self.assertEqual(body['items'][0]['attachments'][0]['formula_amount'], 5)
+        self.assertEqual(body['items'][0]['attachments'][0]['formula_amount'], 10)
+        self.assertNotIn('formula_unit_cost_override',body['items'][0]['attachments'][0])
         bad = copy.deepcopy(request)
         bad['payload']['items'][0]['quote_display']['total'] = 1
         self.assertNotEqual(hydrate(bad).returncode, 0)

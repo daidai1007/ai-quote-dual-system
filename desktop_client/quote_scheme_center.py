@@ -26,7 +26,7 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.23.02"
+CLIENT_VERSION = "2026.10.26.01"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
@@ -809,6 +809,9 @@ def _apply_read_only(window, read_only):
         attachment_host = getattr(window, name, None)
         if attachment_host is not None:
             attachment_host.setEnabled(not read_only)
+    sync = getattr(window, '_sync_door_position_controls', None)
+    if callable(sync):
+        sync()
 
 
 def _apply_opened_scheme(window, result, route=3, after_open=None):
@@ -1331,6 +1334,7 @@ def install_quote_scheme_center(namespace):
             getattr(window, "material_combo", None), getattr(window, "coating_combo", None),
             getattr(window, "scheme2_color_combo", None), getattr(window, "single_door_combo", None),
             getattr(window, "double_door_combo", None), getattr(window, "notes_text", None),
+            getattr(window, "front_door_combo", None), getattr(window, "rear_door_combo", None),
         ):
             signal = (getattr(control, "textChanged", None) or getattr(control, "currentTextChanged", None)
                       or getattr(control, "valueChanged", None))

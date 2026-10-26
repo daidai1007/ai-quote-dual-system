@@ -158,7 +158,10 @@ const compactItemsSql=payload=>`COALESCE((SELECT jsonb_agg(jsonb_build_object(
   'amount',item#>>'{quote_display,total}','discount',item#>>'{quote_display,discount}',
   'quantity',COALESCE(item#>>'{quote_display,quantity}',item->>'quantity','1'),
   'quote_method',COALESCE(item->>'quote_method','QUICK'),
-  'costs',CASE WHEN item->'formula' ?& ARRAY['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost','management_fee']
+  'costs',CASE WHEN item#>>'{formula,cost_allocation,basis}'='formula_attachments_v1'
+      AND item#>>'{formula,cost_allocation,complete}'='true'
+    THEN item#>'{formula,cost_allocation,totals}'
+    WHEN item->'formula' ?& ARRAY['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost','management_fee']
     THEN (SELECT jsonb_object_agg(key,value) FROM jsonb_each(item->'formula') WHERE key=ANY(ARRAY['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost','management_fee']))
     ELSE NULL END)) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${payload}->'draft_items')='array' THEN ${payload}->'draft_items' ELSE '[]'::jsonb END) item),'[]'::jsonb)`;
 

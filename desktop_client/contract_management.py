@@ -86,9 +86,12 @@ def freeze_contract_quote(window,snapshot):
         # run the latest cost formulas or catalogue against an older document.
         values=scheme2_ui._row_values(item)
         item['quote_cost_display']={'schema':1,'values':{
+            '面价':scheme2_ui._money(values[13]),  # Older recipients' wire field only.
+            **{
             heading:(scheme2_ui._money(values[scheme2_ui.COST_DISPLAY_ORDER[column]])
                      if column in scheme2_ui.MONEY_COLUMNS else str(values[scheme2_ui.COST_DISPLAY_ORDER[column]]))
-            for column,heading in enumerate(scheme2_ui.HEADERS)}}
+            for column,heading in enumerate(scheme2_ui.HEADERS)}},
+            'price_breakdown':scheme2_ui._cost_price_components(item)}
     snapshot['contract_quote_snapshot']={'schema':1,'items':items}
     return snapshot
 

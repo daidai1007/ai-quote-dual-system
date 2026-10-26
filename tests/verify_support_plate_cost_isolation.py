@@ -86,7 +86,10 @@ class CostIsolation(base.SupportPlateRuntime):
         self.assertEqual(self.item["formula"]["attachment_fee"], 91.34)
         self.assertEqual(self.item["formula"]["management_fee"], old_management)
         details = ui._detail_rows(self.item)
-        self.assertEqual(next(row for row in details if row["category"] == "attachment_fee")["base_amount"], 91.34)
+        allocated=[row for row in details if row.get('attachment_cost_source')]
+        self.assertEqual(ui.money_sum(row['base_amount'] for row in allocated),91.34)
+        self.assertEqual({row['category'] for row in allocated},{'material_cost','spray_cost','auxiliary_cost','labor_cost'})
+        self.assertFalse(any(row['category']=='attachment_fee' for row in allocated))
         self.item = json.loads(json.dumps(self.item, ensure_ascii=False))
         reopened = self.editor(self.item["attachments"][0])
         result = self.switch(reopened, "JP791164")
@@ -221,6 +224,34 @@ class CostIsolation(base.SupportPlateRuntime):
         self.assertEqual(self.item["formula"]["attachment_fee"], 91.34)
         self.assertEqual(self.item["formula"]["management_fee"], 15.08)
         self.assertEqual(self.item["attachment_confirmation_inputs"][0]["attachment_price_id"], row["attachment_price_id"])
+
+    def test_catalogue_cost_stays_readonly_through_model_change_and_snapshot_repair(self):
+        editor = self.editor()
+        self.switch(editor, "JP791184")  # Pin the original manufacturing snapshot.
+        editor.table.cellWidget(0, editor.COL_UNIT_COST).setValue(19.25)
+        selected = self.switch(editor, base.SUPPORT_PLATE_MODELS["有孔承板"][2])
+        self.assertEqual(selected["formula_amount"], 91.34)
+        self.assertTrue(editor.table.cellWidget(0, editor.COL_UNIT_COST).lineEdit().isReadOnly())
+        editor.accept()
+        self.item.update(attachment_contract=2, quote_line_id="old-line", attachment_snapshot_dirty=True)
+        row = copy.deepcopy(self.item["attachments"][0])
+        body = {"attachment_contract":2,"quote_line_id":"new-line",
+                "attachments":[{**row,"formula_amount":1998,"formula_unit_cost":999}],
+                "formula_cost":copy.deepcopy(self.item["formula"])}
+        old_start = self.Worker.start
+        def start(worker):
+            if worker.test_url.endswith("/recalculate-line"):
+                QTimer.singleShot(0, lambda:(worker.succeeded.emit(copy.deepcopy(body)),worker.finished.emit()))
+            else:
+                old_start(worker)
+        done, errors = [], []
+        with patch.object(self.Worker,"start",start):
+            self.window.refresh_draft_attachment_snapshot(self.item,lambda:done.append(True),errors.append)
+            base.wait_for(lambda:done or errors)
+        self.assertEqual(errors,[])
+        self.assertEqual(self.item["attachments"][0]["formula_amount"],91.34)
+        self.assertNotIn("formula_unit_cost_override",self.item["attachments"][0])
+        self.assertEqual(self.item["formula"]["attachment_fee"],91.34)
 
     def test_real_api_document_hydration_and_workbook_use_pinned_cost(self):
         editor = self.editor()

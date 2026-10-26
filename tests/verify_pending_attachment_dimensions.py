@@ -15,8 +15,8 @@ from attachment_v2_client import provisionalize_manual_dimension_result
 import scheme2_ui
 
 
-fixture = json.loads((ROOT / "test-output/attachment-cost-v2/api-client-fixtures.json").read_text(encoding="utf-8"))
-missing = copy.deepcopy(fixture["missing"]["attachments"][0])
+missing = dict(attachment_price_id=123,quantity=1,status="ERROR",quick_amount=199.66,
+               formula_amount=None,attachment_price_sign=1,catalog_version="synthetic")
 missing.update(item_name="分段板", category_level1="安装附件", category_level2="分段板",
                required_parameters=[{"name":"分段板高度","source":"MANUAL"}],
                error="人工尺寸 分段板高度必须为正数", manual_inputs={})
@@ -48,7 +48,7 @@ editor = scheme2_ui.AttachmentEditor(window, item)
 assert editor.table.columnCount() == editor.COL_AMOUNT + 1
 assert editor.table.horizontalHeaderItem(editor.COL_NAME).text() == "名称"
 assert editor.table.item(0, editor.COL_SPECIFICATION).text().startswith("点击补充")
-assert editor.table.cellWidget(0, editor.COL_AMOUNT).value() == 0
+assert float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")) == 0
 assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).text() == "0.00"
 assert editor.table.item(0, editor.COL_FORMULA_AMOUNT).data(Qt.ItemDataRole.ForegroundRole) is not None
 dimension_dialog = scheme2_ui._SchemeDimensionEditor(editor, "分段板 · 补充尺寸", ["分段板高度"], {})

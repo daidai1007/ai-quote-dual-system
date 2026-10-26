@@ -188,3 +188,39 @@ test('actual ordinary and ganged workbooks preserve popup fan sale and formula c
     }
   }finally{await fs.rm(folder,{recursive:true,force:true});}
 });
+
+test('edited unit costs including quick-only and deduction survive hydration and Excel output',async()=>{
+  const folder=await fs.mkdtemp(path.join(os.tmpdir(),'popup-unit-prices-'));
+  try{
+    const rows=[{...fan,formula_cost_edited:true,formula_unit_cost_override:12.5,formula_amount:50,
+      unit_price_override:25.25,quick_amount:101,quick_amount_override:101},
+      {...fan,attachment_price_id:10,item_name:'仅面价附件',status:'QUICK_ONLY',quantity:2,
+        formula_cost_edited:true,formula_unit_cost_override:3.25,formula_amount:6.5,quick_amount:0,quick_amount_override:0},
+      {...fan,attachment_price_id:11,item_name:'安装板',quantity:2,attachment_price_sign:-1,
+        formula_cost_edited:true,formula_unit_cost_override:10,formula_amount:-20,
+        unit_price_override:20,quick_amount:-40,quick_amount_override:-40},
+      {custom:true,item_name:'临时附件',quantity:2,formula_cost_edited:true,formula_unit_cost_override:1.25,
+        formula_amount:2.5,unit_price_override:2,quick_amount:4,quick_amount_override:4,custom_amount_edited:true}];
+    const payload=await harness().service.hydrateDocument({quote_id:'UNIT-EDIT-TEST',items:[quote(rows)]});
+    assert.deepEqual(payload.items[0].attachments.map(row=>row.formula_amount),[50,6.5,-20,2.5]);
+    assert.equal(payload.items[0].formula.attachment_fee,39);
+    const input=path.join(folder,'input.json'),output=path.join(folder,'quote.xlsx');
+    await fs.writeFile(input,JSON.stringify(payload));
+    await promisify(execFile)(process.execPath,[path.resolve('export_dual_quote_workbook.mjs'),input,output],{windowsHide:true});
+    const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
+    const audit=book.getWorksheet('附件双报价明细');
+    assert.equal(audit.getCell('K2').value,25.25);
+    assert.equal(audit.getCell('L2').value,101);
+    assert.equal(audit.getCell('V2').value,12.5);
+    assert.equal(audit.getCell('W2').value,50);
+    assert.match(audit.getCell('Z2').value,/成本单价为人工调整值/);
+    for(const bad of [null,-1,'invalid',1000000]){
+      const input=quote([{...rows[0],formula_unit_cost_override:bad}]);
+      await assert.rejects(harness().service.hydrateDocument({items:[input]}),/成本单价无效/);
+    }
+    await assert.rejects(harness().service.hydrateDocument({items:[quote([{...rows[0],formula_amount:49}])]}),/成本与成本单价乘数量不一致/);
+    await assert.rejects(harness().service.hydrateDocument({items:[quote([{...rows[3],formula_unit_cost_override:-1}])]}),/成本单价无效/);
+    const zero=await harness().service.hydrateDocument({items:[quote([{...rows[0],formula_unit_cost_override:0,formula_amount:0}])]});
+    assert.equal(zero.items[0].formula.attachment_fee,0);
+  }finally{await fs.rm(folder,{recursive:true,force:true});}
+});

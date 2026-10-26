@@ -104,5 +104,15 @@ test('real PostgreSQL analytics, permissions, frozen amounts, outcome audit and 
       await assert.rejects(analysis.recordOutcome(owner,{...registration,product_code:'JP'}),{statusCode:400});
       assert.equal(pg.query(frozenSql),before);
     });
+    await t.test('saved formula-attachment allocation feeds category analytics without changing old cost ledger',async()=>{
+      const payload=structuredClone(snapshot);payload.draft_items[0].product_code='JA_SINGLE';
+      payload.draft_items[0].formula.cost_allocation={schema:1,basis:'formula_attachments_v1',complete:true,
+        totals:{material_cost:12,auxiliary_cost:3,labor_cost:4,attachment_fee:0,spray_cost:5,management_fee:1}};
+      const number=await create(owner,payload);
+      const data=await analysis.analyze(owner,{product:'JA'});
+      assert.equal(data.costs.material_cost,'24.00');assert.equal(data.costs.attachment_fee,'0.00');
+      assert.equal(data.costs.labor_cost,'8.00');
+      assert.equal(pg.query(`SELECT snapshot_payload#>>'{draft_items,0,formula,material_cost}' FROM calc.quote_scheme_version v JOIN calc.quote_scheme s USING(scheme_id) WHERE s.scheme_no=${q(number)};`),'10');
+    });
   } finally {await pg.close();}
 });

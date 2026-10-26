@@ -52,12 +52,15 @@ class CopiedQuoteReprice(unittest.TestCase):
 
     def response(self, quote_id, rows):
         result = base.response()
+        selected = rows or self.w.attachments
+        quantity = next((row.get('quantity',1) for row in selected if not row.get('custom')),1)
+        manual = next((row.get('manual_inputs',{}) for row in selected if not row.get('custom')),{})
         result.update(quote_id=quote_id, attachment_contract=2, quote_line_id="new-line",
             attachments=[dict(attachment_price_id=101, item_name="风机测试", model_code="FAN-X",
-                category_level1="风机", quantity=2, formula_unit_cost=11, formula_amount=22,
-                face_price=25, quick_amount=50, status="FIXED", catalog_version="new-db-version",
-                manual_inputs={"风机开孔":100})])
-        result["quick_quote"].update(base_price=321, attachment_fee=50, total_cost=371)
+                category_level1="风机", quantity=quantity, formula_unit_cost=11, formula_amount=11*quantity,
+                face_price=25, quick_amount=25*quantity, status="FIXED", catalog_version="new-db-version",
+                manual_inputs=manual)])
+        result["quick_quote"].update(base_price=321, attachment_fee=25*quantity, total_cost=321+25*quantity)
         return result
 
     def transport(self, worker):
@@ -103,7 +106,9 @@ class CopiedQuoteReprice(unittest.TestCase):
         self.assertEqual(self.w.quote_date.date(), QDate.currentDate())
         selected = self.w.attachments[0]
         self.assertTrue(selected["quote_catalog_refresh_required"])
-        self.assertEqual((selected["model_code"], selected["quantity"]), ("FAN-X",2))
+        self.assertEqual((selected["item_name"], selected["quantity"]), ("风机测试",1))
+        self.assertNotIn('model_code',selected)
+        self.assertNotIn('manual_inputs',selected)
         self.assertNotIn("unit_price_override", selected)
         self.assertNotIn("formula_amount", selected)
         self.assertNotIn("quick_amount_override", selected)
@@ -122,8 +127,8 @@ class CopiedQuoteReprice(unittest.TestCase):
         self.assertIsNone(self.w._scheme2_edit_item)
         saved = self.w.draft_items[1]
         self.assertEqual(saved["quote_line_id"], "new-line")
-        self.assertEqual(saved["attachments"][0]["quick_amount"], 50)
-        self.assertEqual(saved["attachments"][0]["formula_amount"], 22)
+        self.assertEqual(saved["attachments"][0]["quick_amount"], 25)
+        self.assertEqual(saved["attachments"][0]["formula_amount"], 11)
         self.assertEqual(saved["attachments"][-1]["quick_amount"], 37)
         self.assertFalse(self.w._scheme2_new_quote_required)
         self.assertEqual(original, before)
@@ -178,7 +183,7 @@ class CopiedQuoteReprice(unittest.TestCase):
         self.assertEqual(len(self.w.draft_items), 2)
         self.assertEqual(self.w.draft_items[1]["quote_line_id"], "new-line")
         self.assertEqual(self.w.draft_items[1]["ganged_cabinet_count"], 2)
-        self.assertEqual(self.w.draft_items[1]["attachments"][0]["quick_amount"], 50)
+        self.assertEqual(self.w.draft_items[1]["attachments"][0]["quick_amount"], 25)
         self.assertEqual(original, before)
 
     def submit_ganged(self):

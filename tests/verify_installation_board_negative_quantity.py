@@ -33,7 +33,7 @@ class NegativeBoard(unittest.TestCase):
         editor=self.editor()
         editor.table.cellWidget(0,editor.COL_QUANTITY).setValue(-2)
         self.assertEqual(editor.table.item(0,editor.COL_FORMULA_AMOUNT).text(),'-8.00')
-        self.assertEqual(editor.table.cellWidget(0,editor.COL_AMOUNT).value(),-20)
+        self.assertEqual(float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")),-20)
         editor.accept()
         row=self.item['attachments'][0]
         self.assertEqual(row['quantity'],2)

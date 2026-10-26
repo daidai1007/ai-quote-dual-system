@@ -540,9 +540,17 @@ class QuoteManagement:
         self.tabs.addTab(self.history, '调价历史')
         comparison = QWidget(); compare_layout = QVBoxLayout(comparison); choices = QHBoxLayout()
         self.from_version = QComboBox(); self.to_version = QComboBox()
-        choices.addWidget(self.from_version); choices.addWidget(QLabel('对比')); choices.addWidget(self.to_version); choices.addStretch(1)
+        self.compare_clear = button('清除', self.clear_comparison)
+        self.compare_clear.setToolTip('清除版本选择，显示全部版本与上一版的对比')
+        self.from_version.setAccessibleName('原版本');self.to_version.setAccessibleName('对比版本')
+        choices.addWidget(self.from_version); choices.addWidget(QLabel('对比')); choices.addWidget(self.to_version)
+        choices.addWidget(self.compare_clear); choices.addStretch(1)
         compare_layout.addLayout(choices)
-        self.compare_table = table(('产品', '数量', '原折后单价', '新折后单价', '金额变化'))
+        self.compare_table = table(('版本对比', '产品', '数量', '原折后单价', '新折后单价', '变化明细'))
+        self.compare_table.setObjectName('quoteManagementVersionComparison')
+        for column,width in enumerate((155,150,80,120,120)):
+            self.compare_table.setColumnWidth(column,width)
+        self.compare_table.horizontalHeader().sectionResized.connect(lambda *_:self.compare_table.resizeRowsToContents())
         compare_layout.addWidget(self.compare_table); self.tabs.addTab(comparison, '版本对比')
         preview_page = QWidget(); preview_layout = QVBoxLayout(preview_page); actions = QHBoxLayout()
         actions.addWidget(button('打印', lambda: self.window.scheme2_quote_print.click()))
@@ -743,30 +751,52 @@ class QuoteManagement:
                 self.history.setCellWidget(row, 6, button('查看', lambda _=False, n=version['version']: self.view_version(n)))
         with QSignalBlocker(self.from_version), QSignalBlocker(self.to_version):
             before, after = self.from_version.currentData(), self.to_version.currentData()
+            document_key=w._quote_scheme_id
+            if getattr(self,'_compare_document_key',None)!=document_key:
+                before=after=None
+            self._compare_document_key=document_key
             self.from_version.clear(); self.to_version.clear()
+            self.from_version.addItem('全部版本',None);self.to_version.addItem('全部版本',None)
             for version in versions:
+                if version.get('revision_draft'):continue
                 self.from_version.addItem(f"V{version['version']}", version['version'])
                 self.to_version.addItem(f"V{version['version']}", version['version'])
-            self.from_version.setCurrentIndex(max(0, self.from_version.findData(before if before else max(1, len(versions)-1))))
-            self.to_version.setCurrentIndex(max(0, self.to_version.findData(after if after else len(versions))))
+            self.from_version.setCurrentIndex(max(0, self.from_version.findData(before)))
+            self.to_version.setCurrentIndex(max(0, self.to_version.findData(after)))
         self.compare(); self.preview.setHtml(ui._printable_quote_html(w))
         if self.history_version is not None:
             w.scheme2_company.setEnabled(False)
         self.status_changed()
 
+    def clear_comparison(self):
+        with QSignalBlocker(self.from_version),QSignalBlocker(self.to_version):
+            self.from_version.setCurrentIndex(0);self.to_version.setCurrentIndex(0)
+        self.compare()
+
     def compare(self):
-        import scheme2_ui as ui
-        versions = self.state['versions']
-        a, b = self.from_version.currentData(), self.to_version.currentData()
-        if not a or not b or a > len(versions) or b > len(versions): return
-        left, right = versions[a-1]['items'], versions[b-1]['items']
-        rows = []
-        for i in range(max(len(left), len(right))):
-            x = ui._row_values(left[i]) if i < len(left) else None
-            y = ui._row_values(right[i]) if i < len(right) else None
-            rows.append(((y or x)[1], (y or x)[11], '—' if x is None else f'{x[15]:,.2f}',
-                         '—' if y is None else f'{y[15]:,.2f}', f'{money_sum(((y or [0]*17)[16], -(x or [0]*17)[16])):+,.2f}'))
-        fill(self.compare_table, rows)
+        from quote_version_comparison import comparison_groups,change_details
+        groups=comparison_groups(self.state['versions'],self.from_version.currentData(),self.to_version.currentData())
+        rows=[];summary_rows=[]
+        for group in groups:
+            label=f"V{group['current']}（首次报价）" if group['previous'] is None else f"V{group['previous']} → V{group['current']}"
+            for row in group['rows']:
+                left,right=row['left'],row['right'];item=right or left
+                quantity=str(item['quantity'])
+                if left and right and left['quantity']!=right['quantity']:
+                    quantity=f"{left['quantity']} → {right['quantity']}"
+                old='—' if left is None or left['unit'] is None else f"{left['unit']:,.2f}"
+                new='—' if right is None or right['unit'] is None else f"{right['unit']:,.2f}"
+                if row['summary']:summary_rows.append(len(rows))
+                rows.append((label,'本版合计' if row['summary'] else item['name'],quantity,old,new,
+                    change_details(left,right,initial=group['previous'] is None)))
+        fill(self.compare_table,rows)
+        for row in range(self.compare_table.rowCount()):
+            cell=self.compare_table.item(row,5);cell.setToolTip(cell.text())
+        for row in summary_rows:
+            for column in range(self.compare_table.columnCount()):
+                cell=self.compare_table.item(row,column)
+                font=cell.font();font.setBold(True);cell.setFont(font)
+                cell.setBackground(QColor('#e6f0fb'))
 
     def customer_changed(self):
         if not getattr(self.window, '_quote_scheme_loading', False) and self.history_version is None:

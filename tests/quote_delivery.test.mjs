@@ -8,6 +8,25 @@ const snapshot={company:'本机示例客户 <A>',document:{quote_date:'2026-10-2
   drawing_path:'PRIVATE_PATH',scheme_summary:{quoted_amount:999},
   draft_items:[{formula:{material_cost:123456},quote_line_id:'PRIVATE_ID',quote_display:{name:'示例柜',specification:'400×300×200',quantity:2,unit:'台',unit_price:175,total:350,remark:'示例备注'}}]};
 
+test('received fixed/discounted categories use the frozen version and an allowlist',()=>{
+ const data=structuredClone(snapshot);
+ data.draft_items[0].quote_cost_display={schema:1,values:{面价:'325.00',固定报价:'25.00',折扣面价:'150.00'},
+  price_breakdown:{schema:1,basis:'per_unit_set_v1',private:'PRIVATE_BREAKDOWN',
+   fixed:{total:25,rows:[{category:'运费',original:25,discount:1,amount:25,secret:'PRIVATE_ROW'}]},
+   discounted:{total:150,rows:[{category:'柜体',original:300,discount:.5,amount:150}]}}};
+ const doc=deliveryDocument(data,'BJ-20261023-000001',1);
+ assert.equal(doc.cost_snapshot.items[0].price_breakdown.total,175);
+ assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf('固定报价')],'25.00');
+ assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf('折扣面价')],'150.00');
+ assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf('面价')],'325.00','Older clients retain their existing wire field');
+ assert.equal(JSON.stringify(doc).includes('PRIVATE_'),false);
+ data.draft_items[0].quick={base_price:99999};
+ assert.equal(deliveryDocument(data,'BJ-20261023-000001',1).cost_snapshot.items[0].price_breakdown.total,175);
+ data.draft_items[0].quote_cost_display.price_breakdown.fixed.rows[0].amount=99;
+ assert.equal(deliveryDocument(data,'BJ-20261023-000001',1).cost_snapshot.items[0].price_breakdown,null);
+ assert.equal(deliveryDocument(snapshot,'BJ-20261023-000001',1).cost_snapshot.items[0].price_breakdown,null);
+});
+
 test('delivery preserves formal face and same-version costs, without history or source IDs',()=>{
  const d=deliveryDocument(snapshot,'BJ-20261023-000001',2);
  assert.equal(d.total,350);assert.equal(d.quote_version,3);assert.equal(d.source_version_no,2);assert.equal(d.order_nature,'INTERNAL');

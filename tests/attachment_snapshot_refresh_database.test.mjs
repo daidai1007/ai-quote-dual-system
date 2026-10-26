@@ -56,6 +56,10 @@ test('merged refresh SQL executes with real rules, guards, deductions and immuta
       {...input.attachments[0],manual_inputs:{玻璃门宽度:400,玻璃门高度:400}}]});
     assert.equal(queries.length,2);
     assert.equal(fresh.attachments[0].formula_amount,8.8);
+    assert.equal(fresh.attachments[0].cost_method,'FORMULA');
+    assert.equal(fresh.formula_cost.cost_allocation.complete,true);
+    assert.equal(fresh.formula_cost.cost_allocation.totals.attachment_fee,0);
+    assert.equal(fresh.formula_cost.cost_allocation.attachment_total,8.8);
     // Legacy base carries a fixed fee of 5. A fresh result recomputes the
     // approved 6% on 100+10+20+15+8.80, without rewriting the old snapshot.
     assert.equal(fresh.formula_cost.management_fee,9.23);

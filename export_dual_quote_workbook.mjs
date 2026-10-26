@@ -12,6 +12,7 @@ import fs from "node:fs/promises";
 import {documentWithOrderNature,orderNatureLabel} from './quote_order_nature.mjs';
 import path from "node:path";
 import {addAttachmentSnapshotSheet} from "./attachment_snapshot_export.mjs";
+import {withAttachmentCostAllocation} from './attachment_cost_allocation.mjs';
 import {
   attachRangeApi,
   attachWorkbookRangeApi,
@@ -52,7 +53,10 @@ for (const [index,item] of payload.items.entries()) {
   const formula={...(item.formula||{}),attachment_fee:moneySum(rows.map(formulaAttachmentLineAmount))};
   const missing=missingManagementCosts(formula);
   if(missing.length) throw new Error(`第${index+1}行柜体成本分项缺失（${missing.join('、')}），请重新计算整柜`);
-  item.formula=applyManagementFee(formula,item.freight_fee??item.freight??0);
+  const normalized=applyManagementFee(formula,item.freight_fee??item.freight??0);
+  if(item.preserve_legacy_cost_classes){delete normalized.cost_allocation;item.formula=normalized;}
+  else item.formula=withAttachmentCostAllocation(normalized,rows,
+    {strict:!!item.formula?.cost_allocation?.complete||rows.some(row=>row.cost_method==='FORMULA')});
 }
 
 const sellerInformation = {
@@ -1278,7 +1282,7 @@ function buildFormulaCostDetailSheet() {
     const attachmentCost = lineBreakdown.attachmentFee;
     const attachments = Array.isArray(item.attachments) ? item.attachments : [];
     let attachmentLineSum = 0;
-    for (const attachment of attachments) {
+    for (const [attachmentIndex,attachment] of attachments.entries()) {
       const selectedQuantity = asNumber(attachment.quantity || 1);
       const splitCount = gangedCabinetCount(item);
       const quantity = effectiveAttachmentQuantity(
@@ -1293,6 +1297,19 @@ function buildFormulaCostDetailSheet() {
       const formulaSelectedAmount = omittedFromFormula ? 0 : selectedAmount;
       const formulaAmount = omittedFromFormula ? 0 : amount;
       attachmentLineSum += formulaSelectedAmount;
+      const allocation=quote.cost_allocation;
+      const allocated=allocation?.complete?allocation.lines.find(line=>line.index===attachmentIndex):null;
+      if(allocated?.method==='FORMULA'&&!omittedFromFormula){
+        const labels={material_cost:'材料成本',spray_cost:'喷塑费用',auxiliary_cost:'辅材成本',labor_cost:'人工成本'};
+        for(const [key,component] of Object.entries(allocated.components)){
+          const count=asNumber(item.quantity||1),lineAmount=moneyProduct(component.amount,count);
+          addDetail(itemIndex,item,labels[key],`${allocated.name}－${labels[key]}`,allocated.specification,
+            `${component.formula}；单台/套 ${component.amount.toFixed(2)} 元 × ${count}`,
+            allocated.quantity*count,allocated.unit,component.unit_cost,lineAmount,
+            '已保存附件公式成本分项','公式附件分项归类，不重复计入附件成本','detail',1);
+        }
+        continue;
+      }
       const multiplier = selectedQuantity ? quantity / selectedQuantity : 1;
       const signedPrice = quantity ? formulaAmount / quantity : (omittedFromFormula ? 0 : price);
       const componentBasis = attachmentFormulaCostBasis(attachment);

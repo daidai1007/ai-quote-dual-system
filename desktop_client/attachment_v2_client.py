@@ -41,6 +41,9 @@ EXTRA_HEADERS = ("快速金额", "公式状态", "公式单位成本", "公式�
 COST_KEYS = ("error", "rule_id", "rule_version", "rule_materials", "rule_source_row", "formulas", "calculation_notes", "weight_kg", "material_cost", "spray_area_m2", "spray_cost", "auxiliary_cost", "auxiliary_list", "labor_cost", "attachment_selection_id", "quote_line_id", "environment", "pending_manual_dimensions", "pending_manual_error")
 
 
+COST_KEYS = (*COST_KEYS, 'cost_method')
+
+
 def new_quote_attachment_selection(source):
     """Copy configuration, never a previous order's catalogue prices/snapshot."""
     row = copy.deepcopy(source)
@@ -49,7 +52,8 @@ def new_quote_attachment_selection(source):
     inherited = {
         *COST_KEYS, "price", "face_price", "matched_price", "quick_amount",
         "quick_amount_override", "unit_price_override", "formula_amount", "formula_unit_cost",
-        "custom_amount_edited", "catalog_version", "data_version", "status", "status_text",
+        "custom_amount_edited", "formula_cost_edited", "formula_unit_cost_override",
+        "custom_cost_edited", "catalog_version", "data_version", "status", "status_text",
         "catalogue_face_price", "catalogue_quick_amount", "quick_face_price",
     }
     for key in list(row):
@@ -57,6 +61,39 @@ def new_quote_attachment_selection(source):
             row.pop(key, None)
     row["quote_catalog_refresh_required"] = True
     return row
+
+
+def copied_attachment_name_selection(source):
+    """Recreate a copied choice by name, with fresh size/quantity/model inputs."""
+    keys = ('item_name','name','category_level1','category_level2','category_level3',
+            'attachment_category','unit','custom')
+    row = {key:copy.deepcopy(source[key]) for key in keys if key in source}
+    name = str(source.get('item_name') or source.get('name') or source.get('model_code') or '').strip()
+    row.update(item_name=name,quantity=1,selection_source='manual',copied_attachment_name=name)
+    if source.get('custom'):
+        # Custom items have no live catalogue. Keep the established manual
+        # unit-price rule, while resetting the old count and specification.
+        quantity = abs(float(source.get('quantity') or 1))
+        cost = float(source.get('formula_amount',source.get('custom_cost',0)) or 0)/quantity
+        sale = source.get('unit_price_override',source.get('matched_price'))
+        if sale is None:
+            sale = float(source.get('quick_amount_override',source.get('quick_amount',0)) or 0)/quantity
+        row.update(formula_amount=cost,custom_cost=cost,quick_amount=float(sale),
+                   quick_amount_override=float(sale),unit_price_override=float(sale),matched_price=float(sale),
+                   custom_amount_edited=bool(source.get('custom_amount_edited')),
+                   custom_cost_edited=bool(source.get('custom_cost_edited')))
+    else:
+        row['quote_catalog_refresh_required'] = True
+    return row
+
+
+def preserve_copied_attachment_name(source, calculated):
+    name = source.get('copied_attachment_name')
+    if name:
+        calculated = {**calculated,'item_name':name,'copied_attachment_name':name}
+        if 'name' in source:
+            calculated['name'] = name
+    return calculated
 
 
 def attachment_image_match_key(value):
@@ -439,6 +476,17 @@ def discard_automatic_amount_override(row):
     return cleaned
 
 
+def apply_manual_cost(source, calculated):
+    if source.get("formula_cost_edited") is True and calculated.get("status") not in ("PENDING_MANUAL", "ERROR"):
+        calculated = dict(calculated)
+        unit = Decimal(str(source["formula_unit_cost_override"]))
+        amount = unit * Decimal(str(calculated.get("quantity", 1))) * price_sign(calculated)
+        calculated["formula_cost_edited"] = True
+        calculated["formula_unit_cost_override"] = float(unit)
+        calculated["formula_amount"] = float(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    return calculated
+
+
 def merge_cost(source, cost, automatic_base_height=None):
     if is_base_attachment(source) and source.get("ganged_cabinet_index", source.get("ganged_fixed_base_index")) is not None:
         automatic_base_height = None
@@ -481,6 +529,9 @@ def merge_cost(source, cost, automatic_base_height=None):
             merged["custom_amount_edited"] = True
             if quantity:
                 merged["unit_price_override"] = float(abs(amount / quantity))
+    # Quote-local cost edits do not alter catalogue/formula provenance. Keep
+    # the explicit unit cost when dimensions/quantities refresh the snapshot.
+    merged = apply_manual_cost(source, merged)
     if automatic_base_height is not None and uses_base_height(merged):
         manual = copy.deepcopy(merged.get("manual_inputs") or {})
         # Keep the automatically derived base height in the immutable quote
@@ -489,7 +540,7 @@ def merge_cost(source, cost, automatic_base_height=None):
         # from their server snapshots and block confirmation.
         manual["底座高度"] = automatic_base_height
         merged["manual_inputs"] = manual
-    return merged
+    return preserve_copied_attachment_name(source, merged)
 
 def price_sign(source):
     return -1 if source.get("attachment_price_sign") == -1 else 1
@@ -1539,6 +1590,8 @@ def install_attachment_v2(namespace):
                 return
             for row in resolved:
                 row.pop("quote_catalog_refresh_required", None)
+                if row.get('copied_attachment_name'):
+                    row['item_name'] = row['copied_attachment_name']
             window.attachments = resolved
             window._attachment_v2_line_id = None
             window.current_result = None
@@ -1761,8 +1814,8 @@ def install_attachment_v2(namespace):
             if errors:
                 failed("；".join(f"{row.get('item_name')}：{row.get('error') or '尺寸未补齐'}" for row in errors))
                 return
-            merged = [merge_snapshot_cost(source, merge_cost(source, cost), item,
-                                         getattr(window, "scheme2_defaults", {}))
+            merged = [apply_manual_cost(source, merge_snapshot_cost(source, merge_cost(source, cost), item,
+                                         getattr(window, "scheme2_defaults", {})))
                       for source, cost in zip(rows, costs)]
             iterator = iter(merged)
             updated = [row if row.get("custom") else next(iterator) for row in sources]
@@ -1939,6 +1992,7 @@ def install_attachment_v2(namespace):
     def reset_v2(window, *args, **kwargs):
         retire_quote_request(window)
         window._scheme2_new_quote_required = False
+        window._attachment_names_manual_only = False
         window._attachment_v2_line_id = None
         window._v2_confirmation_inputs = []
         return reset(window, *args, **kwargs)

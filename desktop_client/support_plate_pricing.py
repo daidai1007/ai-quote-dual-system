@@ -15,7 +15,7 @@ COST_FIELDS = (
     "formula_amount", "formula_unit_cost", "weight_kg", "material_cost", "spray_area_m2",
     "spray_cost", "auxiliary_cost", "auxiliary_list", "labor_cost", "rule_id", "rule_version",
     "rule_materials", "rule_source_row", "formulas", "calculation_notes", "required_parameters",
-    "status", "status_text",
+    "status", "status_text", "cost_method",
 )
 
 

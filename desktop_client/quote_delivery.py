@@ -138,11 +138,15 @@ class QuoteDelivery:
     def __init__(self, manager):
         self.manager, self.window = manager, manager.window
         self.pending_send = None; self.send_dialog = None; self.received = None; self.epoch = 0; self.page = 1
+        self.send_loading = False; self.send_feedback_context = None
         self.output_registration_busy = False
         self.cost_active = False; self.cost_restore = None
         self.window._quote_delivery_output_pending = None
         self.send_button = button('发送给同事', self.start_send, True); self.send_button.setAccessibleName('发送给同事')
         manager.detail_page.layout().itemAt(1).layout().addWidget(self.send_button)
+        self.send_status = QLabel(); self.send_status.setAccessibleName('发送状态')
+        self.send_status.setTextFormat(Qt.TextFormat.PlainText); self.send_status.setWordWrap(True)
+        self.send_status.hide(); manager.detail_page.layout().insertWidget(2, self.send_status)
         self.records_page = QWidget(); box = QVBoxLayout(self.records_page)
         self.sent_notice = QLabel(); self.sent_notice.setTextFormat(Qt.TextFormat.PlainText); self.sent_notice.setWordWrap(True); box.addWidget(self.sent_notice)
         self.records_status = QLabel('当前报价尚未发送'); self.records_status.setWordWrap(True); box.addWidget(self.records_status)
@@ -221,9 +225,14 @@ class QuoteDelivery:
     def refresh(self):
         w, m = self.window, self.manager
         busy = bool(getattr(w, '_scheme2_document_busy', False) or getattr(w, '_quote_scheme_export_context', None))
-        self.send_button.setEnabled(bool(w._quote_scheme_id) and not getattr(w, '_name_scope_foreign', False) and not busy and w._quote_scheme_status != 'VOID')
+        self.send_button.setEnabled(bool(w._quote_scheme_id) and not getattr(w, '_name_scope_foreign', False) and not busy and not self.send_loading and w._quote_scheme_status != 'VOID')
+        self.send_button.setText('正在核对…' if self.send_loading else '发送给同事')
+        self.send_status.setVisible(bool(self.send_status.text()) and self.send_feedback_context == self.send_context())
         self.send_button.setToolTip('发送当前查看的正式版本；草稿须先打印或导出完成正式登记')
         if self.cost_active:self.enforce_cost_readonly()
+
+    def send_context(self):
+        return (self.window._quote_scheme_id, self.manager.history_version or len(self.manager.state.get('versions', [])) or 1)
 
     def start_send(self):
         if self.pending_send is not None and self.send_dialog is not None:
@@ -231,20 +240,40 @@ class QuoteDelivery:
         w, m = self.window, self.manager
         if not self.send_button.isEnabled(): return
         if schemes._registration_guard(w): return
-        number = m.history_version or len(m.state.get('versions', [])) or 1
-        scheme_no = w._quote_scheme_id; self.send_button.setEnabled(False)
-        self.manager.feedback.setText('正在核对正式报价版本…')
-        def failed(message): self.refresh(); self.manager.feedback.setText(message)
+        context = self.send_context(); scheme_no, number = context
+        from quote_order_nature import current
+        if current(w) == 'UNCLASSIFIED':
+            self.send_feedback_context = context
+            if w._quote_scheme_status == 'QUOTED' or m.history_version is not None:
+                message = '当前报价的订单性质为“待分类”，暂不能发送。请回到最新版本，点击“调整报价”创建修订版，选择“内部”或“外部”，核对金额后成功打印或导出，再发送给同事。'
+            else:
+                message = '请先在客户旁选择订单性质“内部”或“外部”，核对金额后成功打印或导出，再发送给同事。'
+            self.send_status.setText(message); self.refresh(); return
+        self.send_loading = True; self.send_feedback_context = context
+        self.send_status.setText(f'正在核对 V{number} 正式报价版本并加载同事名单…'); self.refresh()
+        def failed(message):
+            self.send_loading = False
+            self.send_status.setText('发送前核对失败：' + str(message)); self.refresh()
+        def still_current():
+            if self.send_context() == context: return True
+            self.send_loading = False; self.refresh(); return False
         def versions_loaded(result):
-            if w._quote_scheme_id != scheme_no: self.refresh(); return
-            value = next((row for row in result.get('items', []) if row['quote_version'] == number), None)
-            if value is None: failed('当前查看的版本尚未完成正式登记，请先打印或导出，再发送给同事。'); return
+            if not still_current(): return
+            try: value = next((row for row in result.get('items', []) if row['quote_version'] == number), None)
+            except (AttributeError, KeyError, TypeError):
+                failed('服务器返回的正式版本数据格式异常，请联系管理员核对 API 版本。'); return
+            if value is None:
+                failed(f'未找到当前 V{number} 的可发送正式版本。请确认该版本已完成打印或导出登记；若已完成，请联系管理员核对正式版本数据。'); return
             def people_loaded(people):
-                if w._quote_scheme_id != scheme_no: self.refresh(); return
-                self.send_dialog = SendQuoteDialog(self, value, people.get('items', []), self.manager.detail_page)
-                self.send_dialog.open(); self.refresh(); self.manager.feedback.clear()
-            self.request('GET', '/colleagues', None, people_loaded, failed)
-        self.request('GET', '/versions?' + urllib.parse.urlencode({'scheme_no': scheme_no}), None, versions_loaded, failed)
+                if not still_current(): return
+                try:
+                    self.send_dialog = SendQuoteDialog(self, value, people.get('items', []), self.manager.detail_page)
+                    self.send_dialog.open(); self.send_loading = False; self.send_status.clear(); self.refresh()
+                except Exception as error: failed(error)
+            try: self.request('GET', '/colleagues', None, people_loaded, failed)
+            except Exception as error: failed(error)
+        try: self.request('GET', '/versions?' + urllib.parse.urlencode({'scheme_no': scheme_no}), None, versions_loaded, failed)
+        except Exception as error: failed(error)
 
     def load_records(self):
         no = self.window._quote_scheme_id
@@ -343,7 +372,10 @@ class QuoteDelivery:
 
     def enforce_cost_readonly(self):
         if not self.cost_active or self.cost_restore is None:return
-        for control,_enabled in self.cost_restore['controls']:control.setEnabled(False)
+        links = tuple(self.window.scheme2_cost_selection_values[column]
+                      for column in (7, 24))
+        for control,_enabled in self.cost_restore['controls']:
+            if control not in links:control.setEnabled(False)
         self.window.scheme2_cost_return.setEnabled(True);self.window.scheme2_cost_return.hide()
         self.window.summary_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.window.scheme2_cost_undo.hide()
@@ -377,6 +409,9 @@ class QuoteDelivery:
                         value=saved.get(label)
                         text='未记录' if value is None else f'{value:,.2f}' if isinstance(value,(int,float)) and column in ui.MONEY_COLUMNS else str(value)
                         cell=QTableWidgetItem(text);cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        if column in (ui.FIXED_QUOTE_COLUMN,ui.DISCOUNTED_QUOTE_COLUMN):
+                            font=cell.font();font.setUnderline(True);cell.setFont(font)
+                            cell.setToolTip('点击查看本版本保存的单台／单套报价分项。')
                         grid.setItem(row,column,cell)
                     grid.setRowHeight(row,64)
                 grid.selectRow(min(max(selected,0),max(len(d['items'])-1,0)))
@@ -386,19 +421,34 @@ class QuoteDelivery:
 
     def sync_cost_selection(self):
         if not self.cost_active:return False
+        import scheme2_ui as ui
         w=self.window;grid=w.summary_table;row=grid.currentRow()
-        for column,label in w.scheme2_cost_selection_values.items():
-            cell=grid.item(row,column);label.setText(cell.text() if cell else '未记录')
-        name=grid.item(row,1);w.scheme2_cost_selection_context.setText(name.text() if name else '')
-        w.scheme2_cost_selection_context.setVisible(name is not None)
+        ui._fill_cost_selection_detail(w,row,0<=row<grid.rowCount())
         return True
+
+    def show_price_breakdown(self,row,column):
+        if not self.cost_active:return
+        rows=(self.received['document'].get('cost_snapshot') or {}).get('items') or []
+        if not 0<=row<self.window.summary_table.rowCount():return
+        import scheme2_ui as ui
+        components=rows[row].get('price_breakdown') if row<len(rows) else None
+        ui._show_quick_price_breakdown(self.window,None,column,components=components)
 
     def show_cost_detail(self,row):
         if not self.cost_active or not 0<=row<self.window.summary_table.rowCount():return
         dialog=QDialog(self.window);dialog.setWindowTitle('成本明细 · 收到版本 V'+str(self.received['document']['quote_version']))
-        box=QVBoxLayout(dialog);grid=table(('成本项目','本版本保存值'))
+        box=QVBoxLayout(dialog)
         import scheme2_ui as ui
-        fill(grid,[(ui.HEADERS[c],self.window.summary_table.item(row,c).text()) for c in range(12,21)])
+        saved=(self.received['document'].get('cost_snapshot') or {}).get('items') or []
+        details=saved[row].get('details') or [] if row<len(saved) else []
+        if any(detail.get('note')=='附件公式成本分项' for detail in details):
+            grid=table(('成本项目','明细项目','本版本保存金额'))
+            fill(grid,[(detail.get('type',''),detail.get('name',''),ui._money(
+                detail.get('amount') if detail.get('amount') is not None else
+                ui.money_product(detail.get('base_amount') or 0,detail.get('factor') if detail.get('factor') is not None else 1))) for detail in details])
+        else:
+            grid=table(('成本项目','本版本保存值'))
+            fill(grid,[(ui.HEADERS[c],self.window.summary_table.item(row,c).text()) for c in range(12,21)])
         box.addWidget(grid);box.addWidget(button('关闭',dialog.accept));dialog.resize(520,450);style_dialog(dialog);dialog.exec()
 
     def completed_output(self, kind):
