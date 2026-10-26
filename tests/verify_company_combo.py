@@ -4,12 +4,13 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
-from PySide6.QtCore import QSettings, Qt  # noqa: E402
+from PySide6.QtCore import QSettings, Qt, QRect  # noqa: E402
 from PySide6.QtGui import QFont  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
@@ -24,12 +25,19 @@ namespace = v3_launcher.load_v3_namespace()
 namespace["MainWindow"].load_catalogs = lambda self: None
 app = QApplication.instance() or QApplication([])
 app.setFont(QFont("Microsoft YaHei UI", 10))
+# The offscreen plugin's default 800px desktop otherwise shrinks the requested
+# 1366px workbench and its popup before this desktop-layout test starts.
+work_area = Mock(wraps=app.primaryScreen())
+work_area.availableGeometry.return_value = QRect(0, 0, 4096, 2160)
+screen_override = patch.object(namespace["MainWindow"], "screen", return_value=work_area)
+screen_override.start()
 settings_dir = tempfile.TemporaryDirectory()
 settings_path = str(Path(settings_dir.name) / "company-settings.ini")
 scheme2_ui._company_settings = lambda: QSettings(settings_path, QSettings.Format.IniFormat)
 window = namespace["MainWindow"]()
 window.resize(1366, 820)
 window.show()
+assert window.width() == 1366
 window.show_section(scheme2_ui.COST_ROUTE)
 app.processEvents()
 assert not window.scheme2_cost_page.isAncestorOf(window.scheme2_company)
@@ -49,15 +57,22 @@ company.addItem("绵阳市鑫瑞电气设备制造有限公司")
 company.setCurrentIndex(0)
 app.processEvents()
 
-assert window.scheme2_cost_sidebar.width() == scheme2_ui.COST_SIDEBAR_WIDTH == 130
+assert scheme2_ui.COST_SIDEBAR_WIDTH == 130
+assert window.scheme2_cost_sidebar.width() == round(130 * window._scheme2_scale)
 assert not window.scheme2_cost_sidebar.isAncestorOf(company)
 assert window.scheme2_quote_company_field.isAncestorOf(company)
 assert window.quote_management.detail_page.isAncestorOf(company)
 assert window.quote_management.root.currentWidget() is window.quote_management.detail_page
 assert company.isVisibleTo(window)
-assert company.height() == scheme2_ui.COMPANY_COMBO_HEIGHT == 56
+assert scheme2_ui.COMPANY_COMBO_HEIGHT == 56
+assert company.height() == round(56 * window._scheme2_scale)
 assert company.view().objectName() == "scheme2CompanyDropdown"
-assert company.view().minimumWidth() >= 320
+company.showPopup()
+app.processEvents()
+# The responsive popup sets its visible width on opening, not a permanent
+# minimumWidth that would force the customer area wider on smaller windows.
+assert company.view().window().width() >= 320
+company.hidePopup()
 assert company.view().wordWrap()
 assert company.view().sizeHintForRow(0) >= 40
 assert company.isEditable() and not company.lineEdit().isReadOnly()
@@ -89,4 +104,5 @@ assert second_company.findText(custom_company, Qt.MatchFlag.MatchExactly) >= 0
 second_window.close()
 app.processEvents()
 settings_dir.cleanup()
+screen_override.stop()
 print("quote-only company selector and independent cost-page contracts passed")

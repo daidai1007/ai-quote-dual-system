@@ -13,7 +13,9 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = (
+    'verify_quote_version_history.py',
     'verify_weight_freight.py',
+    'verify_jp_auxiliary_weight.py', 'verify_jp_auxiliary_weight_workflow.py',
     'verify_quote_remarks.py',
     'verify_light_action_ui.py', 'verify_order_nature.py',
     'verify_quote_export_customer.py',

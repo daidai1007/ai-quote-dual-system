@@ -11,6 +11,8 @@ const board = { attachment_price_id:1, data_version:'offline', item_name:'安装
   width_mm:600, height_mm:1800, depth_mm:600, rules:[] };
 const environment = { product_code:'JP', material_code:'SECC', width_mm:500,
   height_mm:1700, depth_mm:900, coating_type:'橘纹', quote_date:'2026-10-10' };
+const baseFormula=()=>({material_cost:300,auxiliary_cost:50,labor_cost:100,
+  spray_cost:50,attachment_fee:0,management_fee:30,total_cost:530});
 
 test('installation-board perimeter amount, exact size, quantity, deduction and depth exclusion',()=>{
   for (const [quantity,sign] of [[1,1],[3,1],[2,-1]]) {
@@ -34,15 +36,18 @@ test('installation-board perimeter amount, exact size, quantity, deduction and d
 
 test('quick total changes without changing installation-board formula cost',()=>{
   const row=calculateAttachment({quantity:1},board,[{rule_id:1,method:'FIXED',fixed_cost:50.83}],environment);
-  const result=applyAttachmentTotals({quick_quote:{total_cost:1000,attachment_fee:0},formula_cost:{total_cost:500,attachment_fee:0}},[row]);
+  const result=applyAttachmentTotals({quick_quote:{total_cost:1000,attachment_fee:0},formula_cost:baseFormula()},[row]);
   assert.equal(result.quick_quote.total_cost,1333.22);
   assert.equal(result.quick_quote.attachment_fee,333.22);
-  assert.equal(result.formula_cost.total_cost,550.83);
+  assert.equal(result.formula_cost.attachment_fee,50.83);
+  assert.equal(result.formula_cost.management_fee,33.05); // (500+50.83)*6%
+  assert.equal(result.formula_cost.total_cost,583.88);
   const deducted=applyAttachmentTotals({quick_quote:{total_cost:1000,attachment_fee:0},
-    formula_cost:{total_cost:500,attachment_fee:0}},[
+    formula_cost:baseFormula()},[
     calculateAttachment({quantity:2,attachment_price_sign:-1},board,[{rule_id:1,method:'FIXED',fixed_cost:50.83}],environment)]);
   assert.equal(deducted.formula_cost.attachment_fee,-101.66);
-  assert.equal(deducted.formula_cost.total_cost,398.34);
+  assert.equal(deducted.formula_cost.management_fee,23.9);
+  assert.equal(deducted.formula_cost.total_cost,422.24);
   assert.equal(deducted.quick_quote.total_cost,333.56);
 });
 
@@ -71,7 +76,7 @@ test('installation-board costs use actual face dimensions, never catalogue size 
 test('immutable catalogue audit price and scaled quote/export snapshots both survive',async()=>{
   let snapshot, insertSql;
   const service=createAttachmentService({env:{},
-    calculateBase:async()=>({quick_quote:{total_cost:1000,attachment_fee:0},formula_cost:{total_cost:500,attachment_fee:0}}),
+    calculateBase:async()=>({quick_quote:{total_cost:1000,attachment_fee:0},formula_cost:baseFormula()}),
     runPsql:async sql=>{
       if(sql.includes('attachment_catalog_version')) return JSON.stringify([{data_version:'offline',status:'ACTIVE'}]);
       if(sql.includes('FROM (SELECT p.attachment_price_id')) return JSON.stringify([board]);

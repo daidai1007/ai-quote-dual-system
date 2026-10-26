@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {attachmentCatalogFixture} from './helpers/attachment_catalog_fixture.mjs';
 import test from 'node:test';
 import {createAttachmentService} from '../api/attachment_service.mjs';
 
-const fixture = JSON.parse(readFileSync(new URL('../test-output/attachment-cost-v2/api-client-fixtures.json', import.meta.url)));
+const fixture = {catalog:attachmentCatalogFixture()};
 const glass = fixture.catalog.items.find(row => row.item_name === '玻璃门' && row.category_level1 === '控制柜附件');
 const children = [{width_mm:800,height_mm:1800,depth_mm:500}, {width_mm:600,height_mm:1800,depth_mm:500}];
 const service = createAttachmentService({env:{},runPsql:async sql => {

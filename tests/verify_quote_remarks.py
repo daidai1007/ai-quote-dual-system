@@ -78,21 +78,103 @@ class QuoteRemarks(unittest.TestCase):
         self.assertEqual(ui._row_values(self.w.draft_items[0])[15:17],expected_prices)
         return saved
 
-    def test_default_names_match_popup_without_specs_sizes_quantities(self):
+    def test_default_names_and_quantities_match_each_popup_row(self):
         item=self.w.draft_items[0]
         dialog=ui.AttachmentEditor(self.w,item)
         names=list(dict.fromkeys(dialog.table.item(row,0).text() for row in range(dialog.table.rowCount())))
         self.assertEqual(names,['风机','照明灯/行程开关','人工附加件'])
         dialog.accept()
         actual=self.w.scheme2_quote_preview.item(10,7).text()
-        self.assertIn('、'.join(names),actual)
-        for excluded in ('MODEL-NOT-IN-REMARK','SECOND-MODEL','SPECIAL-SPEC','120','×3','×2'):
+        self.assertEqual(item['quantity'],2)
+        self.assertIn('风机×6、风机×4、照明灯/行程开关×2、人工附加件×2',actual)
+        for excluded in ('MODEL-NOT-IN-REMARK','SECOND-MODEL','SPECIAL-SPEC','120'):
             self.assertNotIn(excluded,actual)
         dialog=ui.AttachmentEditor(self.w,item)
-        dialog.table.item(0,0).setText('弹窗更名附件');dialog.table.removeRow(1);dialog.accept()
-        self.assertIn('弹窗更名附件',self.w.scheme2_quote_preview.item(10,7).text())
+        dialog.table.item(0,0).setText('弹窗更名附件')
+        dialog.table.cellWidget(0,dialog.COL_QUANTITY).setValue(4)
+        dialog.table.removeRow(1);dialog.accept()
+        self.assertIn('弹窗更名附件×8',self.w.scheme2_quote_preview.item(10,7).text())
         self.assertNotIn('风机',self.w.scheme2_quote_preview.item(10,7).text())
         self.screenshot('01-default-popup-names.png')
+
+    def test_popup_quantities_times_order_count_save_reopen_print_and_export(self):
+        item=self.w.draft_items[0];item['quantity']=7
+        dialog=ui.AttachmentEditor(self.w,item)
+        dialog.table.cellWidget(0,dialog.COL_QUANTITY).setValue(4)
+        dialog.table.cellWidget(3,dialog.COL_QUANTITY).setValue(6)
+        dialog.accept();self.w._quote_scheme_save_timer.stop()
+        expected=self.w.scheme2_quote_preview.item(10,7).text()
+        self.assertIn('风机×28、风机×14、照明灯/行程开关×7、人工附加件×42',expected)
+        self.assertEqual(item['attachments'][0]['quantity'],4)
+        self.m.save();wait(lambda:self.w._quote_scheme_save_worker is None)
+        self.assertEqual(self.server['snapshot']['draft_items'][0]['final_remark'],expected)
+        schemes._apply_opened_scheme(self.w,dict(found=True,**deepcopy(self.server),quote_management_historical_export=True),ui.QUOTE_ROUTE)
+        self.w._quote_scheme_save_timer.stop()
+        self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),expected)
+        pdf=Path(self.folder.name)/'attachment-counts.pdf'
+        def choose(dialog):
+            printer=dialog.printer();printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat);printer.setOutputFileName(str(pdf))
+            return QDialog.DialogCode.Accepted
+        with patch.object(ui.QPrintDialog,'exec',choose):self.w.scheme2_quote_print.click()
+        wait(lambda:not self.w._quote_scheme_workers)
+        from pypdf import PdfReader
+        printed=''.join(''.join(page.extract_text() for page in PdfReader(pdf).pages).split())
+        self.assertIn('风机×28、风机×14、照明灯/行程开关×7、人工附加件×42',printed)
+        self.assertEqual(self.posts()[-1]['kind'],'PRINT')
+        self.assert_outputs(expected)
+        self.screenshot('04-attachment-quantities.png')
+
+    def test_ganged_and_negative_board_counts_match_popup_without_cancelling_rows(self):
+        item=self.w.draft_items[0];item['quantity']=9
+        item['attachments']=[
+            dict(item_name='内门',ganged_inner_door_match=True,ganged_cabinet_index=0,quantity=2),
+            dict(item_name='内门',ganged_inner_door_match=True,ganged_cabinet_index=1,quantity=3),
+            dict(item_name='安装板',quantity=2,attachment_price_sign=-1),
+            dict(item_name='安装板',quantity=1,attachment_price_sign=1),
+            dict(item_name='安装板',quantity=-3),
+        ]
+        before=deepcopy(item)
+        dialog=ui.AttachmentEditor(self.w,item)
+        counts=[dialog.table.cellWidget(r,dialog.COL_QUANTITY).value() for r in range(dialog.table.rowCount())]
+        self.assertEqual(counts,[2,3,-2,1,-3])
+        self.assertIn('内门×18、内门×27、安装板×-18（扣减）、安装板×9、安装板×-27（扣减）',ui._scheme2_quote_remark(item))
+        self.assertEqual(item['attachments'],before['attachments'])
+        dialog.reject()
+
+    def test_cost_page_order_count_change_updates_total_counts_only(self):
+        item=self.w.draft_items[0];attachments=deepcopy(item['attachments'])
+        self.w.summary_table.item(0,4).setText('5');app.processEvents()
+        self.assertEqual(item['quantity'],5)
+        self.assertIn('风机×15、风机×10、照明灯/行程开关×5、人工附加件×5',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertEqual(item['attachments'],attachments)
+        self.w.refresh_summary();self.w.refresh_summary()
+        self.assertIn('风机×15、风机×10',self.w.scheme2_quote_preview.item(10,7).text())
+        self.w.summary_table.item(0,4).setText('2');app.processEvents()
+        self.assertIn('风机×6、风机×4',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertEqual(item['attachments'],attachments)
+
+    def test_historical_default_totals_follow_its_own_order_count(self):
+        item=self.w.draft_items[0];item['quantity']=2;self.w.refresh_summary()
+        first=deepcopy(self.w.draft_items)
+        item['quantity']=5;self.w.refresh_summary()
+        self.m.state['versions']=[versions.make_version(first,'合成测试客户',1,'首次','合成人员','2026-10-26'),
+                                  versions.make_version(self.w.draft_items,'合成测试客户',2,'修订','合成人员','2026-10-26')]
+        self.m.view_version(1)
+        self.assertIn('风机×6、风机×4',self.w.scheme2_quote_preview.item(10,7).text())
+        self.assertIn('风机×6、风机×4',ui._printable_quote_html(self.w))
+        self.assertIn('风机×6、风机×4',ui._quote_export_items_snapshot(self.w)[0]['quote_display']['remark'])
+        self.m.restore_latest();self.w._quote_scheme_save_timer.stop()
+        self.assertIn('风机×15、风机×10',self.w.scheme2_quote_preview.item(10,7).text())
+
+    def test_old_names_only_and_current_auto_text_remain_automatic(self):
+        item=self.w.draft_items[0]
+        for prior in (ui._scheme2_quote_remark(item,include_quantities=False),ui._scheme2_quote_remark(item)):
+            item.pop('quote_remark_manual',None);ui._synchronize_export_remark(item,prior)
+            self.assertIn('风机×6、风机×4',ui._quote_item_remark(item))
+            self.assertFalse(item['quote_remark_manual'])
+        dialog=ui.AttachmentEditor(self.w,item)
+        dialog.table.cellWidget(0,dialog.COL_QUANTITY).setValue(8);dialog.accept()
+        self.assertIn('风机×16、风机×4',self.w.scheme2_quote_preview.item(10,7).text())
 
     def test_full_manual_text_saves_reopens_prints_and_exports(self):
         text='人工备注：附件按双方确认内容交付 <A>&B\n第二行可以修改整段说明。'
@@ -161,7 +243,9 @@ class QuoteRemarks(unittest.TestCase):
 
     def test_manual_override_survives_popup_changes_and_escape_cancels(self):
         self.edit('手工保留的整段附件说明')
-        dialog=ui.AttachmentEditor(self.w,self.w.draft_items[0]);dialog.table.item(0,0).setText('修改过的附件名称');dialog.accept()
+        dialog=ui.AttachmentEditor(self.w,self.w.draft_items[0]);dialog.table.item(0,0).setText('修改过的附件名称')
+        dialog.table.cellWidget(0,dialog.COL_QUANTITY).setValue(9);dialog.accept()
+        self.w.summary_table.item(0,4).setText('4');app.processEvents()
         self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),'手工保留的整段附件说明')
         editor=self.edit('应该取消的内容',commit=False);QTest.keyClick(editor,Qt.Key.Key_Escape);app.processEvents()
         self.assertEqual(self.w.draft_items[0]['final_remark'],'手工保留的整段附件说明')

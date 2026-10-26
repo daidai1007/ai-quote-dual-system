@@ -1049,7 +1049,7 @@ def _registration_guard(window):
 
 
 def _prepare_export(window, kind="XLSX"):
-    from quote_order_nature import require_selected
+    from quote_order_nature import require_selected, current as current_order_nature
     if not require_selected(window): return False
     from scheme2_ui import _commit_quote_text_editor
     _commit_quote_text_editor(window)
@@ -1068,6 +1068,13 @@ def _prepare_export(window, kind="XLSX"):
     if not operator: return False
     manager = getattr(window, 'quote_management', None)
     historical = manager.history_version if manager is not None else None
+    if manager is not None and historical is None and manager.state.get('versions'):
+        from quote_management_model import same_document
+        current = dict(items=window.draft_items, company=window.scheme2_company.currentText(), order_nature=current_order_nature(window))
+        latest = manager.state['versions'][-1]
+        if latest.get('pending_confirmation') or (latest.get('confirmed') and not same_document(current, latest)):
+            QMessageBox.information(window, '请确认报价修改', '当前报价有未确认修改，请在“调整报价”中确认保存新版本后，再打印或导出。')
+            return False
     if historical is not None and not getattr(window, '_qm_historical_export_supported', False):
         QMessageBox.information(window, '历史报价导出', '历史版本导出需要配套API支持。请更新API后从报价单列表重新打开；当前版本和草稿保持不变。')
         return False

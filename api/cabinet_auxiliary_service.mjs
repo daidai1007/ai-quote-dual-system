@@ -1,5 +1,6 @@
 import {evaluateFormula,round} from './attachment_formula.mjs';
 import {applyManagementFee} from '../quick_discount_rules.mjs';
+import {jpAuxiliaryWeight} from './jp_auxiliary_weight.mjs';
 
 const valueSql=value=>value==null?'NULL':typeof value==='number'?String(value):
   `convert_from(decode('${Buffer.from(String(value)).toString('hex')}','hex'),'UTF8')`;
@@ -42,7 +43,9 @@ export function calculateCabinetAuxiliary(profile,lines,environment){
       quantity_rule:line.quantity_rule,length_formula:line.length_formula,notes:line.notes,
       source_total_formula:line.source_total_formula,source_sheet:line.source_sheet,source_row_no:line.source_row_no};
   });
+  const selfMadeWeight=jpAuxiliaryWeight({...environment,product_code:profile.product_code});
   return {data_version:environment.data_version,product_code:profile.product_code,method:'BOM',
+    ...(selfMadeWeight?{self_made_weight:selfMadeWeight}:{}),
     single_door_count:Number(profile.single_door_count),double_door_count:Number(profile.double_door_count),spray_unit_price:sprayUnitPrice,
     auxiliary_spray_area_m2:round(details.reduce((sum,row)=>sum+row.spray_area_m2,0),8),
     auxiliary_spray_cost:round(details.reduce((sum,row)=>sum+row.spray_cost,0),2),
@@ -128,5 +131,14 @@ export function applyCabinetAuxiliary(result,auxiliary){
     cabinet_auxiliary_reference_depth_mm:auxiliary.reference_depth_mm??null,cabinet_auxiliary_perimeter_ratio:auxiliary.perimeter_ratio??null,
     cabinet_auxiliary_lines:auxiliary.lines,cabinet_auxiliary_spray_area_m2:auxiliary.auxiliary_spray_area_m2,
     cabinet_auxiliary_spray_cost:auxiliary.auxiliary_spray_cost});
+  if(auxiliary.self_made_weight){
+    formula.cabinet_auxiliary_self_made_weight_kg=auxiliary.self_made_weight.weight_kg;
+    formula.cabinet_auxiliary_weight_basis=auxiliary.self_made_weight.basis;
+    formula.cabinet_auxiliary_weight_lines=auxiliary.self_made_weight.lines;
+  }else{
+    delete formula.cabinet_auxiliary_self_made_weight_kg;
+    delete formula.cabinet_auxiliary_weight_basis;
+    delete formula.cabinet_auxiliary_weight_lines;
+  }
   return {...result,formula_cost:applyManagementFee(formula)};
 }

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {attachmentCatalogFixture} from './helpers/attachment_catalog_fixture.mjs';
 import test from 'node:test';
 import {createAttachmentService,attachmentInput} from '../api/attachment_service.mjs';
 
-const fixture=JSON.parse(readFileSync(new URL('../test-output/attachment-cost-v2/api-client-fixtures.json',import.meta.url)));
+const fixture={catalog:attachmentCatalogFixture()};
 const glass=fixture.catalog.items.find(row=>row.item_name==='玻璃门'&&row.category_level1==='控制柜附件');
 const oldId='11111111-1111-4111-8111-111111111111';
 function harness(children=[],catalogItem=glass){

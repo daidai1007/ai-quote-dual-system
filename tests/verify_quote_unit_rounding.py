@@ -40,7 +40,10 @@ def quote_item(sample):
         specification="1000*600*2000", quantity=sample["quantity"],
         quick_discount=sample["discount"], formula_discount=sample["discount"],
         freight_fee=sample["freight"], ganged_cabinet_count=sample.get("ganged", 1),
-        attachments=attachments, final_remark="保留备注。",
+        # Complete persisted manual-remark fields avoid triggering the legacy
+        # remark migration during a test whose contract is monetary immutability.
+        attachments=attachments, final_remark="保留备注。", quote_remark_manual=True,
+        notes="保留备注。", source_ocr_remark="保留备注。", source_reviewed_remark="保留备注。",
         quick=dict(base_price=sample["base"], attachment_fee=fee, total_cost=money(sample["base"] + fee)),
         formula=dict(material_cost=sample["base"], auxiliary_cost=0, labor_cost=0,
                      spray_cost=0, management_fee=0, attachment_fee=fee,

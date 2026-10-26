@@ -40,3 +40,4 @@
 !api/contract_service.mjs
 !api/quote_delivery_document.mjs
 !api/quote_delivery_service.mjs
+!api/jp_auxiliary_weight.mjs

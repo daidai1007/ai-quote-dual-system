@@ -131,7 +131,8 @@ test('JP side panel uses height and depth only, independently of cabinet/catalog
 test('real preview uses each child cabinet; snapshot and export keep effective prices without changing catalogue audit amounts',async()=>{
   let saved,sqlWritten;
   const service=createAttachmentService({env:{},calculateBase:async()=>({
-    quick_quote:{attachment_fee:0,total_cost:1000},formula_cost:{attachment_fee:0,total_cost:500}}),
+    quick_quote:{attachment_fee:0,total_cost:1000},formula_cost:{material_cost:300,auxiliary_cost:50,
+      labor_cost:100,spray_cost:50,attachment_fee:0,management_fee:30,total_cost:530}}),
     runPsql:async sql=>{
       if(sql.includes('attachment_catalog_version')) return JSON.stringify([{data_version:'offline',status:'ACTIVE'}]);
       if(sql.includes('FROM (SELECT p.attachment_price_id')) return JSON.stringify(items);

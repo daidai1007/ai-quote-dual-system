@@ -1003,6 +1003,13 @@ def _attachment_popup_text(source):
     return name, spec, is_light_switch
 
 
+def _attachment_popup_quantity(source):
+    """Use the selected-attachments editor's single-cabinet/set count."""
+    from attachment_v2_client import allows_negative_attachment_quantity
+    lower = -9999 if allows_negative_attachment_quantity(source) else 1
+    return max(lower, min(9999, round(_displayed_attachment_quantity(source))))
+
+
 class AttachmentEditor(QDialog):
     DEFAULT_SIZE = QSize(650, 315)
     MINIMUM_SIZE = QSize(480, 240)
@@ -1168,7 +1175,7 @@ class AttachmentEditor(QDialog):
         quantity.setSingleStep(self.cabinet_quantity)
         quantity.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         quantity.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        total_quantity = round(_displayed_attachment_quantity(source) * self.cabinet_quantity)
+        total_quantity = _attachment_popup_quantity(source) * self.cabinet_quantity
         quantity.setValue(total_quantity)
         quantity.setProperty("previousQuantity", quantity.value())
         quantity.setToolTip(
@@ -4486,7 +4493,7 @@ def _refresh_cost_table(window):
                     mode = '自动' if item.get('freight_mode') == 'AUTO' and item.get('freight_basis') == AUTO_FREIGHT_BASIS else '人工/已保存'
                     cell.setToolTip(f"当前运费：{mode}。默认每套自制件重量×1元/kg；双击可改人工金额，不参与折扣，总运费再乘订单数量。")
                 if column == 22:
-                    cell.setToolTip("单台／单套重量（kg）=柜体含损耗计价重量＋当前附件单件重量×附件自身数量；扣减安装板按减项统计。\n无有效重量数据的附件不计入；底部汇总再乘订单数量。")
+                    cell.setToolTip("单台／单套重量（kg）=柜体含损耗计价重量＋JP横梁/纵梁/左右立柱辅材重量＋当前附件单件重量×附件自身数量；扣减安装板按减项统计。\nJP辅材按已确认公式含1.2系数，不重复乘损耗或台数；底部汇总再乘订单数量。无有效重量数据的附件不计入。")
                 table.setItem(row, column, cell)
         total_row = len(items)
         quantity_total = sum(max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
@@ -7481,7 +7488,7 @@ def _restore_add_action(window):
         add_button.setEnabled(True)
 
 
-def _scheme2_quote_remark(item, *, legacy=False):
+def _scheme2_quote_remark(item, *, legacy=False, include_quantities=True):
     """Build the formal quote remark only from confirmed program fields."""
 
     product = str(
@@ -7500,6 +7507,7 @@ def _scheme2_quote_remark(item, *, legacy=False):
         material = "不锈钢316"
     surface = str(item.get("scheme2_selected_surface") or item.get("coating_type") or "").strip()
     color = str(item.get("display_color") or "").strip()
+    order_quantity = max(1, int(_number(item.get("quantity", 1), 1)))
     attachment_names = []
     for attachment in item.get("attachments") or []:
         if not isinstance(attachment, dict):
@@ -7512,10 +7520,16 @@ def _scheme2_quote_remark(item, *, legacy=False):
                 name = f"{name}（{model}）"
         elif not legacy:
             name, _spec, _light = _attachment_popup_text(attachment)
-            # Remarks list names only: omit the child label, model, size and
-            # quantity, while retaining popup order and quote-local names.
+            # Retain popup order and quote-local names; models/sizes stay in
+            # the cost details. Old names-only text is used for migration.
             name = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", name).strip()
-        if name and name not in attachment_names:
+        if name and not legacy and include_quantities:
+            quantity = _attachment_popup_quantity(attachment) * order_quantity
+            deduction = "（扣减）" if quantity < 0 else ""
+            # The popup keeps per-cabinet/set counts; remarks show line totals.
+            # Multiply only here, leaving attachment quantities/costs intact.
+            attachment_names.append(f"{name}×{quantity}{deduction}")
+        elif name and name not in attachment_names:
             attachment_names.append(name)
     attachments = "、".join(attachment_names) or "无附件"
     parts = [f"仿威图{product}柜", material, surface, color, attachments]
@@ -7535,14 +7549,19 @@ def _synchronize_export_remark(item, remark):
 
 
 def _quote_item_remark(item, *, preserve_existing=False):
-    """Default to current popup names; a complete manual override includes blanks."""
+    """Default to popup names/counts; a complete manual override includes blanks."""
     if preserve_existing and "final_remark" in item:
         return str(item.get("final_remark") or "")
     if "quote_remark_manual" not in item:
         prior = str(item.get("final_remark") or "").strip()
         # Recognize the previous generated wording without erasing unrelated
         # remarks already saved in old quotation snapshots.
-        item["quote_remark_manual"] = bool(prior and prior != _scheme2_quote_remark(item, legacy=True))
+        automatic = {
+            _scheme2_quote_remark(item, legacy=True),
+            _scheme2_quote_remark(item, include_quantities=False),
+            _scheme2_quote_remark(item),
+        }
+        item["quote_remark_manual"] = bool(prior and prior not in automatic)
     value = str(item.get("final_remark") or "") if item["quote_remark_manual"] else _scheme2_quote_remark(item)
     _synchronize_export_remark(item, value)
     return str(item["final_remark"])

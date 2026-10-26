@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 
 import {applyCabinetMaterial,createCabinetMaterialService} from '../api/cabinet_material_service.mjs';
 import {createCabinetSprayService} from '../api/cabinet_spray_service.mjs';
+import {installLocalNameScope,localApiSession} from './helpers/local_api_session.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const psql=process.env.ATTACHMENT_TEST_PSQL||'G:/PostgreSQL/18/bin/psql.exe';
@@ -37,7 +38,7 @@ test('versioned cabinet catalog stages, activates, calculates and saves an immut
   `);
   runFile('database/migrations/cabinet_material_v2.sql');
   runFile('database/migrations/cabinet_spray_v2.sql');
-  runFile('database/migrations/cabinet_auxiliary_v2.sql');
+  runFile('database/migrations/cabinet_auxiliary_v3.sql');
   runFile('database/migrations/cabinet_labor_v1.sql');
   const staged=runFile('database/cabinet-material/web/02-stage.sql');
   assert.match(staged,/cabinet-material-4f8bf726efa6568d-v2/);
@@ -59,10 +60,10 @@ test('versioned cabinet catalog stages, activates, calculates and saves an immut
   assert.equal(sql(`SELECT calc.get_product_spray_cost('JQ_EXP','JQ609648','SECC',600,960,480,1,12);`),'49.500000');
   assert.equal(sql(`SELECT calc.get_product_spray_cost('JQ_EXP','JQ609648','SECC',600,960,480,1,0);`),'0');
   const auxiliaryStaged=runFile('database/cabinet-auxiliary/web/02-stage.sql');
-  assert.match(auxiliaryStaged,/cabinet-auxiliary-706c234a5de12a39-v2/);
-  assert.equal(sql(`SELECT count(*) FROM calc.cabinet_auxiliary_line;`),'255');
+  assert.match(auxiliaryStaged,/cabinet-auxiliary-189ae4efbfcb40f5-v3/);
+  assert.equal(sql(`SELECT count(*) FROM calc.cabinet_auxiliary_line;`),'510');
   assert.equal(sql(`SELECT count(*) FROM calc.cabinet_auxiliary_fixed_rule;`),'72');
-  assert.equal(sql(`SELECT calc.activate_cabinet_auxiliary_catalog_v2('cabinet-auxiliary-706c234a5de12a39-v2');`),'cabinet-auxiliary-706c234a5de12a39-v2');
+  assert.equal(sql(`SELECT calc.activate_cabinet_auxiliary_catalog_v3('cabinet-auxiliary-189ae4efbfcb40f5-v3');`),'cabinet-auxiliary-189ae4efbfcb40f5-v3');
   const laborStaged=runFile('database/cabinet-labor/web/02-stage.sql');
   assert.match(laborStaged,/cabinet-labor-a3d12580527a3eb6-v1/);
   assert.equal(sql(`SELECT count(*) FROM calc.cabinet_labor_rule;`),'57');
@@ -71,11 +72,14 @@ test('versioned cabinet catalog stages, activates, calculates and saves an immut
   assert.equal(sql(`SELECT data_version FROM calc.cabinet_labor_catalog_version WHERE status='ACTIVE';`),'cabinet-labor-01249192a2981dc7-v2');
   assert.equal(sql(`SELECT count(*) FROM calc.cabinet_labor_rule WHERE data_version='cabinet-labor-01249192a2981dc7-v2';`),'58');
   assert.equal(sql(`SELECT count(*) FROM calc.cabinet_labor_rule WHERE data_version='cabinet-labor-01249192a2981dc7-v2' AND product_code='JM' AND rule_kind='LINEAR_WEIGHT';`),'2');
+  runFile('database/migrations/enforce_management_fee_6_percent.sql');
+  installLocalNameScope(sql);
 
   const service=createCabinetMaterialService({runPsql:async source=>sql(source)});
   const input={quote_id:'CABINET-1',product_code:'JS',material_code:'SUS304',width_mm:1000,height_mm:1800,
     depth_mm:600,single_door_count:1,double_door_count:0,cabinet_body_thickness_mm:1.5,
-    waste_factor:1.3,quote_date:'2026-09-11',coating_type:'橘纹'};
+    waste_factor:1.3,quote_date:'2026-09-11',coating_type:'橘纹',material_unit_price_override:20,
+    galvanized_sheet_unit_price_override:5,carbon_steel_unit_price_override:5};
   const material=await service.calculate(input);
   assert.equal(material.data_version,'cabinet-material-4f8bf726efa6568d-v2');
   assert.equal(material.waste_factor,1.3);
@@ -98,7 +102,8 @@ test('versioned cabinet catalog stages, activates, calculates and saves an immut
   assert.equal(defaulted.waste_factor,1.2);
 
   const experience=await service.calculate({quote_id:'CABINET-EXP',product_code:'JQ_EXP',model_code:'JQ609648',
-    material_code:'SECC',width_mm:600,height_mm:960,depth_mm:480,waste_factor:1.8,quote_date:'2026-09-11'});
+    material_code:'SECC',width_mm:600,height_mm:960,depth_mm:480,waste_factor:1.8,quote_date:'2026-09-11',
+    material_unit_price_override:5,galvanized_sheet_unit_price_override:5,carbon_steel_unit_price_override:5});
   assert.equal(experience.data_version,'cabinet-material-4f8bf726efa6568d-v2');
   assert.equal(experience.corrected_material_weight_kg,54);
   assert.equal(experience.material_cost,270);
@@ -129,35 +134,40 @@ test('versioned cabinet catalog stages, activates, calculates and saves an immut
   const reserve=net.createServer();await new Promise(resolve=>reserve.listen(0,'127.0.0.1',resolve));
   const port=reserve.address().port;await new Promise(resolve=>reserve.close(resolve));
   const child=spawn(process.execPath,[path.join(root,'api/server.mjs')],{cwd:root,windowsHide:true,env:{...process.env,
-    DATABASE_URL:'',PGSERVICE:undefined,PGSERVICEFILE:undefined,PGPASSWORD:'',RENDER:'',AI_QUOTE_API_KEY:'',AI_QUOTE_API_HOST:'127.0.0.1',PORT:String(port),PSQL_PATH:psql,
+    DATABASE_URL:'',PGSERVICE:undefined,PGSERVICEFILE:undefined,PGPASSWORD:'',RENDER:'',AI_QUOTE_API_KEY:'local-regression-only',AI_QUOTE_API_HOST:'127.0.0.1',PORT:String(port),PSQL_PATH:psql,
     AI_QUOTE_DB_HOST:dbHost,AI_QUOTE_DB_PORT:'55439',AI_QUOTE_DB_USER:'attachment_test',AI_QUOTE_DB_NAME:db}});
   try{
     await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('local API startup timeout')),10000);
       child.stdout.on('data',data=>{if(String(data).includes('listening')){clearTimeout(timer);resolve();}});
       child.once('error',reject);child.once('exit',code=>{clearTimeout(timer);reject(new Error(`API exited ${code}`));});});
-    const response=await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...input,quote_id:'HTTP-CABINET',waste_factor:1.35})});
+    const api=await localApiSession(`http://127.0.0.1:${port}`);
+    const response=await api.fetch('/api/quotes/calculate-dual',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...input,quote_id:'HTTP-CABINET',waste_factor:1.35})});
     const body=await response.json();assert.equal(response.status,200,JSON.stringify(body));
     assert.equal(body.formula_cost.waste_factor,1.35);
     assert.ok(body.formula_cost.material_details.some(row=>row.material_code==='SECC'));
     assert.ok(body.formula_cost.material_details.some(row=>row.material_code==='SUS304'));
     assert.equal(body.formula_cost.cabinet_spray_version,'cabinet-spray-4b3d73c9cb7a6f26-v2');
-    assert.equal(body.formula_cost.cabinet_auxiliary_version,'cabinet-auxiliary-706c234a5de12a39-v2');
+    assert.equal(body.formula_cost.cabinet_auxiliary_version,'cabinet-auxiliary-189ae4efbfcb40f5-v3');
     assert.equal(body.formula_cost.cabinet_labor_version,'cabinet-labor-01249192a2981dc7-v2');
     assert.ok(body.formula_cost.auxiliary_cost>0);
     assert.ok(body.formula_cost.labor_cost>0);
-    assert.equal(body.formula_cost.management_fee,Math.round(body.formula_cost.labor_cost*.13*100)/100);
+    const feeBaseCents=['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost']
+      .reduce((sum,key)=>sum+Math.round(body.formula_cost[key]*100),0);
+    assert.equal(body.formula_cost.management_fee_rate,.06);
+    assert.equal(body.formula_cost.management_fee,Math.floor((feeBaseCents*6+50)/100)/100);
     assert.equal(body.quick_quote.base_price,2000);
     assert.equal(body.quick_quote.total_cost,2000);
     assert.ok(body.formula_cost.product_area_m2>0);
     assert.equal(body.formula_cost.spray_cost,Math.round(body.formula_cost.product_area_m2*12*100)/100);
     assert.equal(sql(`SELECT formula_waste_factor FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'1.35');
     assert.equal(sql(`SELECT cabinet_spray_version FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'cabinet-spray-4b3d73c9cb7a6f26-v2');
-    assert.equal(sql(`SELECT cabinet_auxiliary_version FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'cabinet-auxiliary-706c234a5de12a39-v2');
+    assert.equal(sql(`SELECT cabinet_auxiliary_version FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'cabinet-auxiliary-189ae4efbfcb40f5-v3');
     assert.equal(sql(`SELECT cabinet_labor_version FROM calc.dual_quote_result WHERE quote_id='HTTP-CABINET';`),'cabinet-labor-01249192a2981dc7-v2');
 
-    const experienceResponse=await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-dual`,{method:'POST',headers:{'content-type':'application/json'},
+    const experienceResponse=await api.fetch('/api/quotes/calculate-dual',{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({quote_id:'HTTP-EXPERIENCE',product_code:'JQ_EXP',model_code:'JQ609648-1',material_code:'SECC',
-        width_mm:600,height_mm:960,depth_mm:480,waste_factor:1.8,quote_date:'2026-09-11',coating_type:'橘纹'})});
+        width_mm:600,height_mm:960,depth_mm:480,waste_factor:1.8,quote_date:'2026-09-11',coating_type:'橘纹',
+        material_unit_price_override:5,galvanized_sheet_unit_price_override:5,carbon_steel_unit_price_override:5})});
     const experienceBody=await experienceResponse.json();assert.equal(experienceResponse.status,200,JSON.stringify(experienceBody));
     assert.equal(experienceBody.formula_cost.net_material_weight_kg,54);
     assert.equal(experienceBody.formula_cost.corrected_material_weight_kg,54);

@@ -7,7 +7,6 @@ import math
 from quick_discount_rules import PRICING_BASIS, money, money_sum
 
 SCHEMA = 1
-MAX_VERSIONS = 50
 
 
 def decimal_input(text, places=2, maximum=None):
@@ -108,12 +107,31 @@ def restore_state(value):
     if not isinstance(value, dict) or value.get('schema') != SCHEMA:
         return dict(schema=SCHEMA, versions=[], current=0)
     versions = value.get('versions')
-    if not isinstance(versions, list) or len(versions) > MAX_VERSIONS:
+    if not isinstance(versions, list):
         raise ValueError('报价版本记录无效。')
     for index, version in enumerate(versions, 1):
         if not isinstance(version, dict) or version.get('version') != index or not isinstance(version.get('items'), list):
             raise ValueError('报价版本记录不连续或明细无效。')
-    return deepcopy(value)
+    restored = deepcopy(value)
+    # Older clients retained this flag after saving an edited revision. Such a
+    # version is a real price record, not an empty slot for the next adjustment.
+    for index, version in enumerate(restored['versions']):
+        if version.get('revision_draft') and not version.get('pending_confirmation') and (version.get('sealed') or index == 0
+                or not same_document(version, restored['versions'][index-1])):
+            version.pop('revision_draft', None)
+        if index > 0 and not version.get('revision_draft'):
+            version['confirmed'] = True
+    return restored
+
+
+def same_document(left, right):
+    """Compare editable content, excluding rebuilt presentation caches/metadata."""
+    def content(version):
+        items = [{key: value for key, value in item.items()
+                  if key not in ('quote_display', 'quote_cost_display', 'cost_detail_rows')}
+                 for item in version.get('items') or []]
+        return items, version.get('company', ''), version.get('order_nature', 'UNCLASSIFIED')
+    return content(left) == content(right)
 
 
 def sync_latest(state, items, company, operator='', quote_date='', order_nature='UNCLASSIFIED'):
@@ -123,13 +141,22 @@ def sync_latest(state, items, company, operator='', quote_date='', order_nature=
     versions = state.setdefault('versions', [])
     number = len(versions) or 1
     prior = versions[-1] if versions else {}
+    if prior.get('sealed') or prior.get('confirmed'):
+        return state
     entry = make_version(items, company, number, prior.get('reason', '首次报价'), operator, quote_date, order_nature)
-    entry['sealed'] = bool(prior.get('sealed'))
-    if prior.get('revision_draft'):
+    if (prior.get('revision_draft') and len(versions) > 1
+            and (prior.get('pending_confirmation') or same_document(entry, versions[-2]))):
         entry['revision_draft'] = True
-    if versions and not prior.get('sealed'):
+        if prior.get('pending_confirmation'):
+            entry['pending_confirmation'] = True
+    if versions and same_document(entry, prior):
+        # A view/refresh/open cannot rewrite the saved author, time or reason.
+        if not entry.get('revision_draft'):
+            prior.pop('revision_draft', None)
+        return state
+    if versions:
         versions[-1] = entry
-    elif not versions:
+    else:
         versions.append(entry)
     state.update(schema=SCHEMA, current=len(versions))
     return state
@@ -138,8 +165,6 @@ def sync_latest(state, items, company, operator='', quote_date='', order_nature=
 def append_version(state, items, company, reason, operator='', quote_date='', order_nature=None):
     if not reason.strip():
         raise ValueError('请填写调价原因。')
-    if len(state['versions']) >= MAX_VERSIONS:
-        raise ValueError('报价版本超过50份，请新建报价方案。')
     if order_nature is None:
         order_nature = (state['versions'][-1] if state['versions'] else {}).get('order_nature')
     entry = make_version(items, company, len(state['versions']) + 1, reason, operator, quote_date, order_nature)

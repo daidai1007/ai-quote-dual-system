@@ -63,8 +63,16 @@ class ManagementFee(unittest.TestCase):
         self.window.current_result = dict(formula=copy.deepcopy(item["formula"]), quick=copy.deepcopy(item["quick"]))
         self.window._formula_base_result = copy.deepcopy(item["formula_base"])
         self.window.attachments = copy.deepcopy(item["attachments"])
+        # This fixture injects a result directly. Complete the normal AUTO
+        # initialization before simulating a subsequent manual freight edit.
+        self.window.refresh_discounted_totals()
+        self.assertEqual(self.window.freight_state.mode, "AUTO")
+        self.assertEqual(self.window.current_result["formula"]["management_fee"], 120.61)
         self.window.freight_spin.setValue(61.86)
         self.window.refresh_discounted_totals()
+        self.assertEqual(self.window.freight_spin.value(), 61.86)
+        self.assertEqual(self.window.freight_state.mode, "MANUAL")
+        self.assertEqual(self.window.current_result["formula"]["management_fee_base"], 2072.05)
         self.assertEqual(self.window.current_result["formula"]["management_fee"], 124.32)
         self.assertEqual(self.window.current_result["formula"]["total_cost"], 2134.51)
         self.window.draft_items = [item]
@@ -73,6 +81,14 @@ class ManagementFee(unittest.TestCase):
         frozen = ui._quote_export_items_snapshot(self.window, items=[item])[0]
         self.assertEqual(frozen["formula"]["management_fee"], 124.32)
         self.assertEqual(frozen["formula"]["management_fee_rate"], .06)
+
+    def test_manual_attachment_quantity_is_per_whole_set_in_python_too(self):
+        row = dict(quantity=2, selection_source='manual', quick_amount=20, formula_amount=14)
+        self.assertEqual(pricing.effective_attachment_quantity(row, 3, 4), 6)
+        self.assertEqual(pricing.effective_attachment_line_amount(row, 3, 4), 60)
+        self.assertEqual(pricing.effective_formula_attachment_line_amount(row, 3, 4), 42)
+        children = [dict(row, ganged_cabinet_index=index) for index in range(4)]
+        self.assertEqual(sum(pricing.effective_attachment_quantity(child, 3, 4) for child in children), 24)
 
     def test_missing_actual_cost_component_cannot_be_filled_from_old_total(self):
         item = product()

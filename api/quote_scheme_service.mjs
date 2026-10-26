@@ -160,6 +160,15 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
   const natureUnchanged = (snapshot, alias='s') => `NOT EXISTS (SELECT 1 FROM calc.quote_scheme_version nature_lock
     WHERE nature_lock.scheme_id=${alias}.scheme_id AND ${orderNatureSql('nature_lock.snapshot_payload')}<>'UNCLASSIFIED'
       AND ${orderNatureSql('nature_lock.snapshot_payload')}<>${sqlUnicodeText(snapshotOrderNature(snapshot))})`;
+  const confirmedHistoryUnchanged = (snapshot, alias='s') => `NOT EXISTS (
+    SELECT 1 FROM calc.quote_scheme_snapshot history_snapshot,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(history_snapshot.snapshot_payload#>'{quote_management,versions}')='array'
+        THEN history_snapshot.snapshot_payload#>'{quote_management,versions}' ELSE '[]'::jsonb END) old_version
+    WHERE history_snapshot.scheme_id=${alias}.scheme_id AND old_version->>'confirmed'='true'
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(${sqlUnicodeText(JSON.stringify(
+        Array.isArray(snapshot.quote_management?.versions) ? snapshot.quote_management.versions : []))}::jsonb) new_version
+        WHERE new_version->>'version'=old_version->>'version'
+          AND (new_version-'sealed')=(old_version-'sealed')))`;
 
   const create = async (principal, input, { sourceNo = null } = {}) => {
     principal=currentQuotePrincipal()||principal;
@@ -257,8 +266,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     const predicate = where.join(' AND ');
     return query(`WITH matched AS (
       SELECT s.*, source.scheme_no AS source_scheme_no,(${writePermissionSql(principal,'s')}) AS can_write,
-        CASE WHEN (snap.snapshot_payload#>>'{quote_management,current}') ~ '^[1-9][0-9]?$'
-          THEN (snap.snapshot_payload#>>'{quote_management,current}')::integer ELSE s.version_no END AS quote_version,
+        CASE WHEN (snap.snapshot_payload#>>'{quote_management,current}') ~ '^[1-9][0-9]*$'
+          THEN (snap.snapshot_payload#>>'{quote_management,current}')::numeric ELSE s.version_no END AS quote_version,
         ${orderNatureSql('snap.snapshot_payload')} AS order_nature,count(*) OVER() AS total_count
       FROM calc.quote_scheme s LEFT JOIN calc.quote_scheme source ON source.scheme_id=s.source_scheme_id
       LEFT JOIN calc.quote_scheme_snapshot snap ON snap.scheme_id=s.scheme_id
@@ -285,6 +294,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       SELECT s.* FROM calc.quote_scheme s WHERE s.scheme_no=${sqlUnicodeText(schemeNo)}
         AND ${writePermissionSql(principal, 's')} AND s.status IN ('DRAFT','REVISING')
         AND ${natureUnchanged(snapshot)}
+        AND ${confirmedHistoryUnchanged(snapshot)}
         AND s.lock_version=${sqlNumber(input.expected_version)} FOR UPDATE
     ), updated AS (
       UPDATE calc.quote_scheme s SET company_name=${sqlUnicodeText(summary.company)},
@@ -309,7 +319,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
         jsonb_build_object('lock_version',lock_version) FROM updated)
     SELECT COALESCE((SELECT jsonb_build_object('saved',TRUE,'scheme_no',scheme_no,'status',status,
       'lock_version',lock_version,'updated_at',updated_at) FROM updated),'{"saved":false,"conflict":true}'::jsonb)::text;`);
-    if (!result?.saved) throw Object.assign(new Error('方案已被他人修改、当前状态只读或无权限，请重新打开。'), { statusCode: 409 });
+    if (!result?.saved) throw Object.assign(new Error('方案已被他人修改、当前状态只读、无权限或已确认调价历史被改动，请重新打开。'), { statusCode: 409 });
     return result;
   };
 
@@ -415,7 +425,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
             WHEN jsonb_typeof(snap.snapshot_payload->'quote_management'->'versions')='array'
             THEN snap.snapshot_payload->'quote_management'->'versions' ELSE '[]'::jsonb END) entry
             WHERE entry->>'version'=${sqlUnicodeText(String(version))}
-              AND entry->>'version'<>snap.snapshot_payload->'quote_management'->>'current'
+              AND (entry->>'version'<>snap.snapshot_payload->'quote_management'->>'current'
+                OR entry->>'confirmed'='true')
               AND entry->'items'=${sqlUnicodeText(JSON.stringify(frozenSnapshot.draft_items))}::jsonb
               AND COALESCE(entry->>'order_nature','UNCLASSIFIED')=${sqlUnicodeText(snapshotOrderNature(frozenSnapshot))}
               AND entry->>'company'=${sqlUnicodeText(String(frozenSnapshot.company || ''))})
@@ -433,7 +444,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     const p = principalValues(principal);
     const result = await query(`WITH target AS (SELECT s.* FROM calc.quote_scheme s WHERE s.scheme_no=${sqlUnicodeText(schemeNo)}
       AND ${writePermissionSql(principal, 's')} AND s.lock_version=${sqlNumber(input.expected_version)}
-      ${formalSuccess ? `AND ${natureUnchanged(frozenSnapshot)}` : ''} FOR UPDATE),
+      ${formalSuccess ? `AND ${natureUnchanged(frozenSnapshot)} AND ${confirmedHistoryUnchanged(frozenSnapshot)}` : ''} FOR UPDATE),
     logged AS (INSERT INTO calc.quote_scheme_export(scheme_id,export_kind,succeeded,actor_user_id,actor_name_snapshot,detail)
       SELECT scheme_id,${sqlUnicodeText(kind)},${input.succeeded ? 'TRUE':'FALSE'},${p.id},${sqlUnicodeText(operatorName)},
         ${sqlUnicodeText(JSON.stringify(input.detail || {}))}::jsonb FROM target RETURNING scheme_id),

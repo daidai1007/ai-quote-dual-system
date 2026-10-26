@@ -200,6 +200,7 @@ class DialogStyleTests(unittest.TestCase):
         try:
             self.assertIsNotNone(getattr(APP, '_unified_dialog_style_filter', None))
             item = json.loads((ROOT / 'tests/fixtures/export_formula_cost_detail.json').read_text('utf-8'))['items'][0]
+            ui._quote_item_remark(item)
             before = copy.deepcopy(item)
             discount = ui.FaceDiscountEditor(window, item)
             discount.show()

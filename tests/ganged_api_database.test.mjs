@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import {fileURLToPath} from 'node:url';
+import {installLocalNameScope,localApiSession} from './helpers/local_api_session.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const db = `ganged_performance_test_${Date.now()}`, psql = 'G:/PostgreSQL/18/bin/psql.exe';
@@ -20,6 +21,9 @@ test('real batch HTTP API: independent material weights, two bases, streamed pha
     for (const f of ['tests/fixtures/attachment_online_schema_20260911.sql','database/attachment-v2/web/01-prepare.sql',
       'database/attachment-v2/web/02-stage.sql','tests/fixtures/attachment_api_base_stub.sql',
       'database/migrations/cabinet_material_v2.sql','database/cabinet-material/web/02-stage.sql']) file(f);
+    installLocalNameScope(sql);
+    for(const f of ['cabinet_spray_v2.sql','cabinet_auxiliary_v3.sql','cabinet_labor_v1.sql'])
+      file('database/migrations/'+f);
     const stagedVersion=sql("SELECT data_version FROM calc.attachment_catalog_version WHERE status='STAGED';");
     assert.match(stagedVersion, /^xlsx-[a-f0-9]{16}-r[0-9]+$/);
     sql(`BEGIN; SET LOCAL calc.attachment_v2_api_ready='on'; SELECT calc.switch_attachment_catalog_v2('${stagedVersion}'); COMMIT;
@@ -27,12 +31,16 @@ test('real batch HTTP API: independent material weights, two bases, streamed pha
     const reserve=net.createServer(); await new Promise(resolve=>reserve.listen(0,'127.0.0.1',resolve));
     const port=reserve.address().port; await new Promise(resolve=>reserve.close(resolve));
     child=spawn(process.execPath, ['api/server.mjs'], {cwd:root,windowsHide:true,env:{...process.env,
-      DATABASE_URL:'',PGPASSWORD:'',RENDER:'',PORT:String(port),PSQL_PATH:psql,AI_QUOTE_API_KEY:'',AI_QUOTE_API_HOST:'127.0.0.1',
+      DATABASE_URL:'',PGPASSWORD:'',RENDER:'',PORT:String(port),PSQL_PATH:psql,AI_QUOTE_API_KEY:'local-regression-only',AI_QUOTE_API_HOST:'127.0.0.1',
       AI_QUOTE_DB_HOST:'127.0.0.1',AI_QUOTE_DB_PORT:'55439',AI_QUOTE_DB_USER:'attachment_test',AI_QUOTE_DB_NAME:db}});
     const log=[]; child.stdout.on('data',data=>log.push(String(data)));
+    child.stderr.on('data',data=>log.push(String(data)));
     await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('local API startup timeout')),8000);
       child.stdout.on('data',data=>{if(String(data).includes('listening')){clearTimeout(timer);resolve();}});child.once('error',reject);});
-    const catalog=await (await fetch(`http://127.0.0.1:${port}/api/attachments/catalog?v=2`)).json();
+    const api=await localApiSession(`http://127.0.0.1:${port}`);
+    const catalogResponse=await api.fetch('/api/attachments/catalog?v=2');
+    const catalog=await catalogResponse.json();
+    assert.equal(catalogResponse.status,200,JSON.stringify(catalog));
     const cabinets=[1000,800].map((width,index)=>({quote_id:`BATCH-${index}`,product_code:'JP_SINGLE',material_code:'SECC',
       width_mm:width,height_mm:2100,depth_mm:600,quote_date:'2026-10-09',coating_type:'橘纹',
       single_door_count:1,double_door_count:0,waste_factor:1.2,cabinet_body_thickness_mm:1.5,
@@ -47,10 +55,11 @@ test('real batch HTTP API: independent material weights, two bases, streamed pha
     });
     const input={cabinets,attachment_payload:{...cabinets[0],quote_id:'BATCH-0',width_mm:1800,
       ganged_cabinet_count:2,ganged_cabinets:cabinets,attachments:bases,attachment_contract:2}};
-    const response=await fetch(`http://127.0.0.1:${port}/api/quotes/calculate-ganged`,{method:'POST',
+    const response=await api.fetch('/api/quotes/calculate-ganged',{method:'POST',
       headers:{'content-type':'application/json',accept:'application/x-ndjson','x-quote-request-id':'batch-database-trace'},body:JSON.stringify(input)});
-    assert.equal(response.status,200);
-    const events=(await response.text()).trim().split('\n').map(JSON.parse);
+    const responseText=await response.text();
+    assert.equal(response.status,200,responseText+'\n'+log.join('').slice(-2500));
+    const events=responseText.trim().split('\n').map(JSON.parse);
     assert.equal(events.at(-1).type,'result',JSON.stringify(events.at(-1)));
     const result=events.at(-1).result;
     assert.equal(result.ganged_batch_contract,1);

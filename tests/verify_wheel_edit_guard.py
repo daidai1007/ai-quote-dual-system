@@ -188,6 +188,9 @@ class WheelEditing(unittest.TestCase):
                     formula_amount=10, quick_amount=12)],
                     quick=dict(attachment_fee=12, total_cost=112),
                     formula=dict(attachment_fee=10, total_cost=110))
+        # Start with a normalized persisted remark, not a legacy row whose
+        # first editor construction intentionally adds remark metadata.
+        ui._quote_item_remark(item)
         before = copy.deepcopy(item)
         dialog = self.show_widget(ui.AttachmentEditor(self.window, item))
         for column in (dialog.COL_QUANTITY, dialog.COL_FORMULA_AMOUNT, dialog.COL_AMOUNT):

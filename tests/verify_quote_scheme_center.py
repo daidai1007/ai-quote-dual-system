@@ -82,7 +82,7 @@ with patch.object(quote_scheme_center, "_load_list") as load_list, \
     assert all(button.isVisibleTo(window) for button in buttons)
     backgrounds = [button.grab().toImage().pixelColor(12, button.height() // 2).name()
                    for button in buttons]
-    assert backgrounds == ["#2563eb"] * 3, backgrounds
+    assert backgrounds == ["#e6f1fb"] * 3, backgrounds
     artifact_directory = os.environ.get("AI_QUOTE_UI_ARTIFACT_DIR", "").strip()
     if artifact_directory:
         output = Path(artifact_directory)

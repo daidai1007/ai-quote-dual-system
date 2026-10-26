@@ -19,6 +19,7 @@ COPY api/formula_template_query.mjs api/ganged_quote_service.mjs api/quote_telem
 COPY api/quote_analysis_service.mjs api/name_login_service.mjs api/quote_access_scope.mjs ./api/
 COPY api/contract_document.mjs api/contract_formula.mjs api/contract_quote.mjs api/contract_service.mjs ./api/
 COPY api/quote_delivery_document.mjs api/quote_delivery_service.mjs ./api/
+COPY api/jp_auxiliary_weight.mjs ./api/
 COPY quote_order_nature.mjs exceljs_range_adapter.mjs quote_export_contract.mjs quick_discount_rules.mjs export_dual_quote_workbook.mjs attachment_snapshot_export.mjs ./
 
 RUN chown -R node:node /app

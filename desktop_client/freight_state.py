@@ -30,6 +30,7 @@ def billable_weight(result):
 
 
 AUTO_FREIGHT_BASIS = 'self_made_weight_v1'
+JP_AUXILIARY_WEIGHT_BASIS = 'jp_auxiliary_frame_weight_v1'
 
 
 def _finite(value, default=Decimal(0)):
@@ -41,7 +42,7 @@ def _finite(value, default=Decimal(0)):
 
 
 def self_made_weight(item):
-    """One set: cabinet billable weight plus completed attachment piece weights.
+    """One set: cabinet billable + JP BOM frame + completed attachment weights.
 
     Child counts, order quantity and cabinet waste are already represented by
     the accepted cabinet/attachment results; never apply them a second time.
@@ -54,7 +55,7 @@ def self_made_weight(item):
     cabinet = _finite(formula.get('corrected_material_weight_kg'))
     if formula.get('corrected_material_weight_kg') is None and item.get('ganged_cabinet_results'):
         cabinet = billable_weight(item) or Decimal(0)
-    total = max(Decimal(0), cabinet)
+    total = max(Decimal(0), cabinet) + jp_auxiliary_weight(item)
     for row in item.get('attachments') or []:
         if (not isinstance(row, dict) or row.get('status') in ('ERROR', 'PENDING_MANUAL')
                 or row.get('pending_manual_dimensions')):
@@ -65,6 +66,19 @@ def self_made_weight(item):
         sign = -1 if quantity < 0 or _finite(row.get('attachment_price_sign', 1), Decimal(1)) == -1 else 1
         total += weight * abs(quantity) * sign
     return max(Decimal(0), total)
+
+
+def jp_auxiliary_weight(item):
+    """Accepted JP BOM weight already includes its 1.2; no extra multipliers."""
+    if not isinstance(item, dict): return Decimal(0)
+    formula = item.get('formula') or item.get('formula_cost') or {}
+    if not isinstance(formula, dict): return Decimal(0)
+    if formula.get('cabinet_auxiliary_weight_basis') == JP_AUXILIARY_WEIGHT_BASIS:
+        return max(Decimal(0), _finite(formula.get('cabinet_auxiliary_self_made_weight_kg')))
+    children = formula.get('ganged_cabinet_costs')
+    if not isinstance(children, list) or not children:
+        children = item.get('ganged_cabinet_results')
+    return sum((jp_auxiliary_weight(child) for child in children or [] if isinstance(child, dict)), Decimal(0))
 
 
 def automatic_item_freight(item):

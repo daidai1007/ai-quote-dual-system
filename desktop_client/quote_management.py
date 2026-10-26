@@ -207,30 +207,31 @@ class AdjustQuoteDialog(QWidget):
         else: super().keyPressEvent(event)
 
     def draw(self):
-        import scheme2_ui as ui
-        rows = []
-        for item in self.items:
-            values = ui._row_values(item)
-            rows.append((f'{values[1]}\n{values[3]}', values[11], f'{values[15]:.2f}',
-                         f'{values[16]:,.2f}', factor_text(item['quote_original_discount']),
-                         factor_text(item.get('quick_discount', 1))))
-        fill(self.grid, rows, (2, 5))
-        self.inputs = {}
-        for row in range(len(rows)):
-            self.grid.setRowHeight(row, 88)
-            for col in (0,2,5): self.grid.item(row,col).setForeground(QColor('transparent'))
-            product = QWidget(); product_layout = QVBoxLayout(product); product_layout.setContentsMargins(10,6,10,6)
-            product_layout.addWidget(QLabel(rows[row][0]))
-            link = button('附件价格', lambda _=False,r=row: self.attachment_row(r)); link.setObjectName('quoteManagementLink')
-            product_layout.addWidget(link); self.grid.setCellWidget(row,0,product)
-            for col in (2,5):
-                host = QWidget(); host_layout = QHBoxLayout(host); host_layout.setContentsMargins(8,6,8,6)
-                editor = QLineEdit(self.grid.item(row,col).text()); editor.setFixedWidth(104 if col==2 else 78)
-                editor.setAlignment(Qt.AlignmentFlag.AlignRight)
-                editor.setAccessibleName(f'第{row+1}行' + ('折后单价' if col==2 else '调整折扣'))
-                editor.textEdited.connect(lambda text,r=row,c=col:self.grid.item(r,c).setText(text))
-                host_layout.addStretch(1); host_layout.addWidget(editor); self.grid.setCellWidget(row,col,host)
-                self.inputs[row,col] = editor
+        with QSignalBlocker(self.grid):
+            import scheme2_ui as ui
+            rows = []
+            for item in self.items:
+                values = ui._row_values(item)
+                rows.append((f'{values[1]}\n{values[3]}', values[11], f'{values[15]:.2f}',
+                             f'{values[16]:,.2f}', factor_text(item['quote_original_discount']),
+                             factor_text(item.get('quick_discount', 1))))
+            fill(self.grid, rows, (2, 5))
+            self.inputs = {}
+            for row in range(len(rows)):
+                self.grid.setRowHeight(row, 88)
+                for col in (0,2,5): self.grid.item(row,col).setForeground(QColor('transparent'))
+                product = QWidget(); product_layout = QVBoxLayout(product); product_layout.setContentsMargins(10,6,10,6)
+                product_layout.addWidget(QLabel(rows[row][0]))
+                link = button('附件价格', lambda _=False,r=row: self.attachment_row(r)); link.setObjectName('quoteManagementLink')
+                product_layout.addWidget(link); self.grid.setCellWidget(row,0,product)
+                for col in (2,5):
+                    host = QWidget(); host_layout = QHBoxLayout(host); host_layout.setContentsMargins(8,6,8,6)
+                    editor = QLineEdit(self.grid.item(row,col).text()); editor.setFixedWidth(104 if col==2 else 78)
+                    editor.setAlignment(Qt.AlignmentFlag.AlignRight)
+                    editor.setAccessibleName(f'第{row+1}行' + ('折后单价' if col==2 else '调整折扣'))
+                    editor.textEdited.connect(lambda text,r=row,c=col:self.grid.item(r,c).setText(text))
+                    host_layout.addStretch(1); host_layout.addWidget(editor); self.grid.setCellWidget(row,col,host)
+                    self.inputs[row,col] = editor
 
     def changed(self, row, column):
         if column not in (2, 5): return
@@ -586,6 +587,8 @@ class QuoteManagement:
             entry = model.append_version(self.state, self.window.draft_items, self.window.scheme2_company.currentText(),
                 '创建修订版', self.operator(), self.window._quote_scheme_quote_date, nature.current(self.window))
             entry['revision_draft'] = True
+            entry['pending_confirmation'] = True
+            entry.pop('confirmed', None)
         self.sync()
         if self.state['versions'] and self.window._quote_scheme_status in ('QUOTED','ARCHIVED','VOID'):
             self.state['versions'][-1]['sealed'] = True
@@ -733,10 +736,11 @@ class QuoteManagement:
         fill(self.items_table, [(v[1], v[3], v[11], f'{v[15]:,.2f}', f'{v[16]:,.2f}',
              factor_text(item.get('quote_original_discount', item.get('quick_discount', 1))), factor_text(item.get('quick_discount', 1)))
              for item in w.draft_items for v in [ui._row_values(item)]])
-        versions = self.state['versions']
+        versions = [version for version in self.state['versions'] if not version.get('pending_confirmation')]
         fill(self.history, [(f"V{v['version']}", v['company'], f"{v['amount']:,.2f}", v['updated_at'], v['operator'], v['reason'], '') for v in versions])
         for row, version in enumerate(versions):
-            self.history.setCellWidget(row, 6, button('查看', lambda _=False, n=version['version']: self.view_version(n)))
+            if self.history.cellWidget(row, 6) is None:
+                self.history.setCellWidget(row, 6, button('查看', lambda _=False, n=version['version']: self.view_version(n)))
         with QSignalBlocker(self.from_version), QSignalBlocker(self.to_version):
             before, after = self.from_version.currentData(), self.to_version.currentData()
             self.from_version.clear(); self.to_version.clear()
@@ -793,7 +797,7 @@ class QuoteManagement:
         if w._quote_scheme_read_only or self.history_version is not None or nature.locked(w) or getattr(w, '_scheme2_document_busy', False): return
         w._quote_order_nature = code
         for version in self.state.get('versions', []):
-            if not version.get('sealed'): version['order_nature'] = code
+            if not version.get('sealed') and not version.get('confirmed'): version['order_nature'] = code
         self.sync(); w.refresh_summary()
         from quote_scheme_center import _schedule_save
         _schedule_save(w)
@@ -851,8 +855,6 @@ class QuoteManagement:
         self.sync()
         revision_draft = bool(self.state['versions'] and self.state['versions'][-1].get('revision_draft'))
         number = len(self.state['versions']) + (0 if revision_draft else 1)
-        if number>model.MAX_VERSIONS:
-            self.feedback.setText('报价版本超过50份，请新建报价方案。'); return
         dialog = AdjustQuoteDialog(w.draft_items, number, w)
         self.root.addWidget(dialog); dialog.setWindowFlags(Qt.WindowType.Widget)
         self.root.setCurrentWidget(dialog)
@@ -862,20 +864,25 @@ class QuoteManagement:
             self.root.setCurrentWidget(self.detail_page); self.root.removeWidget(dialog)
         if not accepted:
             dialog.deleteLater(); return
-        if dialog.items == w.draft_items:
+        candidate = dict(items=dialog.items, company=w.scheme2_company.currentText(), order_nature=nature.current(w))
+        reference = self.state['versions'][-2] if revision_draft and len(self.state['versions']) > 1 else self.state['versions'][-1]
+        if dialog.items == w.draft_items and model.same_document(candidate, reference):
             self.feedback.setText('报价未发生变化，无需生成新版本。'); dialog.deleteLater(); return
         if revision_draft:
             self.state['versions'][-1] = model.make_version(dialog.items, w.scheme2_company.currentText(), number,
                 dialog.reason.toPlainText().strip(), self.operator(), w._quote_scheme_quote_date, nature.current(w))
         else:
             model.append_version(self.state, dialog.items, w.scheme2_company.currentText(), dialog.reason.toPlainText().strip(), self.operator(), w._quote_scheme_quote_date)
+        self.state['versions'][-1]['confirmed'] = True
         w.draft_items = deepcopy(dialog.items); w.refresh_summary(); self.tabs.setCurrentIndex(0)
         self.refresh(); self.save(); dialog.deleteLater()
 
     def view_version(self, number):
         import quote_scheme_center as centre
         if getattr(self.window, '_scheme2_document_busy', False) or self.window._quote_scheme_export_context: return
-        if number == len(self.state['versions']):
+        workspace = self.latest_workspace or dict(items=self.window.draft_items,
+            company=self.window.scheme2_company.currentText(), order_nature=nature.current(self.window))
+        if number == len(self.state['versions']) and model.same_document(workspace, self.state['versions'][number-1]):
             self.restore_latest(); self.tabs.setCurrentIndex(0); return
         w = self.window
         if self.latest_workspace is None:

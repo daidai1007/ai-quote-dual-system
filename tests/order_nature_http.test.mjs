@@ -29,7 +29,7 @@ test('order nature survives save/reopen/output/analysis and cannot bypass contra
    return {status:response.status,data:await response.json()};
   };
   const login=await request('/api/name-login',{name:'本机人员甲'});assert.equal(login.status,200);token=login.data.token;
-  const snapshot=type=>({company:'本机测试客户 A',analysis_customer:{customer_code:'LOCAL-A'},document:{order_nature:type},scheme_summary:{company:'本机测试客户 A',quoted_amount:650.3},
+  const snapshot=type=>({company:'本机测试客户 A',analysis_customer:{customer_code:'LOCAL-A'},document:{order_nature:type,quote_date:'2026-10-23'},scheme_summary:{company:'本机测试客户 A',quoted_amount:650.3},
    draft_items:sampleQuote.items.map(row=>({name:row.name,product_code:'JP',quantity:row.quantity,attachments:[],formula:{material_cost:row.unit_price,auxiliary_cost:0,labor_cost:0,attachment_fee:0,spray_cost:0,management_fee:0},formula_discount:1,quote_display:{...row,discount:.8}}))});
   const rows={};
   await t.test('draft allows unclassified, formal output rejects missing and invalid classification',async()=>{

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {createAttachmentService} from '../api/attachment_service.mjs';
 import ExcelJS from '@excel.js/exceljs';
 import {requiredParameters} from '../api/attachment_cost.mjs';
+import {installLocalNameScope,localApiSession} from './helpers/local_api_session.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const psql=process.env.ATTACHMENT_TEST_PSQL || 'G:/PostgreSQL/18/bin/psql.exe';
 const db=`attachment_v2_test_${Date.now()}`;
@@ -17,51 +18,63 @@ function sql(text,database=db) { return execFileSync(psql,[...base,'-d',database
 function file(relative,database=db) { return sql(fs.readFileSync(path.join(root,relative),'utf8'),database); }
 const json=value=>`convert_from(decode('${Buffer.from(JSON.stringify(value)).toString('hex')}','hex'),'UTF8')::jsonb`;
 const original=JSON.parse(fs.readFileSync(path.join(root,'database/attachment-v2/generated/attachment-bundle.json')));
+// Current requests carry the sidebar prices explicitly; do not rely on the
+// legacy database-price fallback when exercising attachment calculations.
+const seccPrices={material_unit_price_override:5,galvanized_sheet_unit_price_override:5,carbon_steel_unit_price_override:5};
 let bundle;
 
 test('实际HTTP API与本地PostgreSQL：V2持久化、基础计算回滚及旧客户端门槛',async()=>{
   const target=`${db}_http`;
   sql(`CREATE DATABASE ${target};`,'postgres');
   for(const f of ['tests/fixtures/attachment_online_schema_20260911.sql','database/attachment-v2/web/01-prepare.sql','database/attachment-v2/web/02-stage.sql','tests/fixtures/attachment_api_base_stub.sql']) file(f,target);
-  sql(`BEGIN; SET LOCAL calc.attachment_v2_api_ready='on'; SELECT calc.switch_attachment_catalog_v2('${original.data_version}'); COMMIT;`,target);
+  installLocalNameScope(text=>sql(text,target));
+  // The real API reads the current calculator schemas even when no catalog
+  // is active and this fixture intentionally falls back to its base stub.
+  for(const f of ['cabinet_material_v2.sql','cabinet_spray_v2.sql','cabinet_auxiliary_v3.sql','cabinet_labor_v1.sql'])
+    file('database/migrations/'+f,target);
+  const stagedVersion=sql("SELECT data_version FROM calc.attachment_catalog_version WHERE status='STAGED';",target);
+  assert.match(stagedVersion,/^xlsx-[a-f0-9]{16}-r[0-9]+$/);
+  sql(`BEGIN; SET LOCAL calc.attachment_v2_api_ready='on'; SELECT calc.switch_attachment_catalog_v2('${stagedVersion}'); COMMIT;`,target);
   const reserve=net.createServer();await new Promise(resolve=>reserve.listen(0,'127.0.0.1',resolve));
   const port=reserve.address().port;await new Promise(resolve=>reserve.close(resolve));
   const child=spawn(process.execPath,[path.join(root,'api/server.mjs')],{cwd:root,windowsHide:true,env:{...process.env,
-    DATABASE_URL:'',PGSERVICE:undefined,PGSERVICEFILE:undefined,PGPASSWORD:'',RENDER:'',AI_QUOTE_API_KEY:'',AI_QUOTE_API_HOST:'127.0.0.1',PORT:String(port),PSQL_PATH:psql,
+    DATABASE_URL:'',PGSERVICE:undefined,PGSERVICEFILE:undefined,PGPASSWORD:'',RENDER:'',AI_QUOTE_API_KEY:'local-regression-only',AI_QUOTE_API_HOST:'127.0.0.1',PORT:String(port),PSQL_PATH:psql,
     AI_QUOTE_DB_HOST:'127.0.0.1',AI_QUOTE_DB_PORT:'55439',AI_QUOTE_DB_USER:'attachment_test',AI_QUOTE_DB_NAME:target,
-    AI_QUOTE_ATTACHMENT_V2_VERSION:original.data_version,AI_QUOTE_ATTACHMENT_V2_ALLOW_STAGED:'1'}});
+    AI_QUOTE_ATTACHMENT_V2_VERSION:stagedVersion,AI_QUOTE_ATTACHMENT_V2_ALLOW_STAGED:'1'}});
   try {
     await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('local API startup timeout')),10000);
       child.stdout.on('data',data=>{if(String(data).includes('listening')){clearTimeout(timer);resolve();}});
       child.once('error',reject);child.once('exit',code=>{clearTimeout(timer);reject(new Error(`API exited ${code}`));});});
-    const call=async(route,body)=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{});return {status:response.status,body:await response.json()};};
+    const api=await localApiSession(`http://127.0.0.1:${port}`);
+    const call=async(route,body)=>{const response=await api.fetch(route,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{});return {status:response.status,body:await response.json()};};
     const catalog=await call('/api/attachments/catalog?v=2');assert.equal(catalog.status,200,JSON.stringify(catalog));assert.equal(catalog.body.catalog_write_supported,true);
     const manualInput={category_level1:'其他附件',category_level2:'人工新增',item_name:'本地新增附件',model_code:'LOCAL-1',price:12.5,unit:'件',price_source:'人工新增'};
     const created=await call('/api/attachments/catalog',manualInput);
-    assert.equal(created.status,200,JSON.stringify(created));assert.equal(created.body.created,true);assert.equal(created.body.attachment_contract,2);assert.equal(created.body.data_version,original.data_version);
+    assert.equal(created.status,200,JSON.stringify(created));assert.equal(created.body.created,true);assert.equal(created.body.attachment_contract,2);assert.equal(created.body.data_version,stagedVersion);
     const afterCreate=await call('/api/attachments/catalog?v=2');assert.equal(afterCreate.body.items.length,catalog.body.items.length+1);
     const manual=afterCreate.body.items.find(item=>item.attachment_price_id===created.body.attachment_price_id);
     assert.ok(manual);assert.equal(manual.price,12.5);assert.deepEqual(manual.rules,[]);
     const duplicate=await call('/api/attachments/catalog',manualInput);
     assert.equal(duplicate.status,200,JSON.stringify(duplicate));assert.equal(duplicate.body.created,false);assert.equal(duplicate.body.attachment_price_id,created.body.attachment_price_id);
     assert.equal((await call('/api/attachments/catalog?v=2')).body.items.length,afterCreate.body.items.length);
-    const manualPreview=await call('/api/attachments/preview',{quote_id:'HTTP_MANUAL',product_code:'JP',material_code:'SECC',width_mm:800,height_mm:2000,depth_mm:600,quote_date:'2026-09-11',coating_type:'橘纹',attachments:[{attachment_price_id:manual.attachment_price_id,quantity:2}]});
+    const manualPreview=await call('/api/attachments/preview',{...seccPrices,quote_id:'HTTP_MANUAL',product_code:'JP',material_code:'SECC',width_mm:800,height_mm:2000,depth_mm:600,quote_date:'2026-09-11',coating_type:'橘纹',attachments:[{attachment_price_id:manual.attachment_price_id,quantity:2}]});
     assert.equal(manualPreview.status,200,JSON.stringify(manualPreview));assert.equal(manualPreview.body.attachments[0].status,'QUICK_ONLY');assert.equal(manualPreview.body.attachments[0].quick_amount,25);assert.equal(manualPreview.body.formula_attachment_fee,0);
     const price=catalog.body.items.find(a=>a.source_row_no===208).attachment_price_id;
-    const input={quote_id:'HTTP_LOCAL',attachment_contract:2,product_code:'JP',material_code:'SECC',width_mm:800,height_mm:2000,depth_mm:600,quote_date:'2026-09-11',coating_type:'橘纹',attachments:[{attachment_price_id:price,quantity:2,formula_amount:0,unit_price_override:0}]};
+    const input={...seccPrices,quote_id:'HTTP_LOCAL',attachment_contract:2,product_code:'JP',material_code:'SECC',width_mm:800,height_mm:2000,depth_mm:600,quote_date:'2026-09-11',coating_type:'橘纹',attachments:[{attachment_price_id:price,quantity:2,formula_amount:0,unit_price_override:0}]};
     const response=await call('/api/quotes/calculate-dual',input);
     assert.equal(response.status,200,JSON.stringify(response));
-    assert.equal(response.body.formula_cost.total_cost,112);assert.equal(response.body.quick_quote.total_cost,240);
+    assert.equal(response.body.formula_cost.management_fee,6.64);
+    assert.equal(response.body.formula_cost.total_cost,117.34);assert.equal(response.body.quick_quote.total_cost,240);
     assert.ok(response.body.attachments[0].attachment_selection_id);
     assert.equal(sql('SELECT count(*) FROM calc.local_base_probe;',target),'0','base calculation must roll back its transient writes');
     assert.equal(sql("SELECT count(*) FROM calc.attachment_selection WHERE quote_id='HTTP_LOCAL';",target),'1');
-    const document={quote_id:'HTTP_DOCUMENT',company_code:'LOCAL',company_name:'本地测试',quote_date:input.quote_date,items:[{...input,
+    const document={quote_id:'HTTP_DOCUMENT',company_code:'LOCAL',company_name:'本地测试',order_nature:'EXTERNAL',quote_date:input.quote_date,items:[{...input,
       quote_line_id:response.body.quote_line_id,attachments:response.body.attachments,quantity:1,formula:{total_cost:0},quick:{total_cost:0}}]};
     const checked=await call('/api/quotes/confirm-check',document);assert.equal(checked.status,200,JSON.stringify(checked));
     assert.equal(sql('SELECT count(*) FROM calc.quote_document;',target),'0');
     const confirmed=await call('/api/quotes/confirm',document);assert.equal(confirmed.status,200,JSON.stringify(confirmed));
     const historic=await call('/api/company-history/match',{...input,company_code:'LOCAL'});
-    assert.equal(historic.body.payload.formula.total_cost,112);
+    assert.equal(historic.body.payload.formula.total_cost,117.34);
     assert.equal(historic.body.payload.quick.total_cost,240);
     assert.equal(historic.body.payload.attachments[0].attachment_selection_id,response.body.attachments[0].attachment_selection_id);
     const invalid=await call('/api/attachments/preview',{...input,attachments:[{attachment_price_id:99999,quantity:1}]});
@@ -74,19 +87,30 @@ test('实际HTTP API与本地PostgreSQL：V2持久化、基础计算回滚及旧
       ganged_cabinet_inputs:gangedCabinets.map((row,index)=>({...input,...row,quote_id:`HTTP_GANGED-${index+1}`,
         product_code:index?'JP_DOUBLE':'JP_SINGLE',attachments:[]})),
       attachments:[{attachment_price_id:price,quantity:2,ganged_cabinet_index:1}]};
+    const unownedPreview=await call('/api/attachments/preview',gangedInput);
+    assert.equal(unownedPreview.status,400);
+    assert.match(unownedPreview.body.message,/不在本人可操作范围/);
+    // The normal workflow calculates child cabinets under this name first.
+    // Invented private quote IDs must remain rejected by the real API guard.
+    for(const childInput of gangedInput.ganged_cabinet_inputs){
+      const childResult=await call('/api/quotes/calculate-dual',childInput);
+      assert.equal(childResult.status,200,JSON.stringify(childResult));
+    }
     const gangedPreview=await call('/api/attachments/preview',gangedInput);
     assert.equal(gangedPreview.status,200,JSON.stringify(gangedPreview));
     assert.equal(gangedPreview.body.attachments[0].ganged_cabinet_index,1);
     assert.equal(gangedPreview.body.attachments[0].environment.width_mm,600);
     const ganged=await call('/api/attachments/snapshot-ganged',{...gangedInput,base_result:{
-      quote_id:'HTTP_GANGED-1',formula_cost:{total_cost:200,attachment_fee:0,labor_cost:20,management_fee:2.6},
+      quote_id:'HTTP_GANGED-1',formula_cost:{material_cost:157.4,auxiliary_cost:10,spray_cost:10,
+        total_cost:209.24,attachment_fee:0,labor_cost:20,management_fee:11.84},
       quick_quote:{base_price:400,total_cost:400,attachment_fee:0},risk_flags:[],ganged_cabinet_results:[],
     }});
     assert.equal(ganged.status,200,JSON.stringify(ganged));
-    assert.equal(ganged.body.formula_cost.total_cost,212);assert.equal(ganged.body.quick_quote.total_cost,440);
+    assert.equal(ganged.body.formula_cost.management_fee,12.56);
+    assert.equal(ganged.body.formula_cost.total_cost,221.96);assert.equal(ganged.body.quick_quote.total_cost,440);
     assert.equal(ganged.body.attachments[0].ganged_cabinet_index,1);assert.ok(ganged.body.quote_line_id);
     assert.equal(sql("SELECT count(*) FROM calc.attachment_selection WHERE quote_id='HTTP_GANGED';",target),'1');
-    const gangedDocument={quote_id:'HTTP_GANGED_DOCUMENT',company_code:'LOCAL',company_name:'本地并柜测试',quote_date:input.quote_date,
+    const gangedDocument={quote_id:'HTTP_GANGED_DOCUMENT',company_code:'LOCAL',company_name:'本地并柜测试',order_nature:'EXTERNAL',quote_date:input.quote_date,
       items:[{...gangedInput,quote_line_id:ganged.body.quote_line_id,attachments:ganged.body.attachments,quantity:1,
         formula:ganged.body.formula_cost,quick:ganged.body.quick_quote}]};
     const gangedChecked=await call('/api/quotes/confirm-check',gangedDocument);
@@ -103,20 +127,22 @@ test('V2服务读取STAGED预览、按ID双金额、人工错误阻断和历史�
   const target=`${db}_service`;
   sql(`CREATE DATABASE ${target};`,'postgres');
   for(const f of ['tests/fixtures/attachment_online_schema_20260911.sql','database/attachment-v2/web/01-prepare.sql','database/attachment-v2/web/02-stage.sql']) file(f,target);
+  const stagedVersion=sql("SELECT data_version FROM calc.attachment_catalog_version WHERE status='STAGED';",target);
   sql(`CREATE TABLE calc.material(material_code varchar PRIMARY KEY,density_g_cm3 numeric);
     INSERT INTO calc.material VALUES('SECC',7.85),('SUS304',7.93),('SUS316',7.98);
     CREATE FUNCTION calc.get_material_unit_price(varchar,date) RETURNS numeric LANGUAGE sql AS 'SELECT CASE WHEN $1=''SECC'' THEN 5 ELSE 20 END::numeric';
     CREATE FUNCTION calc.get_spray_unit_price(date,varchar) RETURNS numeric LANGUAGE sql AS 'SELECT 10::numeric';`,target);
-  const service=createAttachmentService({runPsql:async text=>sql(text,target),env:{AI_QUOTE_ATTACHMENT_V2_VERSION:original.data_version,AI_QUOTE_ATTACHMENT_V2_ALLOW_STAGED:'1'},calculateBase:async input=>{
+  const service=createAttachmentService({runPsql:async text=>sql(text,target),env:{AI_QUOTE_ATTACHMENT_V2_VERSION:stagedVersion,AI_QUOTE_ATTACHMENT_V2_ALLOW_STAGED:'1'},calculateBase:async input=>{
     assert.deepEqual(input.attachments,[]);
     return {formula_cost:{total_cost:100,material_cost:78.7,auxiliary_cost:5,spray_cost:5,labor_cost:10,management_fee:1.3,product_area_m2:2,attachment_fee:0},quick_quote:{base_price:200,total_cost:200,attachment_fee:0}};
   }});
   const catalog=await service.catalog();assert.equal(catalog.items.length,226);
   assert.equal(await service.hasActive(),false);
   const price=Number(catalog.items.find(q=>q.source_row_no===208).attachment_price_id);
-  const input={quote_id:'SERVICE',product_code:'JP',material_code:'SECC',width_mm:800,height_mm:2000,depth_mm:600,coating_type:'橘纹',quote_date:'2026-09-11',attachments:[{attachment_price_id:price,quantity:2,unit_price_override:0,formula_amount:0}]};
+  const input={...seccPrices,quote_id:'SERVICE',product_code:'JP',material_code:'SECC',width_mm:800,height_mm:2000,depth_mm:600,coating_type:'橘纹',quote_date:'2026-09-11',attachments:[{attachment_price_id:price,quantity:2,unit_price_override:0,formula_amount:0}]};
   const result=await service.calculate(input);
-  assert.equal(result.formula_cost.total_cost,112);assert.equal(result.quick_quote.total_cost,240);
+  assert.equal(result.formula_cost.management_fee,6.64);
+  assert.equal(result.formula_cost.total_cost,117.34);assert.equal(result.quick_quote.total_cost,240);
   assert.ok(result.attachments[0].attachment_selection_id);
   const gangedRows=[
     {width_mm:400,height_mm:2000,depth_mm:600,single_door_count:1,double_door_count:0},
@@ -126,25 +152,27 @@ test('V2服务读取STAGED预览、按ID双金额、人工错误阻断和历史�
     ganged_cabinets:gangedRows,ganged_cabinet_inputs:gangedRows.map((row,index)=>({...input,...row,
       product_code:index?'JP_DOUBLE':'JP_SINGLE',attachments:[]})),
     attachments:[{attachment_price_id:price,quantity:2,ganged_cabinet_index:1}],base_result:{
-      quote_id:'SERVICE_GANGED-1',formula_cost:{total_cost:200,attachment_fee:0,labor_cost:20,management_fee:2.6},
+      quote_id:'SERVICE_GANGED-1',formula_cost:{material_cost:157.4,auxiliary_cost:10,spray_cost:10,
+        total_cost:209.24,attachment_fee:0,labor_cost:20,management_fee:11.84},
       quick_quote:{base_price:400,total_cost:400,attachment_fee:0},risk_flags:[],ganged_cabinet_results:[],
     }});
-  assert.equal(ganged.formula_cost.total_cost,212);assert.equal(ganged.quick_quote.total_cost,440);
+  assert.equal(ganged.formula_cost.management_fee,12.56);
+  assert.equal(ganged.formula_cost.total_cost,221.96);assert.equal(ganged.quick_quote.total_cost,440);
   assert.equal(ganged.attachments[0].ganged_cabinet_index,1);
   assert.equal(ganged.attachments[0].product_code,'JP_DOUBLE');assert.equal(ganged.attachments[0].environment.width_mm,600);
   const gangedDocument={items:[{...input,quote_id:'SERVICE_GANGED',ganged_cabinet_count:2,ganged_cabinets:gangedRows,
     attachments:ganged.attachments,quote_line_id:ganged.quote_line_id,attachment_contract:2,
     formula:ganged.formula_cost,quick:ganged.quick_quote}]};
-  assert.equal((await service.hydrateDocument(gangedDocument)).items[0].formula.total_cost,212);
+  assert.equal((await service.hydrateDocument(gangedDocument)).items[0].formula.total_cost,221.96);
   const changedGanged=structuredClone(gangedDocument);changedGanged.items[0].ganged_cabinets[0].width_mm=401;
   await assert.rejects(()=>service.hydrateDocument(changedGanged),/并柜明细已变化/);
   const again=await service.calculate(input);assert.notEqual(again.quote_line_id,result.quote_line_id);
   const document={items:[{...input,attachments:result.attachments,quote_line_id:result.quote_line_id,attachment_contract:2,formula:result.formula_cost,quick:result.quick_quote}]};
   await service.hydrateDocument(document);
   const manipulated=structuredClone(document);manipulated.items[0].formula.total_cost=0;manipulated.items[0].quick.total_cost=0;
-  assert.equal((await service.hydrateDocument(manipulated)).items[0].formula.total_cost,112);
+  assert.equal((await service.hydrateDocument(manipulated)).items[0].formula.total_cost,117.34);
   manipulated.items[0].labor_multiplier=2;
-  assert.equal((await service.hydrateDocument(manipulated)).items[0].formula.total_cost,123.3);
+  assert.equal((await service.hydrateDocument(manipulated)).items[0].formula.total_cost,127.94);
   const stripped=structuredClone(document);delete stripped.items[0].attachment_contract;
   stripped.items[0].attachments=[{attachment_price_id:price,quantity:2}];
   await assert.rejects(()=>service.hydrateDocument(stripped),/报价行ID/);
@@ -168,7 +196,10 @@ test('V2服务读取STAGED预览、按ID双金额、人工错误阻断和历史�
   for(const rule of dynamicRules){
     const item=catalog.items.find(a=>a.rules.some(r=>r.rule_id===rule.rule_id));
     const manual=Object.fromEntries(requiredParameters(rule).filter(p=>p.source==='MANUAL').map(p=>[p.name,100]));
-    const saved=await service.calculate({...input,product_code:rule.products[0]||'JK',material_code:rule.materials[0]||'SECC',attachments:[{attachment_price_id:item.attachment_price_id,quantity:2,manual_inputs:manual}]});
+    const material=rule.materials[0]||'SECC';
+    const saved=await service.calculate({...input,product_code:rule.products[0]||'JK',material_code:material,
+      material_unit_price_override:material==='SECC'?5:20,
+      attachments:[{attachment_price_id:item.attachment_price_id,quantity:2,manual_inputs:manual}]});
     assert.equal(saved.attachments[0].status,'CALCULATED',`source row ${rule.source_row_no}: ${JSON.stringify(saved.attachments[0])}`);
   }
   const bad=await service.calculate({...input,attachments:[{attachment_price_id:dynamic.attachment_price_id,quantity:1}]});
@@ -179,11 +210,12 @@ test('V2服务读取STAGED预览、按ID双金额、人工错误阻断和历史�
   const dynamicRow=catalog.items.find(q=>q.rules.some(r=>r.method==='CALCULATED'&&r.auxiliary_list));
   const complete=await service.calculate({...input,attachments:[select(208,2),select(98,3),{attachment_price_id:dynamicRow.attachment_price_id,quantity:2,manual_inputs:dynamicInputs}]});
   assert.ok(complete.attachments.every(a=>a.status!=='ERROR'),JSON.stringify(complete.attachments));
-  const stainless=await service.calculate({...input,material_code:'SUS304',attachments:[select(208,2)]});
+  const stainless=await service.calculate({...input,material_code:'SUS304',material_unit_price_override:20,attachments:[select(208,2)]});
   assert.equal(stainless.attachments[0].formula_unit_cost,17.5);assert.equal(stainless.attachments[0].quick_amount,40);
-  const multi={quote_id:'LOCAL-V2-SAMPLE',quote_date:input.quote_date,company_name:'本地兼容验证样例',items:[complete,stainless].map((r,i)=>({...input,material_code:i?'SUS304':'SECC',name:'同型号测试产品',model_code:'',quantity:1,formula_discount:1,quick_discount:1,labor_multiplier:1,attachments:r.attachments,attachment_contract:2,quote_line_id:r.quote_line_id,formula:r.formula_cost,quick:r.quick_quote}))};
+  const multi={quote_id:'LOCAL-V2-SAMPLE',quote_date:input.quote_date,company_name:'本地兼容验证样例',items:[complete,stainless].map((r,i)=>({...input,material_code:i?'SUS304':'SECC',material_unit_price_override:i?20:5,name:'同型号测试产品',model_code:'',quantity:1,formula_discount:1,quick_discount:1,labor_multiplier:1,attachments:r.attachments,attachment_contract:2,quote_line_id:r.quote_line_id,formula:r.formula_cost,quick:r.quick_quote}))};
   const hydrated=await service.hydrateDocument(multi);
   const outputDir=path.join(root,'test-output/attachment-cost-v2');
+  fs.mkdirSync(outputDir,{recursive:true});
   const manualComplete=await service.preview({...input,attachments:[{attachment_price_id:dynamic.attachment_price_id,quantity:1,manual_inputs:dynamicInputs}]});
   assert.equal(manualComplete.attachments[0].status,'CALCULATED');
   fs.writeFileSync(path.join(outputDir,'api-client-fixtures.json'),JSON.stringify({catalog,input,result,missing,manualComplete,complete,stainless,document:hydrated},null,2));
@@ -222,11 +254,12 @@ test('用户提供的线上结构：精度、真实约束、旧函数保留和�
   assert.equal(sql("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='calc.attachment_price'::regclass AND conname='uq_attachment_price_source_version';",target),'UNIQUE NULLS NOT DISTINCT (source_file, source_sheet, source_row_no, price_source, data_version)');
   file('database/attachment-v2/web/02-stage.sql',target);
   file('database/attachment-v2/web/03-verify.sql',target);
-  assert.equal(sql(`SELECT price,quick_face_price FROM calc.attachment_price WHERE data_version='${original.data_version}' AND import_key='${q.import_key}';`,target),'524.5939|524.593927');
-  assert.equal(sql(`SELECT count(*) FROM calc.attachment_classification WHERE classification_source='${original.data_version}';`,target),'226');
+  const stagedVersion=sql("SELECT data_version FROM calc.attachment_catalog_version WHERE status='STAGED';",target);
+  assert.equal(sql(`SELECT price,quick_face_price FROM calc.attachment_price WHERE data_version='${stagedVersion}' AND import_key='${q.import_key}';`,target),'524.5939|524.593927');
+  assert.equal(sql(`SELECT count(*) FROM calc.attachment_classification WHERE classification_source='${stagedVersion}';`,target),'226');
   assert.equal(sql('SELECT count(*) FROM calc.attachment_price WHERE is_active;',target),'2');
   // Legacy NULL-version duplicates and within-version duplicates remain prohibited.
-  for(const version of ['NULL',`'${original.data_version}'`]) assert.throws(()=>sql(`INSERT INTO calc.attachment_price(attachment_category,item_name,source_file,source_sheet,source_row_no,price_source,data_version)
+  for(const version of ['NULL',`'${stagedVersion}'`]) assert.throws(()=>sql(`INSERT INTO calc.attachment_price(attachment_category,item_name,source_file,source_sheet,source_row_no,price_source,data_version)
     SELECT attachment_category,item_name,source_file,source_sheet,source_row_no,price_source,data_version FROM calc.attachment_price
     WHERE data_version IS NOT DISTINCT FROM ${version} LIMIT 1;`,target));
   const next=structuredClone(original);next.data_version='test-online-next';
@@ -346,7 +379,13 @@ test('产品专用优先、通用回退、同级冲突拒绝',()=>{
 });
 test('正式生成包全量导入本地：226面价、62规则、264绑定及材质关系',()=>{
   file('database/attachment-v2/generated/03-stage-only.sql');
-  file('database/attachment-v2/04a-stage-acceptance.sql');
+  const pinnedAcceptance=fs.readFileSync(path.join(root,'database/attachment-v2/04a-stage-acceptance.sql'),'utf8');
+  // The retained manual guide is pinned to r4. It must reject an r5 stage;
+  // adapt only its expected version in this local fixture, retaining every
+  // count, source-hash, classification and material guard.
+  assert.throws(()=>sql(pinnedAcceptance));
+  assert.ok(pinnedAcceptance.includes('xlsx-7b6fcb18de6f8969-r4'));
+  sql(pinnedAcceptance.replaceAll('xlsx-7b6fcb18de6f8969-r4',original.data_version));
   assert.equal(sql(`SELECT count(*) FROM calc.attachment_classification c JOIN calc.attachment_price p USING(attachment_price_id) WHERE p.data_version='${original.data_version}' AND (c.category_level2='' OR c.category_level3='');`),'0');
   const imported=JSON.parse(sql(`SELECT json_agg(json_build_object('key',import_key,'price',quick_face_price,'row',source_row_no) ORDER BY source_row_no) FROM calc.attachment_price WHERE data_version='${original.data_version}';`));
   assert.equal(imported.length,226);

@@ -56,7 +56,11 @@ test('merged refresh SQL executes with real rules, guards, deductions and immuta
       {...input.attachments[0],manual_inputs:{玻璃门宽度:400,玻璃门高度:400}}]});
     assert.equal(queries.length,2);
     assert.equal(fresh.attachments[0].formula_amount,8.8);
-    assert.equal(fresh.formula_cost.total_cost,158.8);
+    // Legacy base carries a fixed fee of 5. A fresh result recomputes the
+    // approved 6% on 100+10+20+15+8.80, without rewriting the old snapshot.
+    assert.equal(fresh.formula_cost.management_fee,9.23);
+    assert.equal(fresh.formula_cost.management_fee_rate,.06);
+    assert.equal(fresh.formula_cost.total_cost,163.03);
     assert.notEqual(fresh.quote_line_id,old.quote_line_id);
     assert.equal(frozen(),before);
     queries.length=0;
@@ -73,7 +77,8 @@ test('merged refresh SQL executes with real rules, guards, deductions and immuta
     assert.equal(frozen(),before);
     const empty=await service.recalculateLine({quote_line_id:old.quote_line_id,attachments:[]});
     assert.deepEqual(empty.attachments,[]);
-    assert.equal(empty.formula_cost.total_cost,150);
+    assert.equal(empty.formula_cost.management_fee,8.7);
+    assert.equal(empty.formula_cost.total_cost,153.7);
   } finally {
     if(fs.existsSync(path.join(data,'postmaster.pid')))run('pg_ctl.exe',['-D',data,'-w','stop','-m','fast']);
     // Never remove an unverified directory or a possibly running cluster.
