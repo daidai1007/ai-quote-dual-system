@@ -29,6 +29,7 @@ SUITES = (
     'verify_quote_remark_format.py', 'verify_quote_remark_format_runtime.py', 'verify_scheme2_quote_remark.py',
     'verify_light_action_ui.py', 'verify_order_nature.py',
     'verify_quote_export_customer.py',
+    'verify_contract_customer_flow.py',
     'verify_quote_management_filters.py',
     'verify_name_login.py', 'verify_name_login_workflow.py',
     'verify_quote_management.py', 'verify_quote_unit_rounding.py',

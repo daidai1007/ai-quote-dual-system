@@ -4,6 +4,7 @@ import {inspectContractTemplate,validateContractMapping,renderContractTemplate,C
 import {contractQuote} from './contract_quote.mjs';
 import {snapshotOrderNature,orderNatureSql} from '../quote_order_nature.mjs';
 import {canManageAllQuotes} from './quote_access_scope.mjs';
+import {contractCustomer,contractCustomerNameSql} from './contract_customer.mjs';
 const error=(message,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const documentCall=(fn,...args)=>{try{return fn(...args);}catch(e){e.statusCode=400;throw e;}};
 const hash=data=>createHash('sha256').update(data).digest('hex');
@@ -24,21 +25,26 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
  const source=async(p,no,version)=>{
   identity(p);if(!/^BJ-\d{8}-\d{6}$/.test(String(no||'')))throw error('报价编号无效');number(version);
   const value=await query(`SELECT COALESCE((SELECT jsonb_build_object('scheme_id',s.scheme_id,'scheme_no',s.scheme_no,'version_no',v.version_no,
-   'customer_code',COALESCE(NULLIF(v.snapshot_payload#>>'{analysis_customer,customer_code}',''),CASE WHEN c.matches=1 THEN c.code END),
-   'customer_name',COALESCE(NULLIF(v.snapshot_payload#>>'{scheme_summary,company}',''),s.company_name),'snapshot',v.snapshot_payload)
+   'catalog_customer_code',CASE WHEN c.matches=1 THEN c.code END,
+   'snapshot_customer_code',v.snapshot_payload#>>'{analysis_customer,customer_code}',
+   'snapshot_customer_name',v.snapshot_payload#>>'{analysis_customer,customer_name}',
+   'customer_name',${contractCustomerNameSql()},'snapshot',v.snapshot_payload)
    FROM calc.quote_scheme s JOIN calc.quote_scheme_version v USING(scheme_id)
-   LEFT JOIN LATERAL(SELECT count(*) AS matches,min(company_code) AS code FROM calc.ordering_company WHERE company_name=COALESCE(NULLIF(v.snapshot_payload#>>'{scheme_summary,company}',''),s.company_name)) c ON TRUE
+   LEFT JOIN LATERAL(SELECT count(*) AS matches,min(company_code) AS code FROM calc.ordering_company WHERE btrim(company_name)=${contractCustomerNameSql()}) c ON TRUE
    WHERE s.scheme_no=${q(no)} AND v.version_no=${Number(version)} AND s.status<>'VOID' AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')}),'null'::jsonb)::text;`);
   if(!value)throw error('正式报价不可用或无权用于生成合同',404);
   if(snapshotOrderNature(value.snapshot)!=='EXTERNAL')throw error('仅外部正式报价可用于合同；内部及待分类报价不能进入合同管理。',409);
-  if(!value.customer_code)throw error('该正式报价的客户编码待确认，请先核对客户归属');
-  return value;
+  return contractCustomer(value);
  };
- const sourceList=async p=>query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('scheme_no',s.scheme_no,'version_no',v.version_no,'order_nature','EXTERNAL','customer_name',COALESCE(NULLIF(v.snapshot_payload#>>'{scheme_summary,company}',''),s.company_name),
-  'customer_code',COALESCE(NULLIF(v.snapshot_payload#>>'{analysis_customer,customer_code}',''),CASE WHEN c.matches=1 THEN c.code END),'product_summary',s.product_summary) ORDER BY s.updated_at DESC,v.version_no DESC),'[]'::jsonb)::text
+ const sourceList=async p=>(await query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('scheme_no',s.scheme_no,'version_no',v.version_no,'order_nature','EXTERNAL','customer_name',${contractCustomerNameSql()},
+  'catalog_customer_code',CASE WHEN c.matches=1 THEN c.code END,
+  'snapshot_customer_code',v.snapshot_payload#>>'{analysis_customer,customer_code}',
+  'snapshot_customer_name',v.snapshot_payload#>>'{analysis_customer,customer_name}',
+  'product_summary',s.product_summary) ORDER BY s.updated_at DESC,v.version_no DESC),'[]'::jsonb)::text
   FROM calc.quote_scheme s JOIN calc.quote_scheme_version v USING(scheme_id)
-  LEFT JOIN LATERAL(SELECT count(*) AS matches,min(company_code) AS code FROM calc.ordering_company WHERE company_name=COALESCE(NULLIF(v.snapshot_payload#>>'{scheme_summary,company}',''),s.company_name)) c ON TRUE
-  WHERE s.status<>'VOID' AND ${orderNatureSql('v.snapshot_payload')}='EXTERNAL' AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')};`);
+  LEFT JOIN LATERAL(SELECT count(*) AS matches,min(company_code) AS code FROM calc.ordering_company WHERE btrim(company_name)=${contractCustomerNameSql()}) c ON TRUE
+  WHERE s.status<>'VOID' AND ${orderNatureSql('v.snapshot_payload')}='EXTERNAL' AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')};`))
+    .filter(row=>row.customer_name).map(contractCustomer);
  const template=async(p,id,write=false,use=false)=>{
   const result=await query(`SELECT COALESCE((SELECT to_jsonb(t) FROM(SELECT v.template_version_id,v.version_no,v.file_format,v.original_filename,encode(v.file_content,'base64') AS content,v.file_sha256,v.field_mapping,
   g.group_id,g.customer_code,g.customer_name,g.template_name,g.owner_user_id,g.owner_name,g.lock_version,g.enabled,g.is_default

@@ -313,7 +313,7 @@ class ContractManagement(QWidget):
     def __init__(self,window):
         super().__init__(); self.window=window; self.setObjectName('contractManagement'); self.setStyleSheet(STYLE)
         self.data=dict(sources=[],templates=[],records=[],drafts=[]);self.record_page=1;self.record_total=0; self.workers=[]; self.busy=False; self.queue=[]
-        self.pending_scheme=None; self.selected_customer=None; self.loaded=False; self.identity=(contract_headers(window) or {});self.person=person_key(window);self.unsaved=False
+        self.pending_scheme=None; self.pending_version=None; self.selected_customer=None; self.loaded=False; self.identity=(contract_headers(window) or {});self.person=person_key(window);self.unsaved=False
         self.request_id=str(uuid4()); self.draft=None; self.record=None; self.output=None; self.preview_pages=[]
         self.temp_dirs=[]; self.current_quote=None; self.mapping=None; self.populating=False; self.historical=False
         root=QVBoxLayout(self); root.setContentsMargins(*[METRICS['margin']]*4); root.setSpacing(METRICS['gap'])
@@ -391,7 +391,7 @@ class ContractManagement(QWidget):
         for worker in self.workers:worker.requestInterruption()
         if same_person:
             self.notice.setText('姓名会话已续期，填写内容已保留，可重试原操作。');self.sync_actions();return
-        self.loaded=False;self.unsaved=False;self.selected_customer=None
+        self.loaded=False;self.unsaved=False;self.selected_customer=None;self.pending_scheme=None;self.pending_version=None
         self.record_search_timer.stop()
         with QSignalBlocker(self.record_search):self.record_search.clear()
         for worker in self.workers: worker.requestInterruption()
@@ -444,13 +444,15 @@ class ContractManagement(QWidget):
 
     def enter(self):
         self.check_identity()
-        if not self.loaded: self.reload()
-        elif self.pending_scheme: self.apply_pending()
+        # Entry from a selected quotation must not reuse an earlier bootstrap.
+        if not self.loaded or self.pending_scheme: self.reload()
 
     def received(self,result):
         result={**result,'sources':[row for row in result.get('sources',[]) if row.get('order_nature')=='EXTERNAL']}
-        self.data=result; self.loaded=bool(result.get('ready')); self.render_data(); self.apply_pending()
+        self.data=result; self.loaded=bool(result.get('ready'))
         self.notice.setText('已加载合同模板与记录。' if self.loaded else result.get('message','合同服务尚未启用。'))
+        self.render_data()
+        if self.loaded:self.apply_pending()
 
     def render_data(self):
         selected=self.customer.currentData(); source=self.source.currentData(); template=self.template.currentData()
@@ -470,10 +472,17 @@ class ContractManagement(QWidget):
     def apply_pending(self):
         no=self.pending_scheme
         if not no:return
-        self.pending_scheme=None; source=next((r for r in self.data.get('sources',[]) if r['scheme_no']==no),None)
+        version=self.pending_version
+        self.pending_scheme=None;self.pending_version=None
+        matches=[r for r in self.data.get('sources',[]) if r['scheme_no']==no and (version is None or r['version_no']==version)]
+        source=max(matches,key=lambda r:r['version_no']) if matches else None
         if source:
+            customer_index=self.customer.findData(source['customer_code'])
+            if customer_index>=0:self.customer.setItemText(customer_index,source['customer_name'])
             self.customer.setCurrentIndex(self.customer.findData(source['customer_code'])); self.source.setCurrentIndex(index_of(self.source,(no,source['version_no']))); self.tabs.setCurrentIndex(0)
-        else: self.notice.setText('所选报价尚无可用于合同的正式版本。请先按现有流程确认并成功导出报价。')
+        else:
+            self.customer.setCurrentIndex(0);self.customer_changed()
+            self.notice.setText('未读取到所选报价的正式版本，请重新加载核对；不会改用其他报价生成合同。')
 
     def customer_changed(self,*_):
         if self.populating:return
@@ -516,6 +525,7 @@ class ContractManagement(QWidget):
             selection=(selected,method)
             def received(result):
                 if selection!=(self.source.currentData(),self.method.currentData()):return
+                self.customer.setItemText(self.customer.currentIndex(),result['customer_name'])
                 self.current_quote=result['quote']; q=self.current_quote; self.source_info.setText(f"客户：{result['customer_name']}\n来源：{selected[0]} / 正式 V{selected[1]} · {self.method.currentText()}")
                 fill(self.items,[(r['name'],r['specification'],r['quantity'],r['unit'],f"{r['unit_price']:,.2f}",f"{r['total']:,.2f}") for r in q['items']]); self.amount.setText(f"¥ {q['total']:,.2f}"); self.upper.setText('人民币大写：'+q['total_upper']); self.notice.setText('已读取正式报价冻结金额。'); self.sync_actions()
             self.request('/quote',dict(scheme_no=selected[0],version_no=selected[1],method=method),received)
@@ -818,7 +828,12 @@ def install_contract_management(namespace):
                 selected=manager.rows[row]
                 if selected.get('order_nature') != 'EXTERNAL' or selected.get('can_write') is False:
                     page.notice.setText('仅外部正式报价可生成合同。');return
-                page.pending_scheme=manager.rows[row]['scheme_no'];page.source_info.setText('待加载来源报价：'+page.pending_scheme);window.show_section(route)
+                if page.busy or page.unsaved:
+                    page.notice.setText('请先完成当前合同操作，或保存生成草稿、新建合同后再切换报价单。');return
+                page.customer.setCurrentIndex(0);page.customer_changed()
+                page.pending_scheme=selected['scheme_no']
+                page.pending_version=int(selected['version_no']) if selected.get('status') in ('QUOTED','ARCHIVED') and selected.get('version_no') else None
+                page.source_info.setText('待加载来源报价：'+page.pending_scheme);window.show_section(route)
         manager.contract=contract;manager.contract_source=page.source_info
         manager.contract_button.clicked.disconnect();manager.contract_button.clicked.connect(contract)
     def section(window,index):

@@ -60,6 +60,7 @@ $testFiles = @(
     "tests/verify_name_login.py",
     "tests/verify_name_login_workflow.py",
     "tests/verify_contract_identity.py",
+    "tests/verify_contract_customer_flow.py",
     "tests/verify_contract_management.py",
     "tests/verify_contract_office_preview.py",
     "tests/verify_quote_management.py",
