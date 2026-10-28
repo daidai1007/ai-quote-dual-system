@@ -78,9 +78,9 @@ class VerticalExportTransport(unittest.TestCase):
         for ordinal, column, values in [(1,'L',[14,3]),(2,'J',[14,3])]:
             table = cells(file, ordinal)
             freight_rows = [a[len(column):] for a,v in table.items() if a.startswith(column) and v=='运费']
-            self.assertEqual(len(freight_rows), 2)
-            value_column = 'M' if ordinal==1 else 'K'
-            self.assertEqual([float(table[value_column+r]) for r in freight_rows], values)
+            self.assertEqual(len(freight_rows), 1)
+            value_columns = ['M', 'N'] if ordinal==1 else ['K', 'L']
+            self.assertEqual([float(table[c+freight_rows[0]]) for c in value_columns], values)
 
     def test_actual_recovered_http_export_opts_in_without_mutating_snapshot(self):
         original = deepcopy(self.payload)

@@ -6,8 +6,10 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import test from 'node:test';
 import ExcelJS from '@excel.js/exceljs';
+import {unzipSync} from 'fflate';
+import {DOMParser} from '@xmldom/xmldom';
 import {quotationLayout} from './quotation_layout_reader.mjs';
-import {money} from '../quick_discount_rules.mjs';
+import {money,PRICING_BASIS,quickOrderLineBreakdown,moneySum,effectiveAttachmentLineAmount} from '../quick_discount_rules.mjs';
 const run=promisify(execFile),root=path.resolve(import.meta.dirname,'..');
 const fixture=JSON.parse(await fs.readFile(path.join(root,'tests/fixtures/export_formula_cost_detail.json'),'utf8'));
 const baseline=JSON.parse(await fs.readFile(path.join(root,'tests/fixtures/quote_left_layout_baseline.json'),'utf8'));
@@ -18,7 +20,8 @@ async function exported(payload,check){
   const input=path.join(dir,'input.json'),output=path.join(dir,'quote.xlsx');
   await fs.writeFile(input,JSON.stringify({...payload,quotation_detail_layout:'right_vertical_v1'}));
   await run(process.execPath,[path.join(root,'export_dual_quote_workbook.mjs'),input,output],{cwd:root,windowsHide:true});
-  const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);await check(book);
+  const bytes=await fs.readFile(output);
+  const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);await check(book,unzipSync(bytes));
  }finally{
   assert.equal(path.dirname(path.resolve(dir)),path.resolve(os.tmpdir()));
   assert(path.basename(dir).startsWith('quote-vertical-'));
@@ -36,6 +39,75 @@ function evaluate(sheet,address,visiting=new Set()){
  visiting.delete(address);assert.match(expr,/^[\d\s.eE+*/(),\-ROUND]+$/);
  return Function('ROUND',`"use strict";return (${expr});`)((n,p)=>{assert.equal(p,2);return money(n);});
 }
+
+test('serialized merged cells retain both vertical edges and the last-row bottom border for every left cell',async()=>{
+ await exported(fixture,(book,entries)=>{
+  const parse=bytes=>new DOMParser().parseFromString(Buffer.from(bytes).toString('utf8'),'application/xml');
+  const styles=parse(entries['xl/styles.xml']);
+  const children=(node,name)=>Array.from(node.childNodes).filter(c=>c.nodeType===1&&c.nodeName===name);
+  const xfs=children(styles.getElementsByTagName('cellXfs')[0],'xf');
+  const borders=children(styles.getElementsByTagName('borders')[0],'border');
+  for(const [name,old] of Object.entries(baseline)){
+   const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
+   const xml=parse(entries[`xl/worksheets/sheet${sheet.id}.xml`]);
+   const cells=new Map(Array.from(xml.getElementsByTagName('c')).map(c=>[c.getAttribute('r'),c]));
+   for(const source of old.rows.filter(row=>row.row>=11)){
+    const first=plan.products[source.row-11]??plan.subtotal,last=endOfMerge(sheet,first,2);
+    for(let column=1;column<=8;column++){
+     const expected=old.styles[source.cells[column-1].style].border||{};
+     for(let row=first;row<=last;row++){
+      const address=sheet.getCell(row,column).address,cell=cells.get(address);
+      assert(cell,`${name}/${address} must be serialized`);
+      const border=borders[Number(xfs[Number(cell.getAttribute('s')||0)].getAttribute('borderId')||0)];
+      const edges=['left','right',...(row===first?['top']:[]),...(row===last?['bottom']:[])];
+      for(const edge of edges){
+       const actual=children(border,edge)[0];
+       assert.equal(actual?.getAttribute('style')||undefined,expected[edge]?.style,`${name}/${address} ${edge} physical border`);
+       if(expected[edge]?.color?.argb)assert.equal(children(actual,'color')[0]?.getAttribute('rgb'),expected[edge].color.argb);
+      }
+     }
+    }
+   }
+   for(const first of [10,...plan.blocks[0].fields.map(field=>field.row)]){
+    const last=endOfMerge(sheet,first,plan.first);
+    for(let column=plan.first;column<=plan.first+plan.blocks.length;column++)for(let row=first;row<=last;row++){
+     const address=sheet.getCell(row,column).address,cell=cells.get(address);assert(cell,address);
+     const border=borders[Number(xfs[Number(cell.getAttribute('s')||0)].getAttribute('borderId')||0)];
+     for(const edge of ['left','right',...(row===first?['top']:[]),...(row===last?['bottom']:[])]){
+      assert.equal(children(border,edge)[0]?.getAttribute('style'),'thin',`${name}/${address} right table ${edge}`);
+     }
+    }
+   }
+  }
+ });
+});
+
+test('current unit-set matrix totals reference each numeric product quantity, never a product heading',async()=>{
+ const payload=structuredClone(fixture);payload.items[1].quantity=3;
+ payload.items.forEach((item,index)=>{
+  const line=quickOrderLineBreakdown({quote:item.quick,attachments:item.attachments,
+   discount:item.quick_discount??1,cabinetQuantity:item.quantity,gangedCabinetCount:1,freightFee:item.freight_fee||0});
+  item.pricing_basis=PRICING_BASIS;
+  item.quote_display={name:`合成测试柜${index+1}`,specification:`${item.width_mm}*${item.depth_mm}*${item.height_mm}`,
+   quantity:item.quantity,unit:'台',unit_price:line.equivalentUnitTotal,total:line.lineTotal,
+   discount:item.quick_discount??1,attachments:item.attachments,
+   attachment_face_price:moneySum(item.attachments.map(a=>effectiveAttachmentLineAmount(a,1,1))),material_difference:0,
+   quick_base_price:line.basePrice,quick_attachment_fee:item.quick.attachment_fee,quick_total_cost:item.quick.total_cost,
+   remark:item.final_remark||item.notes||''};
+ });
+ await exported(payload,book=>{
+  const sheet=book.getWorksheet('快速报价单'),plan=quotationLayout(sheet);
+  assert.equal(plan.layout,'matrix');
+  plan.blocks.forEach((block,index)=>{
+   const unit=block.fields.find(field=>field.name==='原价单价');
+   const total=block.fields.find(field=>field.name==='原价总价');assert(unit&&total);
+   const formula=sheet.getCell(total.address).value.formula;
+   assert.equal(formula,`ROUND(${unit.address}*D${plan.products[index]},2)`);
+   assert.equal(evaluate(sheet,total.address),money(payload.items[index].quick.total_cost*payload.items[index].quantity));
+   assert(Number.isFinite(evaluate(sheet,total.address)));
+  });
+ });
+});
 
 test('saved left quotation retains every value/style, column width and original visual row height',async()=>{
  await exported(fixture,book=>{
@@ -57,7 +129,25 @@ test('saved left quotation retains every value/style, column width and original 
     });
    }
    assert.equal(plan.blocks[0].row,10);
-   assert.equal(sheet.columnCount,plan.first+1,'no obsolete wide columns');
+   assert.equal(sheet.columnCount,plan.first+fixture.items.length,'one value column per product, no obsolete wide columns');
+  }
+ });
+});
+
+test('ordinary detail rows have the same visible height as the item header',async()=>{
+ await exported(fixture,book=>{
+  for(const name of ['公式法报价单','快速报价单']){
+   const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
+   const pixels=(first,last)=>{
+    let total=0;for(let row=first;row<=last;row++)total+=Math.round((sheet.getRow(row).height??15)*4/3);
+    return total;
+   };
+   const expected=pixels(10,endOfMerge(sheet,10,plan.first));
+   assert.equal(expected,44,'retain the established 33pt header display height');
+   for(const block of plan.blocks)for(const field of block.fields){
+    assert.equal(pixels(field.row,endOfMerge(sheet,field.row,plan.first)),expected,
+      `${name}/${field.name} should be as tall as the item header`);
+   }
   }
  });
 });
@@ -67,11 +157,15 @@ test('each product has its own ordered, typed vertical details with live relocat
   for(const name of ['公式法报价单','快速报价单']){
    const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
    assert.equal(plan.blocks.length,fixture.items.length);
+   assert.equal(plan.layout,'matrix');
    const headers=plan.blocks[0].fields.map(f=>f.name);
    assert.deepEqual(headers.slice(-2),['运费','折扣']);
    plan.blocks.forEach((block,i)=>{
+    assert.equal(block.row,10,'product headings share the original header row');
+    assert.equal(block.column,plan.first+1+i,'products are displayed side by side');
     assert.match(block.name,new RegExp(`^0${i+1} · `));
     assert.deepEqual(block.fields.map(f=>f.name),headers);
+    assert.deepEqual(block.fields.map(f=>f.row),plan.blocks[0].fields.map(f=>f.row),'all products share the same item rows');
     for(const f of block.fields){
      const value=sheet.getCell(f.address).value;
      assert(value===null||typeof value==='number'||typeof value?.formula==='string');
@@ -103,7 +197,9 @@ test('nine products and long attachment labels retain names, signed/zero values 
    assert.equal(plan.products.length,9);assert.equal(plan.blocks.length,9);
    plan.blocks.forEach((block,i)=>{
     const f=block.fields.find(f=>f.name===longName);assert(f);
-    assert(endOfMerge(sheet,f.row,plan.first)>f.row,'long label has enough merged height');
+    const last=endOfMerge(sheet,f.row,plan.first);
+    let visiblePixels=0;for(let row=f.row;row<=last;row++)visiblePixels+=Math.round((sheet.getRow(row).height??15)*4/3);
+    assert(visiblePixels>=Math.ceil((Math.ceil(longName.length*2/38)*12+2)*4/3),'long label has enough visible height, with or without a merge');
     const signed=block.fields.find(f=>f.name==='标准安装板');
     assert(sheet.getCell(signed.address).value<0);
     assert.equal(sheet.getCell(plan.products[i],2).text,`第${i+1}项合成产品`);

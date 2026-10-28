@@ -1537,15 +1537,19 @@ function arrangeVerticalQuotationDetails(sheet, method) {
   const publicRows = new Map();
   const heights = new Map();
   const addresses = new Map();
-  let nextRow = 11;
+  const sourceGeometry = [];
+  let sourcePixels = 0;
   for (let row = 1; row <= sourceRowCount; row += 1) {
     const source = sheet.getRow(row);
     const height = source.height ?? sheet.properties.defaultRowHeight ?? 15;
-    const span = row < 11 ? 1 : Math.max(1, Math.ceil(height / 18));
-    const first = row < 11 ? row : nextRow;
-    const last = first + span - 1;
-    publicRows.set(row, { first, last, height });
-    if (row >= 11) nextRow = last + 1;
+    if (row < 11) {
+      publicRows.set(row, { first: row, last: row, height });
+      heights.set(row, height);
+    } else {
+      const pixels = Math.max(1, Math.round(height * 4 / 3));
+      sourceGeometry.push({ sourceRow: row, firstPixel: sourcePixels, lastPixel: sourcePixels + pixels, height, pixels });
+      sourcePixels += pixels;
+    }
     sourceRows.set(row, {
       hidden: source.hidden, outlineLevel: source.outlineLevel,
       cells: Array.from({ length: 8 }, (_, column) => {
@@ -1553,47 +1557,77 @@ function arrangeVerticalQuotationDetails(sheet, method) {
         return { value: clone(cell.value), style: clone(cell.style) };
       }),
     });
-    // 0.75pt is one pixel at normal Excel zoom. Integral-pixel subrows plus
-    // one remainder preserve the original visible total after pixel rounding.
-    const step = span === 1 ? height : Math.floor(height / span / 0.75) * 0.75;
-    for (let fine = first; fine <= last; fine += 1) {
-      heights.set(fine, fine === last ? height - step * (span - 1) : step);
-    }
-    for (let column = 1; column <= 8; column += 1) {
-      addresses.set(`${col(column)}${row}`, `${col(column)}${first}`);
-    }
   }
   const fields = Array.from({ length: endColumn - startColumn + 1 }, (_, index) => ({
     name: sheet.getCell(10, startColumn + index).text,
     sourceColumn: startColumn + index,
   }));
-  const spanFor = (first, required) => {
-    let last = first, height = heights.get(first) ?? 18;
-    while (height + 0.001 < required) { last += 1; height += heights.get(last) ?? 18; }
-    return last;
-  };
   const textLines = (text, width = 38) => String(text).split(/\r?\n/).reduce((sum, line) => sum + Math.max(1,
     Math.ceil([...line].reduce((size, ch) => size + (/[^\x00-\x7f]/.test(ch) ? 2 : 1), 0) / width)), 0);
+  // One shared item column and one value column per product, as in the
+  // approved comparison layout. Splitting physical rows keeps the left quote
+  // at its original visual height while the right-hand fields remain compact.
+  const headings = payload.items.map((_item, index) =>
+    `${String(index + 1).padStart(2, "0")} · ${String(sourceRows.get(11 + index).cells[1].value ?? "")}`);
+  const originalHeaderPixels = Math.round(heights.get(10) * 4 / 3);
+  const headerPixels = Math.max(originalHeaderPixels,
+    ...headings.map(text => Math.ceil((textLines(text, 18) * 12 + 4) * 4 / 3)));
+  const headerEndPixel = headerPixels - originalHeaderPixels;
+  let cursorPixel = headerEndPixel;
+  const fieldPixelRows = fields.map(field => {
+    const firstPixel = cursorPixel;
+    // Ordinary detail rows have the same visible height as the item header.
+    // A longer label can grow only its shared detail row to avoid clipping.
+    const pixels = Math.max(headerPixels, Math.ceil((textLines(field.name) * 12 + 2) * 4 / 3));
+    cursorPixel += pixels;
+    return { ...field, firstPixel, lastPixel: cursorPixel };
+  });
+  // Split only at the union of original left-row edges and right-table edges.
+  // Pixel-proportional point heights preserve each original left row's exact
+  // total points AND normal-zoom pixels, without hundreds of one-pixel rows.
+  const cuts = new Set([0, headerEndPixel, cursorPixel]);
+  for (const range of sourceGeometry) { cuts.add(range.firstPixel); cuts.add(range.lastPixel); }
+  for (const range of fieldPixelRows) { cuts.add(range.firstPixel); cuts.add(range.lastPixel); }
+  const boundaries = [...cuts].sort((a, b) => a - b), pixelToRow = new Map();
+  let geometryIndex = 0, nextRow = 11;
+  const allocated = new Map();
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const firstPixel = boundaries[index], lastPixel = boundaries[index + 1];
+    pixelToRow.set(firstPixel, nextRow);
+    while (geometryIndex < sourceGeometry.length && sourceGeometry[geometryIndex].lastPixel <= firstPixel) geometryIndex += 1;
+    const source = sourceGeometry[geometryIndex];
+    let height = (lastPixel - firstPixel) * 0.75;
+    if (source) {
+      const previous = allocated.get(source.sourceRow) || 0;
+      height = lastPixel === source.lastPixel ? source.height - previous
+        : source.height * (lastPixel - firstPixel) / source.pixels;
+      allocated.set(source.sourceRow, previous + height);
+    }
+    heights.set(nextRow, height); nextRow += 1;
+  }
+  pixelToRow.set(boundaries.at(-1), nextRow);
+  for (const range of sourceGeometry) publicRows.set(range.sourceRow, {
+    first: pixelToRow.get(range.firstPixel), last: pixelToRow.get(range.lastPixel) - 1, height: range.height,
+  });
+  for (const [row, range] of publicRows) for (let column = 1; column <= 8; column += 1) {
+    addresses.set(`${col(column)}${row}`, `${col(column)}${range.first}`);
+  }
+  const headerLast = headerEndPixel === 0 ? 10 : pixelToRow.get(headerEndPixel) - 1;
+  const fieldRows = fieldPixelRows.map(field => ({ ...field,
+    row: pixelToRow.get(field.firstPixel), last: pixelToRow.get(field.lastPixel) - 1 }));
   const blocks = [];
-  let cursor = 10;
   payload.items.forEach((_item, index) => {
     const sourceRow = 11 + index;
-    const name = String(sourceRows.get(sourceRow).cells[1].value ?? "");
-    const heading = `${String(index + 1).padStart(2, "0")} · ${name}`;
-    const headerLast = spanFor(cursor, Math.max(28, textLines(heading, 18) * 12 + 4));
-    const block = { index, sourceRow, headerRow: cursor, headerLast, heading, fields: [] };
-    cursor = headerLast + 1;
-    for (const field of fields) {
-      const last = spanFor(cursor, textLines(field.name) * 12 + 2);
+    const valueColumn = startColumn + 1 + index;
+    const block = { index, sourceRow, headerRow: 10, headerLast, heading: headings[index], valueColumn, fields: [] };
+    for (const field of fieldRows) {
       const cell = sheet.getCell(sourceRow, field.sourceColumn);
-      const address = `${col(startColumn + 1)}${cursor}`;
+      const address = `${col(valueColumn)}${field.row}`;
       addresses.set(cell.address, address);
-      block.fields.push({ ...field, row: cursor, last, address,
+      block.fields.push({ ...field, address,
         sourceAddress: cell.address, value: clone(cell.value), style: clone(cell.style) });
-      cursor = last + 1;
     }
     blocks.push(block);
-    cursor += 1;
   });
   const moveFormula = formula => formula.replace(/\$?([A-Z]{1,3})\$?([1-9]\d*)\b/g, (match, letters, row) => {
     const moved = addresses.get(`${letters}${row}`);
@@ -1625,6 +1659,12 @@ function arrangeVerticalQuotationDetails(sheet, method) {
       }
       const cell = sheet.getCell(range.first, column);
       cell.value = moveValue(saved.value); cell.style = clone(saved.style);
+      // A native spreadsheet reads physical edge-cell styles, not just the
+      // merged master. Replacing the master's style alone leaves stale/empty
+      // borders on later rows after spliceRows and produces missing outlines.
+      for (let row = range.first; row <= range.last; row += 1) {
+        sheet.getCell(row, column).style = clone(saved.style);
+      }
     }
   }
   const line = { style: "thin", color: { argb: "FFCBD5E1" } };
@@ -1638,23 +1678,25 @@ function arrangeVerticalQuotationDetails(sheet, method) {
     if (last > first) sheet.mergeCells(first, column, last, column);
     const cell = sheet.getCell(first, column); cell.value = value; cell.style = clone(style);
     for (let row = first; row <= last; row += 1) {
+      sheet.getCell(row, column).style = clone(style);
       if (!heights.has(row)) sheet.getRow(row).height = 18;
     }
   };
   sheet.getColumn(startColumn).width = 38;
-  sheet.getColumn(startColumn + 1).width = 18;
+  write(10, headerLast, startColumn, "项目", headerStyle);
+  for (const field of fieldRows) write(field.row, field.last, startColumn, field.name, bodyStyle);
   for (const block of blocks) {
-    write(block.headerRow, block.headerLast, startColumn, "项目", headerStyle);
-    write(block.headerRow, block.headerLast, startColumn + 1, block.heading, headerStyle);
+    sheet.getColumn(block.valueColumn).width = 18;
+    write(block.headerRow, block.headerLast, block.valueColumn, block.heading, headerStyle);
     for (const field of block.fields) {
-      write(field.row, field.last, startColumn, field.name, bodyStyle);
       const style = { ...clone(bodyStyle), numFmt: field.style.numFmt || "#,##0.00",
         alignment: { vertical: "middle", horizontal: "right" } };
-      write(field.row, field.last, startColumn + 1, moveValue(field.value), style);
+      write(field.row, field.last, block.valueColumn, moveValue(field.value), style);
     }
   }
   // Remove the old wide, empty audit columns as well as their formatting.
-  if (sheet.columnCount > startColumn + 1) sheet.spliceColumns(startColumn + 2, sheet.columnCount - startColumn - 1);
+  const lastColumn = startColumn + blocks.length;
+  if (sheet.columnCount > lastColumn) sheet.spliceColumns(lastColumn + 1, sheet.columnCount - lastColumn);
   if (sheet.pageSetup.printArea) {
     sheet.pageSetup.printArea = sheet.pageSetup.printArea.replace(/([A-H])(\d+)/g,
       (_match, letter, row) => `${letter}${publicRows.get(Number(row))?.last ?? row}`);
@@ -1795,7 +1837,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
     const sheet = candidateWorkbook.getWorksheet(name);
     for (const block of layout.blocks) {
       assertRow([sheet.getCell(block.headerRow, layout.startColumn).text,
-        sheet.getCell(block.headerRow, layout.startColumn + 1).text], ["项目", block.heading], `${name} detail identity`);
+        sheet.getCell(block.headerRow, block.valueColumn).text], ["项目", block.heading], `${name} detail identity`);
       for (const field of block.fields) {
         if (sheet.getCell(field.row, layout.startColumn).text !== field.name) throw new Error(`${name} detail label changed`);
         const actual = sheet.getCell(field.address).value;
