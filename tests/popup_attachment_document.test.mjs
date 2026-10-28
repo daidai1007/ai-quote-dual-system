@@ -6,6 +6,7 @@ import path from 'node:path';
 import {promisify} from 'node:util';
 import test from 'node:test';
 import ExcelJS from '@excel.js/exceljs';
+import {projectQuotationAudit} from './quotation_layout_reader.mjs';
 import {createAttachmentService} from '../api/attachment_service.mjs';
 import {PRICING_BASIS,quickOrderLineBreakdown,moneySum} from '../quick_discount_rules.mjs';
 
@@ -156,7 +157,7 @@ test('actual ordinary and ganged workbooks preserve popup fan sale and formula c
       const input=path.join(folder,`input-${count}.json`),output=path.join(folder,`quote-${count}.xlsx`);
       await fs.writeFile(input,JSON.stringify(payload));
       await promisify(execFile)(process.execPath,[path.resolve('export_dual_quote_workbook.mjs'),input,output],{windowsHide:true});
-      const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
+      const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);projectQuotationAudit(book);
       for(const [sheet,amount] of [['快速报价单',480],['公式法报价单',280]]){
         const table=book.getWorksheet(sheet),column=table.getRow(10).values.findIndex(value=>value===fan.item_name);
         assert.ok(column>0,`${sheet} missing fan column`);

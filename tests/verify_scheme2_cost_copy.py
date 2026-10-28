@@ -45,7 +45,9 @@ before = copy.deepcopy(sample)
 duplicate.click()
 assert len(window.draft_items) == 3
 copied = window.draft_items[1]
-assert copied == before and sample == before and copied is not sample
+assert {key:value for key,value in copied.items() if key!='attachment_selection_mode'} == before
+assert copied['attachment_selection_mode']=='manual_names'
+assert sample == before and copied is not sample
 assert window.draft_items[2] is following and window.summary_table.currentRow() == 1
 assert [window.summary_table.item(row, 0).text() for row in range(3)] == ['1', '2', '3']
 copied_ref = window._draft_drawing_refs[id(copied)]

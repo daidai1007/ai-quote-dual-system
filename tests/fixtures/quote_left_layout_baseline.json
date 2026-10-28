@@ -1,0 +1,2102 @@
+{
+  "公式法报价单": {
+    "widths": [
+      5,
+      18,
+      24,
+      7,
+      7,
+      11,
+      12,
+      58
+    ],
+    "styles": [
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF111827"
+          },
+          "size": 22,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "right": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "top": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "bottom": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF374151"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "right": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "top": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "bottom": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "right": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "top": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "bottom": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {},
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF374151"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF374151"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF374151"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center"
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF1F3A5F"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "solid",
+          "fgColor": {
+            "argb": "FFE9EEF5"
+          }
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle",
+          "wrapText": true
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle",
+          "wrapText": true
+        }
+      },
+      {
+        "numFmt": "#,##0.00",
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle",
+          "wrapText": true
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "left",
+          "vertical": "middle",
+          "wrapText": true
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF1F3A5F"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "solid",
+          "fgColor": {
+            "argb": "FFF3F6FA"
+          }
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "numFmt": "#,##0.00",
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF1F3A5F"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "solid",
+          "fgColor": {
+            "argb": "FFF3F6FA"
+          }
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF1F3A5F"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "solid",
+          "fgColor": {
+            "argb": "FFF3F6FA"
+          }
+        },
+        "alignment": {
+          "vertical": "middle"
+        }
+      }
+    ],
+    "rows": [
+      {
+        "row": 1,
+        "height": 20.1,
+        "cells": [
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "REG-COST-DETAIL-20260805",
+            "style": 1
+          },
+          {
+            "value": null,
+            "style": 2
+          },
+          {
+            "value": null,
+            "style": 2
+          },
+          {
+            "value": null,
+            "style": 2
+          },
+          {
+            "value": null,
+            "style": 3
+          }
+        ]
+      },
+      {
+        "row": 2,
+        "height": 20.1,
+        "cells": [
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "日期",
+            "style": 1
+          },
+          {
+            "value": "2026-08-05",
+            "style": 2
+          },
+          {
+            "value": "2026-08-05",
+            "style": 2
+          },
+          {
+            "value": "2026-08-05",
+            "style": 2
+          },
+          {
+            "value": null,
+            "style": 3
+          }
+        ]
+      },
+      {
+        "row": 3,
+        "height": 22.5,
+        "cells": [
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": "订单性质",
+            "style": 3
+          },
+          {
+            "value": "待分类",
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          }
+        ]
+      },
+      {
+        "row": 4,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "买方",
+            "style": 4
+          },
+          {
+            "value": "成本明细回归测试公司",
+            "style": 5
+          },
+          {
+            "value": "成本明细回归测试公司",
+            "style": 5
+          },
+          {
+            "value": "成本明细回归测试公司",
+            "style": 5
+          },
+          {
+            "value": "卖方",
+            "style": 4
+          },
+          {
+            "value": "浙江京能电力设备有限公司",
+            "style": 5
+          },
+          {
+            "value": "浙江京能电力设备有限公司",
+            "style": 5
+          },
+          {
+            "value": "浙江京能电力设备有限公司",
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 5,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "地址",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": "地址",
+            "style": 4
+          },
+          {
+            "value": "杭州临安横畈工业功能区桑园路18号",
+            "style": 5
+          },
+          {
+            "value": "杭州临安横畈工业功能区桑园路18号",
+            "style": 5
+          },
+          {
+            "value": "杭州临安横畈工业功能区桑园路18号",
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 6,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "电话",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": "电话",
+            "style": 4
+          },
+          {
+            "value": "0571-88520091",
+            "style": 5
+          },
+          {
+            "value": "0571-88520091",
+            "style": 5
+          },
+          {
+            "value": "0571-88520091",
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 7,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "传真",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": "传真",
+            "style": 4
+          },
+          {
+            "value": "0571-88520077",
+            "style": 5
+          },
+          {
+            "value": "0571-88520077",
+            "style": 5
+          },
+          {
+            "value": "0571-88520077",
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 8,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "邮箱",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": "邮箱",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 9,
+        "height": 24.9,
+        "cells": [
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          }
+        ]
+      },
+      {
+        "row": 10,
+        "height": 33,
+        "cells": [
+          {
+            "value": "序号",
+            "style": 6
+          },
+          {
+            "value": "名称",
+            "style": 6
+          },
+          {
+            "value": "规格型号(W*D*H)",
+            "style": 6
+          },
+          {
+            "value": "数量",
+            "style": 6
+          },
+          {
+            "value": "单位",
+            "style": 6
+          },
+          {
+            "value": "单价",
+            "style": 6
+          },
+          {
+            "value": "总价",
+            "style": 6
+          },
+          {
+            "value": "备注",
+            "style": 6
+          }
+        ]
+      },
+      {
+        "row": 11,
+        "height": 81,
+        "cells": [
+          {
+            "value": 1,
+            "style": 7
+          },
+          {
+            "value": "JF100MKD2.80.03-001",
+            "style": 7
+          },
+          {
+            "value": "1000*600*1800",
+            "style": 7
+          },
+          {
+            "value": 2,
+            "style": 7
+          },
+          {
+            "value": "台",
+            "style": 7
+          },
+          {
+            "value": 763.2,
+            "style": 8
+          },
+          {
+            "value": 1526.4,
+            "style": 8
+          },
+          {
+            "value": "成本明细回归测试。",
+            "style": 9
+          }
+        ]
+      },
+      {
+        "row": 12,
+        "height": 101,
+        "cells": [
+          {
+            "value": 2,
+            "style": 7
+          },
+          {
+            "value": "KP802060005",
+            "style": 7
+          },
+          {
+            "value": "800*600*2000",
+            "style": 7
+          },
+          {
+            "value": 1,
+            "style": 7
+          },
+          {
+            "value": "台",
+            "style": 7
+          },
+          {
+            "value": 1134.2,
+            "style": 8
+          },
+          {
+            "value": 1134.2,
+            "style": 8
+          },
+          {
+            "value": "成本明细第二行回归测试。",
+            "style": 9
+          }
+        ]
+      },
+      {
+        "row": 13,
+        "height": 90,
+        "cells": [
+          {
+            "value": null,
+            "style": 10
+          },
+          {
+            "value": "合计",
+            "style": 10
+          },
+          {
+            "value": null,
+            "style": 10
+          },
+          {
+            "value": null,
+            "style": 10
+          },
+          {
+            "value": null,
+            "style": 10
+          },
+          {
+            "value": null,
+            "style": 11
+          },
+          {
+            "value": 2660.6,
+            "style": 11
+          },
+          {
+            "value": null,
+            "style": 12
+          }
+        ]
+      }
+    ],
+    "views": [
+      {
+        "workbookViewId": 0,
+        "rightToLeft": false,
+        "state": "normal",
+        "showRuler": true,
+        "showRowColHeaders": true,
+        "showGridLines": false,
+        "zoomScale": 100,
+        "zoomScaleNormal": 100
+      }
+    ],
+    "headerMerges": [
+      "A1:C2",
+      "E1:G1",
+      "E2:G2",
+      "B4:D4",
+      "F4:H4",
+      "B5:D5",
+      "F5:H5",
+      "B6:D6",
+      "F6:H6",
+      "B7:D7",
+      "F7:H7",
+      "B8:D8",
+      "F8:H8"
+    ]
+  },
+  "快速报价单": {
+    "widths": [
+      5,
+      18,
+      24,
+      7,
+      7,
+      11,
+      12,
+      58
+    ],
+    "styles": [
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF111827"
+          },
+          "size": 22,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "right": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "top": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "bottom": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF374151"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "right": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "top": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "bottom": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "right": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "top": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          },
+          "bottom": {
+            "style": "medium",
+            "color": {
+              "argb": "FF1F2937"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {},
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF374151"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF374151"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF374151"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center"
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF1F3A5F"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "solid",
+          "fgColor": {
+            "argb": "FFE9EEF5"
+          }
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle",
+          "wrapText": true
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle",
+          "wrapText": true
+        }
+      },
+      {
+        "numFmt": "#,##0.00",
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle",
+          "wrapText": true
+        }
+      },
+      {
+        "font": {
+          "color": {
+            "argb": "FF1F2937"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF6B7280"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "none"
+        },
+        "alignment": {
+          "horizontal": "left",
+          "vertical": "middle",
+          "wrapText": true
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF1F3A5F"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "solid",
+          "fgColor": {
+            "argb": "FFF3F6FA"
+          }
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "numFmt": "#,##0.00",
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF1F3A5F"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "solid",
+          "fgColor": {
+            "argb": "FFF3F6FA"
+          }
+        },
+        "alignment": {
+          "horizontal": "center",
+          "vertical": "middle"
+        }
+      },
+      {
+        "font": {
+          "bold": true,
+          "color": {
+            "argb": "FF1F3A5F"
+          },
+          "size": 10,
+          "name": "Microsoft YaHei"
+        },
+        "border": {
+          "left": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "right": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "top": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          },
+          "bottom": {
+            "style": "thin",
+            "color": {
+              "argb": "FF4B5563"
+            }
+          }
+        },
+        "fill": {
+          "type": "pattern",
+          "pattern": "solid",
+          "fgColor": {
+            "argb": "FFF3F6FA"
+          }
+        },
+        "alignment": {
+          "vertical": "middle"
+        }
+      }
+    ],
+    "rows": [
+      {
+        "row": 1,
+        "height": 20.1,
+        "cells": [
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "REG-COST-DETAIL-20260805",
+            "style": 1
+          },
+          {
+            "value": null,
+            "style": 2
+          },
+          {
+            "value": null,
+            "style": 2
+          },
+          {
+            "value": null,
+            "style": 2
+          },
+          {
+            "value": null,
+            "style": 3
+          }
+        ]
+      },
+      {
+        "row": 2,
+        "height": 20.1,
+        "cells": [
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "报价单",
+            "style": 0
+          },
+          {
+            "value": "日期",
+            "style": 1
+          },
+          {
+            "value": "2026-08-05",
+            "style": 2
+          },
+          {
+            "value": "2026-08-05",
+            "style": 2
+          },
+          {
+            "value": "2026-08-05",
+            "style": 2
+          },
+          {
+            "value": null,
+            "style": 3
+          }
+        ]
+      },
+      {
+        "row": 3,
+        "height": 22.5,
+        "cells": [
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": "订单性质",
+            "style": 3
+          },
+          {
+            "value": "待分类",
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          }
+        ]
+      },
+      {
+        "row": 4,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "买方",
+            "style": 4
+          },
+          {
+            "value": "成本明细回归测试公司",
+            "style": 5
+          },
+          {
+            "value": "成本明细回归测试公司",
+            "style": 5
+          },
+          {
+            "value": "成本明细回归测试公司",
+            "style": 5
+          },
+          {
+            "value": "卖方",
+            "style": 4
+          },
+          {
+            "value": "浙江京能电力设备有限公司",
+            "style": 5
+          },
+          {
+            "value": "浙江京能电力设备有限公司",
+            "style": 5
+          },
+          {
+            "value": "浙江京能电力设备有限公司",
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 5,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "地址",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": "地址",
+            "style": 4
+          },
+          {
+            "value": "杭州临安横畈工业功能区桑园路18号",
+            "style": 5
+          },
+          {
+            "value": "杭州临安横畈工业功能区桑园路18号",
+            "style": 5
+          },
+          {
+            "value": "杭州临安横畈工业功能区桑园路18号",
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 6,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "电话",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": "电话",
+            "style": 4
+          },
+          {
+            "value": "0571-88520091",
+            "style": 5
+          },
+          {
+            "value": "0571-88520091",
+            "style": 5
+          },
+          {
+            "value": "0571-88520091",
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 7,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "传真",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": "传真",
+            "style": 4
+          },
+          {
+            "value": "0571-88520077",
+            "style": 5
+          },
+          {
+            "value": "0571-88520077",
+            "style": 5
+          },
+          {
+            "value": "0571-88520077",
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 8,
+        "height": 16.5,
+        "cells": [
+          {
+            "value": "邮箱",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": "邮箱",
+            "style": 4
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          },
+          {
+            "value": null,
+            "style": 5
+          }
+        ]
+      },
+      {
+        "row": 9,
+        "height": 24.9,
+        "cells": [
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          },
+          {
+            "value": null,
+            "style": 3
+          }
+        ]
+      },
+      {
+        "row": 10,
+        "height": 33,
+        "cells": [
+          {
+            "value": "序号",
+            "style": 6
+          },
+          {
+            "value": "名称",
+            "style": 6
+          },
+          {
+            "value": "规格型号(W*D*H)",
+            "style": 6
+          },
+          {
+            "value": "数量",
+            "style": 6
+          },
+          {
+            "value": "单位",
+            "style": 6
+          },
+          {
+            "value": "折后单价",
+            "style": 6
+          },
+          {
+            "value": "折后总价",
+            "style": 6
+          },
+          {
+            "value": "备注",
+            "style": 6
+          }
+        ]
+      },
+      {
+        "row": 11,
+        "height": 81,
+        "cells": [
+          {
+            "value": 1,
+            "style": 7
+          },
+          {
+            "value": "JF100MKD2.80.03-001",
+            "style": 7
+          },
+          {
+            "value": "1000*600*1800",
+            "style": 7
+          },
+          {
+            "value": 2,
+            "style": 7
+          },
+          {
+            "value": "台",
+            "style": 7
+          },
+          {
+            "value": 3200,
+            "style": 8
+          },
+          {
+            "value": 6400,
+            "style": 8
+          },
+          {
+            "value": "成本明细回归测试。",
+            "style": 9
+          }
+        ]
+      },
+      {
+        "row": 12,
+        "height": 101,
+        "cells": [
+          {
+            "value": 2,
+            "style": 7
+          },
+          {
+            "value": "KP802060005",
+            "style": 7
+          },
+          {
+            "value": "800*600*2000",
+            "style": 7
+          },
+          {
+            "value": 1,
+            "style": 7
+          },
+          {
+            "value": "台",
+            "style": 7
+          },
+          {
+            "value": 4100,
+            "style": 8
+          },
+          {
+            "value": 4100,
+            "style": 8
+          },
+          {
+            "value": "成本明细第二行回归测试。",
+            "style": 9
+          }
+        ]
+      },
+      {
+        "row": 13,
+        "height": 90,
+        "cells": [
+          {
+            "value": null,
+            "style": 10
+          },
+          {
+            "value": "合计",
+            "style": 10
+          },
+          {
+            "value": null,
+            "style": 10
+          },
+          {
+            "value": null,
+            "style": 10
+          },
+          {
+            "value": null,
+            "style": 10
+          },
+          {
+            "value": null,
+            "style": 11
+          },
+          {
+            "value": 10500,
+            "style": 11
+          },
+          {
+            "value": null,
+            "style": 12
+          }
+        ]
+      }
+    ],
+    "views": [
+      {
+        "workbookViewId": 0,
+        "rightToLeft": false,
+        "state": "normal",
+        "showRuler": true,
+        "showRowColHeaders": true,
+        "showGridLines": false,
+        "zoomScale": 100,
+        "zoomScaleNormal": 100
+      }
+    ],
+    "headerMerges": [
+      "A1:C2",
+      "E1:G1",
+      "E2:G2",
+      "B4:D4",
+      "F4:H4",
+      "B5:D5",
+      "F5:H5",
+      "B6:D6",
+      "F6:H6",
+      "B7:D7",
+      "F7:H7",
+      "B8:D8",
+      "F8:H8"
+    ]
+  }
+}

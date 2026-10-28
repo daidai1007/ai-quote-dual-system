@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
+from PySide6.QtCore import QPoint
 
 import verify_quote_document_progress as base
 import quote_document_progress as progress
@@ -37,7 +38,11 @@ class DocumentFeedback(unittest.TestCase):
         c = self.controller
         for host, _bar, _locate in c.widgets.values():
             self.assertTrue(host.isHidden())
-        initial_height = self.window.summary_table.height()
+        # The original short table can already be at its minimum height and
+        # feedback can occupy the existing action dock. Verify actual fit and
+        # non-overlap instead of requiring an unrelated table to shrink.
+        cost_page = self.window.scheme2_cost_page
+        initial_height = cost_page.height()
         c.begin('generate')
         host, bar, _locate = c.widgets['generate']
         self.assertEqual(c.show_timer.interval(), 300)
@@ -49,12 +54,16 @@ class DocumentFeedback(unittest.TestCase):
         self.assertLessEqual(bar.height(), 4)
         self.assertFalse(bar.isTextVisible())
         self.assertIn(PROGRESS_COLORS['fill'], bar.styleSheet())
-        self.assertLess(self.window.summary_table.height(), initial_height)
+        table = self.window.summary_table
+        table_bottom = table.mapTo(self.window, QPoint(0, table.height())).y()
+        feedback_top = host.mapTo(self.window, QPoint(0, 0)).y()
+        self.assertLessEqual(table_bottom, feedback_top)
+        self.assertTrue(self.window.rect().contains(host.mapTo(self.window, host.rect().bottomRight())))
         self.capture('running')
         c.end(cancelled=True)
         app.processEvents()
         self.assertTrue(host.isHidden())
-        self.assertEqual(self.window.summary_table.height(), initial_height)
+        self.assertEqual(cost_page.height(), initial_height)
         self.assertTrue(self.window.scheme2_cost_generate.isEnabled())
         self.assertTrue(self.window.summary_table.isEnabled())
         self.assertFalse(c.timer.isActive())

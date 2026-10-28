@@ -13,6 +13,8 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = (
+    'verify_cost_horizontal_restore.py',
+    'verify_quote_batch_discount.py',
     'verify_front_rear_doors.py',
     'verify_attachment_unit_prices.py',
     'verify_copied_attachment_names.py', 'verify_copied_quote_reprice.py',

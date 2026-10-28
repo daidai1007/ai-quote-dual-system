@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import ExcelJS from "@excel.js/exceljs";
+import {projectQuotationAudit} from "./quotation_layout_reader.mjs";
 import {money, moneySum, moneyProduct, quickOrderLineBreakdown, PRICING_BASIS, formulaAttachmentLineAmount, attachmentExcludedFromDiscount} from "../quick_discount_rules.mjs";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
@@ -12,7 +13,12 @@ const fixturePath = path.join(projectRoot, "tests", "fixtures", "export_formula_
 const doorMatrixFixturePath = path.join(projectRoot, "tests", "fixtures", "export_quick_door_matrix.json");
 const exporterPath = path.join(projectRoot, "export_dual_quote_workbook.mjs");
 
-const runExporter = (outputPath, inputPath = fixturePath) => new Promise((resolve, reject) => {
+const runExporter = async (outputPath, sourcePath = fixturePath) => {
+ const request = JSON.parse(await fs.readFile(sourcePath, 'utf8'));
+ request.quotation_detail_layout = 'right_vertical_v1';
+ const inputPath = outputPath + '.input.json';
+ await fs.writeFile(inputPath, JSON.stringify(request));
+ return new Promise((resolve, reject) => {
   const child = spawn(process.execPath, [exporterPath, inputPath, outputPath], {
     cwd: projectRoot,
     windowsHide: true,
@@ -26,7 +32,8 @@ const runExporter = (outputPath, inputPath = fixturePath) => new Promise((resolv
     if (code === 0) resolve();
     else reject(new Error(stderr.trim() || stdout.trim() || `exporter exited with code ${code}`));
   });
-});
+ });
+};
 
 test("customer metadata survives legacy payload and Excel serialization", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-customer-"));
@@ -39,6 +46,7 @@ test("customer metadata survives legacy payload and Excel serialization", async 
     await runExporter(outputPath, inputPath);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     for (const name of ["公式法报价单", "快速报价单"]) {
       assert.equal(workbook.getWorksheet(name).getCell("B4").value, payload.company_name);
     }
@@ -92,6 +100,7 @@ test("formal workbook replaces only the door phrase using current door counts", 
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     for (const sheetName of ["公式法报价单", "快速报价单"]) {
       const sheet = workbook.getWorksheet(sheetName);
       cases.forEach(([, , expected], index) => {
@@ -171,6 +180,7 @@ for (const modern of [false, true]) {
       await runExporter(outputPath,inputPath);
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
       for (const name of ["公式法报价单","快速报价单"]) {
         const sheet = workbook.getWorksheet(name);
         cases.forEach((sample,index) => {
@@ -268,6 +278,7 @@ test("quick public quote uses the click-time UI snapshot verbatim", async () => 
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     const quickSheet = workbook.getWorksheet("快速报价单");
     assert.deepEqual(
       [2, 3, 4, 5, 6, 7, 8].map((column) => quickSheet.getCell(11, column).value),
@@ -302,6 +313,7 @@ test("both quotation sheets preserve cleared and multiline manual remarks", asyn
       await runExporter(outputPath, inputPath);
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
       for (const sheetName of ["公式法报价单", "快速报价单"]) {
         assert.equal(String(workbook.getWorksheet(sheetName).getCell("H11").value ?? ""), remark);
       }
@@ -344,6 +356,7 @@ test("ganged quick export keeps the click-time attachment amount", async () => {
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     const quickSheet = workbook.getWorksheet("快速报价单");
     const headers = quickSheet.getRow(10).values;
     const fanColumn = headers.findIndex((value) => value === "风机SG22060HA2/220V（国产）");
@@ -380,6 +393,7 @@ test("formula quotation mirrors quick attachment-name detail columns", async () 
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     const quickSheet = workbook.getWorksheet("快速报价单");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
@@ -432,6 +446,7 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     const quickSheet = workbook.getWorksheet("快速报价单");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
@@ -486,6 +501,7 @@ test("formal workbook preserves the legacy desktop quotation format", async () =
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), [
       "公式法报价单", "快速报价单", "成本明细",
     ]);
@@ -555,7 +571,9 @@ test("quick workbook uses stable selected-name columns without obsolete configur
     const workbook = new ExcelJS.Workbook();
     const reversedWorkbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     await reversedWorkbook.xlsx.readFile(reversedOutputPath);
+    projectQuotationAudit(reversedWorkbook);
     const sheet = workbook.getWorksheet("快速报价单");
     const reversedSheet = reversedWorkbook.getWorksheet("快速报价单");
     const formulaSheet = workbook.getWorksheet("公式法报价单");
@@ -624,6 +642,7 @@ test("quick workbook uses popup attachment rows and omits synthetic fee deltas",
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     const sheet = workbook.getWorksheet("快速报价单");
     const headers = sheet.getRow(10).values;
     const otherColumn = headers.findIndex((value) => value === "其他附件/差额");
@@ -667,6 +686,7 @@ test("workbook uses final attachment quantities for every ordinary row", async (
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     const quickSheet = workbook.getWorksheet("快速报价单");
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(quickSheet.getCell("F11").value, 1150, "quick per-cabinet unit total with original-price door strip");
@@ -772,6 +792,7 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     for (const sheetName of ["公式法报价单", "快速报价单"]) {
       const sheet = workbook.getWorksheet(sheetName);
       assert.equal(sheet.getCell("C11").text, item.specification);
@@ -840,6 +861,7 @@ test("formula export falls back from null attachment fees and leaves missing wei
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     closeTo(formulaSheet.getCell("F11").value, 763.2, "formula uses popup fee and current management");
 
@@ -895,6 +917,7 @@ test("other attachments stay at original price in both exported quotations", asy
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
+    projectQuotationAudit(workbook);
     const formulaSheet = workbook.getWorksheet("公式法报价单");
     const quickSheet = workbook.getWorksheet("快速报价单");
     closeTo(formulaSheet.getCell("F11").value, 983.15, "formula keeps other attachment outside discount");

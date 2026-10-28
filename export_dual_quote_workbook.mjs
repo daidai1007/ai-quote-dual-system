@@ -1522,6 +1522,158 @@ fillSheet(formulaSheet, "formula");
 fillSheet(quickSheet, "quick");
 buildFormulaCostDetailSheet();
 
+// Layout only: keep fillSheet and every pricing function above unchanged.
+// Excel shares row heights across a sheet. Split its physical rows and merge
+// each A:H cell over the split so the original quotation retains exactly the
+// same visual heights, widths, values and styles beside the compact detail.
+const quotationLayouts = new Map();
+function arrangeVerticalQuotationDetails(sheet, method) {
+  const clone = value => value === undefined ? undefined : structuredClone(value);
+  const startColumn = method === "formula" ? 12 : 10;
+  const endColumn = method === "formula" ? formulaDiscountColumnIndex : quickDiscountColumnIndex;
+  const sourceRowCount = sheet.rowCount;
+  const sourceColumnCount = sheet.columnCount;
+  const sourceRows = new Map();
+  const publicRows = new Map();
+  const heights = new Map();
+  const addresses = new Map();
+  let nextRow = 11;
+  for (let row = 1; row <= sourceRowCount; row += 1) {
+    const source = sheet.getRow(row);
+    const height = source.height ?? sheet.properties.defaultRowHeight ?? 15;
+    const span = row < 11 ? 1 : Math.max(1, Math.ceil(height / 18));
+    const first = row < 11 ? row : nextRow;
+    const last = first + span - 1;
+    publicRows.set(row, { first, last, height });
+    if (row >= 11) nextRow = last + 1;
+    sourceRows.set(row, {
+      hidden: source.hidden, outlineLevel: source.outlineLevel,
+      cells: Array.from({ length: 8 }, (_, column) => {
+        const cell = source.getCell(column + 1);
+        return { value: clone(cell.value), style: clone(cell.style) };
+      }),
+    });
+    // 0.75pt is one pixel at normal Excel zoom. Integral-pixel subrows plus
+    // one remainder preserve the original visible total after pixel rounding.
+    const step = span === 1 ? height : Math.floor(height / span / 0.75) * 0.75;
+    for (let fine = first; fine <= last; fine += 1) {
+      heights.set(fine, fine === last ? height - step * (span - 1) : step);
+    }
+    for (let column = 1; column <= 8; column += 1) {
+      addresses.set(`${col(column)}${row}`, `${col(column)}${first}`);
+    }
+  }
+  const fields = Array.from({ length: endColumn - startColumn + 1 }, (_, index) => ({
+    name: sheet.getCell(10, startColumn + index).text,
+    sourceColumn: startColumn + index,
+  }));
+  const spanFor = (first, required) => {
+    let last = first, height = heights.get(first) ?? 18;
+    while (height + 0.001 < required) { last += 1; height += heights.get(last) ?? 18; }
+    return last;
+  };
+  const textLines = (text, width = 38) => String(text).split(/\r?\n/).reduce((sum, line) => sum + Math.max(1,
+    Math.ceil([...line].reduce((size, ch) => size + (/[^\x00-\x7f]/.test(ch) ? 2 : 1), 0) / width)), 0);
+  const blocks = [];
+  let cursor = 10;
+  payload.items.forEach((_item, index) => {
+    const sourceRow = 11 + index;
+    const name = String(sourceRows.get(sourceRow).cells[1].value ?? "");
+    const heading = `${String(index + 1).padStart(2, "0")} · ${name}`;
+    const headerLast = spanFor(cursor, Math.max(28, textLines(heading, 18) * 12 + 4));
+    const block = { index, sourceRow, headerRow: cursor, headerLast, heading, fields: [] };
+    cursor = headerLast + 1;
+    for (const field of fields) {
+      const last = spanFor(cursor, textLines(field.name) * 12 + 2);
+      const cell = sheet.getCell(sourceRow, field.sourceColumn);
+      const address = `${col(startColumn + 1)}${cursor}`;
+      addresses.set(cell.address, address);
+      block.fields.push({ ...field, row: cursor, last, address,
+        sourceAddress: cell.address, value: clone(cell.value), style: clone(cell.style) });
+      cursor = last + 1;
+    }
+    blocks.push(block);
+    cursor += 1;
+  });
+  const moveFormula = formula => formula.replace(/\$?([A-Z]{1,3})\$?([1-9]\d*)\b/g, (match, letters, row) => {
+    const moved = addresses.get(`${letters}${row}`);
+    if (!moved) return match;
+    const [, targetColumn, targetRow] = /^([A-Z]+)(\d+)$/.exec(moved);
+    return `${match.startsWith('$') ? '$' : ''}${targetColumn}${match.includes('$' + row) ? '$' : ''}${targetRow}`;
+  });
+  const moveValue = value => value && typeof value === "object" && value.formula
+    ? { ...clone(value), formula: moveFormula(value.formula) } : clone(value);
+  for (const merge of [...sheet.model.merges]) {
+    if (Number(/\d+$/.exec(merge)[0]) >= 11) sheet.unMergeCells(merge);
+  }
+  sheet.spliceRows(11, sourceRowCount - 10);
+  for (let row = 1; row <= 10; row += 1) {
+    for (let column = 9; column <= sourceColumnCount; column += 1) {
+      const cell = sheet.getCell(row, column); cell.value = null; cell.style = {};
+    }
+  }
+  for (let sourceRow = 11; sourceRow <= sourceRowCount; sourceRow += 1) {
+    const range = publicRows.get(sourceRow), source = sourceRows.get(sourceRow);
+    for (let row = range.first; row <= range.last; row += 1) {
+      const target = sheet.getRow(row);
+      target.height = heights.get(row); target.hidden = source.hidden; target.outlineLevel = source.outlineLevel;
+    }
+    for (let column = 1; column <= 8; column += 1) {
+      const saved = source.cells[column - 1];
+      if (range.last > range.first && (saved.value != null || Object.keys(saved.style).length)) {
+        sheet.mergeCells(range.first, column, range.last, column);
+      }
+      const cell = sheet.getCell(range.first, column);
+      cell.value = moveValue(saved.value); cell.style = clone(saved.style);
+    }
+  }
+  const line = { style: "thin", color: { argb: "FFCBD5E1" } };
+  const bodyStyle = { font: { name: "Microsoft YaHei", size: 10, color: { argb: "FF1F2937" } },
+    alignment: { vertical: "middle", horizontal: "left", wrapText: true },
+    border: { top: clone(line), bottom: clone(line), left: clone(line), right: clone(line) } };
+  const headerStyle = { ...clone(bodyStyle), font: { name: "Microsoft YaHei", size: 10, bold: true, color: { argb: "FF40566F" } },
+    fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF3F8" } },
+    alignment: { vertical: "middle", horizontal: "center", wrapText: true } };
+  const write = (first, last, column, value, style) => {
+    if (last > first) sheet.mergeCells(first, column, last, column);
+    const cell = sheet.getCell(first, column); cell.value = value; cell.style = clone(style);
+    for (let row = first; row <= last; row += 1) {
+      if (!heights.has(row)) sheet.getRow(row).height = 18;
+    }
+  };
+  sheet.getColumn(startColumn).width = 38;
+  sheet.getColumn(startColumn + 1).width = 18;
+  for (const block of blocks) {
+    write(block.headerRow, block.headerLast, startColumn, "项目", headerStyle);
+    write(block.headerRow, block.headerLast, startColumn + 1, block.heading, headerStyle);
+    for (const field of block.fields) {
+      write(field.row, field.last, startColumn, field.name, bodyStyle);
+      const style = { ...clone(bodyStyle), numFmt: field.style.numFmt || "#,##0.00",
+        alignment: { vertical: "middle", horizontal: "right" } };
+      write(field.row, field.last, startColumn + 1, moveValue(field.value), style);
+    }
+  }
+  // Remove the old wide, empty audit columns as well as their formatting.
+  if (sheet.columnCount > startColumn + 1) sheet.spliceColumns(startColumn + 2, sheet.columnCount - startColumn - 1);
+  if (sheet.pageSetup.printArea) {
+    sheet.pageSetup.printArea = sheet.pageSetup.printArea.replace(/([A-H])(\d+)/g,
+      (_match, letter, row) => `${letter}${publicRows.get(Number(row))?.last ?? row}`);
+  }
+  quotationLayouts.set(sheet.name, { method, startColumn, publicRows, blocks, addresses, moveValue });
+}
+// Older installed clients repair freight using horizontal cell addresses.
+// Only clients that understand the new layout may opt in to vertical details.
+const verticalDetailsRequested = payload.quotation_detail_layout === "right_vertical_v1";
+for (const [sheet, method] of [[formulaSheet, "formula"], [quickSheet, "quick"]]) {
+  if (verticalDetailsRequested) arrangeVerticalQuotationDetails(sheet, method);
+  else quotationLayouts.set(sheet.name, {
+    method, startColumn: method === "formula" ? 12 : 10,
+    publicRows: new Map(Array.from({ length: sheet.rowCount }, (_, index) =>
+      [index + 1, { first: index + 1, last: index + 1, height: sheet.getRow(index + 1).height }])),
+    blocks: [],
+  });
+}
+
 const assertClose = (actual, expected, label) => {
   if (!Number.isFinite(Number(actual)) || Math.abs(Number(actual) - Number(expected)) > 0.01) {
     throw new Error(`${label} mismatch: expected ${expected}, got ${actual}`);
@@ -1582,7 +1734,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
     );
     let subtotal = 0;
     items.forEach((item, index) => {
-      const row = 11 + index;
+      const row = quotationLayouts.get(sheetName).publicRows.get(11 + index).first;
       const quote = method === "formula" ? item.formula : item.quick;
       const display = quoteDisplay(item);
       const discount = asNumber((method === "formula"
@@ -1615,7 +1767,8 @@ const verifyWorkbookContents = (candidateWorkbook) => {
       assertClose(actual[6], expected[6], `${sheetName} row ${row} amount`);
       if (String(actual[7] ?? "") !== expected[7]) throw new Error(`${sheetName} row ${row} remark changed`);
     });
-    const subtotalRow = 11 + items.length;
+    const layout = quotationLayouts.get(sheetName);
+    const subtotalRow = layout.publicRows.get(11 + items.length).first;
     if (rangePlainValues(sheet, `B${subtotalRow}`)[0][0] !== "合计") {
       throw new Error(`${sheetName} subtotal label is missing`);
     }
@@ -1624,26 +1777,37 @@ const verifyWorkbookContents = (candidateWorkbook) => {
       subtotal,
       `${sheetName} subtotal`,
     );
-    audit[sheetName] = rangePlainValues(sheet, `B10:H${subtotalRow}`);
+    audit[sheetName] = [rangePlainValues(sheet, "B10:H10")[0],
+      ...items.map((_item, index) => rangePlainValues(sheet, `B${layout.publicRows.get(11 + index).first}:H${layout.publicRows.get(11 + index).first}`)[0]),
+      rangePlainValues(sheet, `B${subtotalRow}:H${subtotalRow}`)[0]];
   }
 
-  const serializedFormulaSheet = attachRangeApi(candidateWorkbook.getWorksheet("公式法报价单"));
-  const serializedQuickSheet = attachRangeApi(candidateWorkbook.getWorksheet("快速报价单"));
-  assertRow(
-    rangePlainValues(serializedFormulaSheet, "L10:P10")[0],
-    ["材料成本", "辅材成本", "人工成本", "喷塑费用", "管理费用"],
-    "formula cost headers",
-  );
-  assertRow(
-    rangePlainValues(serializedFormulaSheet, `Q10:${formulaLastColumn}10`)[0],
-    formulaCostHeaders,
-    "formula attachment-name headers",
-  );
-  assertRow(
-    rangePlainValues(serializedQuickSheet, `J10:${quickLastColumn}10`)[0],
-    quickCostHeaders,
-    "quick cost headers",
-  );
+  if (!verticalDetailsRequested) {
+    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("公式法报价单"), "L10:P10")[0],
+      ["材料成本", "辅材成本", "人工成本", "喷塑费用", "管理费用"], "formula cost headers");
+    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("公式法报价单"), `Q10:${formulaLastColumn}10`)[0],
+      formulaCostHeaders, "formula attachment-name headers");
+    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("快速报价单"), `J10:${quickLastColumn}10`)[0],
+      quickCostHeaders, "quick cost headers");
+  }
+  audit.quotation_layout = {};
+  for (const [name, layout] of quotationLayouts) {
+    const sheet = candidateWorkbook.getWorksheet(name);
+    for (const block of layout.blocks) {
+      assertRow([sheet.getCell(block.headerRow, layout.startColumn).text,
+        sheet.getCell(block.headerRow, layout.startColumn + 1).text], ["项目", block.heading], `${name} detail identity`);
+      for (const field of block.fields) {
+        if (sheet.getCell(field.row, layout.startColumn).text !== field.name) throw new Error(`${name} detail label changed`);
+        const actual = sheet.getCell(field.address).value;
+        const expected = layout.moveValue(field.value);
+        if (JSON.stringify(actual ?? null) !== JSON.stringify(expected ?? null)) throw new Error(`${name} detail value/formula changed: ${field.name}`);
+      }
+    }
+    audit.quotation_layout[name] = { start_column: layout.startColumn,
+      public_rows: Object.fromEntries(layout.publicRows),
+      blocks: layout.blocks.map(({ index, headerRow, fields }) => ({index, header_row: headerRow,
+        fields: fields.map(({name,row,last,address,sourceAddress}) => ({name,row,last,address,source_address:sourceAddress}))})) };
+  }
 
   const costSheet = attachRangeApi(candidateWorkbook.getWorksheet("成本明细"));
   if (!costSheet) throw new Error("saved workbook is missing sheet: 成本明细");

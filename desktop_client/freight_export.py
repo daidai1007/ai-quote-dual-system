@@ -62,6 +62,12 @@ def fill_freight_cells(path, amounts):
         name = target.lstrip('/') if target.startswith('/') else posixpath.normpath('xl/' + target)
         xml = parts[name].decode('utf-8')
         root = ET.fromstring(xml)
+        detail_header = 'L10' if sheet.get('name') == '公式法报价单' else 'J10'
+        if any(c.get('r') == detail_header and text(c).strip() == '项目'
+               for c in root.findall('.//m:sheetData/m:row/m:c', NS)):
+            # The server already wrote each product's freight in its vertical
+            # block. Horizontal addresses would overwrite labels and discounts.
+            continue
         header = next((c for c in root.findall('.//m:sheetData/m:row/m:c', NS)
                        if text(c).strip() == '运费'), None)
         if header is None:
@@ -113,6 +119,7 @@ def install_freight_export(namespace):
     def export_workbook(window, output_path, payload):
         # Freeze the same quote snapshot sent to the existing export endpoint.
         payload = deepcopy(payload)
+        payload['quotation_detail_layout'] = 'right_vertical_v1'
         amounts = {'公式法报价单': [], '快速报价单': []}
         for item in payload.get('items', []):
             amounts['公式法报价单'].append(_formula_order_line_breakdown(item)['freight_total'])

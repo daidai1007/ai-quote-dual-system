@@ -1,0 +1,143 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import test from 'node:test';
+import ExcelJS from '@excel.js/exceljs';
+import {quotationLayout} from './quotation_layout_reader.mjs';
+import {money} from '../quick_discount_rules.mjs';
+const run=promisify(execFile),root=path.resolve(import.meta.dirname,'..');
+const fixture=JSON.parse(await fs.readFile(path.join(root,'tests/fixtures/export_formula_cost_detail.json'),'utf8'));
+const baseline=JSON.parse(await fs.readFile(path.join(root,'tests/fixtures/quote_left_layout_baseline.json'),'utf8'));
+const normalize=value=>JSON.parse(JSON.stringify(value));
+async function exported(payload,check){
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'quote-vertical-'));
+ try{
+  const input=path.join(dir,'input.json'),output=path.join(dir,'quote.xlsx');
+  await fs.writeFile(input,JSON.stringify({...payload,quotation_detail_layout:'right_vertical_v1'}));
+  await run(process.execPath,[path.join(root,'export_dual_quote_workbook.mjs'),input,output],{cwd:root,windowsHide:true});
+  const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);await check(book);
+ }finally{
+  assert.equal(path.dirname(path.resolve(dir)),path.resolve(os.tmpdir()));
+  assert(path.basename(dir).startsWith('quote-vertical-'));
+  await fs.rm(dir,{recursive:true,force:true});
+ }
+}
+function height(sheet,first,last){let n=0;for(let r=first;r<=last;r++)n+=sheet.getRow(r).height??sheet.properties.defaultRowHeight??15;return n;}
+function endOfMerge(sheet,row,column){const cell=sheet.getCell(row,column);const merge=sheet.model.merges.find(m=>m.startsWith(cell.address+':'));return merge?Number(/\d+$/.exec(merge)[0]):row;}
+function evaluate(sheet,address,visiting=new Set()){
+ assert(!visiting.has(address),'no circular reference');
+ const value=sheet.getCell(address).value;
+ if(!value?.formula)return Number(value||0);
+ visiting.add(address);
+ const expr=value.formula.replace(/\b[A-Z]+\d+\b/g,r=>String(evaluate(sheet,r,visiting)));
+ visiting.delete(address);assert.match(expr,/^[\d\s.eE+*/(),\-ROUND]+$/);
+ return Function('ROUND',`"use strict";return (${expr});`)((n,p)=>{assert.equal(p,2);return money(n);});
+}
+
+test('saved left quotation retains every value/style, column width and original visual row height',async()=>{
+ await exported(fixture,book=>{
+  for(const [name,old] of Object.entries(baseline)){
+   const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
+   assert.deepEqual(Array.from({length:8},(_,i)=>sheet.getColumn(i+1).width),old.widths);
+   assert.deepEqual(sheet.views,old.views);
+   for(const merge of old.headerMerges)assert(sheet.model.merges.includes(merge));
+   for(const row of old.rows){
+    const actualRow=row.row<11?row.row:plan.products[row.row-11]??plan.subtotal;
+    const last=row.row<11?actualRow:endOfMerge(sheet,actualRow,2);
+    assert(Math.abs(height(sheet,actualRow,last)-row.height)<.00001);
+    let pixels=0;for(let r=actualRow;r<=last;r++)pixels+=Math.round((sheet.getRow(r).height??15)*4/3);
+    assert.equal(pixels,Math.round(row.height*4/3),'original visible height after normal-zoom pixel rounding');
+    row.cells.forEach((cell,i)=>{
+     const actual=sheet.getCell(actualRow,i+1);
+     assert.deepEqual(normalize(actual.value),cell.value,`${name} value ${row.row}/${i+1}`);
+     assert.deepEqual(normalize(actual.style),old.styles[cell.style],`${name} style ${row.row}/${i+1}`);
+    });
+   }
+   assert.equal(plan.blocks[0].row,10);
+   assert.equal(sheet.columnCount,plan.first+1,'no obsolete wide columns');
+  }
+ });
+});
+
+test('each product has its own ordered, typed vertical details with live relocated formulas',async()=>{
+ await exported(fixture,book=>{
+  for(const name of ['公式法报价单','快速报价单']){
+   const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
+   assert.equal(plan.blocks.length,fixture.items.length);
+   const headers=plan.blocks[0].fields.map(f=>f.name);
+   assert.deepEqual(headers.slice(-2),['运费','折扣']);
+   plan.blocks.forEach((block,i)=>{
+    assert.match(block.name,new RegExp(`^0${i+1} · `));
+    assert.deepEqual(block.fields.map(f=>f.name),headers);
+    for(const f of block.fields){
+     const value=sheet.getCell(f.address).value;
+     assert(value===null||typeof value==='number'||typeof value?.formula==='string');
+     if(value?.formula)assert.equal(evaluate(sheet,f.address),value.result,`${name}/${block.name}/${f.name}`);
+    }
+   });
+   if(name==='快速报价单'){
+    const first=plan.blocks[0].fields[0],base=plan.blocks[0].fields.find(f=>f.name==='柜体');
+    const original=evaluate(sheet,first.address);
+    sheet.getCell(base.address).value+=100;
+    assert.equal(evaluate(sheet,first.address),money(original+100),'formula responds to changed component');
+   }
+  }
+ });
+});
+
+test('nine products and long attachment labels retain names, signed/zero values and distinct blocks',async()=>{
+ const payload=structuredClone(fixture);
+ const longName='长名称回归附件'.repeat(9);
+ payload.items=Array.from({length:9},(_,i)=>{
+  const item=structuredClone(fixture.items[0]);item.name=`第${i+1}项合成产品`;
+  item.attachments=[{item_name:longName,quantity:1,quick_amount:i,formula_amount:i},
+    {item_name:'标准安装板',category_level1:'安装板',attachment_price_sign:-1,quantity:1,quick_amount:-100,formula_amount:-50}];
+  item.quick.attachment_fee=i-100;item.quick.total_cost=3150+i-100;return item;
+ });
+ await exported(payload,book=>{
+  for(const name of ['公式法报价单','快速报价单']){
+   const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
+   assert.equal(plan.products.length,9);assert.equal(plan.blocks.length,9);
+   plan.blocks.forEach((block,i)=>{
+    const f=block.fields.find(f=>f.name===longName);assert(f);
+    assert(endOfMerge(sheet,f.row,plan.first)>f.row,'long label has enough merged height');
+    const signed=block.fields.find(f=>f.name==='标准安装板');
+    assert(sheet.getCell(signed.address).value<0);
+    assert.equal(sheet.getCell(plan.products[i],2).text,`第${i+1}项合成产品`);
+    for(const field of block.fields)if(sheet.getCell(field.address).value?.formula)
+      assert.equal(evaluate(sheet,field.address),sheet.getCell(field.address).value.result);
+   });
+   assert.equal(sheet.getCell(plan.blocks[0].fields.find(f=>f.name===longName).address).value,0,'zero is not blank');
+  }
+ });
+});
+
+test('absent attachment values remain blank instead of being replaced by zero',async()=>{
+ await exported(fixture,book=>{
+  for(const name of ['公式法报价单','快速报价单']){
+   const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
+   const row=plan.blocks[1].fields.find(f=>f.name==='接地线');assert(row);
+   assert.equal(sheet.getCell(row.address).value,null);
+  }
+ });
+});
+
+test('multiline product and attachment names get enough vertical space without changing the quotation',async()=>{
+ const payload=structuredClone(fixture);payload.items=[payload.items[0]];
+ const item=payload.items[0];item.name='第一行合成产品名称\n第二行合成产品名称\n第三行合成产品名称';
+ const label='第一行附件\n第二行附件\n第三行附件';
+ item.attachments=[{item_name:label,quantity:1,quick_amount:50,formula_amount:50}];
+ await exported(payload,book=>{
+  for(const name of ['公式法报价单','快速报价单']){
+   const sheet=book.getWorksheet(name),plan=quotationLayout(sheet),block=plan.blocks[0];
+   assert.equal(sheet.getCell(plan.products[0],2).text,item.name);
+   assert(block.name.endsWith(item.name));
+   assert(endOfMerge(sheet,block.row,plan.first+1)>block.row);
+   const field=block.fields.find(f=>f.name===label);assert(field);
+   assert(height(sheet,field.row,endOfMerge(sheet,field.row,plan.first))>=38);
+  }
+ });
+});

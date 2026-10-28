@@ -50,6 +50,12 @@ class CostScrolling(unittest.TestCase):
         QTest.qWait(40)
         ui._apply_responsive(self.window)
         QTest.qWait(40)
+        # The original table/detail layout has deferred geometry passes after
+        # a large resize. Settle those before checking the final scroll range.
+        for _ in range(3):
+            app.processEvents()
+            ui._apply_responsive(self.window)
+            QTest.qWait(15)
         self.assertEqual(self.window.size().toTuple(), (width, height))
 
     def rows(self, count):
@@ -141,7 +147,9 @@ class CostScrolling(unittest.TestCase):
         self.assertTrue(self.window.scheme2_cost_sidebar.isHidden())
         self.window.show_section(ui.QUOTE_ROUTE)
         self.settle(1024, 620)
-        self.assertEqual(self.outer.verticalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # The existing quote-management page owns its scrolling and uses the
+        # common action dock independently of the cancelled cost transpose.
+        self.assertEqual(self.outer.verticalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
 
 if __name__ == '__main__':

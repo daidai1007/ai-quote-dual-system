@@ -265,7 +265,8 @@ class UnitSetPricing(unittest.TestCase):
             self.assertEqual(export.returncode, 0, export.stderr)
             result = subprocess.run(['node', '--input-type=module', '-e',
                 "import ExcelJS from '@excel.js/exceljs'; const w=new ExcelJS.Workbook();"
-                "await w.xlsx.readFile(process.argv[1]);const s=w.getWorksheet('快速报价单');"
+                "import {projectQuotationAudit} from './tests/quotation_layout_reader.mjs';"
+                "await w.xlsx.readFile(process.argv[1]);projectQuotationAudit(w);const s=w.getWorksheet('快速报价单');"
                 "console.log(JSON.stringify([s.getCell('F11').value,s.getCell('G11').value,s.getCell('G12').value,"
                 "s.getCell('J11').value.result,s.getCell('K11').value.result,"
                 "s.getCell('K10').value,s.getCell('K11').value.formula]));",

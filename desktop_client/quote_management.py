@@ -39,11 +39,23 @@ QLineEdit, QPlainTextEdit, QComboBox { background:white; border:1px solid #dce4e
 QTableWidget { font-size:12px; background:white; alternate-background-color:white; border:1px solid #dce4ee; gridline-color:#dce4ee; selection-background-color:#eaf2ff; selection-color:#20344e; }
 QHeaderView::section { font-size:12px; background:#f3f6fa; color:#63748a; border:0; border-bottom:1px solid #dce4ee; padding:11px 10px; font-weight:400; }
 QPushButton#quoteManagementLink { color:#2463bd; border:0; background:transparent; padding:2px 0; text-align:left; }
+QWidget#quoteManagementAdjust QLabel { background:transparent; }
+QLabel#quoteManagementBatchTitle { font-weight:600; }
+QLabel#quoteManagementBatchScope { color:#63748a; font-size:12px; }
+QLabel#quoteManagementBatchStatus { color:#2463bd; font-size:12px; }
+QFrame#quoteManagementBatch { border:0; border-bottom:1px solid #dce4ee; background:white; }
+QWidget#quoteManagementAdjustCell { background:white; }
+QWidget#quoteManagementAdjustCell[batchMatch="true"] { background:#f3f8ff; }
 QTabWidget::pane { background:white; border:1px solid #dce4ee; border-radius:5px; }
 QTabBar::tab { background:white; border:0; border-bottom:2px solid transparent; padding:12px 15px; color:#20344e; }
 QTabBar::tab:selected { color:#2463bd; border-bottom-color:#2463bd; }
 QTextBrowser { background:white; border:1px solid #dce4ee; }
 """
+
+# Logical pixels; reuse the approved light-action control for all page actions.
+ADJUST_METRICS = dict(product_width=174, factor_width=130, field_gap=12,
+                      section_gap=14, row_height=88,
+                      columns=(280, 64, 130, 130, 90, 110))
 
 
 def button(text, callback, primary=False):
@@ -148,25 +160,24 @@ class AdjustQuoteDialog(QWidget):
         layout.setContentsMargins(24, 23, 24, 20); layout.setSpacing(14)
         heading = QHBoxLayout()
         self.title = QLabel(f'调整报价  V{max(1, number-1)} → V{number}'); self.title.setObjectName('scheme2PageTitle')
-        heading.addWidget(self.title, 1); heading.addWidget(button('取消调价', self.reject)); layout.addLayout(heading)
+        self.cancel_button = apply_light_action(button('取消调价', self.reject))
+        heading.addWidget(self.title, 1); heading.addWidget(self.cancel_button); layout.addLayout(heading)
         if parent is not None and hasattr(parent, 'scheme2_company'):
             layout.addWidget(QLabel(parent.scheme2_company.currentText()))
-        notice = QLabel('可直接修改折后单价或每行调整折扣；折后总价＝折后单价×数量。')
-        notice.setWordWrap(True); notice.setStyleSheet('background:#eaf2ff;color:#2463bd;padding:14px;border-radius:4px;')
-        layout.addWidget(notice)
         sheet = QFrame(); sheet.setObjectName('quoteManagementSheet'); layout.addWidget(sheet,1)
         sheet_layout = QVBoxLayout(sheet); sheet_layout.setContentsMargins(16,16,16,16); sheet_layout.setSpacing(12)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
         body=QWidget(); body.setStyleSheet('background:white;'); scroll.setWidget(body); sheet_layout.addWidget(scroll,1)
         layout=QVBoxLayout(body); layout.setContentsMargins(0,0,0,0); layout.setSpacing(12)
+        self.build_batch_controls(layout)
         self.grid = table(self.HEADERS)
         self.grid.setItemDelegate(PriceInputDelegate(self.grid))
         self.grid.setObjectName('quoteManagementAdjustTable')
         self.grid.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.grid.horizontalHeader().setStretchLastSection(False)
         self.grid.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch)
-        for index,width in enumerate((280,80,140,140,110,130)): self.grid.setColumnWidth(index,width)
-        grid_height = min(500, 48 + max(1,len(items))*88)
+        for index,width in enumerate(ADJUST_METRICS['columns']): self.grid.setColumnWidth(index,width)
+        grid_height = min(500, 48 + max(1,len(items))*ADJUST_METRICS['row_height'])
         self.grid.setFixedHeight(grid_height)
         self.draw()
         self.grid.cellChanged.connect(self.changed)
@@ -187,9 +198,88 @@ class AdjustQuoteDialog(QWidget):
         layout.addStretch(1)
         sheet_layout.addWidget(self.total, 0, Qt.AlignmentFlag.AlignRight)
         actions = QHBoxLayout(); actions.addWidget(QLabel(f'保存为 V{number} · 不覆盖旧版本')); actions.addStretch(1)
-        self.back_button = button('返回修改', self.back); self.back_button.hide(); actions.addWidget(self.back_button)
-        self.primary = button('核对调价', self.accept, True); actions.addWidget(self.primary); sheet_layout.addLayout(actions)
+        self.back_button = apply_light_action(button('返回修改', self.back)); self.back_button.hide(); actions.addWidget(self.back_button)
+        self.primary = apply_light_action(button('核对调价', self.accept, True), ('核对调价', f'确认保存 V{number}'))
+        actions.addWidget(self.primary); sheet_layout.addLayout(actions)
         self.refresh_total()
+
+    def build_batch_controls(self, layout):
+        import scheme2_ui as ui
+        self.batch_panel = QFrame(); self.batch_panel.setObjectName('quoteManagementBatch')
+        panel = QVBoxLayout(self.batch_panel); panel.setContentsMargins(0,0,0,14)
+        panel.setSpacing(8)
+        heading = QHBoxLayout()
+        title = QLabel('批量调整折扣'); title.setObjectName('quoteManagementBatchTitle')
+        self.batch_scope = QLabel(); self.batch_scope.setObjectName('quoteManagementBatchScope')
+        heading.addWidget(title); heading.addWidget(self.batch_scope); heading.addStretch(1)
+        panel.addLayout(heading)
+        fields = QHBoxLayout(); fields.setSpacing(ADJUST_METRICS['field_gap'])
+        self.batch_product = QComboBox(); self.batch_product.setAccessibleName('批量调价产品')
+        self.batch_product.setFixedWidth(ADJUST_METRICS['product_width'])
+        for product in dict.fromkeys(ui._cost_product(item) for item in self.items):
+            self.batch_product.addItem(product, product)
+        self.batch_factor = QueryLineEdit(); self.batch_factor.setAccessibleName('批量调整折扣')
+        self.batch_factor.setFixedWidth(ADJUST_METRICS['factor_width'])
+        self.batch_factor.setAlignment(Qt.AlignmentFlag.AlignRight)
+        if self.items: self.batch_factor.setText(factor_text(self.items[0].get('quick_discount',1)))
+        fields.addWidget(filter_field('产品', self.batch_product, 'quoteManagementBatchProduct'))
+        fields.addWidget(filter_field('调整折扣', self.batch_factor, 'quoteManagementBatchFactor'))
+        self.batch_apply = apply_light_action(button('应用到同产品', self.apply_batch_factor))
+        fields.addWidget(self.batch_apply, 0, Qt.AlignmentFlag.AlignBottom); fields.addStretch(1)
+        panel.addLayout(fields)
+        self.batch_feedback = QLabel(); self.batch_feedback.setWordWrap(True)
+        self.batch_feedback.setObjectName('quoteManagementBatchStatus'); panel.addWidget(self.batch_feedback)
+        layout.addWidget(self.batch_panel)
+        self.batch_product.currentIndexChanged.connect(self.batch_product_changed)
+        self.batch_factor.returnPressed.connect(self.apply_batch_factor)
+
+    def batch_rows(self):
+        import scheme2_ui as ui
+        product = self.batch_product.currentData()
+        return [row for row,item in enumerate(self.items) if ui._cost_product(item) == product]
+
+    def update_batch_scope(self):
+        import scheme2_ui as ui
+        rows = self.batch_rows(); matched = set(rows)
+        quantity = sum(ui._row_values(self.items[row])[11] for row in rows)
+        self.batch_scope.setText(f'{self.batch_product.currentText()} · {len(rows)} 项 / {quantity:g} 台' if rows else '暂无产品')
+        self.batch_apply.setEnabled(bool(rows) and not self.reviewing)
+        self.batch_product.setEnabled(bool(self.items)); self.batch_factor.setEnabled(bool(rows))
+        with QSignalBlocker(self.grid):
+            for row in range(self.grid.rowCount()):
+                for column in range(self.grid.columnCount()):
+                    self.grid.item(row,column).setBackground(QColor('#f3f8ff' if row in matched else 'white'))
+                    host = self.grid.cellWidget(row,column)
+                    if host is not None:
+                        host.setProperty('batchMatch',row in matched)
+                        host.style().unpolish(host); host.style().polish(host); host.update()
+
+    def batch_product_changed(self):
+        rows = self.batch_rows()
+        self.update_batch_scope()
+        self.batch_feedback.setText(f'将调整以下 {len(rows)} 项 {self.batch_product.currentText()} 产品' if rows else '')
+
+    def apply_batch_factor(self):
+        if self.reviewing: return
+        rows = self.batch_rows()
+        if not rows:
+            self.error.setText('请先选择产品。'); return
+        # Replacing matching row inputs can repair them. Incomplete attachment
+        # edits or another product's invalid input must never be silently lost.
+        for key in self.errors:
+            if len(key) != 2 or key[0] not in rows:
+                self.error.setText('请先修正其他产品的单价、折扣或附件价格。'); return
+        try:
+            value = model.decimal_input(self.batch_factor.text(),4,10)
+            pending = deepcopy(self.items)
+            for row in rows: model.set_factor(pending[row],value)
+        except ValueError as error:
+            self.error.setText(str(error)); return
+        self.items = pending
+        self.errors = {key:value for key,value in self.errors.items() if key[0] not in rows}
+        self.attachment_panel.hide()
+        self.draw(); self.error.clear(); self.refresh_total()
+        self.batch_feedback.setText(f'已将 {len(rows)} 项 {self.batch_product.currentText()} 产品的折扣统一调整为 {factor_text(value)}')
 
     def exec(self):
         # This is a page in the quote stack, not an extra dialog surface.
@@ -212,26 +302,35 @@ class AdjustQuoteDialog(QWidget):
             rows = []
             for item in self.items:
                 values = ui._row_values(item)
-                rows.append((f'{values[1]}\n{values[3]}', values[11], f'{values[15]:.2f}',
+                product = ui._cost_product(item)
+                name = f'{product} · {values[1]}' if product not in ('—',values[1]) else values[1]
+                rows.append((f'{name}\n{values[3]}', values[11], f'{values[15]:.2f}',
                              f'{values[16]:,.2f}', factor_text(item['quote_original_discount']),
                              factor_text(item.get('quick_discount', 1))))
             fill(self.grid, rows, (2, 5))
             self.inputs = {}
             for row in range(len(rows)):
-                self.grid.setRowHeight(row, 88)
+                self.grid.setRowHeight(row, ADJUST_METRICS['row_height'])
+                for col in range(1,6):
+                    self.grid.item(row,col).setTextAlignment(Qt.AlignmentFlag.AlignVCenter |
+                        (Qt.AlignmentFlag.AlignHCenter if col==1 else Qt.AlignmentFlag.AlignRight))
                 for col in (0,2,5): self.grid.item(row,col).setForeground(QColor('transparent'))
-                product = QWidget(); product_layout = QVBoxLayout(product); product_layout.setContentsMargins(10,6,10,6)
+                product = QWidget(); product.setObjectName('quoteManagementAdjustCell')
+                product_layout = QVBoxLayout(product); product_layout.setContentsMargins(10,6,10,6)
                 product_layout.addWidget(QLabel(rows[row][0]))
                 link = button('附件价格', lambda _=False,r=row: self.attachment_row(r)); link.setObjectName('quoteManagementLink')
                 product_layout.addWidget(link); self.grid.setCellWidget(row,0,product)
                 for col in (2,5):
-                    host = QWidget(); host_layout = QHBoxLayout(host); host_layout.setContentsMargins(8,6,8,6)
+                    host = QWidget(); host.setObjectName('quoteManagementAdjustCell')
+                    host_layout = QHBoxLayout(host); host_layout.setContentsMargins(8,6,8,6)
                     editor = QLineEdit(self.grid.item(row,col).text()); editor.setFixedWidth(104 if col==2 else 78)
                     editor.setAlignment(Qt.AlignmentFlag.AlignRight)
                     editor.setAccessibleName(f'第{row+1}行' + ('折后单价' if col==2 else '调整折扣'))
                     editor.textEdited.connect(lambda text,r=row,c=col:self.grid.item(r,c).setText(text))
                     host_layout.addStretch(1); host_layout.addWidget(editor); self.grid.setCellWidget(row,col,host)
                     self.inputs[row,col] = editor
+            self.update_batch_scope()
+            if not self.batch_feedback.text(): self.batch_product_changed()
 
     def changed(self, row, column):
         if column not in (2, 5): return
@@ -308,6 +407,7 @@ class AdjustQuoteDialog(QWidget):
 
     def back(self):
         self.reviewing = False; self.grid.show(); self.review_grid.hide()
+        self.batch_panel.show(); self.update_batch_scope()
         self.reason.setReadOnly(False); self.back_button.hide(); self.primary.setText('核对调价')
         self.title.setText(f'调整报价  V{max(1,self.number-1)} → V{self.number}')
 
@@ -330,6 +430,7 @@ class AdjustQuoteDialog(QWidget):
         fill(self.review_grid,rows)
         self.attachment_panel.hide()
         self.reviewing = True; self.grid.hide(); self.review_grid.show(); self.reason.setReadOnly(True)
+        self.batch_panel.hide()
         self.back_button.show(); self.primary.setText(f'确认保存 V{self.number}')
         self.title.setText(f'核对本次调价  V{max(1,self.number-1)} → V{self.number}')
 
