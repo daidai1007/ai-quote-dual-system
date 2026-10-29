@@ -1125,6 +1125,8 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
       const parts=requestUrl.pathname.split('/').filter(Boolean),resource=parts[2],id=parts[3],action=parts[4];
       if(req.method==='GET'&&resource==='bootstrap') return json(res,200,await contractService.bootstrap(principal));
       if(req.method==='POST'&&resource==='quote') return json(res,200,await contractService.quote(principal,await readBody(req)));
+      if(req.method==='POST'&&resource==='customer-profile') return json(res,200,await contractService.customerProfile(principal,await readBody(req)));
+      if(req.method==='POST'&&resource==='customer-profile-save') return json(res,200,await contractService.saveCustomerProfile(principal,await readBody(req)));
       if(req.method==='POST'&&resource==='templates'&&!id) return json(res,201,await contractService.upload(principal,await readBody(req)));
       if(req.method==='GET'&&resource==='templates'&&id&&!action) return json(res,200,await contractService.inspect(principal,id));
       if(req.method==='GET'&&resource==='templates'&&action==='versions') return json(res,200,await contractService.versions(principal,id));

@@ -4,6 +4,7 @@ import {unzipSync,zipSync,strFromU8,strToU8} from 'fflate';
 import {DOMParser,XMLSerializer} from '@xmldom/xmldom';
 import path from 'node:path';
 import {evaluateCells} from './contract_formula.mjs';
+import {CUSTOMER_PROFILE_FIELDS} from './customer_profile.mjs';
 const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const S='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const R='http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -13,10 +14,11 @@ const child=(node,name)=>children(node,name)[0];
 const xml=node=>new XMLSerializer().serializeToString(node);
 const parse=text=>{if(/<!DOCTYPE|<!ENTITY/i.test(text))throw Error('模板含不支持的 XML 声明');return new DOMParser({onError:(level,message)=>{if(level!=='warning')throw Error('模板 XML 无效：'+message);}}).parseFromString(text,'application/xml');};
 const fail=message=>{throw Object.assign(new Error(message),{statusCode:400});};
-const scalarKeys=['buyer_name','seller_name','contract_no','sign_date','delivery_date','buyer_contact','buyer_address','seller_address','total_amount','total_upper','source_scheme_no','source_version','quote_method'];
-const aliases={'客户名称':'buyer_name','购方名称':'buyer_name','供方名称':'seller_name','合同编号':'contract_no','签约日期':'sign_date','交货日期':'delivery_date','客户联系人':'buyer_contact','客户地址':'buyer_address','供方地址':'seller_address','合同金额':'total_amount','合计金额':'total_amount','金额大写':'total_upper','报价编号':'source_scheme_no','报价版本':'source_version','报价方式':'quote_method'};
+const scalarKeys=['buyer_name','seller_name','contract_no','sign_date','delivery_date',...Object.keys(CUSTOMER_PROFILE_FIELDS),'seller_address','total_amount','total_upper','source_scheme_no','source_version','quote_method'];
+const aliases={'客户名称':'buyer_name','购方名称':'buyer_name','需方':'buyer_name','需方名称':'buyer_name','供方名称':'seller_name','合同编号':'contract_no','签约日期':'sign_date','交货日期':'delivery_date','客户联系人':'buyer_contact','客户地址':'buyer_address','需方地址':'buyer_address','电话':'buyer_phone','需方电话':'buyer_phone','传真':'buyer_fax','需方传真':'buyer_fax','委托代理人':'buyer_agent','需方委托代理人':'buyer_agent','开户行':'buyer_bank_name','需方开户行':'buyer_bank_name','帐号':'buyer_bank_account','账号':'buyer_bank_account','需方账号':'buyer_bank_account','税号':'buyer_tax_no','需方税号':'buyer_tax_no','供方地址':'seller_address','合同金额':'total_amount','合计金额':'total_amount','金额大写':'total_upper','报价编号':'source_scheme_no','报价版本':'source_version','报价方式':'quote_method'};
 const itemKeys=['number','name','specification','quantity','unit','unit_price','total','remark'];
-export const CONTRACT_FIELDS=Object.freeze({buyer_name:'购方名称',seller_name:'供方名称',contract_no:'客户合同编号',sign_date:'签约日期',delivery_date:'交货日期',buyer_contact:'客户联系人',buyer_address:'客户地址',seller_address:'供方地址',total_amount:'合计金额',total_upper:'人民币大写',source_scheme_no:'来源报价编号',source_version:'正式报价版本',quote_method:'采用报价'});
+Object.assign(aliases,{'代表':'buyer_representative','需方代表':'buyer_representative'});
+export const CONTRACT_FIELDS=Object.freeze({buyer_name:'需方名称',seller_name:'供方名称',contract_no:'客户合同编号',sign_date:'签约日期',delivery_date:'交货日期',...CUSTOMER_PROFILE_FIELDS,seller_address:'供方地址',total_amount:'合计金额',total_upper:'人民币大写',source_scheme_no:'来源报价编号',source_version:'正式报价版本',quote_method:'采用报价'});
 const tokens=text=>[...text.matchAll(/\{\{\s*([^{}]{1,100}?)\s*\}\}/gu)].map(m=>({text:m[0],key:m[1]}));
 function archive(bytes,format){
   if(!['docx','xlsx'].includes(format)||!bytes?.length||bytes.length>8*1024*1024)fail('请上传不超过8MB的 DOCX / XLSX 模板；旧格式请先转换');
@@ -160,8 +162,17 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
   if(!Array.isArray(items)||!items.length||items.length>500)fail('合同产品数量应为1至500行');
   const model=open(bytes,format),row=model.rows.find(r=>r.id===mapping.items.target),expectations=[];
   for(const field of mapping.fields){
-    const value=values[field.source];if(value===undefined||value===null||String(value).trim()==='')fail('请补齐合同字段：'+(CONTRACT_FIELDS[field.source]||field.source.replace('custom:','')));
     const loc=location(model,field.target,format),find=String(field.find||'');
+    if(field.source==='delivery_date'&&(values.delivery_date==null||String(values.delivery_date).trim()==='')){
+      // Delivery terms already belong to the customer's template. A legacy
+      // mapping must not clear or replace that original wording.
+      if(tokens(loc.text).some(token=>(aliases[token.key]||token.key)==='delivery_date'))
+        fail('请在客户合同模板中填写交货日期或交货条款，交货日期不再由合同生成页面填写。');
+      continue;
+    }
+    const optional=field.source==='contract_no'||['buyer_contact','buyer_phone','buyer_fax','buyer_representative','buyer_agent','buyer_bank_name','buyer_bank_account','buyer_tax_no'].includes(field.source);
+    const value=values[field.source]??(optional?'':undefined);
+    if(!optional&&(value===undefined||value===null||String(value).trim()===''))fail('请补齐合同字段：'+(CONTRACT_FIELDS[field.source]||field.source.replace('custom:','')));
     if(format==='docx')replaceWord(loc.node,find,typeof value==='number'?value.toFixed(2):String(value));
     else if(child(loc.node,'f')){if(field.source!=='total_amount')fail('有公式的字段仅允许用于核对合同总额');expectations.push({part:loc.part,cell:loc.node,value:Number(value)});}
     else{const result=find?loc.text.replace(find,()=>String(value)):value;setCell(loc.node,find&&loc.text!==find?result:(field.source==='total_amount'?Number(value):String(value)));loc.text=String(result);}
