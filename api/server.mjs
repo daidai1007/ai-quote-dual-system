@@ -1084,6 +1084,9 @@ const quoteSchemeResponse = async (req, res, requestUrl) => {
   if (action === 'export-result') {
     return json(res, 200, await quoteSchemeService.exportResult(principal, schemeNo, input));
   }
+  if (action === 'confirm-for-contract') {
+    return json(res, 200, await quoteSchemeService.confirmForContract(principal, schemeNo, input));
+  }
   return json(res, 404, { error: 'not_found' });
 };
 

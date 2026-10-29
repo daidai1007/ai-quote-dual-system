@@ -515,6 +515,9 @@ def main() -> None:
         log_path,
     )
     try:
+        from client_update_bridge import run_if_configured
+        if run_if_configured():
+            return
         namespace = load_v3_namespace()
         _LOGGER.info("V3 namespace loaded; entering Qt application")
         namespace["main"]()

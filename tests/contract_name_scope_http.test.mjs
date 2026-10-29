@@ -47,9 +47,13 @@ test('real name session protects contract metadata, writes and original Office o
   const input={scheme_no:config.scheme_no,version_no:1,template_version_id:configured.data.template_version_id,method:'QUICK',fields:{contract_no:'LOCAL-AUTH',seller_name:'本机供方',sign_date:'2026-10-22'},request_id:randomUUID()};
   const generated=await request('/api/contracts/generate',{token:owner.token,body:input});assert.equal(generated.status,200,JSON.stringify(generated.data));const record=generated.data;
   const file=await request('/api/contracts/records/'+record.record_id+'/file',{token:owner.token,binary:true});assert.equal(file.status,200);assert.equal(createHash('sha256').update(file.data).digest('hex'),record.file_sha256);
-  await t.test('OWN cannot enumerate or directly open another person’s resources',async()=>{
-   const list=await request('/api/contracts/bootstrap?scope=ALL&user_id='+owner.person.user_id,{token:other.token});assert.equal(list.data.records.length,0);assert.equal(list.data.templates.length,0);
-   for(const route of ['/api/contracts/records/'+record.record_id,'/api/contracts/records/'+record.record_id+'/file','/api/contracts/templates/'+configured.data.template_version_id])assert.equal((await request(route,{token:other.token})).status,404);
+  await t.test('OWN can read shared templates while quote and generated-record scopes remain private',async()=>{
+   const list=await request('/api/contracts/bootstrap?scope=ALL&user_id='+owner.person.user_id,{token:other.token});assert.equal(list.data.records.length,0);assert.equal(list.data.sources.length,0);assert.equal(list.data.templates.length,1);assert.equal(list.data.templates[0].can_use,true);assert.equal(list.data.templates[0].can_write,false);
+   for(const route of ['/api/contracts/records/'+record.record_id,'/api/contracts/records/'+record.record_id+'/file'])assert.equal((await request(route,{token:other.token})).status,404);
+   assert.equal((await request('/api/contracts/templates/'+configured.data.template_version_id,{token:other.token})).status,200);
+   assert.equal((await request('/api/contracts/templates/'+configured.data.template_version_id+'/versions',{token:other.token})).status,200);
+   assert.equal((await request('/api/contracts/templates/'+configured.data.template_version_id+'/configure',{token:other.token,body:{expected_version:2,mapping:mapped(inspect.data.inspection,'docx')}})).status,404);
+   assert.equal((await request('/api/contracts/templates/'+configured.data.template_version_id+'/settings',{token:other.token,body:{expected_version:2,enabled:false,is_default:true}})).status,404);
    assert.equal((await request('/api/contracts/generate',{token:other.token,body:{...input,request_id:randomUUID(),role:'ADMIN',owner_user_id:owner.person.user_id}})).status,404);
   });
   await t.test('three global operators generate Word and Excel from another creators quote and template',async()=>{

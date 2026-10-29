@@ -72,7 +72,14 @@ test('ledger contracts use real local SQL, shared templates, private drafts, imm
   const fromOldVersion=await service.ledger.generate(owner,{...input,request_id:randomUUID()});
   assert(fromOldVersion.records.every(r=>r.generation_snapshot.template_version_id===template.template_version_id));
   pg.query(await readFile(new URL('../database/migrations/contract_ledger_v1.preflight.sql',import.meta.url),'utf8'));
-  pg.query(await readFile(new URL('../database/migrations/contract_ledger_v1.verify.sql',import.meta.url),'utf8'));
+  const verifySql=await readFile(new URL('../database/migrations/contract_ledger_v1.verify.sql',import.meta.url),'utf8');
+  assert.equal(pg.query(verifySql).split('\n').at(-1),'t|t');
+  // Comma-separated has_table_privilege lists accept ANY permission. Verification
+  // must require every needed permission, not treat SELECT alone as write access.
+  pg.query('CREATE ROLE synthetic_ledger_readonly NOLOGIN; GRANT USAGE ON SCHEMA calc TO synthetic_ledger_readonly; GRANT SELECT ON calc.ledger_contract_draft,calc.ledger_contract_generation TO synthetic_ledger_readonly;');
+  assert.equal(pg.query('SET ROLE synthetic_ledger_readonly;'+verifySql+'RESET ROLE;').split('\n').at(-1),'f|f');
+  pg.query('GRANT INSERT,UPDATE ON calc.ledger_contract_draft TO synthetic_ledger_readonly; GRANT INSERT ON calc.ledger_contract_generation TO synthetic_ledger_readonly;');
+  assert.equal(pg.query('SET ROLE synthetic_ledger_readonly;'+verifySql+'RESET ROLE;').split('\n').at(-1),'t|t');
   console.log('PASS: disposable DB, batch idempotency/immutability, CAS drafts, rendered bytes and unchanged quotation constraints');
  }finally{await pg.close();}
 });

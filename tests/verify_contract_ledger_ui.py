@@ -28,7 +28,19 @@ class LedgerUITests(unittest.TestCase):
 
     def screenshot(self,name):
         folder=Path(os.environ.get('AI_QUOTE_CONTRACT_SCREENSHOT_DIR',str(base.ROOT/'test-output/ledger-contracts-qa')));folder.mkdir(parents=True,exist_ok=True)
-        base.APP.processEvents();self.w.grab().save(str(folder/name))
+        from PySide6.QtTest import QTest
+        QTest.qWait(100);base.APP.processEvents()
+        if self.l.preview_pages and self.l.stack.currentIndex()==2:
+            geometry=[];bottom=-1
+            for index in range(self.l.pagebox.count()):
+                widget=self.l.pagebox.itemAt(index).widget()
+                if widget is None:continue
+                rect=widget.geometry()
+                self.assertGreaterEqual(rect.top(),bottom+1,'Preview captions/pages overlap after layout settles')
+                geometry.append(dict(y=rect.y(),height=rect.height(),width=rect.width(),picture=hasattr(widget,'source_pixmap')))
+                bottom=rect.bottom()
+            (folder/(name+'.geometry.json')).write_text(json.dumps(geometry),encoding='utf-8')
+        self.w.grab().save(str(folder/name))
 
     def upload_and_read(self,customer,format):
         self.l.customer.setCurrentIndex(self.l.customer.findData(customer))

@@ -36,7 +36,7 @@ class ContractIdentity(unittest.TestCase):
         def inspect(dialog):
             self.assertTrue(any('BJ-20261022-000099' in text.text() and 'V2' in text.text() for text in dialog.findChildren(ui.QLabel)));return ui.QDialog.DialogCode.Accepted
         with patch.object(ui.QDialog,'exec',inspect):p.open_source()
-        p.new_contract();self.assertEqual(p.inputs['seller_name'].text(),'');self.assertEqual(p.inputs['contract_no'].text(),'')
+        p.new_contract();self.assertEqual(p.inputs['seller_name'].text(),ui.DEFAULT_SELLER_NAME);self.assertEqual(p.inputs['contract_no'].text(),'')
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

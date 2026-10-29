@@ -6,6 +6,7 @@ import {snapshotOrderNature,orderNatureSql} from '../quote_order_nature.mjs';
 import {contractCustomer,contractCustomerNameSql} from './contract_customer.mjs';
 import {customerProfileView,createCustomerProfileStore,CUSTOMER_PROFILE_FIELDS} from './customer_profile.mjs';
 import {createLedgerContractService} from './contract_ledger_service.mjs';
+import {displayVersion} from './quote_delivery_document.mjs';
 const error=(message,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const documentCall=(fn,...args)=>{try{return fn(...args);}catch(e){e.statusCode=400;throw e;}};
 const hash=data=>createHash('sha256').update(data).digest('hex');
@@ -40,9 +41,9 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   if(!value)throw error('正式报价不可用或无权用于生成合同',404);
   if(snapshotOrderNature(value.snapshot)!=='EXTERNAL')throw error('仅外部正式报价可用于合同；内部及待分类报价不能进入合同管理。',409);
   const {customer_profile_record,customer_profile_matches,...customer}=contractCustomer(value);
-  return {...customer,customer_profile:customerProfileView(customer,customer_profile_record,Number(customer_profile_matches||0))};
+  return {...customer,quote_version:displayVersion(value.snapshot,value.version_no),customer_profile:customerProfileView(customer,customer_profile_record,Number(customer_profile_matches||0))};
  };
- const sourceList=async p=>(await query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('scheme_no',s.scheme_no,'version_no',v.version_no,'order_nature','EXTERNAL','customer_name',${contractCustomerNameSql()},
+ const sourceList=async p=>(await query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('scheme_no',s.scheme_no,'version_no',v.version_no,'quote_version',COALESCE(v.snapshot_payload#>>'{quote_management,current}',v.version_no::text),'order_nature','EXTERNAL','customer_name',${contractCustomerNameSql()},
   'catalog_customer_code',CASE WHEN c.matches=1 THEN c.code END,
   'snapshot_customer_code',v.snapshot_payload#>>'{analysis_customer,customer_code}',
   'snapshot_customer_name',v.snapshot_payload#>>'{analysis_customer,customer_name}',
@@ -68,7 +69,7 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   const rowsSql=hasLedger?`(SELECT ${quoteColumns},'QUOTE'::text AS source_kind FROM calc.contract_generation UNION ALL SELECT ${ledgerColumns},'LEDGER'::text AS source_kind FROM calc.ledger_contract_generation)`:'calc.contract_generation';
   const filter=scope(p,'r')+match;
   const items=await query(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY created_at DESC,record_id DESC),'[]'::jsonb)::text FROM(SELECT r.record_id,r.record_no,r.customer_contract_no,r.customer_code,r.customer_name,r.owner_name,r.owner_user_id,r.quote_method,r.file_format,r.file_sha256,r.created_at,
-   r.generation_snapshot#>>'{quote,total}' AS amount,r.generation_snapshot->>'scheme_no' AS scheme_no,r.source_version_no,
+   r.generation_snapshot#>>'{quote,total}' AS amount,r.generation_snapshot->>'scheme_no' AS scheme_no,r.source_version_no,r.generation_snapshot->>'source_quote_version' AS source_quote_version,
    v.version_no AS template_version,g.template_name,${hasLedger?'r.source_kind':"'QUOTE'::text AS source_kind"},${own(p,'r')} AS can_write FROM ${rowsSql} r JOIN calc.contract_template_version v USING(template_version_id) JOIN calc.contract_template_group g USING(group_id)
    WHERE ${filter} ORDER BY r.created_at DESC,r.record_id DESC LIMIT 100 OFFSET ${(page-1)*100}) t;`);
   const total=await query(`SELECT count(*)::text FROM ${rowsSql} r JOIN calc.contract_template_version v USING(template_version_id) JOIN calc.contract_template_group g USING(group_id) WHERE ${filter};`);
@@ -157,12 +158,12 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   if(!t.enabled||!t.field_mapping)throw error('模板尚未配置或已停用');if(t.customer_code!==s.customer_code)throw error('客户模板与正式报价客户不一致');
   const selected=documentCall(contractQuote,s.snapshot,data.method),values={...(s.customer_profile?.fields||{}),...data.fields,
     contract_no:data.fields.contract_no??'',seller_name:data.fields.seller_name??DEFAULT_SELLER_NAME,
-    buyer_name:s.customer_name,total_amount:selected.total,total_upper:selected.total_upper,source_scheme_no:s.scheme_no,source_version:String(s.version_no),quote_method:data.method==='QUICK'?'快速报价':'公式报价'};
+    buyer_name:s.customer_name,total_amount:selected.total,total_upper:selected.total_upper,source_scheme_no:s.scheme_no,source_version:String(s.quote_version),quote_method:data.method==='QUICK'?'快速报价':'公式报价'};
   if(values.contract_no)text(values.contract_no,'客户合同编号',200);
   for(const key of ['sign_date','delivery_date'])if(values[key]&&(!/^\d{4}-\d{2}-\d{2}$/.test(values[key])||Number.isNaN(Date.parse(values[key]))||new Date(values[key]).toISOString().slice(0,10)!==values[key]))throw error('合同日期格式无效');
   const bytes=documentCall(renderContractTemplate,Buffer.from(t.content,'base64'),t.file_format,t.field_mapping,values,selected.items);
   if(bytes.length>16*1024*1024)throw error('生成合同超过16MB，请简化模板中的图片');
-  const id=randomUUID(),snapshot={scheme_no:s.scheme_no,source_version:s.version_no,order_nature:'EXTERNAL',template_name:t.template_name,template_version:t.version_no,template_sha256:t.file_sha256,mapping:t.field_mapping,quote:selected,fields:values,method:data.method,customer_profile_version:s.customer_profile?.version??0};
+  const id=randomUUID(),snapshot={scheme_no:s.scheme_no,source_version:s.version_no,source_quote_version:s.quote_version,order_nature:'EXTERNAL',template_name:t.template_name,template_version:t.version_no,template_sha256:t.file_sha256,mapping:t.field_mapping,quote:selected,fields:values,method:data.method,customer_profile_version:s.customer_profile?.version??0};
   const inserted=await query(`WITH allowed AS(SELECT s.scheme_id FROM calc.quote_scheme s JOIN calc.contract_template_group g ON g.group_id=${q(t.group_id)}::uuid WHERE s.scheme_id=${Number(s.scheme_id)} AND s.status<>'VOID' AND g.enabled AND ${useTemplate(p)} AND ${writePermissionSql({...p,role:'USER',departmentId:null},'s')}
     AND EXISTS(SELECT 1 FROM calc.quote_scheme_version v WHERE v.scheme_id=s.scheme_id AND v.version_no=${s.version_no} AND ${orderNatureSql('v.snapshot_payload')}='EXTERNAL')),
    made AS(INSERT INTO calc.contract_generation(record_id,record_no,request_id,input_sha256,owner_user_id,owner_name,customer_code,customer_name,customer_contract_no,source_scheme_id,source_version_no,template_version_id,quote_method,generation_snapshot,file_format,file_content,file_sha256)

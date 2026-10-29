@@ -157,7 +157,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.28.01"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.29.01"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -7856,6 +7856,71 @@ def _show_add_failure_reason(window):
         QMessageBox.warning(window, "失败原因", reason)
 
 
+def _finish_discard_close(window):
+    """End this close attempt without pretending the draft has been saved."""
+    window._scheme2_discard_close_approved = False
+    timer = getattr(window, "_scheme2_discard_close_timer", None)
+    if timer is not None:
+        timer.stop()
+    controls = getattr(window, "_scheme2_discard_close_controls", None)
+    if controls is not None:
+        widget, enabled = controls
+        widget.setEnabled(enabled)
+        window._scheme2_discard_close_controls = None
+
+
+def _discard_close_has_workers(window):
+    preview = getattr(window, "quote_drawing_preview", None)
+    if (getattr(preview, "_workers", [])
+            or getattr(window, "_scheme2_match_workers", [])
+            or getattr(window, "_scheme2_paused_quote_workers", set())):
+        return True
+    worker = getattr(window, "_scheme2_page_worker", None)
+    if worker is not None and worker.isRunning():
+        return True
+    active = getattr(window, "active_background_threads", None)
+    return bool(active and active())
+
+
+def _defer_discard_close(window):
+    """Retry the full close chain after workers stop; never terminate a thread."""
+    if not getattr(window, "_scheme2_discard_close_approved", False):
+        return
+    # Own the retry while consent is latched, avoiding duplicate core/preview
+    # callbacks. A later guard may still cancel and restore normal editing.
+    window.close_after_workers = False
+    window.close_after_pdf_cancel = False
+    window._scheme2_match_close_requested = False
+    window._scheme2_close_after_quote_pause = False
+    if getattr(window, "_scheme2_discard_close_controls", None) is None:
+        controls = window.centralWidget()
+        if controls is not None:
+            window._scheme2_discard_close_controls = (controls, controls.isEnabled())
+            controls.setEnabled(False)
+    timer = getattr(window, "_scheme2_discard_close_timer", None)
+    if timer is None:
+        timer = QTimer(window)
+        timer.setSingleShot(True)
+        window._scheme2_discard_close_timer = timer
+
+        def retry():
+            if not window.isVisible() or not window._scheme2_discard_close_approved:
+                _finish_discard_close(window)
+                return
+            if _discard_close_has_workers(window):
+                timer.start(100)
+                return
+            window.close()
+            # A guard outside scheme2_ui rejected closing. Do not repeatedly
+            # reopen its warning or keep consent for a future user close.
+            if not timer.isActive():
+                _finish_discard_close(window)
+
+        timer.timeout.connect(retry)
+    timer.start(100)
+    window.statusBar().showMessage("正在安全结束后台任务，完成后自动关闭…")
+
+
 def _set_dirty(window, dirty=True):
     window._scheme2_dirty = bool(dirty)
     if dirty:
@@ -8936,23 +9001,32 @@ def install_scheme2_ui(namespace):
         if getattr(window, "_scheme2_match_workers", []):
             window._scheme2_match_close_requested = True
             event.ignore()
+            _defer_discard_close(window)
             return
         if getattr(window, "_scheme2_paused_quote_workers", set()):
             window._scheme2_close_after_quote_pause = True
             window.risk_label.setText("正在等待已暂停的网络请求结束后安全关闭客户端…")
             event.ignore()
+            _defer_discard_close(window)
             return
         worker = getattr(window, "_scheme2_page_worker", None)
         if worker is not None and worker.isRunning():
             worker.requestInterruption()
             event.ignore()
+            _defer_discard_close(window)
             return
-        if getattr(window, "_scheme2_dirty", False) and window.isVisible():
+        if (getattr(window, "_scheme2_dirty", False) and window.isVisible()
+                and not getattr(window, "_scheme2_discard_close_approved", False)):
             if not _confirm_discard_unsaved(window):
                 window._scheme2_close_after_workspace_save = False
                 event.ignore()
                 return
+            window._scheme2_discard_close_approved = True
         original_close(window, event)
+        if event.isAccepted():
+            _finish_discard_close(window)
+        else:
+            _defer_discard_close(window)
 
     def section(window, index):
         if index in (0, 4):

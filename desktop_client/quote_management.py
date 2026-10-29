@@ -588,6 +588,7 @@ class QuoteManagement:
         self.discard_button = button('放弃修改', self.discard)
         self.adjust_button = button('调整报价', self.adjust, True)
         self.latest_button = button('回到最新版本', self.restore_latest)
+        self.detail_contract_button = button('生成合同', self.contract_from_detail)
         w = self.window
         # The approved header owns print/export; the quote-list page has no
         # actions for an unrelated active workspace in the old bottom dock.
@@ -599,7 +600,7 @@ class QuoteManagement:
             control.show()
         w._scheme2_action_dock_entries = [(b,routes) for b,routes in w._scheme2_action_dock_entries
             if b not in (w.scheme2_quote_print, w.scheme2_quote_export)]
-        for control in (w.scheme2_quote_print, w.scheme2_quote_export, self.adjust_button, self.latest_button):
+        for control in (w.scheme2_quote_print, w.scheme2_quote_export, self.detail_contract_button, self.adjust_button, self.latest_button):
             top.addWidget(control)
         layout.addLayout(top)
         customer = QFrame(); customer.setObjectName('quoteManagementCustomer')
@@ -719,6 +720,7 @@ class QuoteManagement:
             self.pending_adjust = False; QTimer.singleShot(0, self.adjust)
 
     def show_list(self):
+        if getattr(self.window,'_detail_contract_busy',False):return
         self.restore_latest(refresh=False)
         self.window._qm_show_list = True
         self.window.show_section(2)
@@ -905,6 +907,10 @@ class QuoteManagement:
 
     def status_changed(self):
         w = self.window
+        from quote_detail_contract import unavailable_reason
+        reason=unavailable_reason(w)
+        self.detail_contract_button.setEnabled(not reason)
+        self.detail_contract_button.setToolTip(reason or '使用当前查看的报价生成合同；首次报价直接确认，无需调整或修订。')
         if hasattr(self, 'delivery'): self.delivery.refresh()
         if hasattr(w, 'quote_scheme_save_status'):
             self.feedback.setText(w.quote_scheme_save_status.text())
@@ -932,6 +938,11 @@ class QuoteManagement:
         self.sync(); w.refresh_summary()
         from quote_scheme_center import _schedule_save
         _schedule_save(w)
+
+    def contract_from_detail(self):
+        controller=getattr(self,'detail_contract_controller',None)
+        if controller is not None:controller.start()
+        else:self.feedback.setText('合同模块尚未就绪，请稍后重试。')
 
     def save(self):
         import quote_scheme_center as centre
@@ -1064,6 +1075,7 @@ def install_quote_management(namespace):
     def section(window, index):
         manager = getattr(window, 'quote_management', None)
         if manager is None: return prior_section(window, index)
+        if getattr(window,'_detail_contract_busy',False):return
         delivery=getattr(manager,'delivery',None)
         if delivery is not None and delivery.cost_active and index != 3: delivery.leave_cost(refresh=False)
         if getattr(window, '_scheme2_document_busy', False) and (index != 2 or getattr(window._scheme2_document_controller, 'kind', '') != 'generate'):

@@ -7,5 +7,8 @@ SELECT table_name,column_name,is_nullable
 FROM information_schema.columns WHERE table_schema='calc'
   AND table_name='contract_generation' AND column_name IN('source_scheme_id','source_version_no','quote_method')
 ORDER BY column_name;
-SELECT has_table_privilege(current_user,'calc.ledger_contract_draft','SELECT,INSERT,UPDATE') AS can_use_ledger_drafts,
-       has_table_privilege(current_user,'calc.ledger_contract_generation','SELECT,INSERT') AS can_generate_ledger_records;
+SELECT (has_table_privilege(current_user,'calc.ledger_contract_draft','SELECT')
+        AND has_table_privilege(current_user,'calc.ledger_contract_draft','INSERT')
+        AND has_table_privilege(current_user,'calc.ledger_contract_draft','UPDATE')) AS can_use_ledger_drafts,
+       (has_table_privilege(current_user,'calc.ledger_contract_generation','SELECT')
+        AND has_table_privilege(current_user,'calc.ledger_contract_generation','INSERT')) AS can_generate_ledger_records;

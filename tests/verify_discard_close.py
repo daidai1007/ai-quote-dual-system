@@ -66,16 +66,20 @@ class DiscardClose(unittest.TestCase):
         self.assertEqual(self.prompts,1)
 
     def test_real_qthread_is_interrupted_and_finishes_before_window_closes(self):
+        from threading import Event
+        release=Event()
         class InFlight(QThread):
             def run(worker):
-                worker.msleep(180)  # An in-flight call must finish safely.
+                release.wait(10)  # Stay in flight until the close guard is observed.
         worker=InFlight(self.w)
         self.addCleanup(lambda:worker.wait(2000))
+        self.addCleanup(release.set)
         worker.start();fixture.wait(worker.isRunning)
         self.assertFalse(self.w.close())
         self.assertTrue(worker.isInterruptionRequested())
         self.assertTrue(self.w.isVisible())
         self.assertFalse(self.w.centralWidget().isEnabled())
+        release.set()
         fixture.wait(lambda:not self.w.isVisible())
         self.assertFalse(worker.isRunning());self.assertEqual(self.prompts,1)
         self.assertTrue(self.w._scheme2_dirty)  # Discard is not a save.

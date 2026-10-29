@@ -19,13 +19,13 @@ import urllib.error
 import urllib.request
 from uuid import uuid4
 
-from PySide6.QtCore import Qt, QEvent, QThread, Signal, QSignalBlocker, QTimer, QUrl, QSaveFile, QIODevice
+from PySide6.QtCore import Qt, QEvent, QThread, Signal, QSignalBlocker, QTimer, QUrl, QSaveFile, QIODevice, QDateTime, QTimeZone
 from PySide6.QtGui import QPixmap, QDesktopServices, QPainter
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFormLayout, QFrame, QLabel, QPushButton, QTabWidget, QComboBox, QLineEdit,
     QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QFileDialog, QMessageBox, QDialog, QDialogButtonBox,
-    QInputDialog, QSizePolicy, QPlainTextEdit)
+    QInputDialog, QSizePolicy, QPlainTextEdit, QStackedWidget)
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
 import quote_scheme_center as schemes
@@ -36,8 +36,24 @@ from scheme2_ui import QUOTE_ROUTE
 
 METRICS = dict(margin=20, gap=12, left_min=340, left_max=640, preview_width=760,
                preview_dpi=100, max_pages=100, upload_bytes=8*1024*1024)
-MANUAL_FIELDS = dict(contract_no='客户合同编号', seller_name='供方名称', sign_date='签约日期',
-    delivery_date='约定交货日期', buyer_contact='客户联系人', buyer_address='客户地址', seller_address='供方地址')
+DEFAULT_SELLER_NAME = '浙江京能电力设备有限公司'
+
+
+def contract_today():
+    return QDateTime.currentDateTimeUtc().toTimeZone(QTimeZone(b'Asia/Shanghai')).toString('yyyy-MM-dd')
+
+
+def default_contract_field(key):
+    if key=='seller_name':return DEFAULT_SELLER_NAME
+    if key=='sign_date':return contract_today()
+    return ''
+
+
+MANUAL_FIELDS = dict(contract_no='客户合同编号（选填）', seller_name='供方名称', sign_date='签约日期',
+    buyer_contact='客户联系人（选填）', buyer_address='需方地址',buyer_phone='需方电话',buyer_fax='需方传真',
+    buyer_representative='需方代表',buyer_agent='需方委托代理人',buyer_bank_name='需方开户行',buyer_bank_account='需方账号',buyer_tax_no='需方税号',seller_address='供方地址')
+PROFILE_FIELDS={key:MANUAL_FIELDS[key] for key in ('buyer_address','buyer_phone','buyer_fax','buyer_contact','buyer_representative','buyer_agent','buyer_bank_name','buyer_bank_account','buyer_tax_no')}
+PROFILE_LIMITS=dict(buyer_address=1000,buyer_phone=80,buyer_fax=80,buyer_contact=120,buyer_representative=120,buyer_agent=120,buyer_bank_name=300,buyer_bank_account=80,buyer_tax_no=80)
 ITEM_FIELDS = dict(number='序号', name='产品名称', specification='规格', quantity='数量',
     unit='单位', unit_price='单价', total='金额', remark='备注')
 STYLE = PAGE_STYLE + """
@@ -314,7 +330,9 @@ class ContractManagement(QWidget):
         super().__init__(); self.window=window; self.setObjectName('contractManagement'); self.setStyleSheet(STYLE)
         self.data=dict(sources=[],templates=[],records=[],drafts=[]);self.record_page=1;self.record_total=0; self.workers=[]; self.busy=False; self.queue=[]
         self.pending_scheme=None; self.pending_version=None; self.selected_customer=None; self.loaded=False; self.identity=(contract_headers(window) or {});self.person=person_key(window);self.unsaved=False
+        self.pending_customer_name='';self._selected_source=None
         self.request_id=str(uuid4()); self.draft=None; self.record=None; self.output=None; self.preview_pages=[]
+        self.profile_dirty=False;self.profile_version=0;self.profile_loaded_for=None;self.profile_manual_fields=set()
         self.temp_dirs=[]; self.current_quote=None; self.mapping=None; self.populating=False; self.historical=False
         root=QVBoxLayout(self); root.setContentsMargins(*[METRICS['margin']]*4); root.setSpacing(METRICS['gap'])
         top=QHBoxLayout(); top.addWidget(label('合同管理','scheme2PageTitle'),1)
@@ -327,17 +345,44 @@ class ContractManagement(QWidget):
         self.notice=OptionalFeedback('contractNote'); root.addWidget(self.notice)
         self.tabs=QTabWidget(); root.addWidget(self.tabs,1)
         self.generate_page=QWidget(); self.tabs.addTab(self.generate_page,'生成合同')
-        self.build_generate(); self.build_library(); self.build_records()
+        self.build_generate(); self.build_library(); self.build_records();self.build_customer_profile()
+        self.build_source_modes()
         self.poll_timer=QTimer(self);self.poll_timer.setInterval(25);self.poll_timer.timeout.connect(self.deliver_results)
         self.identity_timer=QTimer(self); self.identity_timer.setInterval(300); self.identity_timer.timeout.connect(self.check_identity); self.identity_timer.start()
+
+    def build_source_modes(self):
+        from contract_ledger_ui import LedgerContractPanel
+        # Keep the established four tabs and quotation controls intact.
+        old=self.generate_page;self.tabs.removeTab(0)
+        page=QWidget();box=QVBoxLayout(page);box.setContentsMargins(0,0,0,0)
+        row=QHBoxLayout();row.addWidget(label('合同来源'))
+        self.source_mode=SchemeComboBox();self.source_mode.addItems(['从报价单生成','从 Excel 台账生成']);row.addWidget(self.source_mode);row.addStretch();box.addLayout(row)
+        self.source_stack=QStackedWidget();self.source_stack.addWidget(old)
+        self.ledger=LedgerContractPanel(self);self.source_stack.addWidget(self.ledger);box.addWidget(self.source_stack,1)
+        self.source_mode.currentIndexChanged.connect(self.source_mode_changed)
+        self.tabs.insertTab(0,page,'生成合同');self.tabs.setCurrentIndex(0)
+
+    def source_mode_changed(self,index):
+        self.source_stack.setCurrentIndex(index)
+        self.purpose.setText('使用客户合同模板，读取已确认台账并按原格式输出' if index==1 else '使用客户合同模板，填入已确定报价并按原格式输出')
+        if index==1 and not self.ledger.info:self.ledger.reload()
+
+    def has_unsaved(self):
+        return self.unsaved or bool(getattr(self,'ledger',None) and self.ledger.unsaved)
 
     def build_generate(self):
         body=QVBoxLayout(self.generate_page); body.setContentsMargins(0,12,0,0)
         middle=QWidget();content=QVBoxLayout(middle);content.setContentsMargins(0,0,0,0);content.setSpacing(12);self.middle_scroll=scrollable(middle);body.addWidget(self.middle_scroll,1)
         choose,box=card('选择客户模板与报价')
         choices=QGridLayout(); self.customer=SchemeComboBox(); self.source=SchemeComboBox(); self.template=SchemeComboBox(); self.method=SchemeComboBox()
+        # Keep the customer key for templates/profiles; only the quotation can
+        # choose it. The visible buyer is a selectable, read-only text field.
+        self.customer.setParent(self);self.customer.hide()
+        self.customer_display=QueryLineEdit();self.customer_display.setReadOnly(True)
+        self.customer_display.setPlaceholderText('随所选报价单显示')
+        self.customer_display.setAccessibleName('客户（需方）')
         for caption,code in (('请选择采用报价',''),('快速报价','QUICK'),('公式报价','FORMULA')): self.method.addItem(caption,code)
-        for i,(title,control) in enumerate((('客户',self.customer),('客户合同模板',self.template),('正式报价 / 版本',self.source),('采用报价',self.method))):
+        for i,(title,control) in enumerate((('客户（需方）',self.customer_display),('客户合同模板',self.template),('正式报价 / 版本',self.source),('采用报价',self.method))):
             control.setMinimumWidth(0);control.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed);choices.addWidget(label(title),0,i); choices.addWidget(control,1,i); choices.setColumnStretch(i,1)
         box.addLayout(choices);self.choices_card=choose;content.addWidget(choose);self.history_banner=label('', 'contractNotice');self.history_banner.hide();content.addWidget(self.history_banner)
         self.customer.currentIndexChanged.connect(self.customer_changed); self.source.currentIndexChanged.connect(self.selection_changed)
@@ -354,7 +399,10 @@ class ContractManagement(QWidget):
         form,formbox=card('补充合同信息')
         self.form=QFormLayout(); self.inputs={}
         for key,title in MANUAL_FIELDS.items():
-            control=QueryLineEdit(); control.setPlaceholderText('按双方确认内容填写' if key not in ('sign_date','delivery_date') else 'YYYY-MM-DD')
+            control=QueryLineEdit(); control.setPlaceholderText('YYYY-MM-DD' if key=='sign_date' else '按双方确认内容填写')
+            if key=='contract_no':control.setPlaceholderText('客户未提供编号时可留空')
+            if key=='buyer_contact':control.setPlaceholderText('未提供联系人时可留空')
+            control.setText(default_contract_field(key))
             control.textEdited.connect(self.field_edited); self.inputs[key]=control; self.form.addRow(title,control)
         formbox.addLayout(self.form); actions=QHBoxLayout(); actions.addWidget(button('配置填入位置',self.configure_selected)); actions.addWidget(button('查看来源报价',self.open_source)); actions.addStretch(); formbox.addLayout(actions); leftbox.addWidget(form); leftbox.addStretch()
         right,rightbox=card('合同预览'); self.preview_info=OptionalFeedback('contractNote'); rightbox.addWidget(self.preview_info)
@@ -383,6 +431,107 @@ class ContractManagement(QWidget):
         actions=QHBoxLayout(); self.record_search=QueryLineEdit(); self.record_search.setPlaceholderText('客户 / 合同号 / 报价号 / 模板名称');self.record_search_timer=QTimer(self);self.record_search_timer.setSingleShot(True);self.record_search_timer.setInterval(250);self.record_search_timer.timeout.connect(lambda:self.load_records(True));self.record_search.textChanged.connect(lambda:self.record_search_timer.start());self.record_search.returnPressed.connect(lambda:self.load_records(True)); actions.addWidget(self.record_search,1); actions.addWidget(button('预览所选记录',self.open_record)); actions.addWidget(button('下载原文件',lambda:self.open_record(export=True))); actions.addWidget(button('刷新',lambda:self.load_records(True))); box.addLayout(actions)
         pages=QHBoxLayout();self.record_page_info=label('第 1 页','contractNote');pages.addWidget(self.record_page_info);pages.addStretch();self.record_prev=button('上一页',lambda:self.change_record_page(-1));self.record_next=button('下一页',lambda:self.change_record_page(1));pages.addWidget(self.record_prev);pages.addWidget(self.record_next);box.addLayout(pages);layout.addWidget(frame,1);self.tabs.addTab(scrollable(page),'生成记录');self.tabs.currentChanged.connect(lambda index:self.load_records(True) if index==2 and self.loaded else None)
 
+    def build_customer_profile(self):
+        page=QWidget();box=QVBoxLayout(page);box.setContentsMargins(0,14,0,0)
+        frame,body=card('客户资料 · 需方信息','保存后，生成该客户合同时自动带入；历史合同保留生成时的资料。')
+        form=QFormLayout();self.profile_customer=SchemeComboBox();form.addRow('选择客户（需方）',self.profile_customer)
+        self.profile_name=QueryLineEdit();self.profile_name.setReadOnly(True);form.addRow('需方名称',self.profile_name)
+        self.profile_inputs={}
+        for key,title in PROFILE_FIELDS.items():
+            control=QueryLineEdit();control.setMaxLength(PROFILE_LIMITS[key]);control.setPlaceholderText('未提供可留空')
+            control.textEdited.connect(self.profile_edited);self.profile_inputs[key]=control;form.addRow(title,control)
+        body.addLayout(form);actions=QHBoxLayout()
+        self.profile_load_button=button('重新载入资料',lambda:self.load_customer_profile(discard=True))
+        self.profile_import_button=button('导入客户资料',self.import_customer_profile)
+        self.profile_save_button=button('保存客户资料',self.save_customer_profile,True)
+        self.profile_apply_button=button('用于本次合同',self.use_customer_profile)
+        for control in (self.profile_load_button,self.profile_import_button,self.profile_save_button,self.profile_apply_button):actions.addWidget(apply_light_action(control))
+        actions.addStretch();body.addLayout(actions);box.addWidget(frame);box.addStretch()
+        self.profile_customer.currentIndexChanged.connect(self.profile_customer_changed)
+        self.profile_tab=self.tabs.addTab(scrollable(page),'客户资料')
+        self.tabs.currentChanged.connect(lambda index:self.load_customer_profile() if index==self.profile_tab and self.loaded and not self.profile_dirty else None)
+        self.sync_actions()
+
+    def sync_profile_choices(self):
+        if not hasattr(self,'profile_customer'):return
+        selected=self.profile_customer.currentData()
+        with QSignalBlocker(self.profile_customer):
+            self.profile_customer.clear();self.profile_customer.addItem('请选择客户（需方）',None)
+            for code,name in {r['customer_code']:r['customer_name'] for r in self.data.get('sources',[]) if r.get('customer_code')}.items():self.profile_customer.addItem(name,code)
+            self.profile_customer.setCurrentIndex(max(0,self.profile_customer.findData(selected or self.customer.currentData())))
+
+    def profile_source(self):
+        code=self.profile_customer.currentData()
+        rows=[r for r in self.data.get('sources',[]) if r.get('customer_code')==code]
+        return max(rows,key=lambda r:(r['version_no'],r['scheme_no'])) if rows else None
+
+    def profile_customer_changed(self,*_):
+        if self.profile_dirty and self.profile_customer.currentData()!=self.profile_loaded_for:
+            with QSignalBlocker(self.profile_customer):self.profile_customer.setCurrentIndex(max(0,self.profile_customer.findData(self.profile_loaded_for)))
+            self.notice.setText('客户资料尚未保存，请先保存或重新载入后再切换客户。');return
+        self.load_customer_profile()
+
+    def load_customer_profile(self,discard=False):
+        if self.profile_dirty and not discard:return
+        source=self.profile_source()
+        if not source:return
+        code=source['customer_code'];self.profile_dirty=False
+        def loaded(result):
+            if code!=self.profile_customer.currentData():return
+            self.show_customer_profile(result)
+            self.notice.setText('已载入需方资料，可维护后保存。')
+        self.request('/customer-profile',dict(scheme_no=source['scheme_no'],version_no=source['version_no']),loaded)
+
+    def show_customer_profile(self,result):
+        self.profile_loaded_for=result['customer_code'];self.profile_version=int(result.get('version') or 0)
+        self.profile_name.setText(result['customer_name'])
+        for key,control in self.profile_inputs.items():control.setText(str((result.get('fields') or {}).get(key) or ''))
+        self.profile_can_save=result.get('can_save',True);self.profile_dirty=False;self.sync_actions()
+
+    def profile_edited(self,*_):
+        self.profile_dirty=True
+
+    def import_customer_profile(self):
+        if not self.profile_source():self.notice.setText('请先选择需方客户。');return
+        path,_=QFileDialog.getOpenFileName(self,'导入客户资料','','客户资料 (*.json)')
+        if not path:return
+        try:
+            file=Path(path)
+            if file.stat().st_size>128*1024:raise ValueError('客户资料文件过大。')
+            value=json.loads(file.read_text(encoding='utf-8-sig'))
+            if not isinstance(value,dict) or value.get('schema',1)!=1:raise ValueError('客户资料文件格式无效。')
+            if value.get('customer_name')!=self.profile_name.text():raise ValueError('资料文件的需方名称与当前客户不一致。')
+            fields=value.get('fields')
+            if not isinstance(fields,dict) or any(k not in PROFILE_FIELDS for k in fields):raise ValueError('客户资料字段无效。')
+            for key,value in fields.items():
+                if not isinstance(value,str) or len(value)>PROFILE_LIMITS[key] or any(ord(c)<32 or ord(c)==127 for c in value):raise ValueError('客户资料请按文本填写，账号和税号不得使用数字格式。')
+            for key,value in fields.items():self.profile_inputs[key].setText(value)
+            self.profile_dirty=True;self.notice.setText('需方资料已导入，请核对后保存；也可用于本次合同。')
+        except (OSError,ValueError,AttributeError) as error:self.notice.setText(str(error))
+
+    def save_customer_profile(self):
+        source=self.profile_source()
+        if not source or self.profile_loaded_for!=source['customer_code']:self.notice.setText('请先载入所选客户资料。');return
+        payload=dict(scheme_no=source['scheme_no'],version_no=source['version_no'],expected_version=self.profile_version,
+            fields={key:control.text().strip() for key,control in self.profile_inputs.items()})
+        def saved(result):
+            self.show_customer_profile(result)
+            if self.customer.currentData()==result['customer_code']:self.apply_customer_profile(result)
+            self.notice.setText('客户资料已保存，后续合同将自动带入。')
+        self.request('/customer-profile-save',payload,saved)
+
+    def apply_customer_profile(self,result,force=False):
+        if self.historical or result.get('customer_code')!=self.customer.currentData():return
+        for key,value in (result.get('fields') or {}).items():
+            if key in PROFILE_FIELDS and key in self.inputs and (force or key not in self.profile_manual_fields):self.inputs[key].setText(str(value or ''))
+        if force:self.profile_manual_fields.update(PROFILE_FIELDS)
+
+    def use_customer_profile(self):
+        if self.historical:self.notice.setText('请先新建合同，再使用客户资料。');return
+        if self.profile_customer.currentData()!=self.customer.currentData():self.notice.setText('请先在生成合同页选择同一需方报价。');return
+        self.apply_customer_profile(dict(customer_code=self.profile_customer.currentData(),fields={key:w.text().strip() for key,w in self.profile_inputs.items()}),True)
+        self.unsaved=True;self.invalidate();self.tabs.setCurrentIndex(0);self.notice.setText('需方资料已填入本次合同，可继续核对。')
+
     def check_identity(self):
         current=(contract_headers(self.window) or {})
         if current==self.identity: return
@@ -392,18 +541,23 @@ class ContractManagement(QWidget):
         if same_person:
             self.notice.setText('姓名会话已续期，填写内容已保留，可重试原操作。');self.sync_actions();return
         self.loaded=False;self.unsaved=False;self.selected_customer=None;self.pending_scheme=None;self.pending_version=None
+        if hasattr(self,'ledger'):self.ledger.reset_identity()
+        self.pending_customer_name='';self._selected_source=None;self.customer_display.clear()
         self.record_search_timer.stop()
         with QSignalBlocker(self.record_search):self.record_search.clear()
         for worker in self.workers: worker.requestInterruption()
         self.data=dict(sources=[],templates=[],records=[],drafts=[]); self.record=None; self.draft=None
-        for control in self.inputs.values(): control.clear()
+        self.profile_dirty=False;self.profile_loaded_for=None;self.profile_version=0;self.profile_manual_fields.clear()
+        self.profile_name.clear()
+        for control in self.profile_inputs.values():control.clear()
+        for key,control in self.inputs.items():control.setText(default_contract_field(key))
         self.render_data(); self.invalidate(); self.notice.setText('登录身份已变化，请重新加载本人合同数据。')
 
-    def request(self,path,payload,callback,binary=False):
+    def request(self,path,payload,callback,binary=False,on_error=None):
         self.check_identity()
         if contract_headers(self.window) is None:self.notice.setText('姓名会话已变化，请在当前姓名窗口重新操作。');return False
         if self.busy:
-            self.queue.append((path,deepcopy(payload),callback,binary,dict(self.identity))); return True
+            self.queue.append((path,deepcopy(payload),callback,binary,dict(self.identity),on_error)); return True
         self.busy=True; self.sync_actions(); self.notice.setText('正在处理，请稍候…')
         worker=ContractWorker(self.window,'/api/contracts'+path,payload,binary); identity=dict(self.identity);worker._contract_identity=identity; self.workers.append(worker)
         def success(value):
@@ -412,6 +566,7 @@ class ContractManagement(QWidget):
         def failed(message):
             if identity!=(contract_headers(self.window) or {}): return
             self.busy=False; self.sync_actions(); self.notice.setText(message)
+            if on_error:on_error(message)
         def finished():
             if worker in self.workers:self.workers.remove(worker)
             worker.deleteLater()
@@ -434,12 +589,14 @@ class ContractManagement(QWidget):
     def drain_queue(self):
         if self.busy:return
         while self.queue:
-            path,payload,callback,binary,identity=self.queue.pop(0)
+            item=self.queue.pop(0);path,payload,callback,binary,identity=item[:5];on_error=item[5] if len(item)>5 else None
             if identity==self.identity:
-                self.request(path,payload,callback,binary);break
+                self.request(path,payload,callback,binary,on_error);break
 
     def reload(self):
         if self.busy:self.notice.setText('当前合同操作正在处理，完成后可重新加载。');return
+        if hasattr(self,'source_mode') and self.tabs.currentIndex()==0 and self.source_mode.currentIndex()==1:
+            self.ledger.reload();return
         self.request('/bootstrap',None,self.received)
 
     def enter(self):
@@ -459,10 +616,12 @@ class ContractManagement(QWidget):
         self.populating=True; self.customer.clear(); self.customer.addItem('请选择客户',None)
         customers={r['customer_code']:r['customer_name'] for r in self.data.get('sources',[]) if r.get('customer_code')}
         for code,name in customers.items(): self.customer.addItem(name,code)
+        self.sync_profile_choices()
         self.customer.setCurrentIndex(max(0,self.customer.findData(selected))); self.populating=False; self.customer_changed()
         if source:self.source.setCurrentIndex(max(0,index_of(self.source,source)))
         if template:self.template.setCurrentIndex(max(0,self.template.findData(template)))
         if self.template.currentData():self.template_changed()
+        if self.pending_scheme:self.display_customer(self.pending_customer_name)
         rows=self.data.get('templates',[])
         fill(self.library,[(r['customer_name'],r['template_name'],r['file_format'].upper(),'V'+str(r['version_no']),'已配置' if r['configured'] else '待配置',('默认 · ' if r['is_default'] else '')+('可用' if r['enabled'] else '停用'),r['owner_name']) for r in rows]); self.library.setMaximumHeight(16777215)
         self.record_page=1;self.record_total=self.data.get('records_total',len(self.data.get('records',[])));self.render_records(); self.drafts.clear(); self.drafts.addItem('打开生成草稿',None)
@@ -480,9 +639,19 @@ class ContractManagement(QWidget):
             customer_index=self.customer.findData(source['customer_code'])
             if customer_index>=0:self.customer.setItemText(customer_index,source['customer_name'])
             self.customer.setCurrentIndex(self.customer.findData(source['customer_code'])); self.source.setCurrentIndex(index_of(self.source,(no,source['version_no']))); self.tabs.setCurrentIndex(0)
+            self.pending_customer_name=''
         else:
             self.customer.setCurrentIndex(0);self.customer_changed()
+            self.display_customer(self.pending_customer_name)
+            # Keep the exact request for a later reload, never adopt another
+            # accessible quotation simply because its buyer exists.
+            self.pending_scheme=no;self.pending_version=version
             self.notice.setText('未读取到所选报价的正式版本，请重新加载核对；不会改用其他报价生成合同。')
+
+    def display_customer(self,name):
+        self.customer_display.setText(name)
+        self.customer_display.setCursorPosition(0)
+        self.customer_display.setToolTip(name)
 
     def customer_changed(self,*_):
         if self.populating:return
@@ -492,12 +661,14 @@ class ContractManagement(QWidget):
                 with QSignalBlocker(self.customer):self.customer.setCurrentIndex(self.customer.findData(self.selected_customer))
                 self.notice.setText('当前合同信息未保存，请先保存生成草稿，或点击“新建合同”舍弃后再切换客户。');return
             for key,control in self.inputs.items():
-                if key not in ('seller_name','seller_address'):control.setText('')
+                if key not in ('seller_name','seller_address'):control.setText(default_contract_field(key))
             self.draft=None
+        if code!=self.selected_customer:self.profile_manual_fields.clear()
         self.selected_customer=code
+        self.display_customer(self.customer.currentText() if code else '')
         self.populating=True; self.source.clear(); self.source.addItem('请选择正式报价',None); self.template.clear(); self.template.addItem('请选择客户模板',None)
         for r in self.data.get('sources',[]):
-            if r.get('customer_code')==code:self.source.addItem(r['scheme_no']+' / 正式 V'+str(r['version_no']),(r['scheme_no'],r['version_no']))
+            self.source.addItem(r['scheme_no']+' / 正式 V'+str(r.get('quote_version') or r['version_no']),(r['scheme_no'],r['version_no']))
         for r in self.data.get('templates',[]):
             if r['customer_code']==code and r.get('can_use',r.get('can_write')) and r['enabled']:
                 self.template.addItem(r['template_name']+' · '+r['file_format'].upper()+' · V'+str(r['version_no'])+(' · 待配置' if not r['configured'] else ''),r['template_version_id'])
@@ -507,6 +678,8 @@ class ContractManagement(QWidget):
         if default:self.template_changed()
 
     def field_edited(self,*_):
+        sender=self.sender()
+        self.profile_manual_fields.update(key for key,control in self.inputs.items() if key in PROFILE_FIELDS and control is sender)
         self.unsaved=True;self.invalidate()
 
     def invalidate(self,*_):
@@ -519,6 +692,24 @@ class ContractManagement(QWidget):
 
     def selection_changed(self,*_):
         if self.populating:return
+        selected=self.source.currentData()
+        source=next((r for r in self.data.get('sources',[]) if (r['scheme_no'],r['version_no'])==selected),None)
+        if source:
+            code=source['customer_code']
+            if code!=self.selected_customer and self.selected_customer and self.unsaved:
+                with QSignalBlocker(self.source):self.source.setCurrentIndex(max(0,index_of(self.source,self._selected_source)))
+                self.notice.setText('当前合同信息未保存，请先保存生成草稿，或点击“新建合同”舍弃后再切换报价。');return
+            customer_index=self.customer.findData(code)
+            with QSignalBlocker(self.customer):
+                self.customer.setItemText(customer_index,source['customer_name'])
+                self.customer.setCurrentIndex(customer_index)
+            if code!=self.selected_customer:
+                self.customer_changed()
+                with QSignalBlocker(self.source):self.source.setCurrentIndex(index_of(self.source,selected))
+            self.display_customer(source['customer_name'])
+        elif not self.pending_scheme:
+            self.display_customer('')
+        self._selected_source=selected
         self.invalidate(); self.current_quote=None; fill(self.items,[]); self.amount.setText('¥ —'); self.upper.setText('人民币大写：—'); self.source_info.clear()
         selected=self.source.currentData(); method=self.method.currentData()
         if selected and method:
@@ -526,7 +717,13 @@ class ContractManagement(QWidget):
             def received(result):
                 if selection!=(self.source.currentData(),self.method.currentData()):return
                 self.customer.setItemText(self.customer.currentIndex(),result['customer_name'])
-                self.current_quote=result['quote']; q=self.current_quote; self.source_info.setText(f"客户：{result['customer_name']}\n来源：{selected[0]} / 正式 V{selected[1]} · {self.method.currentText()}")
+                self.display_customer(result['customer_name'])
+                if result.get('customer_profile'):
+                    profile=result['customer_profile'];self.apply_customer_profile(profile)
+                    if not self.profile_dirty:
+                        with QSignalBlocker(self.profile_customer):self.profile_customer.setCurrentIndex(self.profile_customer.findData(profile['customer_code']))
+                        self.show_customer_profile(profile)
+                self.current_quote=result['quote']; q=self.current_quote; self.source_info.setText(f"客户：{result['customer_name']}\n来源：{selected[0]} / 正式 V{result.get('quote_version') or selected[1]} · {self.method.currentText()}")
                 fill(self.items,[(r['name'],r['specification'],r['quantity'],r['unit'],f"{r['unit_price']:,.2f}",f"{r['total']:,.2f}") for r in q['items']]); self.amount.setText(f"¥ {q['total']:,.2f}"); self.upper.setText('人民币大写：'+q['total_upper']); self.notice.setText('已读取正式报价冻结金额。'); self.sync_actions()
             self.request('/quote',dict(scheme_no=selected[0],version_no=selected[1],method=method),received)
 
@@ -556,8 +753,17 @@ class ContractManagement(QWidget):
         self.export_button.setEnabled(bool(self.output) and not self.busy); self.original_button.setEnabled(bool(self.output) and not self.busy); self.print_button.setEnabled(bool(self.preview_pages) and not self.busy)
         for control in (self.customer,self.source,self.template,self.method,self.drafts,self.tabs.tabBar()):control.setEnabled(not self.busy)
         for control in self.inputs.values():control.setReadOnly(self.busy or self.historical)
+        if hasattr(self,'profile_customer'):
+            self.profile_customer.setEnabled(not self.busy)
+            active=bool(self.profile_source()) and not self.busy
+            for control in self.profile_inputs.values():control.setReadOnly(not active)
+            for control in (self.profile_load_button,self.profile_import_button,self.profile_apply_button):control.setEnabled(active)
+            self.profile_apply_button.setEnabled(active and not self.historical and self.profile_customer.currentData()==self.customer.currentData())
+            self.profile_save_button.setEnabled(active and getattr(self,'profile_can_save',True) and self.profile_loaded_for==self.profile_customer.currentData())
         if hasattr(self,'record_prev'):
             self.record_prev.setEnabled(not self.busy and self.record_page>1);self.record_next.setEnabled(not self.busy and self.record_page*100<self.record_total)
+        if hasattr(self,'source_mode'):self.source_mode.setEnabled(not self.busy)
+        if hasattr(self,'ledger'):self.ledger.sync_actions()
 
     def input_data(self):
         selected=self.source.currentData()
@@ -584,14 +790,14 @@ class ContractManagement(QWidget):
             t=result['template']; self.populating=True; index=self.template.findData(t['template_version_id'])
             if index<0:self.template.addItem(t['template_name']+' · 草稿 V'+str(t['version_no']),t['template_version_id']);index=self.template.count()-1
             self.template.setCurrentIndex(index); self.populating=False; self.mapping=t.get('field_mapping'); self.update_custom_fields()
-            for key,control in self.inputs.items():control.setText(data['fields'].get(key,''))
+            for key,control in self.inputs.items():control.setText(data['fields'].get(key,default_contract_field(key)))
+            self.profile_manual_fields.update(PROFILE_FIELDS)
             self.draft=deepcopy(d); self.sync_actions(); self.notice.setText('草稿已恢复；生成前重新核对报价和合同字段。')
         self.request('/templates/'+str(data['template_version_id']),None,loaded)
 
     def generate(self):
         try:
             payload=self.input_data()
-            if not payload['fields']['contract_no']:raise ValueError('请填写客户合同编号。')
         except ValueError as e:self.notice.setText(str(e));return
         payload['request_id']=self.request_id
         self.request('/generate',payload,self.generated)
@@ -638,7 +844,7 @@ class ContractManagement(QWidget):
 
     def worker_finished(self,worker):
         if worker in self.workers:self.workers.remove(worker)
-        worker.deleteLater();self.drain_queue()
+        worker.deleteLater();self.drain_queue();self.sync_actions()
 
     def export_file(self):
         if not self.output:return
@@ -646,6 +852,7 @@ class ContractManagement(QWidget):
         if not path:return
         if not Path(path).suffix:path+=output['path'].suffix
         if Path(path).suffix.lower()!=output['path'].suffix.lower():self.notice.setText('请按原格式输出，文件后缀应为 '+output['path'].suffix+'。');return
+        if hasattr(self,'validate_export_target') and not self.validate_export_target(Path(path)):return
         target=QSaveFile(path)
         if not target.open(QIODevice.OpenModeFlag.WriteOnly) or target.write(output['bytes'])!=len(output['bytes']) or not target.commit():
             target.cancelWriting();self.notice.setText('输出失败，原生成记录仍保留，可重新选择位置。');return
@@ -679,6 +886,9 @@ class ContractManagement(QWidget):
 
     def configure(self,template_id):
         if not template_id:self.notice.setText('请先选择或上传客户模板。');return
+        selected=next((r for r in self.data.get('templates',[]) if r['template_version_id']==template_id),None)
+        if not selected or not selected.get('can_write'):
+            self.notice.setText('该模板由其他同事上传，可查看和使用；只有上传人可以修改字段配置。');return
         def loaded(result):
             if result['template']['owner_user_id']!=next((r['owner_user_id'] for r in self.data.get('templates',[]) if r['template_version_id']==template_id and r.get('can_write')),None):self.notice.setText('该模板为只读，不能修改字段配置。');return
             dialog=MappingDialog(result,self)
@@ -687,6 +897,8 @@ class ContractManagement(QWidget):
         self.request('/templates/'+str(template_id),None,loaded)
 
     def upload(self,new_version=False):
+        if hasattr(self,'source_mode') and self.tabs.currentIndex()==0 and self.source_mode.currentIndex()==1:
+            self.ledger.upload();return
         if self.busy:return
         t=self.selected_template(True) if new_version else None
         if new_version and (not t or not t.get('can_write')):self.notice.setText('请选择本人维护的客户模板。');return
@@ -712,9 +924,28 @@ class ContractManagement(QWidget):
         self.request('/templates/'+str(t['template_version_id'])+'/settings',payload,lambda _:self.reload())
 
     def use_template(self):
+        if self.busy:self.notice.setText('当前合同操作正在处理，完成后再选择模板。');return
         t=self.selected_template(True)
         if not t or not t.get('can_use',t.get('can_write')) or not t['enabled']:self.notice.setText('请选择有权使用的可用模板。');return
-        self.customer.setCurrentIndex(self.customer.findData(t['customer_code']));self.template.setCurrentIndex(self.template.findData(t['template_version_id']));self.tabs.setCurrentIndex(0)
+        if self.source_mode.currentIndex()==1:
+            from contract_ledger import CUSTOMERS
+            key=next((key for key,c in CUSTOMERS.items() if c['name']==t['customer_name']),None)
+            if not key:self.notice.setText('该客户未配置台账导入规则，请使用原报价单流程。');return
+            if not t['configured']:self.notice.setText('请先配置模板中的产品明细及备注位置。');return
+            if self.ledger.unsaved and key!=self.ledger.customer.currentData():self.notice.setText('请先保存当前台账合同草稿，再切换客户。');return
+            self.ledger.customer.setCurrentIndex(self.ledger.customer.findData(key))
+            self.ledger.info['templates']=self.data.get('templates',[]);self.ledger.sync_templates(t['template_version_id'])
+            if self.ledger.imported:self.ledger.changed()
+            self.tabs.setCurrentIndex(0);return
+        customer_index=self.customer.findData(t['customer_code'])
+        if customer_index<0:
+            self.notice.setText('当前没有该客户可用的正式报价，请先准备该客户的正式报价后再使用此模板。');return
+        if self.unsaved and self.selected_customer and self.selected_customer!=t['customer_code']:
+            self.notice.setText('当前合同信息未保存，请先保存生成草稿，或点击“新建合同”后再切换客户模板。');return
+        self.customer.setCurrentIndex(customer_index)
+        template_index=self.template.findData(t['template_version_id'])
+        if template_index<0:self.notice.setText('该模板当前不可用，请重新加载后再选择。');return
+        self.template.setCurrentIndex(template_index);self.tabs.setCurrentIndex(0)
 
     def template_versions(self):
         t=self.selected_template(True)
@@ -737,30 +968,38 @@ class ContractManagement(QWidget):
 
     def render_records(self):
         search=self.record_search.text().strip().casefold();self.visible_records=[r for r in self.data.get('records',[]) if search in json.dumps(r,ensure_ascii=False).casefold()]
-        fill(self.records,[(r['record_no'],r['customer_contract_no'],r['customer_name'],r['scheme_no']+' / V'+str(r['source_version_no']),'快速报价' if r['quote_method']=='QUICK' else '公式报价',f"¥ {float(r['amount']):,.2f}",r['template_name']+' / V'+str(r['template_version']),r['file_format'].upper(),r['owner_name']) for r in self.visible_records]);self.records.setMaximumHeight(16777215)
+        fill(self.records,[(r['record_no'],r['customer_contract_no'],r['customer_name'],('Excel 台账' if r.get('source_kind')=='LEDGER' else r['scheme_no']+' / V'+str(r.get('source_quote_version') or r['source_version_no'])),('台账合同' if r.get('source_kind')=='LEDGER' else '快速报价' if r['quote_method']=='QUICK' else '公式报价'),f"¥ {float(r['amount']):,.2f}",r['template_name']+' / V'+str(r['template_version']),r['file_format'].upper(),r['owner_name']) for r in self.visible_records]);self.records.setMaximumHeight(16777215)
         self.record_page_info.setText(f'第 {self.record_page} 页 · 共 {self.record_total} 条，每页 100 条');self.sync_actions()
 
     def new_contract(self):
         if self.busy:return
         if self.unsaved and QMessageBox.question(self,'新建合同','舍弃当前未保存的合同信息并重新开始？',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
         self.unsaved=False;self.draft=None
-        for control in self.inputs.values():control.setText('')
+        self.profile_manual_fields.clear()
+        for key,control in self.inputs.items():control.setText(default_contract_field(key))
         self.invalidate();self.selection_changed();self.template_changed();self.notice.setText('请核对本次合同字段后生成。')
 
     def show_history(self,result):
         self.record=result;self.historical=True;s=result['generation_snapshot'];q=s['quote']
-        self.choices_card.hide();self.history_banner.setText(f"历史记录只读：{result['record_no']} · 客户：{s['fields']['buyer_name']}\n来源：{s['scheme_no']} / 正式 V{s['source_version']} · 模板：{s['template_name']} / V{s['template_version']} · {'快速报价' if s['method']=='QUICK' else '公式报价'}");self.history_banner.show()
-        self.source_info.setText(f"历史生成记录：{result['record_no']}\n客户：{s['fields']['buyer_name']}\n来源：{s['scheme_no']} / 正式 V{s['source_version']} · {'快速报价' if s['method']=='QUICK' else '公式报价'}")
+        self.display_customer(s['fields']['buyer_name'])
+        display_version=s.get('source_quote_version') or s['source_version']
+        self.choices_card.hide();self.history_banner.setText(f"历史记录只读：{result['record_no']} · 客户：{s['fields']['buyer_name']}\n来源：{s['scheme_no']} / 正式 V{display_version} · 模板：{s['template_name']} / V{s['template_version']} · {'快速报价' if s['method']=='QUICK' else '公式报价'}");self.history_banner.show()
+        self.source_info.setText(f"历史生成记录：{result['record_no']}\n客户：{s['fields']['buyer_name']}\n来源：{s['scheme_no']} / 正式 V{display_version} · {'快速报价' if s['method']=='QUICK' else '公式报价'}")
         fill(self.items,[(r['name'],r['specification'],r['quantity'],r['unit'],f"{r['unit_price']:,.2f}",f"{r['total']:,.2f}") for r in q['items']]);self.amount.setText(f"¥ {q['total']:,.2f}");self.upper.setText('人民币大写：'+q['total_upper'])
         self.mapping=s['mapping'];self.update_custom_fields()
         for key,control in self.inputs.items():control.setText(s['fields'].get(key,''))
         self.sync_actions()
 
     def open_record(self,export=False):
+        if self.has_unsaved():
+            self.notice.setText('请先保存当前合同草稿，再打开历史合同。');return
         row=self.records.currentRow()
         if not 0<=row<len(self.visible_records):self.notice.setText('请选择一条生成记录。');return
         selected=self.visible_records[row];self.invalidate()
         def received(result):
+            if result.get('source_kind')=='LEDGER':
+                self.source_mode.setCurrentIndex(1);self.tabs.setCurrentIndex(0);self.ledger.show_history(result,selected.get('can_write'),export);return
+            self.source_mode.setCurrentIndex(0)
             self.show_history(result);self.tabs.setCurrentIndex(0)
             if selected.get('can_write'):self.download(result,export)
             else:self.notice.setText('可查看该历史合同信息；原文件打开、打印与输出仅限生成人。')
@@ -772,10 +1011,15 @@ class ContractManagement(QWidget):
         else:source=self.source.currentData();quote=self.current_quote;method=self.method.currentText()
         if not source or not quote:return
         dialog=QDialog(self);dialog.setWindowTitle('来源正式报价快照');dialog.resize(850,520);dialog.setStyleSheet(STYLE);box=QVBoxLayout(dialog)
-        box.addWidget(label(f'{source[0]} / 正式 V{source[1]} · {method}'));grid=table(('产品','规格','数量','单价','金额'),'contractSource');fill(grid,[(r['name'],r['specification'],r['quantity'],f"{r['unit_price']:,.2f}",f"{r['total']:,.2f}") for r in quote['items']]);box.addWidget(grid,1);box.addWidget(label(f"合计：¥ {quote['total']:,.2f}"));box.addWidget(button('关闭',dialog.accept));dialog.exec()
+        displayed=(self.record['generation_snapshot'].get('source_quote_version') or source[1]) if self.historical else next((r.get('quote_version') or source[1] for r in self.data.get('sources',[]) if (r['scheme_no'],r['version_no'])==source),source[1])
+        box.addWidget(label(f'{source[0]} / 正式 V{displayed} · {method}'));grid=table(('产品','规格','数量','单价','金额'),'contractSource');fill(grid,[(r['name'],r['specification'],r['quantity'],f"{r['unit_price']:,.2f}",f"{r['total']:,.2f}") for r in quote['items']]);box.addWidget(grid,1);box.addWidget(label(f"合计：¥ {quote['total']:,.2f}"));box.addWidget(button('关闭',dialog.accept));dialog.exec()
 
     def fit_previews(self):
-        width=max(160,min(METRICS['preview_width'],self.preview_scroll.viewport().width()-24))
+        margins=self.pagebox.contentsMargins()
+        # Reserve the vertical bar before a tall page makes it appear. A fixed
+        # child width must not leave the newly narrowed viewport overflowing.
+        available=min(self.preview_scroll.viewport().width(),self.preview_scroll.contentsRect().width()-self.preview_scroll.verticalScrollBar().sizeHint().width())
+        width=max(1,min(METRICS['preview_width'],available-margins.left()-margins.right()-4))
         for index in range(self.pagebox.count()):
             picture=self.pagebox.itemAt(index).widget();pix=getattr(picture,'source_pixmap',None)
             if pix is not None and not pix.isNull():
@@ -804,7 +1048,7 @@ def install_contract_management(namespace):
         import name_login
         if not getattr(name_login,'_contract_guard_installed',False):
             previous=name_login.critical_tasks
-            name_login.critical_tasks=lambda window:previous(window) or any(bool(getattr(getattr(window,'contract_management',None),key,False)) for key in ('unsaved','busy','queue'))
+            name_login.critical_tasks=lambda window:previous(window) or (getattr(window,'contract_management',None) is not None and window.contract_management.has_unsaved()) or any(bool(getattr(getattr(window,'contract_management',None),key,False)) for key in ('profile_dirty','busy','queue'))
             name_login._contract_guard_installed=True
     except ImportError:pass
     prior_init,prior_section,prior_close=cls.__init__,cls.show_section,cls.closeEvent
@@ -828,14 +1072,20 @@ def install_contract_management(namespace):
                 selected=manager.rows[row]
                 if selected.get('order_nature') != 'EXTERNAL' or selected.get('can_write') is False:
                     page.notice.setText('仅外部正式报价可生成合同。');return
-                if page.busy or page.unsaved:
+                if page.busy or page.has_unsaved():
                     page.notice.setText('请先完成当前合同操作，或保存生成草稿、新建合同后再切换报价单。');return
                 page.customer.setCurrentIndex(0);page.customer_changed()
+                page.source_mode.setCurrentIndex(0)
                 page.pending_scheme=selected['scheme_no']
                 page.pending_version=int(selected['version_no']) if selected.get('status') in ('QUOTED','ARCHIVED') and selected.get('version_no') else None
+                page.pending_customer_name=str(selected.get('company_name') or '')
+                page.display_customer(page.pending_customer_name)
                 page.source_info.setText('待加载来源报价：'+page.pending_scheme);window.show_section(route)
         manager.contract=contract;manager.contract_source=page.source_info
         manager.contract_button.clicked.disconnect();manager.contract_button.clicked.connect(contract)
+        from quote_detail_contract import DetailContractController
+        manager.detail_contract_controller=DetailContractController(window,page)
+        manager.status_changed()
     def section(window,index):
         page=getattr(window,'contract_management',None)
         if page is not None and page.busy and window.stack.currentIndex()==window.contract_management_route and index!=window.contract_management_route:
@@ -845,14 +1095,23 @@ def install_contract_management(namespace):
         return result
     def close(window,event):
         page=getattr(window,'contract_management',None)
+        if getattr(window,'_detail_contract_busy',False):
+            window.quote_management.feedback.setText('正在保存并确认当前报价，请完成后再关闭程序。');event.ignore();return
         if page is not None and (page.busy or page.queue):
             page.notice.setText('合同正在处理，请完成后再关闭程序。');event.ignore();return
-        if page is not None and page.unsaved:
+        if page is not None and page.profile_dirty:
+            answer=QMessageBox.question(window,'客户资料尚未保存','放弃未保存的客户资料并关闭？',QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Cancel)
+            if answer!=QMessageBox.StandardButton.Discard:event.ignore();return
+            page.profile_dirty=False
+        if page is not None and page.has_unsaved():
             answer=QMessageBox.question(window,'合同信息尚未保存','保存生成草稿后再关闭？',QMessageBox.StandardButton.Save|QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Save)
             if answer==QMessageBox.StandardButton.Save:
-                page.save_draft();event.ignore();return
+                if page.ledger.unsaved:page.ledger.save_draft()
+                else:page.save_draft()
+                event.ignore();return
             if answer==QMessageBox.StandardButton.Cancel:event.ignore();return
             page.unsaved=False
+            page.ledger.unsaved=False
         result=prior_close(window,event)
         if page is not None and event.isAccepted():page.shutdown()
         return result

@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import {isNamePrincipal,quoteScopeSql,sessionOperator,currentQuotePrincipal} from './quote_access_scope.mjs';
 import {authError} from './name_login_service.mjs';
 import {snapshotWithOrderNature, snapshotOrderNature, orderNatureSql, validateOrderNature} from '../quote_order_nature.mjs';
+import {contractQuote} from './contract_quote.mjs';
+import {displayVersion} from './quote_delivery_document.mjs';
 
 const STATUSES = Object.freeze(['DRAFT', 'QUOTED', 'REVISING', 'ARCHIVED', 'VOID']);
 const ROLES = Object.freeze(['USER', 'DEPARTMENT_MANAGER', 'ADMIN']);
@@ -394,18 +396,18 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     return result;
   };
 
-  const exportResult = async (principal, schemeNo, input) => {
+  const registerResult = async (principal, schemeNo, input, contractConfirmation=false) => {
     principal=currentQuotePrincipal()||principal;
     input=sessionOperator(principal,input);
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     const kind = String(input.kind || 'XLSX').toUpperCase();
-    if (!['PRINT','PREVIEW','XLSX'].includes(kind) || typeof input.succeeded !== 'boolean') {
+    if (!(contractConfirmation?kind==='CONTRACT':['PRINT','PREVIEW','XLSX'].includes(kind)) || typeof input.succeeded !== 'boolean') {
       throw Object.assign(new Error('kind and succeeded are required'), { statusCode: 400 });
     }
     if (!positiveVersion(input.expected_version)) throw Object.assign(new Error('expected_version is required'), { statusCode: 400 });
     const operatorName = operatorNameValue(input);
-    // Previewing is deliberately non-final. Only a successful print or XLSX export
-    // is evidence that a formal quote document was produced.
+    // Preview is non-final. Contract confirmation is an explicit separate
+    // action: it freezes the quote without inventing a print/export receipt.
     const formalSuccess = input.succeeded && kind !== 'PREVIEW';
     const frozenSnapshot = formalSuccess ? snapshotValue(input) : null;
     if (formalSuccess) validateOrderNature(snapshotOrderNature(frozenSnapshot), true);
@@ -444,10 +446,13 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     const p = principalValues(principal);
     const result = await query(`WITH target AS (SELECT s.* FROM calc.quote_scheme s WHERE s.scheme_no=${sqlUnicodeText(schemeNo)}
       AND ${writePermissionSql(principal, 's')} AND s.lock_version=${sqlNumber(input.expected_version)}
+      ${contractConfirmation?"AND s.status IN ('DRAFT','REVISING')":''}
       ${formalSuccess ? `AND ${natureUnchanged(frozenSnapshot)} AND ${confirmedHistoryUnchanged(frozenSnapshot)}` : ''} FOR UPDATE),
-    logged AS (INSERT INTO calc.quote_scheme_export(scheme_id,export_kind,succeeded,actor_user_id,actor_name_snapshot,detail)
+    logged AS (${contractConfirmation?`INSERT INTO calc.quote_scheme_audit(scheme_id,action,from_status,to_status,actor_user_id,actor_name_snapshot,detail)
+      SELECT scheme_id,'CONTRACT_CONFIRMED',status,'QUOTED',${p.id},${sqlUnicodeText(operatorName)},
+        ${sqlUnicodeText(JSON.stringify({quote_version:displayVersion(frozenSnapshot,1),request_id:frozenSnapshot.document.contract_confirmation_id}))}::jsonb FROM target RETURNING scheme_id`:`INSERT INTO calc.quote_scheme_export(scheme_id,export_kind,succeeded,actor_user_id,actor_name_snapshot,detail)
       SELECT scheme_id,${sqlUnicodeText(kind)},${input.succeeded ? 'TRUE':'FALSE'},${p.id},${sqlUnicodeText(operatorName)},
-        ${sqlUnicodeText(JSON.stringify(input.detail || {}))}::jsonb FROM target RETURNING scheme_id),
+        ${sqlUnicodeText(JSON.stringify(input.detail || {}))}::jsonb FROM target RETURNING scheme_id`}),
     changed AS (UPDATE calc.quote_scheme s SET status=CASE WHEN ${formalSuccess ? 'TRUE':'FALSE'} AND s.status IN ('DRAFT','REVISING') THEN 'QUOTED' ELSE s.status END,
       company_name=CASE WHEN ${formalSuccess ? 'TRUE':'FALSE'} AND s.status IN ('DRAFT','REVISING') THEN ${sqlUnicodeText(summary.company)} ELSE s.company_name END,
       product_summary=CASE WHEN ${formalSuccess ? 'TRUE':'FALSE'} AND s.status IN ('DRAFT','REVISING') THEN ${sqlUnicodeText(summary.productSummary)} ELSE s.product_summary END,
@@ -460,7 +465,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       WHERE s.scheme_id IN (SELECT scheme_id FROM logged) RETURNING s.*),
     status_audit AS (INSERT INTO calc.quote_scheme_audit(scheme_id,action,from_status,to_status,actor_user_id,actor_name_snapshot)
       SELECT c.scheme_id,'EXPORT_CONFIRMED',t.status,c.status,${p.id},${sqlUnicodeText(operatorName)} FROM changed c JOIN target t USING(scheme_id)
-      WHERE ${formalSuccess ? 'TRUE':'FALSE'} AND t.status IS DISTINCT FROM c.status),
+      WHERE ${formalSuccess&&!contractConfirmation ? 'TRUE':'FALSE'} AND t.status IS DISTINCT FROM c.status),
     snap AS (INSERT INTO calc.quote_scheme_snapshot(scheme_id,snapshot_payload,saved_at,saved_by_user_id,saved_by_name_snapshot)
       SELECT scheme_id,jsonb_set(${sqlUnicodeText(JSON.stringify(frozenSnapshot || {}))}::jsonb,'{document}',
         (CASE WHEN jsonb_typeof(${sqlUnicodeText(JSON.stringify(frozenSnapshot || {}))}::jsonb->'document')='object'
@@ -486,9 +491,34 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
         SELECT 1 FROM target t WHERE t.scheme_id=c.scheme_id AND t.status IN ('DRAFT','REVISING'))
       ON CONFLICT (scheme_id,version_no) DO NOTHING)
     SELECT COALESCE((SELECT jsonb_build_object('recorded',TRUE,'status',status,'lock_version',lock_version,
-      'formal_success',${formalSuccess ? 'TRUE':'FALSE'}) FROM changed),'{"recorded":false}'::jsonb)::text;`);
+      'formal_success',${formalSuccess ? 'TRUE':'FALSE'}${contractConfirmation?`, 'source_version_no',version_no,'quote_version',${displayVersion(frozenSnapshot,1)}`:''}) FROM changed),'{"recorded":false}'::jsonb)::text;`);
     if (!result?.recorded) throw Object.assign(new Error('方案已被他人修改或无权限，请重新打开后再登记导出结果。'), {statusCode:409});
     return result;
+  };
+
+  const exportResult=(principal,schemeNo,input)=>registerResult(principal,schemeNo,input);
+  const confirmForContract=async(principal,schemeNo,input)=>{
+    principal=currentQuotePrincipal()||principal;
+    if(!principal?.userId||String(principal.userId).startsWith('shared-client:'))throw Object.assign(Error('请使用姓名会话生成合同'),{statusCode:401});
+    if(!validSchemeNo(schemeNo)||!positiveVersion(input.expected_version)||!positiveVersion(input.quote_version)||
+       !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(String(input.request_id||''))||input.historical_quote_version!==undefined)
+      throw Object.assign(Error('当前报价版本或确认编号无效'),{statusCode:400});
+    const snapshot=snapshotValue(input);
+    if(snapshotOrderNature(snapshot)!=='EXTERNAL')throw Object.assign(Error('仅外部报价可生成合同'),{statusCode:409});
+    if(!String(snapshot.company||'').trim())throw Object.assign(Error('请先填写本次报价客户'),{statusCode:400});
+    if(displayVersion(snapshot,1)!==Number(input.quote_version))throw Object.assign(Error('当前查看版本与提交版本不一致'),{statusCode:409});
+    const current=snapshot.quote_management?.versions?.find(v=>v.version===Number(input.quote_version));
+    if(current?.pending_confirmation)throw Object.assign(Error('当前修订内容尚未确认，请先核对报价'),{statusCode:409});
+    try{contractQuote(snapshot,'QUICK');}catch(error){error.statusCode=400;throw error;}
+    const stable=value=>JSON.stringify(value,(_k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
+    const fingerprint=crypto.createHash('sha256').update(stable(snapshot)).digest('hex');
+    const prior=await query(`SELECT COALESCE((SELECT jsonb_build_object('recorded',TRUE,'formal_success',TRUE,'status',s.status,'lock_version',s.lock_version,
+       'source_version_no',v.version_no,'quote_version',${Number(input.quote_version)},'fingerprint',v.snapshot_payload#>>'{document,contract_confirmation_sha256}')
+       FROM calc.quote_scheme s JOIN calc.quote_scheme_version v USING(scheme_id) WHERE s.scheme_no=${sqlUnicodeText(schemeNo)}
+       AND s.status<>'VOID' AND ${writePermissionSql(principal,'s')} AND v.snapshot_payload#>>'{document,contract_confirmation_id}'=${sqlUnicodeText(input.request_id)}),'null'::jsonb)::text;`);
+    if(prior){if(prior.fingerprint!==fingerprint)throw Object.assign(Error('本次确认编号已对应其他报价内容'),{statusCode:409});const {fingerprint:_,...result}=prior;return {...result,reused:true};}
+    snapshot.document={...snapshot.document,contract_confirmation_id:input.request_id,contract_confirmation_sha256:fingerprint};
+    return registerResult(principal,schemeNo,{...input,snapshot,kind:'CONTRACT',succeeded:true},true);
   };
 
   const removeDraft = async (principal, schemeNo, expectedVersion, operatorNameInput) => {
@@ -505,7 +535,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     return result;
   };
 
-  return { create, get, list, save, transition, revision, exportResult, removeDraft };
+  return { create, get, list, save, transition, revision, exportResult, confirmForContract, removeDraft };
 };
 
 export {

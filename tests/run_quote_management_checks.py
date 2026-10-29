@@ -13,6 +13,8 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = (
+    'verify_discard_close.py',
+    'verify_wide_labor_workflow.py',
     'verify_cost_horizontal_restore.py',
     'verify_quote_batch_discount.py',
     'verify_front_rear_doors.py',
@@ -30,6 +32,9 @@ SUITES = (
     'verify_light_action_ui.py', 'verify_order_nature.py',
     'verify_quote_export_customer.py',
     'verify_contract_customer_flow.py',
+    'verify_contract_defaults.py',
+    'verify_customer_profiles.py',
+    'verify_contract_template_sharing.py',
     'verify_quote_management_filters.py',
     'verify_name_login.py', 'verify_name_login_workflow.py',
     'verify_quote_management.py', 'verify_quote_unit_rounding.py',

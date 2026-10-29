@@ -26,7 +26,7 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.28.01"
+CLIENT_VERSION = "2026.10.29.01"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",

@@ -68,12 +68,14 @@ class SessionWorker(QThread):
         except Exception:self.failed.emit('连接失败，当前填写内容已保留，请重试。')
 
 class NameLoginDialog(QDialog):
-    def __init__(self,base_url,headers,parent=None,expected_user=None):
-        self.value=None;self.worker=None
+    def __init__(self,base_url,headers,parent=None,expected_user=None,*,startup=False):
         super().__init__(parent)
         # Initial API_URL is the full calculation endpoint; name switching passes a root.
         self.base_url=str(base_url).strip().split('/api/',1)[0].rstrip('/')
         self.headers=headers;self.expected_user=expected_user
+        self.value=None;self.worker=None;self._startup=startup
+        self._startup_timer=QTimer(self);self._startup_timer.setInterval(1000)
+        self._startup_timer.timeout.connect(self._waiting_for_name)
         self.setWindowTitle('输入姓名');self.setMinimumWidth(420)
         outer=QVBoxLayout(self);outer.setSpacing(DIALOG_METRICS['spacing'])
         outer.addWidget(QLabel('姓名'))
@@ -83,10 +85,24 @@ class NameLoginDialog(QDialog):
         self.enter=QPushButton('进入');self.enter.setObjectName('scheme2PrimaryAction');self.enter.clicked.connect(self.login);outer.addWidget(self.enter)
         self.name.textEdited.connect(lambda _text:self.error.clear() if self.worker is None else None)
         self.name.returnPressed.connect(self.login);style_dialog(self)
+    def _report_startup(self,phase):
+        if self._startup:
+            from client_update_runner import report_startup_phase
+            from quote_scheme_center import CLIENT_VERSION
+            report_startup_phase(CLIENT_VERSION,phase)
+    def _waiting_for_name(self):
+        if self.worker is None:self._report_startup('waiting_for_name')
+    def showEvent(self,event):
+        super().showEvent(event)
+        if self._startup:
+            self._waiting_for_name();self._startup_timer.start()
+    def hideEvent(self,event):
+        self._startup_timer.stop();super().hideEvent(event)
     def login(self):
         if self.worker is not None:return
         name=self.name.text().strip()
         if not name:self.error.setText('请输入姓名。');return
+        self._startup_timer.stop();self._report_startup('starting_main_window')
         self.enter.setEnabled(False);self.name.setEnabled(False);self.error.setText('正在登录…')
         worker=SessionWorker(self.base_url.rstrip('/')+'/api/name-login',self.headers,{'name':name},self);self.worker=worker
         def loaded(value):
@@ -97,6 +113,8 @@ class NameLoginDialog(QDialog):
         def done():
             self.worker=None;self.enter.setEnabled(True);self.name.setEnabled(True);worker.deleteLater()
             if self.value is not None:self.accept()
+            elif self._startup:
+                self._waiting_for_name();self._startup_timer.start()
         worker.finished.connect(done);worker.start()
     def reject(self):
         if self.worker is not None:
@@ -127,7 +145,7 @@ def install_name_login(namespace):
     cls=namespace['MainWindow'];prior_init=cls.__init__
     def init(window,*args,**kwargs):
         if _required and _state is None:
-            dialog=NameLoginDialog(namespace['API_URL'],namespace['_name_connection_headers']())
+            dialog=NameLoginDialog(namespace['API_URL'],namespace['_name_connection_headers'](),startup=True)
             if dialog.exec()!=QDialog.DialogCode.Accepted:raise LoginCancelled()
             set_session(dialog.value)
         window._name_user_id=user_id();window._name_identity_epoch=_epoch
