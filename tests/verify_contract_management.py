@@ -56,7 +56,7 @@ class ContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.folder=Path(TEMP.name);cls.state=cls.folder/'host.json'
         cls.host_log=open(cls.folder/'host.log','w',encoding='utf-8')
-        cls.host=subprocess.Popen([shutil.which('node'),str(ROOT/'tests/helpers/contract_test_host.mjs'),str(cls.state)],cwd=ROOT,
+        cls.host=subprocess.Popen([shutil.which('node'),str(ROOT/'tests/helpers/contract_test_host.mjs'),str(cls.state),*getattr(cls,'host_arguments',[])],cwd=ROOT,
             stdin=subprocess.PIPE,stdout=cls.host_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         until=time.monotonic()+100
         while time.monotonic()<until and not cls.state.is_file() and cls.host.poll() is None:time.sleep(.1)

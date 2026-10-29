@@ -1,0 +1,3 @@
+# Test fixtures only; production client needs xlrd from desktop_client/requirements.txt.
+xlrd==2.0.2
+xlwt==1.3.0

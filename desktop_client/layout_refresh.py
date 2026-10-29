@@ -1082,6 +1082,15 @@ def _ganged_error_text(message) -> str:
     return text or "报价服务未返回错误详情，请检查网络和服务状态后重试。"
 
 
+def _quote_calculation_failure_text(message) -> str:
+    text = _ganged_error_text(message).rstrip("。.")
+    if "同级冲突" in text:
+        return (f"双报价计算失败：{text}。"
+                "这是成本规则匹配冲突，请保留当前产品、尺寸和材质，联系维护人员核对规则后重新计算。")
+    return (f"双报价计算失败：{text}。"
+            "请检查网络后重试；若反复出现，请将客户端日志交给维护人员。")
+
+
 def _set_ganged_calculation_state(window, text: str, tone: str) -> None:
     state = _find(window, QLabel, "quoteResultState")
     if isinstance(state, QLabel):
@@ -8899,10 +8908,7 @@ def install_layout_refresh(namespace: dict) -> None:
                     button.setText(idle_text)
 
                 if outcome["error"] is not None:
-                    rendered = (
-                        f"双报价计算失败：{outcome['error']}。"
-                        "请检查网络后重试；若反复出现，请将客户端日志交给维护人员。"
-                    )
+                    rendered = _quote_calculation_failure_text(outcome["error"])
                     show_error = getattr(self, "show_error", None)
                     if callable(show_error):
                         show_error(rendered)

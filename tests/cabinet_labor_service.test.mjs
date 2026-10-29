@@ -90,3 +90,66 @@ test('every imported labor rule is executable and JM stainless gap is explicit',
   assert.throws(()=>calculateCabinetLabor(bundle.rules,{data_version:bundle.data_version,management_fee_rate:.13,
     product_code:'JM',material_code:'SUS304',width_mm:800,height_mm:1500,depth_mm:300},material),/没有适用人工公式/);
 });
+
+test('JS WIDE screenshot midpoint uses width/perimeter/area matching without a false conflict',()=>{
+  const environment={data_version:bundle.data_version,product_code:'JS_WIDE_EXP',material_code:'SECC',
+    width_mm:1350,height_mm:1250,depth_mm:400}; // 200mm base is a separate attachment.
+  for(const rules of [bundle.rules,[...bundle.rules].reverse()]){
+    const result=calculateCabinetLabor(rules,environment,null);
+    assert.equal(result.matched_rule.model_code,'JS131860');
+    assert.equal(result.matched_rule.labor_cost,390);
+    assert.equal(result.labor_cost,316.22); // 390 * (1350+1250+400)/(1300+1800+600)
+    assert.equal(result.perimeter_ratio,.810811);
+    assert.equal(result.perimeter_difference,700);
+    assert.equal(result.dimension_distance,345000);
+  }
+});
+
+test('fixed labor retains exact dimensions and explicit model boundaries',()=>{
+  const env={product_code:'JS_WIDE_EXP',material_code:'SECC',width_mm:1300,height_mm:1800,depth_mm:600};
+  const exact=calculateCabinetLabor(bundle.rules,env,null);
+  assert.equal(exact.labor_cost,390);assert.equal(exact.match_method,'FIXED_EXACT');
+  const selected=calculateCabinetLabor(bundle.rules,{...env,model_code:'JS141860',width_mm:1350,height_mm:1250,depth_mm:400},null);
+  assert.equal(selected.matched_rule.model_code,'JS141860');
+  assert.equal(selected.labor_cost,323.68); // Explicit model retains its 410 yuan standard.
+});
+
+const fixed=(overrides={})=>({rule_kind:'FIXED',product_code:'JS_WIDE_EXP',material_codes:['SECC'],
+  width_mm:1300,height_mm:1800,depth_mm:600,labor_cost:390,allow_dimension_scale:true,
+  source_sheet:'合成规则',source_row_no:3,...overrides});
+const midpoint={product_code:'JS_WIDE_EXP',material_code:'SECC',width_mm:1350,height_mm:1250,depth_mm:400};
+
+test('width priority precedes perimeter and euclidean distance',()=>{
+  const rules=[fixed({model_code:'PERIMETER',width_mm:1200,height_mm:1400,depth_mm:400,labor_cost:600}),
+    fixed({model_code:'DISTANCE',width_mm:1350,height_mm:1250,depth_mm:450,labor_cost:900,source_row_no:4})];
+  const result=calculateCabinetLabor(rules,midpoint,null);
+  assert.equal(result.matched_rule.model_code,'DISTANCE');assert.equal(result.labor_cost,885.25);
+});
+
+test('equal perimeter and distance use persisted rule identity then source order, independent of input order',()=>{
+  const env={...midpoint,height_mm:1800,depth_mm:600};
+  const first=fixed({rule_id:40,source_row_no:9});
+  const later=fixed({rule_id:41,model_code:'JS141860',width_mm:1400,labor_cost:410,source_row_no:4});
+  for(const rows of [[first,later],[later,first]])assert.equal(calculateCabinetLabor(rows,env,null).matched_rule.rule_id,41);
+  delete first.rule_id;delete later.rule_id;
+  for(const rows of [[first,later],[later,first]])assert.equal(calculateCabinetLabor(rows,env,null).matched_rule.source_row_no,9);
+});
+
+test('actual duplicates and truly unresolved matching priorities still fail closed',()=>{
+  const a=fixed(),b=fixed({labor_cost:999});
+  assert.throws(()=>calculateCabinetLabor([a,b],{...midpoint,width_mm:1300,height_mm:1800,depth_mm:600},null),/人工固定成本存在同级冲突/);
+  assert.throws(()=>calculateCabinetLabor([a,b],midpoint,null),/非标尺寸人工规则存在同级冲突/);
+});
+
+test('scaled labor audit survives formula composition; sales and management semantics remain unchanged',()=>{
+  const labor=calculateCabinetLabor(bundle.rules,midpoint,null);
+  const quick={base_price:1200,attachment_fee:0,total_cost:1200};
+  const result=applyCabinetLabor({formula_cost:{material_cost:100,auxiliary_cost:20,spray_cost:10,attachment_fee:0},quick_quote:quick},labor,8);
+  assert.equal(result.formula_cost.labor_cost,316.22);
+  assert.equal(result.formula_cost.labor_reference_model_code,'JS131860');
+  assert.equal(result.formula_cost.labor_reference_height_mm,1800);
+  assert.equal(result.formula_cost.labor_dimension_distance,345000);
+  assert.equal(result.formula_cost.management_fee,27.25); // (100+20+10+316.22+8)*6%
+  assert.equal(result.formula_cost.total_cost,473.47);
+  assert.deepEqual(result.quick_quote,quick);
+});

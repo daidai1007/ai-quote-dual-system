@@ -3,9 +3,10 @@ import {createHash} from 'node:crypto';
 // The buyer printed on the frozen quotation is authoritative. Summaries and
 // catalogue references from older clients may still describe another buyer.
 const clean = value => typeof value === 'string' ? value.trim().normalize('NFC') : '';
-const missing = new Set(['', '无', '未选择客户', '请选择客户', '未填写客户']);
+// “无” is a literal buyer printed on existing quotations, not an empty choice.
+const missing = new Set(['', '未选择客户', '请选择客户', '未填写客户']);
 export const contractCustomerNameSql = (snapshot='v.snapshot_payload', fallback='s.company_name') => {
-  const usable = value => `CASE WHEN btrim(${value}) NOT IN ('','无','未选择客户','请选择客户','未填写客户') THEN btrim(${value}) END`;
+  const usable = value => `CASE WHEN btrim(${value}) NOT IN ('','未选择客户','请选择客户','未填写客户') THEN btrim(${value}) END`;
   return `COALESCE(${[`${snapshot}->>'company'`, `${snapshot}#>>'{scheme_summary,company}'`, fallback].map(usable).join(',')})`;
 };
 

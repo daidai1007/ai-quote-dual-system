@@ -5,6 +5,7 @@ import {contractQuote} from './contract_quote.mjs';
 import {snapshotOrderNature,orderNatureSql} from '../quote_order_nature.mjs';
 import {contractCustomer,contractCustomerNameSql} from './contract_customer.mjs';
 import {customerProfileView,createCustomerProfileStore,CUSTOMER_PROFILE_FIELDS} from './customer_profile.mjs';
+import {createLedgerContractService} from './contract_ledger_service.mjs';
 const error=(message,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const documentCall=(fn,...args)=>{try{return fn(...args);}catch(e){e.statusCode=400;throw e;}};
 const hash=data=>createHash('sha256').update(data).digest('hex');
@@ -61,12 +62,16 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   identity(p);await requireReady();const page=Number(input.page??1),search=String(input.search||'').trim();
   if(!Number.isSafeInteger(page)||page<1||page>100000||search.length>200||/[\x00-\x1f]/.test(search))throw error('记录查询条件无效');
   const match=search?` AND (r.customer_name ILIKE '%'||${q(search)}||'%' OR r.customer_contract_no ILIKE '%'||${q(search)}||'%' OR r.record_no ILIKE '%'||${q(search)}||'%' OR g.template_name ILIKE '%'||${q(search)}||'%' OR r.generation_snapshot->>'scheme_no' ILIKE '%'||${q(search)}||'%')`:'';
+  const quoteColumns='record_id,record_no,customer_contract_no,customer_code,customer_name,owner_name,owner_user_id,quote_method,file_format,file_sha256,created_at,generation_snapshot,source_version_no,template_version_id';
+  const ledgerColumns="record_id,record_no,customer_contract_no,customer_code,customer_name,owner_name,owner_user_id,'LEDGER'::text AS quote_method,file_format,file_sha256,created_at,generation_snapshot,NULL::integer AS source_version_no,template_version_id";
+  const hasLedger=await ledger.ready();
+  const rowsSql=hasLedger?`(SELECT ${quoteColumns},'QUOTE'::text AS source_kind FROM calc.contract_generation UNION ALL SELECT ${ledgerColumns},'LEDGER'::text AS source_kind FROM calc.ledger_contract_generation)`:'calc.contract_generation';
   const filter=scope(p,'r')+match;
   const items=await query(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY created_at DESC,record_id DESC),'[]'::jsonb)::text FROM(SELECT r.record_id,r.record_no,r.customer_contract_no,r.customer_code,r.customer_name,r.owner_name,r.owner_user_id,r.quote_method,r.file_format,r.file_sha256,r.created_at,
    r.generation_snapshot#>>'{quote,total}' AS amount,r.generation_snapshot->>'scheme_no' AS scheme_no,r.source_version_no,
-   v.version_no AS template_version,g.template_name,${own(p,'r')} AS can_write FROM calc.contract_generation r JOIN calc.contract_template_version v USING(template_version_id) JOIN calc.contract_template_group g USING(group_id)
+   v.version_no AS template_version,g.template_name,${hasLedger?'r.source_kind':"'QUOTE'::text AS source_kind"},${own(p,'r')} AS can_write FROM ${rowsSql} r JOIN calc.contract_template_version v USING(template_version_id) JOIN calc.contract_template_group g USING(group_id)
    WHERE ${filter} ORDER BY r.created_at DESC,r.record_id DESC LIMIT 100 OFFSET ${(page-1)*100}) t;`);
-  const total=await query(`SELECT count(*)::text FROM calc.contract_generation r JOIN calc.contract_template_version v USING(template_version_id) JOIN calc.contract_template_group g USING(group_id) WHERE ${filter};`);
+  const total=await query(`SELECT count(*)::text FROM ${rowsSql} r JOIN calc.contract_template_version v USING(template_version_id) JOIN calc.contract_template_group g USING(group_id) WHERE ${filter};`);
   return {items,total,page,page_size:100};
  };
  const bootstrap=async p=>{
@@ -79,8 +84,8 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   return {ready:true,sources,templates,records,records_total:recordPage.total,drafts,fields:CONTRACT_FIELDS};
  };
  const quote=async(p,input)=>{const s=await source(p,input.scheme_no,input.version_no);return {...s,snapshot:undefined,quote:documentCall(contractQuote,s.snapshot,input.method)};};
- const upload=async(p,input)=>{
-  identity(p);await requireReady();const s=await source(p,input.scheme_no,input.version_no);
+ const storeTemplateForCustomer=async(p,input,s)=>{
+  identity(p);await requireReady();
   if(input.customer_code!==s.customer_code)throw error('模板客户必须与所选正式报价一致');
   const name=text(input.template_name,'模板名称',120),filename=text(input.filename,'文件名',200),format=String(input.format||'').toLowerCase();
   if(!filename.toLowerCase().endsWith('.'+format)||typeof input.content!=='string'||input.content.length>12*1024*1024||!/^[A-Za-z0-9+/]*={0,2}$/.test(input.content))throw error('模板文件格式或内容无效');
@@ -103,6 +108,7 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   if(!result)throw error('模板版本已变化，请刷新后重试',409);
   return {...result,inspection};
  };
+ const upload=async(p,input)=>{const s=await source(p,input.scheme_no,input.version_no);return storeTemplateForCustomer(p,input,s);};
  const inspect=async(p,id)=>{await requireReady();const t=await template(p,id);return {template:{...t,content:undefined},inspection:documentCall(inspectContractTemplate,Buffer.from(t.content,'base64'),t.file_format)};};
  const versions=async(p,id)=>{await requireReady();const t=await template(p,id);return {items:await query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('version_no',version_no,'original_filename',original_filename,'configured',field_mapping IS NOT NULL,'created_at',created_at) ORDER BY version_no DESC),'[]'::jsonb)::text FROM calc.contract_template_version WHERE group_id=${q(t.group_id)}::uuid;`)};};
  const configure=async(p,id,input)=>{
@@ -142,7 +148,7 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
    SELECT COALESCE((SELECT jsonb_build_object('draft_id',draft_id,'lock_version',lock_version) FROM(SELECT * FROM saved UNION ALL SELECT * FROM changed)t),'null'::jsonb)::text;`);
   if(!result)throw error('草稿已变化，请重新打开后保存',409);return result;
  };
- const record=async(p,id,includeFile=false)=>{identity(p);const result=await query(`SELECT COALESCE((SELECT to_jsonb(r) FROM(SELECT record_id,record_no,generation_snapshot,file_format,file_sha256,${includeFile?"encode(file_content,'base64')":'NULL::text'} AS content,owner_user_id FROM calc.contract_generation r WHERE record_id=${q(uuid(id))}::uuid AND ${includeFile?own(p,'r'):scope(p,'r')})r),'null'::jsonb)::text;`);if(!result)throw error('生成记录不存在或无权查看',404);return result;};
+ const record=async(p,id,includeFile=false)=>{identity(p);const result=await query(`SELECT COALESCE((SELECT to_jsonb(r) FROM(SELECT record_id,record_no,generation_snapshot,file_format,file_sha256,${includeFile?"encode(file_content,'base64')":'NULL::text'} AS content,owner_user_id FROM calc.contract_generation r WHERE record_id=${q(uuid(id))}::uuid AND ${includeFile?own(p,'r'):scope(p,'r')})r),'null'::jsonb)::text;`);if(!result){if(await ledger.ready())return ledger.record(p,id,includeFile);throw error('生成记录不存在或无权查看',404);}return result;};
  const generate=async(p,input)=>{
   identity(p);await requireReady();const data=cleanInput(input),requestId=uuid(input.request_id),digest=hash(stable(data));
   const prior=await query(`SELECT COALESCE((SELECT jsonb_build_object('record_id',record_id,'input_sha256',input_sha256) FROM calc.contract_generation r WHERE request_id=${q(requestId)}::uuid AND ${own(p,'r')}),'null'::jsonb)::text;`);
@@ -167,8 +173,9 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   if(!inserted){const raced=await query(`SELECT COALESCE((SELECT jsonb_build_object('record_id',record_id,'input_sha256',input_sha256) FROM calc.contract_generation r WHERE request_id=${q(requestId)}::uuid AND ${own(p,'r')}),'null'::jsonb)::text;`);if(raced?.input_sha256===digest){const r=await record(p,raced.record_id);return {...r,content:undefined,reused:true};}throw error('正式报价或模板状态已变化，请重新核对',409);}
   return inserted;
  };
- const download=async(p,id)=>{await requireReady();const r=await record(p,id,true);await query(`${audit(p,'GENERATION',id,'DOWNLOADED')}; SELECT 'true'::jsonb::text;`);return {filename:r.record_no+'.'+r.file_format,format:r.file_format,sha256:r.file_sha256,bytes:Buffer.from(r.content,'base64')};};
+ const download=async(p,id)=>{await requireReady();const r=await record(p,id,true);await query(`${audit(p,r.source_kind==='LEDGER'?'LEDGER_GENERATION':'GENERATION',id,'DOWNLOADED')}; SELECT 'true'::jsonb::text;`);return {filename:r.record_no+'.'+r.file_format,format:r.file_format,sha256:r.file_sha256,bytes:Buffer.from(r.content,'base64')};};
  const customerProfiles=createCustomerProfileStore({query,q,source});
- return {bootstrap,listRecords,quote,upload,inspect,versions,configure,setTemplate,saveDraft,generate,record,download,
+ const ledger=createLedgerContractService({query,q,identity,scope,own,loadTemplate:template,storeTemplate:storeTemplateForCustomer,configureTemplate:configure,defaultSellerName:DEFAULT_SELLER_NAME});
+ return {bootstrap,listRecords,quote,upload,inspect,versions,configure,setTemplate,saveDraft,generate,record,download,ledger,
   customerProfile:customerProfiles.get,saveCustomerProfile:customerProfiles.save};
 }

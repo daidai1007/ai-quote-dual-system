@@ -1123,6 +1123,14 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
     try {
       const principal=req.namePrincipal;
       const parts=requestUrl.pathname.split('/').filter(Boolean),resource=parts[2],id=parts[3],action=parts[4];
+      if(resource==='ledger'){
+        if(req.method==='GET'&&id==='bootstrap'&&!action)return json(res,200,await contractService.ledger.bootstrap(principal));
+        if(req.method==='POST'&&id==='templates'&&!action)return json(res,201,await contractService.ledger.upload(principal,await readBody(req)));
+        if(req.method==='POST'&&id==='drafts'&&!action)return json(res,200,await contractService.ledger.saveDraft(principal,await readBody(req)));
+        if(req.method==='GET'&&id==='drafts'&&action)return json(res,200,await contractService.ledger.draft(principal,action));
+        if(req.method==='POST'&&id==='generate'&&!action)return json(res,200,await contractService.ledger.generate(principal,await readBody(req)));
+        return json(res,404,{error:'ledger_contract_route_not_found'});
+      }
       if(req.method==='GET'&&resource==='bootstrap') return json(res,200,await contractService.bootstrap(principal));
       if(req.method==='POST'&&resource==='quote') return json(res,200,await contractService.quote(principal,await readBody(req)));
       if(req.method==='POST'&&resource==='customer-profile') return json(res,200,await contractService.customerProfile(principal,await readBody(req)));

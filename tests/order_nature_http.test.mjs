@@ -13,7 +13,7 @@ import {wordTemplate,mapped,sampleQuote} from './helpers/contract_fixtures.mjs';
 test('order nature survives save/reopen/output/analysis and cannot bypass contracts',{timeout:180000},async t=>{
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'quote-nature-http-'));
  const state=path.join(directory,'host.json');
- const host=spawn(process.execPath,[fileURLToPath(new URL('./helpers/contract_test_host.mjs',import.meta.url)),state],{cwd:new URL('../',import.meta.url),windowsHide:true,stdio:['pipe','pipe','pipe']});
+ const host=spawn(process.execPath,[fileURLToPath(new URL('./helpers/contract_test_host.mjs',import.meta.url)),state,'--ledger'],{cwd:new URL('../',import.meta.url),windowsHide:true,stdio:['pipe','pipe','pipe']});
  let errors='';host.stderr.on('data',data=>errors+=data.toString());
  try{
   let config;

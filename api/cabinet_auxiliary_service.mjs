@@ -1,4 +1,5 @@
 import {evaluateFormula,round} from './attachment_formula.mjs';
+import {compareExperienceDimensions} from './experience_dimension_match.mjs';
 import {applyManagementFee} from '../quick_discount_rules.mjs';
 import {jpAuxiliaryWeight} from './jp_auxiliary_weight.mjs';
 
@@ -70,9 +71,7 @@ export function calculateCabinetAuxiliaryFixed(rules,environment){
   else{
     const scalable=candidates.filter(rule=>rule.allow_dimension_scale);
     if(!scalable.length)throw new Error(`${product} 没有 ${width}×${height}×${depth} 的辅材价格`);
-    const rank=rule=>[Math.abs(Number(rule.width_mm)+Number(rule.height_mm)+Number(rule.depth_mm)-width-height-depth),
-      (Number(rule.width_mm)-width)**2+(Number(rule.height_mm)-height)**2+(Number(rule.depth_mm)-depth)**2];
-    scalable.sort((a,b)=>rank(a)[0]-rank(b)[0]||rank(a)[1]-rank(b)[1]
+    scalable.sort((a,b)=>compareExperienceDimensions(a,b,environment)
       ||Number(b.rule_id||0)-Number(a.rule_id||0)||Number(b.source_row_no||0)-Number(a.source_row_no||0));
     matched=scalable[0];method='FIXED_DIMENSION_SCALE';
     ratio=(width+height+depth)/(Number(matched.width_mm)+Number(matched.height_mm)+Number(matched.depth_mm));

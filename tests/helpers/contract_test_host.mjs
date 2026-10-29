@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import {startLocalPostgres} from './local_postgres.mjs';
 import {createQuoteSchemeService} from '../../api/quote_scheme_service.mjs';
 import {wordTemplate,excelTemplate,sampleQuote} from './contract_fixtures.mjs';
+import {ledgerExcelTemplate,ledgerWordTemplate} from './contract_ledger_fixtures.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const state=path.resolve(process.argv[2]);
 const pg=await startLocalPostgres();let child;
@@ -17,6 +18,7 @@ try{
   pg.query(await fs.readFile(path.join(root,'database/migrations',migration),'utf8'));
  }
  if(process.argv.includes('--quote-delivery'))pg.query(await fs.readFile(path.join(root,'database/migrations/quote_delivery_v1.sql'),'utf8'));
+ if(process.argv.includes('--ledger'))pg.query(await fs.readFile(path.join(root,'database/migrations/contract_ledger_v1.sql'),'utf8'));
  const q=v=>v==null?'NULL':`'${String(v).replaceAll("'","''")}'`;
  const quotes=createQuoteSchemeService({runPsql:async s=>pg.query(s),sqlUnicodeText:q,sqlNumber:v=>String(Number(v))});
  const owner={userId:'name-user:'+createHash('sha256').update('本机人员甲').digest('hex'),displayName:'本机人员甲',role:'USER',identityMode:'NAME_ONLY',scope:'OWN',can_view_all_quotes:false};
@@ -43,6 +45,10 @@ try{
  }
  if(!ready)throw Error('Local API did not start');
  await fs.writeFile(path.join(path.dirname(state),'local-template.docx'),wordTemplate());await fs.writeFile(path.join(path.dirname(state),'local-template.xlsx'),excelTemplate());
+ if(process.argv.includes('--ledger')){
+  await fs.writeFile(path.join(path.dirname(state),'synthetic-ledger-template.xlsx'),ledgerExcelTemplate());
+  await fs.writeFile(path.join(path.dirname(state),'synthetic-ledger-template.docx'),ledgerWordTemplate());
+ }
  await fs.writeFile(state,JSON.stringify({base,scheme_no:created.scheme_no,key:'local-contract-owner',customer_code:'LOCAL-A',name_login:true,connection:pg.connection}));
  await new Promise(resolve=>{process.stdin.once('data',resolve);process.stdin.once('end',resolve);});
 }finally{if(child&&child.exitCode===null){child.kill();await new Promise(resolve=>child.once('exit',resolve));}await pg.close();}

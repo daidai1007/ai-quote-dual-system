@@ -72,6 +72,76 @@ class ContractCustomerFlow(unittest.TestCase):
         self.assertEqual(self.p.amount.text(),'¥ 650.30')
         self.assertTrue(self.w.grab().save(str(fixture.ROOT/'.codex-tmp'/'contract-customer-correct.png')))
 
+    def test_buyer_is_read_only_and_literal_none_comes_from_selected_quote(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        self.reply=bootstrap([source(2,'无','NONE'),dict(source(1,'本机其他客户','OTHER'),scheme_no='BJ-20261020-000001')])
+        self.m.rows[0]['company_name']='无'
+        self.open_selected()
+        self.assertEqual(self.p.customer_display.text(),'无')
+        self.assertTrue(self.p.customer_display.isReadOnly())
+        self.assertFalse(self.p.customer.isVisible())
+        self.p.customer_display.setFocus();self.p.customer_display.selectAll()
+        QTest.keyClick(self.p.customer_display,Qt.Key.Key_A)
+        self.assertEqual(self.p.customer_display.text(),'无')
+        self.assertEqual(self.p.source.currentData(),(NO,2))
+        self.assertEqual(self.p.customer.currentData(),'NONE')
+        self.assertEqual(self.p.amount.text(),'¥ 650.30')
+        self.p.customer_display.deselect()
+        self.assertTrue(self.w.grab().save(str(fixture.ROOT/'.codex-tmp'/'contract-buyer-none-readonly.png')))
+
+    def test_direct_contract_entry_can_select_formal_quote_without_choosing_customer(self):
+        self.p.data=deepcopy(self.reply);self.p.render_data()
+        self.assertIsNone(self.p.customer.currentData())
+        self.p.source.setCurrentIndex(contracts.index_of(self.p.source,(NO,2)))
+        self.settle()
+        self.assertEqual(self.p.customer_display.text(),BUYER)
+        self.assertEqual(self.p.customer.currentData(),KEY)
+        self.assertEqual(self.p.amount.text(),'¥ 650.30')
+
+    def test_unavailable_formal_version_keeps_selected_quote_buyer_but_blocks_generation(self):
+        self.m.rows[0]['company_name']='无'
+        self.reply=bootstrap([dict(source(1,'本机无关客户','OTHER'),scheme_no='BJ-20261020-000001')])
+        self.open_selected()
+        self.assertEqual(self.p.customer_display.text(),'无')
+        self.assertIsNone(self.p.current_quote)
+        self.assertIsNone(self.p.source.currentData())
+        self.assertFalse(self.p.generate_button.isEnabled())
+
+    def test_unavailable_contract_service_still_displays_quote_buyer_without_enabling_generation(self):
+        self.m.rows[0]['company_name']='无'
+        self.reply=dict(bootstrap([]),ready=False,message='合成未启用状态')
+        self.open_selected()
+        self.assertEqual(self.p.customer_display.text(),'无')
+        self.assertFalse(self.p.generate_button.isEnabled())
+
+    def test_formal_buyer_wins_over_a_different_current_working_buyer(self):
+        self.m.rows[0]['company_name']='无'
+        self.open_selected()
+        self.assertEqual(self.p.customer_display.text(),BUYER)
+        self.assertEqual(self.p.customer_display.toolTip(),BUYER)
+
+    def test_clearing_formal_quote_clears_display_and_generation(self):
+        self.open_selected()
+        self.p.source.setCurrentIndex(0);self.settle()
+        self.assertEqual(self.p.customer_display.text(),'')
+        self.assertIsNone(self.p.current_quote)
+        self.assertFalse(self.p.generate_button.isEnabled())
+
+    def test_manual_source_change_updates_buyer_and_unsaved_cross_customer_change_is_blocked(self):
+        self.reply['sources'].append(dict(source(1,'本机其他客户','OTHER'),scheme_no='BJ-20261020-000001'))
+        self.open_selected()
+        old=self.p.source.currentData()
+        self.p.unsaved=True
+        self.p.source.setCurrentIndex(contracts.index_of(self.p.source,('BJ-20261020-000001',1)))
+        self.settle()
+        self.assertEqual(self.p.source.currentData(),old)
+        self.assertEqual(self.p.customer_display.text(),BUYER)
+        self.p.unsaved=False
+        self.p.source.setCurrentIndex(contracts.index_of(self.p.source,('BJ-20261020-000001',1)))
+        self.settle()
+        self.assertEqual(self.p.customer_display.text(),'本机其他客户')
+
     def test_revision_uses_latest_available_formal_version_not_unconfirmed_workspace(self):
         self.m.rows[0].update(status='REVISING',version_no=3)
         self.reply['sources'].reverse()

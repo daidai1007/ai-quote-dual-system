@@ -1,4 +1,5 @@
 import {round} from './attachment_formula.mjs';
+import {compareExperienceDimensions,experienceDimensionRank} from './experience_dimension_match.mjs';
 import {applyManagementFee, MANAGEMENT_FEE_RATE} from '../quick_discount_rules.mjs';
 
 const valueSql=value=>value==null?'NULL':typeof value==='number'?String(value):
@@ -38,13 +39,20 @@ function fixedLabor(rules,environment,product){
     excluded_part_names:[],match_method:'FIXED_EXACT',perimeter_ratio:1,matched_rule:exact[0]};
   const scalable=candidates.filter(rule=>rule.allow_dimension_scale);
   if(!scalable.length)throw new Error(`${product} 没有 ${w}×${h}×${d} 的人工成本规则`);
-  scalable.sort((a,b)=>((a.width_mm-w)**2+(a.height_mm-h)**2+(a.depth_mm-d)**2)-((b.width_mm-w)**2+(b.height_mm-h)**2+(b.depth_mm-d)**2));
-  const best=scalable[0],distance=(best.width_mm-w)**2+(best.height_mm-h)**2+(best.depth_mm-d)**2;
-  if(scalable[1]&&((scalable[1].width_mm-w)**2+(scalable[1].height_mm-h)**2+(scalable[1].depth_mm-d)**2)===distance)
+  // Use the same width/perimeter/surface-area priority as other experience
+  // prices; retain the former residual distance and persisted rule ordering.
+  const compare=(a,b)=>compareExperienceDimensions(a,b,environment)
+    ||Number(b.rule_id||0)-Number(a.rule_id||0)||Number(b.source_row_no||0)-Number(a.source_row_no||0);
+  scalable.sort(compare);
+  const best=scalable[0];
+  if(scalable[1]&&compare(best,scalable[1])===0)
     throw new Error(`${product} 非标尺寸人工规则存在同级冲突`);
+  const [widthDifference,perimeterDifference,areaDifference,dimensionDistance]=experienceDimensionRank(best,environment);
   const ratio=(w+h+d)/(Number(best.width_mm)+Number(best.height_mm)+Number(best.depth_mm));
   return {labor_cost:round(Number(best.labor_cost)*ratio,2),labor_billable_weight_kg:null,excluded_part_names:[],
-    match_method:'FIXED_DIMENSION_SCALE',perimeter_ratio:round(ratio,6),matched_rule:best};
+    match_method:'FIXED_DIMENSION_SCALE',perimeter_ratio:round(ratio,6),
+    width_difference:widthDifference,perimeter_difference:perimeterDifference,
+    area_difference_mm2:areaDifference,dimension_distance:dimensionDistance,matched_rule:best};
 }
 
 export function calculateCabinetLabor(rules,environment,material){
@@ -93,6 +101,14 @@ export function applyCabinetLabor(result,labor,freightFee=0){
     labor_billable_weight_kg:labor.labor_billable_weight_kg,labor_excluded_part_names:labor.excluded_part_names,
     labor_source_sheet:labor.matched_rule.source_sheet,labor_source_row_no:labor.matched_rule.source_row_no,
     labor_source_formula:labor.matched_rule.source_formula,management_fee_rate:labor.management_fee_rate,
-    labor_perimeter_ratio:labor.perimeter_ratio??null});
+    labor_perimeter_ratio:labor.perimeter_ratio??null,
+    ...(labor.match_method==='FIXED_DIMENSION_SCALE'?{
+      labor_reference_model_code:labor.matched_rule.model_code,
+      labor_reference_width_mm:Number(labor.matched_rule.width_mm),
+      labor_reference_height_mm:Number(labor.matched_rule.height_mm),
+      labor_reference_depth_mm:Number(labor.matched_rule.depth_mm),
+      labor_dimension_distance:labor.dimension_distance,labor_perimeter_difference:labor.perimeter_difference,
+      labor_width_difference:labor.width_difference,labor_area_difference_mm2:labor.area_difference_mm2,
+    }:{} )});
   return {...result,formula_cost:applyManagementFee(formula,freightFee)};
 }
