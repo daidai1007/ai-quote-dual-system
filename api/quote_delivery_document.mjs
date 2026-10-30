@@ -1,6 +1,7 @@
 import ExcelJS from '@excel.js/exceljs';
 import {contractQuote} from './contract_quote.mjs';
 import {snapshotOrderNature,validateOrderNature} from '../quote_order_nature.mjs';
+import {quickFreightFee} from '../quick_discount_rules.mjs';
 
 export const SELLER=Object.freeze({name:'浙江京能电力设备有限公司',address:'杭州临安横畈工业功能区桑园路18号',phone:'0571-88520091',fax:'0571-88520077'});
 export const displayVersion=(snapshot,fallback)=>{
@@ -9,7 +10,7 @@ export const displayVersion=(snapshot,fallback)=>{
   return value;
 };
 // Retain the old wire column for older clients; the new cost UI omits it.
-export const COST_HEADERS=['序号','名称','产品','尺寸','数量','已选附件','附件面价','面价','材料差价','折扣系数','报价','报价总价','成本单价','材料成本','辅材成本','人工成本','附件成本','喷涂费用','管理费用','运费','成本总价','毛利率','自制件重量','成本明细','固定报价','折扣面价'];
+export const COST_HEADERS=['序号','名称','产品','尺寸','数量','已选附件','附件面价','面价','材料差价','折扣系数','报价','报价总价','成本单价','材料成本','辅材成本','人工成本','附件成本','喷涂费用','管理费用','运费','成本总价','毛利率','自制件重量','成本明细','固定报价','折扣面价','净利率','制造成本','报价运费','税费'];
 const numeric=value=>value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value))?Number(value):null;
 const detailKeys=['type','name','spec','formula','quantity','unit','unit_price','base_amount','factor','amount','note'];
 function priceBreakdown(saved,face){
@@ -42,7 +43,7 @@ function costSnapshot(snapshot,quote){
       折扣系数:numeric(item.quick_discount),报价:face.unit_price,报价总价:face.total,成本单价:numeric(f.total_cost),
       材料成本:numeric(f.material_cost),辅材成本:numeric(f.auxiliary_cost),人工成本:numeric(f.labor_cost),附件成本:numeric(f.attachment_fee),
       喷涂费用:numeric(f.spray_cost),管理费用:numeric(f.management_fee),运费:numeric(item.freight_fee??item.freight),
-      成本总价:null,毛利率:null,自制件重量:numeric(item.self_made_weight),成本明细:'查看'};
+      成本总价:null,毛利率:null,净利率:null,制造成本:numeric(f.manufacturing_cost),税费:numeric(f.tax_cost),报价运费:quickFreightFee(item),自制件重量:numeric(item.self_made_weight),成本明细:'查看'};
     const columns=COST_HEADERS.map(key=>saved?.schema===1&&Object.hasOwn(saved.values||{},key)?saved.values[key]:values[key]);
     return {columns:columns.map(value=>typeof value==='number'?numeric(value):typeof value==='string'?value.slice(0,5000):null),
       price_breakdown:priceBreakdown(saved?.price_breakdown,face),

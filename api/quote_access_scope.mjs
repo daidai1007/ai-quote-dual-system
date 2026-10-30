@@ -86,6 +86,8 @@ export function createPrivateQuoteGuard({runPsql}){
     }
     if(['/api/quotes/confirm','/api/quotes/confirm-check'].includes(path)&&input.quote_id)
       await claim(p,'QUOTE_DOCUMENT',input.quote_id,'calc.quote_document');
+    if(path==='/api/quotes/export'&&Array.isArray(input.items)&&input.items.some(item=>item?.item_type==='standalone_attachment'))
+      await ownReference(p,input.quote_id,'QUOTE_DOCUMENT');
     return input;
   };
   return {beforeBody,ownReference,claim};

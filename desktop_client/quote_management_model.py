@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import math
 
-from quick_discount_rules import PRICING_BASIS, money, money_sum
+from quick_discount_rules import PRICING_BASIS, money, money_sum, quick_freight_fee
 
 SCHEMA = 1
 
@@ -29,6 +29,13 @@ def original_discounts(items):
         item.setdefault('quote_original_discount', float(value))
 
 
+def _refresh_derived_expenses(item):
+    """Freeze current marked expenses with the edited quote, before versioning."""
+    import scheme2_ui as ui
+    if ui.has_manufacturing_cost(item):
+        ui._recalculate_item_management(item)
+
+
 def set_unit_price(item, value):
     """Reverse the same affine price rule used by the original quote sheet.
 
@@ -39,7 +46,7 @@ def set_unit_price(item, value):
     from quick_discount_rules import quick_order_line_breakdown
     target = decimal_input(value)
     quantity = max(1, int(item.get('quantity') or 1))
-    freight = max(0, float(item.get('freight_fee', item.get('freight', 0)) or 0))
+    freight = quick_freight_fee(item)
     quick, _ = ui._quote_with_popup_attachment_fee(ui._quick(item), item.get('attachments') or [], ui._popup_quick_amount)
     args = (quick, item.get('attachments') or [])
     zero = quick_order_line_breakdown(*args, 0, quantity, 1, freight)['equivalent_unit_total']
@@ -61,6 +68,7 @@ def set_unit_price(item, value):
     item.pop('quote_display', None)
     if money(ui._row_values(item)[15]) != target:
         raise ValueError('单价无法按当前报价精确计算，请核对。')
+    _refresh_derived_expenses(item)
 
 
 def set_factor(item, value):
@@ -69,6 +77,7 @@ def set_factor(item, value):
     item['quick_discount'] = factor
     item['pricing_basis'] = PRICING_BASIS
     item.pop('quote_display', None)
+    _refresh_derived_expenses(item)
 
 
 def attachment_unit_price(item, index, value):
@@ -90,6 +99,7 @@ def attachment_unit_price(item, index, value):
     item['quick'] = quick
     item.pop('quote_display', None)
     item.pop('cost_detail_rows', None)
+    _refresh_derived_expenses(item)
 
 
 def make_version(items, company, number, reason='', operator='', quote_date='', order_nature='UNCLASSIFIED'):
@@ -128,7 +138,7 @@ def same_document(left, right):
     """Compare editable content, excluding rebuilt presentation caches/metadata."""
     def content(version):
         items = [{key: value for key, value in item.items()
-                  if key not in ('quote_display', 'quote_cost_display', 'cost_detail_rows','preserve_legacy_cost_classes')}
+                  if key not in ('quote_display', 'quote_cost_display', 'cost_detail_rows','preserve_legacy_cost_classes','gross_margin_basis')}
                  for item in version.get('items') or []]
         for item in items:
             # Classification is a derived cache, not a repricing/version edit.

@@ -37,6 +37,8 @@ export function allocateAttachmentCosts(formula={},rows=[],{strict=false}={}){
   errors.push('附件归类合计与原附件成本不一致，请重新计算');
  const totals=Object.fromEntries(COST_PARTS.map(k=>[k,finite(formula[k])?moneySum([formula[k],parts[k]]):null]));
  Object.assign(totals,{attachment_fee:fixed,management_fee:formula.management_fee??null});
+ if(formula.tax_cost_basis==='quoted_less_display_costs_15pct_v1')totals.tax_cost=formula.tax_cost??null;
+ if(formula.manufacturing_cost_basis==='quoted_unit_4pct_v1')totals.manufacturing_cost=formula.manufacturing_cost??null;
  const result={schema:1,basis:ALLOCATION_BASIS,complete:errors.length===0,totals,attachment_parts:parts,fixed_cost:fixed,
   attachment_total:total,lines,errors};
  if(strict&&errors.length)throw new Error(errors.join('；'));

@@ -88,6 +88,8 @@ class DetailContractTests(unittest.TestCase):
         with patch.object(contracts.ContractWorker,'run',fail):self.m.detail_contract_button.click();self.wait_contract()
         self.assertEqual(self.w.draft_items,before);self.assertFalse(self.w._detail_contract_busy);self.assertFalse(self.w._scheme2_document_busy);self.assertFalse(self.w._quote_scheme_read_only)
         self.assertIn('本机合成网络失败',self.m.feedback.text())
+        self.m.status_changed()  # An unrelated automatic-save status must not hide the failure.
+        self.assertIn('本机合成网络失败',self.m.feedback.text())
 
     def test_05_history_uses_viewed_formal_version_and_missing_v2_never_falls_back(self):
         first=self.open_draft();self.m.detail_contract_button.click();self.wait_contract()
@@ -138,6 +140,8 @@ class DetailContractTests(unittest.TestCase):
         with patch('urllib.request.urlopen',side_effect=lose_reply):
             self.m.detail_contract_button.click();self.wait_contract()
         self.assertFalse(self.w._detail_contract_busy);number=self.w._quote_scheme_id
+        self.m.status_changed()
+        self.assertIn('合成丢失回执',self.m.feedback.text())
         with patch.object(self.c,'confirmed_quote',wraps=self.c.confirmed_quote) as confirmed:
             self.m.detail_contract_button.click();self.wait_contract()
             self.assertTrue(confirmed.call_args.args[0]['reused'])

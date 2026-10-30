@@ -89,8 +89,12 @@ class ExportSnapshotTests(unittest.TestCase):
         # Current confirmed popup: two costs of 15 plus custom cost 5. Ignore
         # the database's old 5-per-row snapshots and the old aggregate fee.
         self.assertEqual(hydrated['items'][0]['formula']['attachment_fee'], 35)
-        self.assertEqual(hydrated['items'][0]['formula']['management_fee'], 47.1)
-        self.assertEqual(hydrated['items'][0]['formula']['total_cost'], 832.1)
+        # Current editable export: quote 3220, production ledger 785;
+        # manufacturing 4%, management 5%, tax (3220-200-100-35-150)*15%.
+        self.assertEqual(hydrated['items'][0]['formula']['manufacturing_cost'], 128.8)
+        self.assertEqual(hydrated['items'][0]['formula']['management_fee'], 161)
+        self.assertEqual(hydrated['items'][0]['formula']['tax_cost'], 410.25)
+        self.assertEqual(hydrated['items'][0]['formula']['total_cost'], 1485.05)
         self.assertEqual(hydrated['items'][0]['quick']['total_cost'], expected['items'][0]['quick']['total_cost'])
         self.assertEqual([r['ganged_cabinet_index'] for r in hydrated['items'][0]['attachments'][:2]], [0, 1])
         with tempfile.TemporaryDirectory(dir=ROOT / 'outputs', prefix='export-snapshot-') as directory:
@@ -106,7 +110,11 @@ class ExportSnapshotTests(unittest.TestCase):
                 self.w.export_workbook(str(output), payload)
             request = transport.call_args.args[0]
             self.assertTrue(request.full_url.endswith('/api/quotes/export'))
-            self.assertEqual(json.loads(request.data), expected)
+            exported_payload = json.loads(request.data)
+            # The existing export wrapper adds presentation metadata; the
+            # frozen business snapshot must still equal both confirmations.
+            self.assertEqual(exported_payload.pop('quotation_detail_layout'), 'right_vertical_v1')
+            self.assertEqual(exported_payload, expected)
             with ZipFile(output) as workbook:
                 self.assertIsNone(workbook.testzip())
                 self.assertIn('xl/worksheets/sheet1.xml', workbook.namelist())

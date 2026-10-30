@@ -29,10 +29,10 @@ window = SimpleNamespace(summary_table=table, draft_items=[item], _scheme2_refre
 scheme2_ui._refresh_cost_table(window)
 actual = [table.item(0, column).text() for column in range(table.columnCount())]
 # Current baseline: fixed bucket excludes discountable cabinet face price;
-# management is 6% of 100+20+30+40+50+10=250, and cost is 250+15.
-assert actual[4:13] == ["2", "1 项 ›", "0.00", "10.00", "—", "0.9", "460.00", "920.00", "265.00"], actual
-assert actual[13:21] == ["100.00", "20.00", "30.00", "40.00", "50.00", "15.00", "10.00", "530.00"]
-assert actual[21:] == ["42.39%", "12.35", "明细 ›", "450.00"]
+# manufacturing is 460*4%=18.4, management is 460*5%=23.
+assert actual[4:13] == ["2", "1 项 ›", "0.00", "10.00", "—", "0.9", "460.00", "920.00", "327.40"], actual
+assert actual[13:21] == ["100.00", "20.00", "30.00", "40.00", "50.00", "23.00", "10.00", "654.80"]
+assert actual[21:] == ["41.65%", "12.35", "明细 ›", "450.00", "28.83%", "18.40", "10.00", "36.00"]
 assert table.isColumnHidden(scheme2_ui.MATERIAL_DIFFERENCE_COLUMN)
 assert [table.item(0, column).background().color().name().upper() for column in (0, 5, 7, 12, 21, 22, 23)] == [
     "#FFFFFF", "#F5F6F8", "#FFF7E6", "#F0F6FD", "#F5F0FA", "#ECF4F1", "#F5F6F8",
@@ -48,4 +48,4 @@ assert table.item(0, 7).text() == "260.00"
 assert table.item(0, 10).text() == "710.00"
 assert table.item(0, 11).text() == "1,420.00"
 table.close()
-print("PASS: cost row values align with all 25 conditional headers")
+print("PASS: cost row values align with all 29 conditional headers")

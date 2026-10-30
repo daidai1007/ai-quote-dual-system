@@ -27,6 +27,54 @@ class FreightOutputTests(unittest.TestCase):
     tearDown = base.DrawingWorkflowTests.tearDown
     accept = base.DrawingWorkflowTests.accept
 
+    def test_download_repair_routes_independent_freights_and_keeps_vertical_workbook_untouched(self):
+        import scheme2_ui as ui
+        from quick_discount_rules import QUICK_FREIGHT_BASIS
+        from freight_export import fill_freight_cells
+        from verify_quote_export_customer import workbook_cell
+        self.w._quote_order_nature='EXTERNAL'
+        items=[]
+        for quick_freight,quantity in ((200,2),(0,3)):
+            item=self.item(100,quantity)
+            item.update(quick_freight_basis=QUICK_FREIGHT_BASIS,quick_freight_mode='MANUAL',quick_freight_fee=quick_freight)
+            item['quick']=dict(base_price=900,total_cost=900,attachment_fee=0)
+            items.append(item)
+        payload=dict(quote_id='LOCAL-DOWNLOAD-FREIGHT',company_name='合成运费客户',order_nature='EXTERNAL',
+                     items=ui._quote_export_items_snapshot(self.w,items=items))
+        with tempfile.TemporaryDirectory(dir=ROOT/'outputs',prefix='freight-routing-client-') as folder:
+            folder=Path(folder)
+            for layout in ('horizontal_legacy','right_vertical_v1'):
+                with self.subTest(layout=layout):
+                    request_payload=copy.deepcopy(payload);request_payload['quotation_detail_layout']=layout
+                    source=folder/'input.json';server=folder/'server.xlsx';output=folder/'client.xlsx'
+                    source.write_text(json.dumps(request_payload,ensure_ascii=False),encoding='utf-8')
+                    result=subprocess.run(['node','export_dual_quote_workbook.mjs',str(source),str(server)],
+                        cwd=ROOT,capture_output=True,text=True,encoding='utf-8',timeout=40)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    original=server.read_bytes()
+                    response=base.Mock();response.__enter__=lambda _:response;response.__exit__=lambda *args:None
+                    response.read.return_value=original
+                    with patch('urllib.request.urlopen',return_value=response):
+                        self.w.export_workbook(str(output),payload)
+                    self.assertEqual(float(workbook_cell(output,'快速报价单','F11')),1100)
+                    self.assertEqual(float(workbook_cell(output,'快速报价单','G11')),2200)
+                    self.assertEqual(float(workbook_cell(output,'公式法报价单','F11')),488)
+                    self.assertEqual(float(workbook_cell(output,'公式法报价单','G11')),976)
+                    if layout=='right_vertical_v1':
+                        self.assertEqual(output.read_bytes(),original,'Horizontal repair must not touch vertical labels/values')
+                    else:
+                        with ZipFile(output) as book:
+                            strings=[''.join(n.itertext()) for n in ET.fromstring(book.read('xl/sharedStrings.xml'))]
+                            for part,expected in (('xl/worksheets/sheet1.xml',(100,100)),('xl/worksheets/sheet2.xml',(200,0))):
+                                cells=ET.fromstring(book.read(part)).findall('.//m:c',NS)
+                                header=next(c for c in cells if c.get('t')=='s' and strings[int(c.find('m:v',NS).text)]=='运费')
+                                column=re.match('[A-Z]+',header.get('r'))[0]
+                                for row,amount in zip((11,12),expected):
+                                    cell=next(c for c in cells if c.get('r')==f'{column}{row}')
+                                    self.assertEqual(float(cell.find('m:v',NS).text),amount)
+            # Also keep the lower-level helper's guarantee for an unrelated map.
+            before=output.read_bytes();fill_freight_cells(output,{});self.assertEqual(output.read_bytes(),before)
+
     def amounts(self, amount):
         # Editing may retain "50 元" until focus changes; the numeric value
         # and both read-only amount labels must still agree to the cent.
@@ -97,7 +145,7 @@ class FreightOutputTests(unittest.TestCase):
         headers = [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())]
         self.w.draft_items = items
         self.w.refresh_summary()
-        before = copy.deepcopy(items)  # Old drafts are migrated to the six-component fee once.
+        before = copy.deepcopy(items)  # Editable rows acquire the confirmed current expense basis once.
         heights = [table.rowHeight(r) for r in range(table.rowCount())]
         self.w.freight_spin.setValue(123)  # unrelated current cabinet
         self.w.refresh_summary()
@@ -109,7 +157,9 @@ class FreightOutputTests(unittest.TestCase):
             self.assertEqual(items[row]['notes'], '保留原备注')
         self.assertEqual(items, before)
         total_row = len(items)
-        self.assertEqual(table.item(total_row, headers.index('成本总价')).text(), '871.54')
+        # Units: 259.05*2 + 241.50 + 187.00; includes manufacture,
+        # quote-based management and tax, with cost freight added once.
+        self.assertEqual(table.item(total_row, headers.index('成本总价')).text(), '946.60')
         self.assertEqual(table.item(total_row, headers.index('报价总价')).text(), '982.20')
 
     def test_saved_draft_restore_keeps_freight(self):
@@ -198,7 +248,9 @@ class FreightOutputTests(unittest.TestCase):
                 self.w.export_workbook(str(output_path), payload)
             request = transport.call_args.args[0]
             self.assertTrue(request.full_url.endswith('/api/quotes/export'))
-            self.assertEqual(json.loads(request.data), unchanged)
+            exported_payload = json.loads(request.data)
+            self.assertEqual(exported_payload.pop('quotation_detail_layout'), 'right_vertical_v1')
+            self.assertEqual(exported_payload, unchanged)
             self.assertEqual(payload, unchanged)
             with ZipFile(output_path) as archive:
                 repaired = {name: archive.read(name) for name in archive.namelist()}

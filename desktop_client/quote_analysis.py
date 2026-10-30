@@ -29,9 +29,9 @@ COLORS = {"bg":"#f3f5f8", "panel":"#ffffff", "brand":"#2563eb", "deep":"#173e76"
           "text":"#243447", "secondary":"#5d7087", "muted":"#8a99aa",
           "border":"#c9d5e2", "soft":"#dce4ec", "head":"#eaf1f8",
           "green":"#79a943", "success":"#3b6d11", "warning":"#955b0a"}
-COST_COLORS = ("#2563eb", "#185fa5", "#ef9f27", "#79a943", "#bbd0ea", "#8a8a86")
-COST_NAMES = {"material_cost": "材料", "auxiliary_cost": "辅材", "labor_cost": "人工",
-              "attachment_fee": "附件", "spray_cost": "喷涂", "management_fee": "管理"}
+COST_COLORS = ("#2563eb", "#185fa5", "#ef9f27", "#79a943", "#bbd0ea", "#8a8a86", "#6b72a8", "#b07f54")
+COST_NAMES = {"material_cost": "材料", "auxiliary_cost": "辅材", "manufacturing_cost":"制造", "labor_cost": "人工",
+              "attachment_fee": "附件", "spray_cost": "喷涂", "management_fee": "管理", "tax_cost": "税费"}
 
 
 def number(value, currency=False):

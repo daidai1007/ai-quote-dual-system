@@ -11,6 +11,7 @@ from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 from freight_state import money
+from quick_discount_rules import PRICING_BASIS, quick_freight_fee
 
 NS = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 REL = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'
@@ -122,12 +123,15 @@ def install_freight_export(namespace):
         payload['quotation_detail_layout'] = 'right_vertical_v1'
         amounts = {'公式法报价单': [], '快速报价单': []}
         for item in payload.get('items', []):
-            amounts['公式法报价单'].append(_formula_order_line_breakdown(item)['freight_total'])
+            # Current detail columns show per-unit/set freight; legacy rows
+            # show the whole order-line amount. Match the server's basis.
+            freight_key = 'freight_fee' if item.get('pricing_basis') == PRICING_BASIS else 'freight_total'
+            amounts['公式法报价单'].append(_formula_order_line_breakdown(item)[freight_key])
             amounts['快速报价单'].append(quick_order_line_breakdown(
                 item.get('quick', {}), item.get('attachments', []),
                 item.get('quick_discount', 1), item.get('quantity') or 1,
-                ganged_split_count(item), item.get('freight_fee', item.get('freight', 0)),
-            )['freight_total'])
+                ganged_split_count(item), quick_freight_fee(item),
+            )[freight_key])
         result = original(window, output_path, payload)
         fill_freight_cells(output_path, amounts)
         return result

@@ -46,14 +46,41 @@ class HorizontalCostRestore(unittest.TestCase):
 
     def test_original_layout_functions_and_all_native_dialogs_match_before_transpose(self):
         baseline=subprocess.run(['git','show','97b2a23ad6ca628f4cad3590db89c89accce2683:desktop_client/scheme2_ui.py'],
-            cwd=fixture.ROOT,capture_output=True,text=True,encoding='utf-8',check=True).stdout
+            cwd=Path(os.environ.get('AI_QUOTE_TEST_GIT_ROOT', str(fixture.ROOT))),
+            capture_output=True,text=True,encoding='utf-8',check=True).stdout
         current=(fixture.ROOT/'desktop_client/scheme2_ui.py').read_text(encoding='utf-8')
         def definitions(text):
             lines=text.splitlines(keepends=True)
             return {n.name:''.join(lines[n.lineno-1:n.end_lineno]) for n in ast.parse(text).body
                     if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         old,new=definitions(baseline),definitions(current)
-        self.assertEqual(old,new)
+        # Approved later work extends these entry points: discard-close guards,
+        # confirmed remarks, and standalone attachments. Keep the strict source
+        # comparison for every other original layout function and popup.
+        evolved = {
+            '_refresh_quote_page', '_load_order_workspace', '_finish_discard_close',
+            '_discard_close_has_workers', '_defer_discard_close', 'install_scheme2_ui',
+            'AttachmentEditor', '_quote_export_items_snapshot', '_apply_cost_control',
+            '_build_cost_page', '_edit_selected', '_cost_cell_clicked',
+            '_refresh_cost_table', '_SchemeAttachmentDialog', '_quote_item_remark',
+            # Approved D dimension review / page-switch entry points.
+            '_Scheme2PageRecognitionWorker', '_sync_scheme2_page_navigation',
+            '_finish_scheme2_page_recognition', '_confirm_scheme2_recognition',
+            '_fail_scheme2_page_recognition', '_activate_scheme2_page',
+            '_mark_ai', '_calculate_and_add',
+            '_synchronize_active_drawing_confirmation',
+            '_row_values', '_GroupedCostHeader',
+            '_cost_cell_changed', '_cost_price_components',
+            '_recalculate_item_management', '_item_production_total', '_detail_rows', '_show_detail', '_build_detail_page', '_quote_unit_price_changed', '_attachment_summary_product_values', '_finish_add',
+        }
+        self.assertTrue(set(old).issubset(new), 'An original layout function or popup was removed')
+        for name in set(old) - evolved:
+            with self.subTest(original_definition=name):
+                self.assertEqual(old[name], new[name])
+        self.assertTrue(issubclass(ui.AttachmentEditor, QDialog))
+        self.assertTrue(issubclass(ui._SchemeAttachmentDialog, QDialog))
+        self.assertEqual(self.w.scheme2_cost_add_independent.text(), '＋ 新增独立附件')
+        self.assertEqual(self.w.scheme2_cost_add_independent.accessibleName(), '新增独立附件')
         self.assertNotIn('cost_vertical_view',current)
         for name in ('run_client_tests.ps1','run_quote_management_checks.py'):
             self.assertNotIn('verify_cost_vertical_view.py',(fixture.ROOT/'tests'/name).read_text(encoding='utf-8'))

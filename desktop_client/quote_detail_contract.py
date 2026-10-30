@@ -38,7 +38,16 @@ class DetailContractController(QObject):
     def __init__(self,window,page):
         super().__init__(window);self.window=window;self.page=page;self.manager=window.quote_management
         self.timer=QTimer(self);self.timer.setInterval(30);self.timer.timeout.connect(self.continue_start)
-        self.active=False;self.attempt=None;self.confirmed=False
+        self.active=False;self.attempt=None;self.confirmed=False;self.failure=''
+
+    def feedback_message(self):
+        """Keep an async failure visible across unrelated save-status refreshes."""
+        if self.active or not self.failure:return ''
+        import contract_management as contracts
+        context=(self.window._quote_scheme_id,viewed_version(self.window),self.manager.history_version)
+        expected=(self.context[0] or getattr(self,'created_no',''),self.context[1],self.context[2])
+        if context!=expected or self.identity!=(contracts.contract_headers(self.window) or {}):return ''
+        return '合同准备未完成：'+self.failure
 
     def start(self):
         import contract_management as contracts
@@ -50,6 +59,7 @@ class DetailContractController(QObject):
         if self.page.busy or self.page.queue or dirty or self.page.profile_dirty:
             self.manager.feedback.setText('请先完成或保存当前合同管理中的操作，再生成本次合同。');return
         _commit_quote_text_editor(self.window)
+        self.failure='';self.created_no=''
         self.identity=dict(contracts.contract_headers(self.window) or {});self.context=(self.window._quote_scheme_id,viewed_version(self.window),self.manager.history_version)
         self.previous_readonly=self.window._quote_scheme_read_only;self.confirmed=False;self.active=True
         self.window._detail_contract_busy=True;self.window._scheme2_document_busy=True
@@ -138,6 +148,7 @@ class DetailContractController(QObject):
         same=self.identity==(contracts.contract_headers(self.window) or {})
         self.window._detail_contract_busy=False;self.window._scheme2_document_busy=False
         if same:
+            self.failure=str(message)
             schemes._apply_read_only(self.window,True if self.confirmed else self.previous_readonly)
             if not self.window._quote_scheme_read_only and self.window._quote_scheme_dirty_seq>self.window._quote_scheme_saved_seq:self.window._quote_scheme_save_timer.start(500)
             self.manager.refresh()

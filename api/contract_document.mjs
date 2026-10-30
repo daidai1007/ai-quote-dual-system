@@ -5,6 +5,7 @@ import {DOMParser,XMLSerializer} from '@xmldom/xmldom';
 import path from 'node:path';
 import {evaluateCells} from './contract_formula.mjs';
 import {CUSTOMER_PROFILE_FIELDS} from './customer_profile.mjs';
+import {uniformWordProductRows,uniformExcelProductRows} from './contract_item_row_layout.mjs';
 const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const S='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const R='http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -178,6 +179,7 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
     else{const result=find?loc.text.replace(find,()=>String(value)):value;setCell(loc.node,find&&loc.text!==find?result:(field.source==='total_amount'?Number(value):String(value)));loc.text=String(result);}
   }
   if(format==='docx'){
+    const renderedProductRows=[];
     for(let i=0;i<items.length;i++){
       const clone=row.node.cloneNode(true),cells=children(clone,'tc');
       for(const [key,index] of Object.entries(mapping.items.columns)){
@@ -186,8 +188,10 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
         for(const p of paras)for(const t of descendants(p,W,'t'))t.textContent='';replaceWord(paras[0],'',text);
       }
       row.node.parentNode.insertBefore(clone,row.node);
+      renderedProductRows.push(clone);
     }
     row.node.parentNode.removeChild(row.node);
+    uniformWordProductRows(renderedProductRows,model);
     for(const part of model.parts.values())for(const node of [...descendants(part,W,'t')])if(/[\r\n]/.test(node.textContent)){
       const lines=node.textContent.replace(/\r\n?/g,'\n').split('\n');
       lines.forEach((line,index)=>{if(index)node.parentNode.insertBefore(node.ownerDocument.createElementNS(W,'w:br'),node);const t=node.cloneNode(false);t.setAttribute('xml:space','preserve');t.textContent=line;node.parentNode.insertBefore(t,node);});node.parentNode.removeChild(node);
@@ -216,7 +220,7 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
         const drawing=parse(strFromU8(model.files[name]));for(const node of descendants(drawing,'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','row'))if(Number(node.textContent)>=at-1)node.textContent=String(Number(node.textContent)+delta);model.parts.set(name,drawing);
       }
     }
-    let anchor=row.node.nextSibling;
+    let anchor=row.node.nextSibling;const renderedProductRows=[];
     for(let i=0;i<items.length;i++){
       const clone=i?row.node.cloneNode(true):row.node;clone.setAttribute('r',String(start+i));
       for(const cell of children(clone,'c')){cell.setAttribute('r',cell.getAttribute('r').replace(/\d+$/,String(start+i)));const f=child(cell,'f');if(f&&i)f.textContent=f.textContent.split(/("(?:[^"]|"")*")/g).map((segment,index)=>index%2?segment:segment.replace(/(\$?)([A-Z]{1,3})(\$?)(\d+)/g,(m,dc,c,dr,r)=>dc+c+dr+(dr?r:Number(r)+i))).join('');}
@@ -224,7 +228,9 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
         let cell=children(clone,'c').find(c=>c.getAttribute('r')===col+(start+i));if(!cell){cell=doc.createElementNS(S,'c');cell.setAttribute('r',col+(start+i));clone.insertBefore(cell,children(clone,'c').find(n=>coordinates(n.getAttribute('r')).col>coordinates(col+'1').col)||null);}setCell(cell,items[i][key]??'');
       }
       if(i)sheetData.insertBefore(clone,anchor);
+      renderedProductRows.push(clone);
     }
+    uniformExcelProductRows(renderedProductRows,model,row.part);
     const sheetMaps=new Map();
     for(const sheet of model.sheets){const cells=new Map();for(const cell of descendants(sheet.doc,S,'c')){const type=cell.getAttribute('t');const loc=model.locations.find(l=>l.node===cell);let value=type==='inlineStr'?descendants(cell,S,'t').map(t=>t.textContent).join(''):type==='s'?loc?.text||'':child(cell,'v')?.textContent||'';if(!['s','inlineStr','str'].includes(type)&&value!=='')value=Number(value);cells.set(cell.getAttribute('r'),{value,formula:child(cell,'f')?.textContent,node:cell});}sheetMaps.set(sheet.name,cells);}
     for(const cells of sheetMaps.values())for(const cell of cells.values())if(typeof cell.value==='string'&&tokens(cell.value).length)fail('合同仍有未填字段，请完善模板配置');

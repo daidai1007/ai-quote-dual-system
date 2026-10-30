@@ -90,10 +90,13 @@ class FullWorkflow(unittest.TestCase):
         self.assertEqual(requests[0]['height_mm'],1800)
         self.assertEqual(requests[0]['material_code'],'SECC')
         self.assertEqual(w.draft_items[0]['quantity'],2)
+        self.assertNotEqual(w.draft_items[0].get('quick_freight_mode'),'MANUAL',
+                            'The new-row highlight must not create a freight edit')
         # Explicit synthetic sales inputs: 200 * .85 + 5 freight = 175 per
         # unit; quantity 2 gives 350. The new analysis must not alter this.
         w.draft_items[0]['quick_discount']=.85
         w.draft_items[0]['freight_fee']=5
+        w.draft_items[0]['freight_mode']='MANUAL'  # Explicit synthetic freight, rather than weight-following AUTO.
         w.refresh_summary()
         w._quote_scheme_loading=False
         w._quote_scheme_save_timer.stop()

@@ -8,6 +8,17 @@ const snapshot={company:'本机示例客户 <A>',document:{quote_date:'2026-10-2
   drawing_path:'PRIVATE_PATH',scheme_summary:{quoted_amount:999},
   draft_items:[{formula:{material_cost:123456},quote_line_id:'PRIVATE_ID',quote_display:{name:'示例柜',specification:'400×300×200',quantity:2,unit:'台',unit_price:175,total:350,remark:'示例备注'}}]};
 
+test('gross and net margins retain frozen values, and old snapshots have no invented net margin',()=>{
+ const old=deliveryDocument(snapshot,'BJ-20261023-000001',3);
+ assert.equal(old.cost_snapshot.items[0].columns[old.cost_snapshot.headers.indexOf('净利率')],null);
+ assert.equal(old.cost_snapshot.items[0].columns[old.cost_snapshot.headers.indexOf('制造成本')],null);
+ const current=structuredClone(snapshot);
+ current.draft_items[0].quote_cost_display={schema:1,values:{毛利率:'50.00%',净利率:'40.00%',制造成本:'7.00',管理费用:'8.75',报价运费:'20.00',运费:'7.00'}};
+ const doc=deliveryDocument(current,'BJ-20261023-000001',3);
+ for(const [key,value] of Object.entries({毛利率:'50.00%',净利率:'40.00%',制造成本:'7.00',管理费用:'8.75',报价运费:'20.00',运费:'7.00'}))
+  assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf(key)],value);
+});
+
 test('received fixed/discounted categories use the frozen version and an allowlist',()=>{
  const data=structuredClone(snapshot);
  data.draft_items[0].quote_cost_display={schema:1,values:{面价:'325.00',固定报价:'25.00',折扣面价:'150.00'},

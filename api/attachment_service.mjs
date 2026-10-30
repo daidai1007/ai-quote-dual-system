@@ -5,6 +5,9 @@ import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
 import {withAttachmentCostAllocation} from '../attachment_cost_allocation.mjs';
 import { materialUnitPriceFromSidebar } from './material_price_override.mjs';
+import {calculateStandaloneAttachment, assertStandaloneReady, STANDALONE_TYPE} from './standalone_attachment.mjs';
+import {hasManufacturingCost,manufacturingFormulaForItem} from '../quick_discount_rules.mjs';
+import {hasTaxCost,withTaxCostForItem} from '../tax_cost.mjs';
 import {PRICING_BASIS, money, moneySum, quickAttachmentLineAmount, formulaAttachmentLineAmount, validateQuoteDisplay, applyManagementFee, missingManagementCosts} from '../quick_discount_rules.mjs';
 
 // SQL values are always UTF-8 hex literals; formulas are evaluated only by attachment_cost.
@@ -205,6 +208,40 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     const items=await query(catalogItemsSql(sqlValue(v.data_version),v.status==='ACTIVE'?' AND p.is_active':'')+';');
     return {items,data_version:v.data_version,status:v.status,attachment_contract:2,catalog_write_supported:true};
   }
+  async function previewStandalone(input, prepared=null) {
+    if(!Array.isArray(input?.attachments)||input.attachments.length<1||input.attachments.length>100)
+      throw new Error('请选择1至100项独立附件');
+    const data=prepared||await catalog();
+    const densities=data.material_densities||await query("SELECT coalesce(jsonb_object_agg(material_code,density_g_cm3),'{}'::jsonb) FROM calc.material;");
+    return {item_type:STANDALONE_TYPE,attachments:input.attachments.map(row=>calculateStandaloneAttachment(row,{...data,material_densities:densities}))};
+  }
+  async function hydrateStandalone(item) {
+    if(String(item.product_code).toLowerCase()!==STANDALONE_TYPE||item.attachment_contract!=='standalone_v1'
+        ||!Array.isArray(item.attachments)||item.attachments.length!==1)
+      throw new Error('独立附件报价行无效，请重新添加');
+    const source=item.attachments[0];assertStandaloneReady(source);
+    for(const key of ['galvanized_price','carbon_price','stainless_304_price','stainless_316_price','surface_price'])
+      if(String(item.scheme2_cost_settings?.[key]??'')!==String(source.standalone_cost_settings?.[key]??''))
+        throw new Error('独立附件修改系数已变化，请等待重新计算完成');
+    const version=String(source.catalog_version||'');
+    if(!version)throw new Error('独立附件缺少目录版本，请重新计算');
+    // Retired catalogue versions remain valid for existing immutable documents.
+    // This is a read, with no synthetic cabinet or attachment_quote_line insert.
+    const entries=source.custom===true?[]:await query(catalogItemsSql(sqlValue(version),'',[id(source.attachment_price_id)])+';');
+    const densities=source.custom===true?{}:await query("SELECT coalesce(jsonb_object_agg(material_code,density_g_cm3),'{}'::jsonb) FROM calc.material;");
+    const row=calculateStandaloneAttachment(source,{items:entries,data_version:version,material_densities:densities});
+    assertStandaloneReady(row);
+    if(money(row.quick_amount)!==money(source.quick_amount)||money(row.formula_amount)!==money(source.formula_amount))
+      throw new Error('独立附件金额与当前参数不一致，请重新计算');
+    const unit=String(row.unit||'件');
+    if(item.unit!==unit||item.quote_display?.unit!==unit)throw new Error('独立附件计量单位不一致');
+    const formula=withAttachmentCostAllocation(applyManagementFee({material_cost:0,auxiliary_cost:0,
+      labor_cost:0,spray_cost:0,attachment_fee:row.formula_amount},item.freight_fee??0),[row]);
+    const current={...item,attachments:[row],formula,formula_base:structuredClone(formula),
+      quick:{base_price:0,attachment_fee:row.quick_amount,total_cost:row.quick_amount}};
+    validateQuoteDisplay(current);
+    return {...current,quote_display:{...current.quote_display,attachments:[row]}};
+  }
   async function preview(input, prepared=null) {
     onProgress('attachments');
     if(!Array.isArray(input.attachments)||input.attachments.length>100) throw new Error('attachments必须为不超过100项的数组');
@@ -390,6 +427,9 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     const items=[];
     for(const [itemIndex,item] of (input.items||[]).entries()){
       try {
+      if(item.item_type===STANDALONE_TYPE||item.attachment_contract==='standalone_v1'){
+        items.push(await hydrateStandalone(item));continue;
+      }
       if(item.attachment_contract!==2){
         if((item.attachments||[]).some(a=>a.catalog_version||a.rule_id||a.status)) throw new Error('附件V2报价缺少服务端报价行ID');
         const ids=(item.attachments||[]).filter(a=>a.attachment_price_id!=null).map(a=>id(a.attachment_price_id));
@@ -484,7 +524,19 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         throw error;
       }
     }
-    return {...input,items};
+    const manufactured=items.map((item,index)=>{
+      if(!hasManufacturingCost(item)&&!hasTaxCost(item))return item;
+      try{
+        const formula=withAttachmentCostAllocation(withTaxCostForItem(item,manufacturingFormulaForItem(item,item.formula,
+          {validateFrozen:true,frozen:input.items[index].formula}),{validateFrozen:true,frozen:input.items[index].formula}),item.attachments||[]);
+        const formula_base=item.formula_base?withTaxCostForItem(item,manufacturingFormulaForItem(item,item.formula_base)):undefined;
+        return {...item,formula,...(formula_base?{formula_base}:{})};
+      }catch(error){
+        error.statusCode=422;error.issues=[{line_number:index+1,product_name:item.name||item.product_code,
+          attachment_name:hasTaxCost(item)?'税费／成本校验':'制造成本',reason:error.message}];throw error;
+      }
+    });
+    return {...input,items:manufactured};
   }
-  return {catalog,preview,calculate,snapshotGanged,recalculateLine,hydrateDocument,hasActive:async()=>query("SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_catalog_version WHERE status='ACTIVE'));")};
+  return {catalog,preview,previewStandalone,calculate,snapshotGanged,recalculateLine,hydrateDocument,hasActive:async()=>query("SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.attachment_catalog_version WHERE status='ACTIVE'));")};
 }

@@ -54,6 +54,10 @@ def allocate_attachment_costs(formula,rows,*,strict=False):
         errors.append('附件归类合计与原附件成本不一致，请重新计算')
     totals={key:money_sum((formula[key],parts[key])) if finite(formula.get(key)) else None for key in COST_PARTS}
     totals.update(attachment_fee=fixed,management_fee=formula.get('management_fee'))
+    if formula.get('tax_cost_basis')=='quoted_less_display_costs_15pct_v1':
+        totals['tax_cost']=formula.get('tax_cost')
+    if formula.get('manufacturing_cost_basis')=='quoted_unit_4pct_v1':
+        totals['manufacturing_cost']=formula.get('manufacturing_cost')
     result=dict(schema=1,basis=BASIS,complete=not errors,totals=totals,attachment_parts=parts,fixed_cost=fixed,
                 attachment_total=total,lines=lines,errors=errors)
     if strict and errors:raise ValueError('；'.join(errors))
@@ -88,6 +92,6 @@ def attachment_detail_rows(allocation):
 def merge_attachment_details(rows,allocation):
     base=[row for row in rows if row.get('category')!='attachment_fee']
     attached=attachment_detail_rows(allocation)
-    order=('material_cost','auxiliary_cost','labor_cost','spray_cost','attachment_fee','unallocated_attachment','management_fee')
+    order=('material_cost','auxiliary_cost','manufacturing_cost','labor_cost','spray_cost','attachment_fee','unallocated_attachment','management_fee','tax_cost')
     return [row for key in order for row in (*base,*attached) if row.get('category')==key]+[
         row for row in base if row.get('category') not in order]

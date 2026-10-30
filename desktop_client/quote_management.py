@@ -913,7 +913,9 @@ class QuoteManagement:
         self.detail_contract_button.setToolTip(reason or '使用当前查看的报价生成合同；首次报价直接确认，无需调整或修订。')
         if hasattr(self, 'delivery'): self.delivery.refresh()
         if hasattr(w, 'quote_scheme_save_status'):
-            self.feedback.setText(w.quote_scheme_save_status.text())
+            controller=getattr(self,'detail_contract_controller',None)
+            contract_failure=controller.feedback_message() if controller is not None else ''
+            self.feedback.setText(contract_failure or w.quote_scheme_save_status.text())
         busy = getattr(w, '_scheme2_document_busy', False) or bool(w._quote_scheme_export_context)
         if getattr(w,'_name_scope_foreign',False):
             for control in (self.adjust_button,self.save_button,self.discard_button,w.scheme2_quote_print,w.scheme2_quote_export):control.setEnabled(False)

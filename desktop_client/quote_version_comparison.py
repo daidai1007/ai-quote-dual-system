@@ -2,6 +2,7 @@
 from copy import deepcopy
 import math
 from quick_discount_rules import money, money_sum, money_product
+from profit_metrics import GROSS_MARGIN_BASIS, production_total
 
 
 def number(value):
@@ -40,17 +41,44 @@ def line_metrics(item):
         if cost_unit is None:
             values=[number(formula.get(key)) for key in
                 ('material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost','management_fee')]
+            if formula.get('manufacturing_cost_basis')=='quoted_unit_4pct_v1':
+                values.append(number(formula.get('manufacturing_cost')))
+            if formula.get('tax_cost_basis')=='quoted_less_display_costs_15pct_v1':
+                values.append(number(formula.get('tax_cost')))
             if all(value is not None for value in values):cost_unit=money_sum(values)
         freight=number(item.get('freight_fee',item.get('freight',0)))
         if cost_unit is not None and freight is not None:
             cost=money_product(money_sum((cost_unit,freight)),quantity)
     margin=(total-cost)/total if total not in (None,0) and cost is not None else None
+    margin_cost=cost
+    # New snapshots explicitly distinguish production gross and all-in net.
+    # Older stored versions retain their original comparison interpretation.
+    if '净利率' in saved:
+        text=str(saved.get('毛利率') or '').strip()
+        margin=number(text[:-1])/100 if text.endswith('%') and number(text[:-1]) is not None else None
+        production=[number(saved.get(label)) for label in ('材料成本','辅材成本','人工成本','附件成本','喷涂费用')]
+        if saved.get('制造成本') not in (None,'','未记录','—'):
+            production.append(number(saved['制造成本']))
+        if all(value is not None for value in production):
+            margin_cost=money_product(money_sum(production),quantity)
+        elif margin is not None and total is not None:
+            margin_cost=money_product(total,1-margin)
+        else:
+            margin_cost=None
     if margin is None and total not in (None,0):
         text=str(saved.get('毛利率') or '').strip()
         if text.endswith('%') and number(text[:-1]) is not None:
             margin=number(text[:-1])/100
+    if item.get('gross_margin_basis') == GROSS_MARGIN_BASIS:
+        production=[number(saved.get(label)) for label in ('材料成本','辅材成本','人工成本','附件成本','喷涂费用')]
+        if saved.get('制造成本') not in (None,'','未记录','—'):
+            production.append(number(saved['制造成本']))
+        production_amount=money_product(money_sum(production),quantity) if saved and all(v is not None for v in production) else production_total(item.get('formula') or {},quantity)
+        freight=number(saved.get('运费',item.get('freight_fee',item.get('freight',0))))
+        margin_cost=money_sum((production_amount,money_product(freight,quantity))) if production_amount is not None and freight is not None else None
+        margin=(total-margin_cost)/total if total not in (None,0) and margin_cost is not None else None
     return dict(name=str(item.get('name') or item.get('model_code') or '未命名'),quantity=quantity,
-                unit=unit,total=total,cost=cost,margin=margin)
+                unit=unit,total=total,cost=cost,margin=margin,margin_cost=margin_cost)
 
 
 def _identity(item):
@@ -89,8 +117,9 @@ def aggregate(metrics):
     def complete_sum(key):
         return money_sum(row[key] for row in metrics) if all(row[key] is not None for row in metrics) else None
     total,cost=complete_sum('total'),complete_sum('cost')
+    margin_cost=money_sum(row.get('margin_cost',row['cost']) for row in metrics) if all(row.get('margin_cost',row['cost']) is not None for row in metrics) else None
     return dict(name='本版合计',quantity=sum(row['quantity'] for row in metrics),unit=None,total=total,cost=cost,
-                margin=(total-cost)/total if total not in (None,0) and cost is not None else None)
+                margin=(total-margin_cost)/total if total not in (None,0) and margin_cost is not None else None)
 
 
 def comparison_groups(versions,from_version=None,to_version=None):

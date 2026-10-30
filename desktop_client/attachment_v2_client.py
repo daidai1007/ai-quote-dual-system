@@ -1612,6 +1612,9 @@ def install_attachment_v2(namespace):
     window_class.resolve_attachments_for_quote = resolve_attachments_for_quote
 
     def recalculate_draft_attachment(window, quote_item, attachment, succeeded, failed):
+        from standalone_attachment import is_standalone, reprice
+        if is_standalone(quote_item):
+            return reprice(window, quote_item, attachment, succeeded, failed)
         # Temporary attachments use only this quotation's manual amounts.
         # Never resolve them into catalogue records or send them to preview.
         if attachment.get("custom") is True:

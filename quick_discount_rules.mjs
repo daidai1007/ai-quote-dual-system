@@ -7,6 +7,20 @@ export const PRICING_BASIS = 'per_unit_set_v1';
 export const MANAGEMENT_FEE_RATE = 0.06;
 export const MANAGEMENT_FEE_BASIS = 'pre_management_cost_with_freight_v1';
 export const MANAGEMENT_COST_KEYS = Object.freeze(['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost']);
+export const MANUFACTURING_COST_BASIS='quoted_unit_4pct_v1';
+export const QUICK_FREIGHT_BASIS='separate_unit_freight_v1';
+export function quickFreightFee(item={}){
+  if(item.quick_freight_basis===QUICK_FREIGHT_BASIS){
+    const mode=item.quick_freight_mode??'FOLLOW_COST';
+    if(!['FOLLOW_COST','MANUAL'].includes(mode))throw new Error('快速报价运费模式无效');
+    if(mode==='MANUAL'){
+      const raw=item.quick_freight_fee;
+      if(typeof raw==='boolean'||!hasFiniteNumber(raw)||Number(raw)<0)throw new Error('快速报价运费必须为有效的非负金额');
+      return money(raw);
+    }
+  }
+  return money(Math.max(0,asFiniteNumber(item.freight_fee??item.freight)));
+}
 export const missingManagementCosts = quote => MANAGEMENT_COST_KEYS.filter(key=>!hasFiniteNumber(quote?.[key]));
 // Decimal coefficient + scale, without a dependency or binary half-cent rounding.
 const decimal = (value = 0) => {
@@ -54,7 +68,18 @@ export function applyManagementFee(quote = {}, freightFee = 0) {
   if(base===null) return {...result,management_fee_base:null,management_fee:null,total_cost:null};
   result.management_fee_base=moneySum([base,Math.max(0,asFiniteNumber(freightFee))]);
   result.management_fee=moneyProduct(result.management_fee_base,MANAGEMENT_FEE_RATE);
-  result.total_cost=moneySum([base,result.management_fee]);
+  let manufacturing=0;
+  if(quote.manufacturing_cost_basis===MANUFACTURING_COST_BASIS){
+    if(quote.manufacturing_in_management!==false)throw new Error('制造成本不计入管理费基数');
+    if(!hasFiniteNumber(quote.manufacturing_cost)||Number(quote.manufacturing_cost)<0)throw new Error('制造成本无效，请重新计算');
+    manufacturing=money(quote.manufacturing_cost);
+    const quoted=quote.manufacturing_quote_unit_price;
+    if(!hasFiniteNumber(quoted)||Number(quoted)<0)throw new Error('管理费需要有效的本行报价');
+    Object.assign(result,{management_fee_rate:.05,management_fee_basis:'quoted_unit_5pct_v1',
+      management_fee_base:money(quoted),management_fee:moneyProduct(quoted,.05)});
+  }
+  const tax=quote.tax_cost_basis==='quoted_less_display_costs_15pct_v1'?quote.tax_cost:0;
+  result.total_cost=hasFiniteNumber(tax)?moneySum([base,manufacturing,result.management_fee,tax]):null;
   return result;
 }
 
@@ -286,6 +311,23 @@ export function quickOrderLineBreakdown({
 }
 
 /** Check the frozen customer-facing values against the canonical quote, not the screen formatter. */
+export const hasManufacturingCost=item=>item?.manufacturing_cost_basis===MANUFACTURING_COST_BASIS||item?.formula?.manufacturing_cost_basis===MANUFACTURING_COST_BASIS;
+
+export function manufacturingFormulaForItem(item,formula=item.formula,{validateFrozen=false,frozen=item.formula}={}){
+  if(!hasManufacturingCost(item))return formula;
+  const line=quickOrderLineBreakdown({quote:item.quick,attachments:item.attachments||[],discount:item.quick_discount??1,
+    cabinetQuantity:item.quantity??1,gangedCabinetCount:item.ganged_cabinet_count??1,
+    freightFee:quickFreightFee(item),materialDifference:materialDifferenceAmount(item)});
+  const amount=moneyProduct(line.equivalentUnitTotal,.04);
+  if(validateFrozen&&(!hasFiniteNumber(frozen?.manufacturing_cost)||money(frozen.manufacturing_cost)!==amount||frozen?.manufacturing_in_management!==false))
+    throw new Error('制造成本与报价乘4%不一致，请重新计算');
+  const result=applyManagementFee({...formula,manufacturing_cost:amount,manufacturing_cost_basis:MANUFACTURING_COST_BASIS,
+    manufacturing_quote_unit_price:line.equivalentUnitTotal,manufacturing_in_management:false},item.freight_fee??item.freight??0);
+  if(validateFrozen&&(!hasFiniteNumber(frozen?.management_fee)||money(frozen.management_fee)!==result.management_fee))
+    throw new Error('管理费用与报价乘5%不一致，请重新计算');
+  return result;
+}
+
 export function validateQuoteDisplay(item) {
   if (item.pricing_basis == null) return; // Historical payloads keep their original contract.
   if (item.pricing_basis !== PRICING_BASIS) throw new Error('不支持的报价金额口径，请更新客户端');
@@ -299,7 +341,7 @@ export function validateQuoteDisplay(item) {
   const materialDifference = materialDifferenceAmount(item);
   const line = quickOrderLineBreakdown({quote: item.quick, attachments: item.attachments,
     discount: item.quick_discount ?? 1, cabinetQuantity: quantity,
-    freightFee: item.freight_fee ?? item.freight ?? 0, materialDifference});
+    freightFee: quickFreightFee(item), materialDifference});
   for (const [field, expected] of Object.entries({unit_price: line.equivalentUnitTotal,
     total: line.lineTotal, attachment_face_price: line.attachmentFee,
     material_difference: materialDifference, quick_base_price: line.basePrice,

@@ -1,5 +1,6 @@
-import {money,moneySum,moneyProduct,formulaAttachmentLineAmount,formulaAttachmentExcluded,attachmentExcludedFromDiscount} from '../quick_discount_rules.mjs';
+import {money,moneySum,moneyProduct,formulaAttachmentLineAmount,formulaAttachmentExcluded,attachmentExcludedFromDiscount,hasManufacturingCost} from '../quick_discount_rules.mjs';
 const required=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+import {hasTaxCost} from '../tax_cost.mjs';
 export function upperRmb(value){
   const cents=Math.round(money(value)*100);if(!Number.isSafeInteger(cents)||cents<0||cents>=1e14)throw Error('合同金额超出大写转换范围');
   const digits='零壹贰叁肆伍陆柒捌玖',small=['','拾','佰','仟'],big=['','万','亿'];
@@ -20,6 +21,8 @@ export function contractQuote(snapshot,method){
     else if(required(display.formula_unit_price)&&required(display.formula_total)){unit_price=money(display.formula_unit_price);total=money(display.formula_total);}
     else{
       const costs=item.formula||{},keys=['material_cost','auxiliary_cost','labor_cost','spray_cost','management_fee'];
+      if(hasManufacturingCost(item))keys.push('manufacturing_cost');
+      if(hasTaxCost(item))keys.push('tax_cost');
       if(keys.some(k=>!required(costs[k])))throw Error('该正式快照的公式成本不完整，请先确认并导出对应版本');
       const attachments=display.attachment_source==='popup_v1'?display.attachments||[]:item.attachments||[];
       if(attachments.some(a=>a.status==='ERROR'))throw Error('正式附件金额未确定');

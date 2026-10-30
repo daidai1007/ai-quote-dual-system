@@ -157,8 +157,16 @@ class ManualMatchTests(unittest.TestCase):
         self.assertEqual(self.item['quick']['attachment_fee'],85)
         self.assertEqual(self.item['quick']['total_cost'],685)
         self.assertEqual(self.item['quote_line_id'],NEW)
-        for key in ('attachments','formula','width_mm','depth_mm','height_mm','specification','quantity','quick_discount','freight_fee'):
+        for key in ('attachments','width_mm','depth_mm','height_mm','specification','quantity','quick_discount','freight_fee'):
             self.assertEqual(self.item[key],before[key],key)
+        # Rematching changes the displayed quote, so the confirmed percentage
+        # expenses must change while every original production input stays.
+        for key in ('material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost'):
+            self.assertEqual(self.item['formula'][key],before['formula'][key],key)
+        self.assertEqual(self.item['formula']['manufacturing_cost'],23.08)
+        self.assertEqual(self.item['formula']['management_fee'],28.85)
+        self.assertEqual(self.item['formula']['tax_cost'],61.5)
+        self.assertEqual(self.item['formula']['total_cost'],288.43)
         self.assertEqual(self.summary.product_table.item(0,9).text(),'600*250*600')
         self.assertEqual(self.summary.product_table.horizontalHeaderItem(10).text(),'柜体原价')
         self.assertEqual(self.summary.product_table.item(0,10).text(),'600.00')

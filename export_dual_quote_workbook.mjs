@@ -8,6 +8,7 @@
  * the shared six-component rule and the already-confirmed popup costs.
  */
 import ExcelJS from "@excel.js/exceljs";
+import {hasTaxCost,withTaxCostForItem} from "./tax_cost.mjs";
 import fs from "node:fs/promises";
 import {documentWithOrderNature,orderNatureLabel} from './quote_order_nature.mjs';
 import path from "node:path";
@@ -35,6 +36,7 @@ import {
   quickDiscountCategory,
   quickOrderLineBreakdown,
   money, moneySum, moneyProduct, PRICING_BASIS, validateQuoteDisplay, applyManagementFee, missingManagementCosts, MANAGEMENT_FEE_RATE,
+  hasManufacturingCost, manufacturingFormulaForItem, quickFreightFee,
 } from "./quick_discount_rules.mjs";
 
 const [inputPath, outputPath] = process.argv.slice(2);
@@ -53,7 +55,7 @@ for (const [index,item] of payload.items.entries()) {
   const formula={...(item.formula||{}),attachment_fee:moneySum(rows.map(formulaAttachmentLineAmount))};
   const missing=missingManagementCosts(formula);
   if(missing.length) throw new Error(`第${index+1}行柜体成本分项缺失（${missing.join('、')}），请重新计算整柜`);
-  const normalized=applyManagementFee(formula,item.freight_fee??item.freight??0);
+  const normalized=withTaxCostForItem(item,hasManufacturingCost(item)?manufacturingFormulaForItem(item,formula,{validateFrozen:true}):applyManagementFee(formula,item.freight_fee??item.freight??0),{validateFrozen:true});
   if(item.preserve_legacy_cost_classes){delete normalized.cost_allocation;item.formula=normalized;}
   else item.formula=withAttachmentCostAllocation(normalized,rows,
     {strict:!!item.formula?.cost_allocation?.complete||rows.some(row=>row.cost_method==='FORMULA')});
@@ -204,10 +206,14 @@ const formulaAttachmentStartColumnIndex = 17; // Q, after L:P formula components
 const formulaNameColumnByName = new Map(
   formulaAttachmentNames.map((name, index) => [name, formulaAttachmentStartColumnIndex + index]),
 );
-const formulaFreightColumnIndex = formulaAttachmentStartColumnIndex + formulaAttachmentNames.length;
+const hasManufacturing = payload.items.some(hasManufacturingCost);
+const formulaManufacturingColumnIndex = hasManufacturing ? formulaAttachmentStartColumnIndex + formulaAttachmentNames.length : null;
+const hasTax = payload.items.some(hasTaxCost);
+const formulaTaxColumnIndex = hasTax ? formulaAttachmentStartColumnIndex + formulaAttachmentNames.length + (hasManufacturing ? 1 : 0) : null;
+const formulaFreightColumnIndex = formulaAttachmentStartColumnIndex + formulaAttachmentNames.length + (hasManufacturing ? 1 : 0) + (hasTax ? 1 : 0);
 const formulaDiscountColumnIndex = formulaFreightColumnIndex + 1;
 const formulaCostHeaders = [
-  ...formulaAttachmentNames, "运费", "折扣",
+  ...formulaAttachmentNames, ...(hasManufacturing?['制造成本']:[]), ...(hasTax?['税费']:[]), "运费", "折扣",
 ];
 const templateRowHeights = {
   1: 20.1, 2: 20.1, 3: 22.5,
@@ -609,7 +615,7 @@ const formulaOrderLineBreakdown = (item = {}) => {
   );
   const formulaAttachmentFee = attachmentFee;
   const componentKeys = [
-    "material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee",
+    "material_cost", "auxiliary_cost", "labor_cost", "spray_cost", "management_fee", ...(hasManufacturingCost(item)?['manufacturing_cost']:[]), ...(hasTaxCost(item)?['tax_cost']:[]),
   ];
   const basePrice = moneySum(componentKeys.map(key=>quote[key]));
   const originalPriceAttachmentTotal = attachments.reduce(
@@ -661,7 +667,7 @@ const quickPublicLineBreakdown = (item = {}) => {
   const cabinetQuantity = asNumber(item.quantity || 1);
   const gangedCount = gangedCabinetCount(item);
   const discount = asNumber(item.quick_discount ?? 1);
-  const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
+  const freightFee = quickFreightFee(item);
   return quickOrderLineBreakdown({
       quote,
       attachments,
@@ -953,6 +959,8 @@ function fillSheet(sheet, method) {
       values[13] = asNumber(quote?.labor_cost) * discount * componentMultiplier;
       values[14] = asNumber(quote?.spray_cost) * discount * componentMultiplier;
       values[15] = asNumber(quote?.management_fee) * discount * componentMultiplier;
+      if(formulaManufacturingColumnIndex)values[formulaManufacturingColumnIndex-1]=asNumber(quote?.manufacturing_cost)*discount*componentMultiplier;
+      if(formulaTaxColumnIndex)values[formulaTaxColumnIndex-1]=hasTaxCost(item)?asNumber(quote?.tax_cost)*discount*componentMultiplier:"";
       // Freight is the final dynamic attachment-detail column and is never
       // discounted; the following column records the formula discount.
       values[formulaFreightColumnIndex - 1] = (unitSet ? formulaBreakdown.freightFee : formulaBreakdown.freightTotal) || "";
@@ -1387,20 +1395,28 @@ function buildFormulaCostDetailSheet() {
       );
     }
 
+    const manufacturingCost=hasManufacturingCost(item)?asNumber(quote.manufacturing_cost):0;
+    if(hasManufacturingCost(item))addDetail(itemIndex,item,'制造成本','制造成本','本行单台／单套报价×4%',
+      `${asNumber(quote.manufacturing_quote_unit_price).toFixed(2)} × 0.04 = ${manufacturingCost.toFixed(2)} 元`,
+      1,'项',manufacturingCost,manufacturingCost,'报价比例','计入生产成本；不计入管理费基数');
     const managementCost = asNumber(quote.management_fee);
-    const managementRate = MANAGEMENT_FEE_RATE;
+    const managementRate = hasManufacturingCost(item) ? .05 : MANAGEMENT_FEE_RATE;
     const managementBase = asNumber(quote.management_fee_base);
     const managementTerms = [materialCost, auxiliaryCost, laborCost, attachmentCost, sprayCost,
       Math.max(0, asNumber(item.freight_fee ?? item.freight))];
-    const managementExpression = `(${managementTerms.map(value=>value.toFixed(2)).join(' + ')})`;
+    const managementExpression = hasManufacturingCost(item) ? managementBase.toFixed(2) : `(${managementTerms.map(value=>value.toFixed(2)).join(' + ')})`;
     addDetail(
       itemIndex, item, "管理费用", "管理费用",
-      "材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
+      hasManufacturingCost(item)?"本行单台／单套报价的5%":"材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
       `${managementExpression} × ${managementRate} = ${managementCost.toFixed(2)} 元`,
       managementBase, "元", managementRate, managementCost, "系统统一公式",
-      "管理费用＝（材料＋辅材＋柜体人工＋附件＋喷涂＋运费）×0.06；不含管理费本身",
+      hasManufacturingCost(item)?"管理费用＝本行报价×0.05；与制造成本不互相叠加":"管理费用＝（材料＋辅材＋柜体人工＋附件＋喷涂＋运费）×0.06；不含管理费本身",
     );
 
+    const taxCost=hasTaxCost(item)?asNumber(quote.tax_cost):0;
+    if(hasTaxCost(item))addDetail(itemIndex,item,'税费','税费','本行单台／单套',
+      `${asNumber(quote.tax_cost_base).toFixed(2)} × 0.15 = ${taxCost.toFixed(2)} 元`,
+      1,'项',taxCost,taxCost,'系统公式','（报价－材料－辅材－附件－成本运费－喷涂）×15%；计入成本和净利率，不扣毛利率');
     const freightFee = Math.max(0, asNumber(item.freight_fee ?? item.freight));
     if (freightFee > 0) {
       addDetail(
@@ -1411,7 +1427,7 @@ function buildFormulaCostDetailSheet() {
       );
     }
 
-    const componentTotal = materialCost + auxiliaryCost + laborCost + attachmentCost + sprayCost + managementCost;
+    const componentTotal = materialCost + auxiliaryCost + manufacturingCost + laborCost + attachmentCost + sprayCost + managementCost + taxCost;
     const formulaCost = asNumber(quote.total_cost) - lineBreakdown.excludedFormulaAttachmentTotal;
     if (Math.abs(formulaCost - componentTotal) > 0.01) {
       const adjustment = formulaCost - componentTotal;

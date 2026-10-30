@@ -1,4 +1,4 @@
-"""Six-component management pricing in shared rules and the recovered client."""
+"""Legacy six-component fees and current quote-based expenses in the real client."""
 import copy
 import json
 import os
@@ -75,6 +75,10 @@ class ManagementFee(unittest.TestCase):
         self.assertEqual(self.window.current_result["formula"]["management_fee_base"], 2072.05)
         self.assertEqual(self.window.current_result["formula"]["management_fee"], 124.32)
         self.assertEqual(self.window.current_result["formula"]["total_cost"], 2134.51)
+        # Preserve this historical six-percent record as a read-only snapshot;
+        # current editable quotes intentionally use manufacturing/management/tax.
+        item['formula'] = copy.deepcopy(self.window.current_result['formula'])
+        self.window._quote_scheme_read_only = True
         self.window.draft_items = [item]
         self.window.refresh_summary()
         self.assertEqual(ui._row_values(item)[17], 2196.37)
@@ -101,26 +105,30 @@ class ManagementFee(unittest.TestCase):
         self.window.draft_items = [item]
         self.window.refresh_summary()
         table = self.window.summary_table
-        self.assertEqual(table.item(0, ui.HEADERS.index("管理费用")).text(), "15.00")
-        self.assertEqual(ui._row_values(item)[17:19], (265, 2650))
+        self.assertEqual(table.item(0, ui.HEADERS.index("管理费用")).text(), "19.00")
+        self.assertEqual(item['formula']['manufacturing_cost'], 15.2)
+        self.assertEqual(item['formula']['tax_cost'], 24)
+        self.assertEqual(ui._row_values(item)[17:19], (308.2, 3082))
         quick_total = ui._row_values(item)[16]
         item["attachments"][0]["formula_amount"] = 60
         self.window.refresh_summary()
-        self.assertEqual(item["formula"]["management_fee"], 16.2)
-        self.assertEqual(ui._row_values(item)[17:19], (286.2, 2862))
+        self.assertEqual(item["formula"]["management_fee"], 19)
+        self.assertEqual(item['formula']['tax_cost'], 21)
+        self.assertEqual(ui._row_values(item)[17:19], (325.2, 3252))
         self.assertEqual(ui._row_values(item)[16], quick_total)
         table.item(0, ui.HEADERS.index("运费")).setText("100")
-        self.assertEqual(item["formula"]["management_fee"], 19.2)
-        self.assertEqual(ui._row_values(item)[17:19], (339.2, 3392))
+        self.assertEqual(item["formula"]["management_fee"], 21.5)
+        self.assertEqual(item['formula']['manufacturing_cost'], 17.2)
+        self.assertEqual(ui._row_values(item)[17:19], (379.7, 3797))
         table.item(0, ui.HEADERS.index("数量")).setText("1")
-        self.assertEqual(ui._row_values(item)[17:19], (339.2, 339.2))
+        self.assertEqual(ui._row_values(item)[17:19], (379.7, 379.7))
         snapshot = ui._quote_export_items_snapshot(self.window)[0]
-        self.assertEqual(snapshot["formula"]["management_fee"], 19.2)
+        self.assertEqual(snapshot["formula"]["management_fee"], 21.5)
         rows = ui._detail_rows(snapshot)
         fee = [row for row in rows if row["category"] == "management_fee"]
         self.assertEqual(len(fee), 1)
-        self.assertEqual(fee[0]["base_amount"], 19.2)
-        self.assertIn("运费", fee[0]["spec"])
+        self.assertEqual(fee[0]["base_amount"], 21.5)
+        self.assertIn("报价的5%", fee[0]["spec"])
 
     def test_ganged_management_is_one_whole_set_fee(self):
         item = product(3)
@@ -130,11 +138,11 @@ class ManagementFee(unittest.TestCase):
         item["formula"]["ganged_cabinet_costs"] = [dict(formula_cost=copy.deepcopy(child)) for _ in range(2)]
         self.window.draft_items = [item]
         self.window.refresh_summary()
-        self.assertEqual(item["formula"]["management_fee"], 15)
-        self.assertEqual(ui._row_values(item)[17:19], (265, 795))
+        self.assertEqual(item["formula"]["management_fee"], 19)
+        self.assertEqual(ui._row_values(item)[17:19], (308.2, 924.6))
         fees = [row for row in ui._detail_rows(item) if row["category"] == "management_fee"]
         self.assertEqual(len(fees), 1)
-        self.assertEqual(fees[0]["base_amount"], 15)
+        self.assertEqual(fees[0]["base_amount"], 19)
 
     def test_labor_multiplier_changes_only_cabinet_labor_and_fee_base(self):
         item = product()
@@ -144,8 +152,9 @@ class ManagementFee(unittest.TestCase):
         ui._apply_cost_control(self.window, "labor_discount", .5)
         self.assertEqual(item["formula"]["labor_cost"], 15)
         self.assertEqual(item["formula"]["attachment_fee"], 40)
-        self.assertEqual(item["formula"]["management_fee"], 14.1)
-        self.assertEqual(ui._row_values(item)[17], 249.1)
+        self.assertEqual(item["formula"]["management_fee"], 19)
+        self.assertEqual(item['formula']['tax_cost'], 24)
+        self.assertEqual(ui._row_values(item)[17], 293.2)
 
 
 if __name__ == "__main__":

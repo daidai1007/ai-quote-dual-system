@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import verify_quote_export_customer as fixture
 from verify_quote_document_progress import app, wait, ui
@@ -45,9 +45,10 @@ class WideLaborWorkflow(unittest.TestCase):
 
     def setUp(self):
         fixture.ExportCustomer.setUp(self);self.w=self.window
+        self.w.show_error=Mock()
         self.load_calculation(self.calculation)
 
-    def load_calculation(self,calculation):
+    def load_calculation(self,calculation,quick_discount=10):
         data=deepcopy(calculation);source,result=data['input'],data['result']
         row=self.w.draft_items[0]
         row.update(source)
@@ -55,7 +56,10 @@ class WideLaborWorkflow(unittest.TestCase):
             formula=deepcopy(result['formula_cost']),formula_base=deepcopy(result['formula_cost']),
             quick=deepcopy(result['quick_quote']),attachments=deepcopy(result['attachments']),
             quote_line_id=result['quote_line_id'],attachment_contract=2,attachment_snapshot_dirty=False,
-            freight_fee=0,freight_mode='MANUAL',quick_discount=1,formula_discount=1)
+            # The API fixture deliberately uses a tiny 200-yuan reference to
+            # test dimension scaling. Keep that evidence intact and use an
+            # explicit synthetic sales factor for the current taxable workflow.
+            freight_fee=0,freight_mode='MANUAL',quick_discount=quick_discount,formula_discount=1)
         self.w.refresh_summary();self.m.show_detail();self.w._quote_scheme_save_timer.stop()
         self.w.resize(1519,987);self.w.show();app.processEvents()
 
@@ -65,6 +69,15 @@ class WideLaborWorkflow(unittest.TestCase):
     def test_screenshot_1800_body_and_200_base_keeps_same_amount_through_workflow(self):
         self.load_calculation(self.calculation['height1800'])
         self.check_workflow(1800,374.19)
+
+    def test_original_low_synthetic_quote_reports_negative_tax_and_blocks_output(self):
+        self.load_calculation(self.calculation,quick_discount=1)
+        self.w.show_error.assert_called_once()
+        self.assertIn('税费计算失败',self.w.show_error.call_args.args[0])
+        self.assertEqual(self.w.summary_table.item(0,ui.TAX_COST_COLUMN).text(),'待核对')
+        self.assertFalse(self.w.scheme2_cost_generate.isEnabled())
+        with self.assertRaisesRegex(ValueError,'税费计算失败'):
+            ui._quote_export_items_snapshot(self.w)
 
     def check_workflow(self,height,labor_cost):
         specification=f'1350*400*({height}+200)'

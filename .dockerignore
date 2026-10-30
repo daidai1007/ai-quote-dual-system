@@ -9,6 +9,8 @@
 !api/quote_scheme_service.mjs
 !api/quote_analysis_service.mjs
 !api/attachment_service.mjs
+!api/standalone_attachment.mjs
+!api/contract_item_row_layout.mjs
 !api/quick_match_override.mjs
 !api/attachment_cost.mjs
 !api/attachment_formula.mjs
@@ -50,3 +52,4 @@
 !api/quote_delivery_service.mjs
 !api/jp_auxiliary_weight.mjs
 !attachment_cost_allocation.mjs
+!tax_cost.mjs

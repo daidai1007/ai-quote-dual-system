@@ -38,7 +38,7 @@ assert item["review_status"] == "confirmed"
 assert item["confirmed"] and item["verified"]
 assert item["manual_reviewed"] and item["manual_confirmation_checked"]
 assert item["classification"] == "cabinet" and item["manual_reviewed_at"]
-assert item["specification"] == "600*1800*400"
+assert item["specification"] == "600*400*1800"
 assert item["remark_review_required"] is False
 
 window = Window()

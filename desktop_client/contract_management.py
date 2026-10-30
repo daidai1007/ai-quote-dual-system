@@ -95,7 +95,7 @@ def freeze_contract_quote(window,snapshot):
     for item in items:
         rows=item.get('attachments') or [];cost=item['formula']
         eligible=[r for r in rows if not formula_attachment_excluded(r)]
-        base=money_sum([cost[k] for k in ('material_cost','auxiliary_cost','labor_cost','spray_cost','management_fee')]+[formula_attachment_line_amount(r) for r in eligible if not attachment_excluded_from_discount(r)])
+        base=money_sum([cost[k] for k in ('material_cost','auxiliary_cost','labor_cost','spray_cost','management_fee')]+[cost.get('manufacturing_cost') or 0, cost.get('tax_cost') or 0]+[formula_attachment_line_amount(r) for r in eligible if not attachment_excluded_from_discount(r)])
         unit=money_sum([money_product(base,float(item.get('formula_discount') or 1)),*[formula_attachment_line_amount(r) for r in eligible if attachment_excluded_from_discount(r)],max(0,float(item.get('freight_fee',item.get('freight',0)) or 0))])
         item['quote_display'].update(formula_unit_price=unit,formula_total=money_product(unit,item['quote_display']['quantity']))
         # Freeze the existing cost-page values now; recipient viewing must not
@@ -106,7 +106,8 @@ def freeze_contract_quote(window,snapshot):
             **{
             heading:(scheme2_ui._money(values[scheme2_ui.COST_DISPLAY_ORDER[column]])
                      if column in scheme2_ui.MONEY_COLUMNS else str(values[scheme2_ui.COST_DISPLAY_ORDER[column]]))
-            for column,heading in enumerate(scheme2_ui.HEADERS)}},
+            for column,heading in enumerate(scheme2_ui.HEADERS)
+            if (heading!='制造成本' or scheme2_ui.has_manufacturing_cost(item)) and (heading!='税费' or scheme2_ui.has_tax_cost(item))}},
             'price_breakdown':scheme2_ui._cost_price_components(item)}
     snapshot['contract_quote_snapshot']={'schema':1,'items':items}
     return snapshot

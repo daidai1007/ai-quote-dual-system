@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QSi
 
 from attachment_v2_client import confirmation_payload, attachment_snapshot_needs_refresh
 from progress_style import PROGRESS_COLORS
+from standalone_attachment import is_standalone, ready as standalone_ready
 
 LOGGER = logging.getLogger("ai_quote.client")
 UPDATE_INTERVAL_MS = 100
@@ -169,7 +170,8 @@ class QuoteDocumentProgress:
             sync_doors()
         self.disabled_controls = [(control, control.isEnabled()) for control in (
             self.window.summary_table, self.window.scheme2_quote_preview, self.window.scheme2_cost_sidebar,
-            *self.window.scheme2_cost_action_buttons[:-2])]
+            *self.window.scheme2_cost_action_buttons[:-2],
+            *([self.window.scheme2_cost_add_independent] if getattr(self.window, 'scheme2_cost_add_independent', None) is not None else []))]
         for control, _enabled in self.disabled_controls:
             control.setEnabled(False)
         host, bar, locate = self.widgets[kind]
@@ -312,16 +314,23 @@ class QuoteDocumentProgress:
         visible_bar.setVisible(self.state == 'busy')
 
     def sync_buttons(self):
-        self.window.scheme2_cost_generate.setEnabled(not self.busy and bool(self.window.draft_items))
+        complete = all((not is_standalone(item) or standalone_ready(item)) and not (item.get('formula') or {}).get('tax_cost_error') for item in self.window.draft_items)
+        self.window.scheme2_cost_generate.setEnabled(not self.busy and bool(self.window.draft_items) and complete)
         self.window.scheme2_quote_print.setEnabled(not self.busy and bool(self.window.draft_items)
             and not getattr(self.window, '_quote_scheme_export_context', None))
         self.window.scheme2_quote_export.setEnabled(not self.busy and bool(self.window.draft_items))
+        if not complete:
+            self.window.scheme2_quote_print.setEnabled(False)
+            self.window.scheme2_quote_export.setEnabled(False)
         if getattr(self.window,'_name_scope_foreign',False):
             self.window.scheme2_quote_print.setEnabled(False);self.window.scheme2_quote_export.setEnabled(False)
         from quote_order_nature import current
         if current(self.window) == 'UNCLASSIFIED':
             self.window.scheme2_quote_print.setEnabled(False)
             self.window.scheme2_quote_export.setEnabled(bool(getattr(self.window, '_quote_scheme_pending_export', None)) and not self.busy)
+        if any((item.get('formula') or {}).get('tax_cost_error') for item in self.window.draft_items):
+            self.window.scheme2_quote_print.setEnabled(False)
+            self.window.scheme2_quote_export.setEnabled(False)
         self.window.scheme2_cost_generate.setText("生成中…" if self.busy and self.kind == "generate" else
                                                 "重试生成" if self.reason and self.kind == "generate" else "生成报价单")
         self.window.scheme2_quote_export.setText("登记中…" if self.busy and self.file_exported else

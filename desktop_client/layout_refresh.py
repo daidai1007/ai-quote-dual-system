@@ -178,6 +178,7 @@ from quick_discount_rules import (
     quick_attachment_line_amount,
     quick_discount_breakdown,
     quick_order_line_breakdown,
+    quick_freight_fee,
 )
 from attachment_category_browser import (
     attachment_names_manual_only,
@@ -8277,7 +8278,7 @@ def install_layout_refresh(namespace: dict) -> None:
                 item.get("quick", {}), item.get("attachments", []),
                 item.get("quick_discount", 1), quantity,
                 ganged_split_count(item),
-                item.get("freight_fee", item.get("freight", 0)),
+                quick_freight_fee(item),
             )
             formula_sum += formula_line["line_total"]
             quick_sum += quick_line["line_total"]

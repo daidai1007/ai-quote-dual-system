@@ -15,6 +15,22 @@ PRICING_BASIS = "per_unit_set_v1"
 MANAGEMENT_FEE_RATE = 0.06
 MANAGEMENT_FEE_BASIS = "pre_management_cost_with_freight_v1"
 MANAGEMENT_COST_KEYS = ("material_cost", "auxiliary_cost", "labor_cost", "attachment_fee", "spray_cost")
+MANUFACTURING_COST_BASIS = 'quoted_unit_4pct_v1'
+QUICK_FREIGHT_BASIS = 'separate_unit_freight_v1'
+
+
+def quick_freight_fee(item):
+    """Quick quote overrides never write the cost freight ledger."""
+    if item.get('quick_freight_basis') == QUICK_FREIGHT_BASIS:
+        mode = item.get('quick_freight_mode', 'FOLLOW_COST')
+        if mode not in ('FOLLOW_COST', 'MANUAL'):
+            raise ValueError('快速报价运费模式无效')
+        if mode == 'MANUAL':
+            raw = item.get('quick_freight_fee')
+            if isinstance(raw, bool) or raw in (None, '') or not math.isfinite(float(raw)) or float(raw) < 0:
+                raise ValueError('快速报价运费必须为有效的非负金额')
+            return money(raw)
+    return money(max(0, float(item.get('freight_fee', item.get('freight', 0)) or 0)))
 
 
 def missing_management_costs(quote):
@@ -45,7 +61,7 @@ def money_product(*values):
 
 
 def apply_management_fee(quote, freight_fee=0):
-    """Six percent of current pre-management costs plus per-cabinet freight.
+    """Current marked rows use 5% of quote; legacy rows retain the old 6% base.
 
     total_cost continues to exclude freight itself, avoiding a second addition
     by the existing quotation/quantity rules. Old fees/totals are not inputs.
@@ -64,7 +80,20 @@ def apply_management_fee(quote, freight_fee=0):
     freight = max(0, float(freight_fee)) if finite(freight_fee) else 0
     result["management_fee_base"] = money_sum((base, freight))
     result["management_fee"] = money_product(result["management_fee_base"], MANAGEMENT_FEE_RATE)
-    result["total_cost"] = money_sum((base, result["management_fee"]))
+    manufacturing = 0
+    if quote.get('manufacturing_cost_basis') == MANUFACTURING_COST_BASIS:
+        if quote.get('manufacturing_in_management') is not False:
+            raise ValueError('制造成本不计入管理费基数')
+        if not finite(quote.get('manufacturing_cost')) or float(quote['manufacturing_cost']) < 0:
+            raise ValueError('制造成本无效，请重新计算')
+        manufacturing = money(quote['manufacturing_cost'])
+        quoted = quote.get('manufacturing_quote_unit_price')
+        if not finite(quoted) or float(quoted) < 0:
+            raise ValueError('管理费需要有效的本行报价')
+        result.update(management_fee_rate=.05,management_fee_basis='quoted_unit_5pct_v1',
+                      management_fee_base=money(quoted),management_fee=money_product(quoted,.05))
+    tax = quote.get('tax_cost') if quote.get('tax_cost_basis') == 'quoted_less_display_costs_15pct_v1' else 0
+    result["total_cost"] = money_sum((base, manufacturing, result["management_fee"], tax)) if finite(tax) else None
     return result
 
 

@@ -745,7 +745,11 @@ const confirmQuoteSql = (input) => {
     order_nature: input.order_nature,
     items: normalizedItems,
   };
-  const historyRows = normalizedItems.map((item, index) => {
+  // The cabinet suggestion history requires three cabinet axes. Independent
+  // attachments stay in the complete quote_document snapshot, without invented
+  // dimensions or a database migration to the cabinet-only history table.
+  const historyRows = normalizedItems.flatMap((item, index) => {
+    if(item.item_type==='standalone_attachment')return [];
     for (const field of ['material_code']) {
       if (!item[field]) throw new Error(`items[${index}].${field} is required`);
     }
@@ -788,7 +792,7 @@ WITH c AS (
          'CONFIRMED', ${sqlUnicodeText(JSON.stringify(snapshot))}::jsonb
   FROM c
   RETURNING quote_id
-), hist AS (
+), hist AS (${historyRows ? `
   INSERT INTO calc.company_quote_history
     (company_id, quote_id, product_code, model_code, material_code,
      coating_type, variant_code, width_mm, height_mm, depth_mm, request_payload)
@@ -797,7 +801,7 @@ WITH c AS (
     coating_type, variant_code, width_mm, height_mm, depth_mm, request_payload
   )
   JOIN c ON TRUE
-  RETURNING history_id
+  RETURNING history_id` : 'SELECT NULL::bigint AS history_id WHERE FALSE'}
 ), scoped AS (
   INSERT INTO calc.quote_name_owner(resource_kind,resource_key,owner_user_id,confirmed_by_name,mapping_source)
   SELECT 'COMPANY_HISTORY',history_id::text,${q(currentQuotePrincipal()?.userId)},${q(currentQuotePrincipal()?.displayName)},'SESSION_CREATED' FROM hist RETURNING 1
@@ -1320,6 +1324,10 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
   if (req.method === 'GET' && req.url === '/api/attachments/catalog?v=2') {
     try { return json(res,200,await attachmentService.catalog()); }
     catch(error) { return json(res,409,{error:'attachment_v2_unavailable',message:error.message}); }
+  }
+  if (req.method === 'POST' && req.url === '/api/attachments/preview-standalone') {
+    try { return json(res,200,await attachmentService.previewStandalone(await readBody(req))); }
+    catch(error) { return json(res,400,{error:'standalone_attachment_preview_failed',message:error.message}); }
   }
   if (req.method === 'POST' && req.url === '/api/attachments/preview') {
     try {

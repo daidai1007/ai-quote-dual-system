@@ -59,6 +59,8 @@ class VersionComparison(unittest.TestCase):
         row=item('甲',100,999,2)
         row['quote_cost_display']=dict(schema=1,values={'成本总价':'120.00','毛利率':'40.00%'})
         self.assertEqual(line_metrics(row)['margin'],.4)
+        row['quote_cost_display']['values'].update(毛利率='50.00%',净利率='40.00%')
+        self.assertEqual(line_metrics(row)['margin'],.5)
         del row['quote_cost_display'];row['formula']={}
         self.assertIsNone(line_metrics(row)['margin'])
         self.assertIn('未记录',change_details(line_metrics(row),line_metrics(row)))
@@ -66,6 +68,50 @@ class VersionComparison(unittest.TestCase):
         self.assertEqual(line_metrics(row)['margin'],1)
         row['quote_display'].update(unit_price=0,total=0)
         self.assertIsNone(line_metrics(row)['margin'])
+
+    def test_new_gross_snapshot_summary_uses_production_cost_without_changing_full_cost(self):
+        rows=[item('甲',100,60),item('乙',900,800)]
+        for row,production,manufacturing,gross,net,cost in zip(rows,[50,720],[4,36],['46.00%','16.00%'],['40.00%','11.11%'],[60,800]):
+            row['quote_cost_display']={'schema':1,'values':{'材料成本':str(production),'辅材成本':'0','人工成本':'0',
+                '附件成本':'0','喷涂费用':'0','制造成本':str(manufacturing),'毛利率':gross,'净利率':net,'成本总价':str(cost)}}
+        summary=comparison_groups([dict(version=1,items=rows)])[0]['rows'][-1]['right']
+        self.assertEqual(summary['margin'],.19)
+        self.assertEqual(summary['cost'],860)
+
+    def test_recorded_manufacturing_in_component_fallback_is_counted_once(self):
+        row=item('制造费快照',100,None,2)
+        row['formula']=dict(material_cost=50,auxiliary_cost=0,labor_cost=0,attachment_fee=0,spray_cost=0,
+            management_fee=5,manufacturing_cost=4,manufacturing_cost_basis='quoted_unit_4pct_v1')
+        self.assertEqual(line_metrics(row)['cost'],118)
+        self.assertAlmostEqual(line_metrics(row)['margin'],.41)
+
+    def test_new_gross_basis_deducts_saved_cost_freight_and_preserves_old_basis(self):
+        row=item('运费毛利',1000,735,2);row['freight_fee']=100
+        row['gross_margin_basis']='production_plus_cost_freight_v1'
+        row['quote_cost_display']={'schema':1,'values':{'材料成本':'600','辅材成本':'0','人工成本':'0',
+            '附件成本':'0','喷涂费用':'0','制造成本':'40','运费':'100','毛利率':'26.00%','净利率':'16.50%','成本总价':'1670'}}
+        before=deepcopy(row);metrics=line_metrics(row)
+        self.assertEqual(metrics['margin'],.26);self.assertEqual(metrics['margin_cost'],1480)
+        self.assertEqual(metrics['cost'],1670);self.assertEqual(row,before)
+        old=deepcopy(row);old.pop('gross_margin_basis');old['quote_cost_display']['values']['毛利率']='36.00%'
+        self.assertEqual(line_metrics(old)['margin'],.36)
+        row['quote_display']['total']=0
+        self.assertIsNone(line_metrics(row)['margin'])
+
+    def test_new_basis_before_cost_display_freezes_uses_production_and_cost_freight(self):
+        row=item('运费毛利',1000,735,2);row.update(gross_margin_basis='production_plus_cost_freight_v1',freight_fee=100)
+        row['formula'].update(material_cost=600,auxiliary_cost=0,labor_cost=0,attachment_fee=0,spray_cost=0,
+            manufacturing_cost=40,manufacturing_cost_basis='quoted_unit_4pct_v1',management_fee=50,tax_cost=45)
+        self.assertEqual(line_metrics(row)['margin'],.26)
+        row['formula'].pop('material_cost');self.assertIsNone(line_metrics(row)['margin'])
+
+    def test_display_basis_change_does_not_invent_a_price_adjustment(self):
+        from quote_management_model import same_document
+        old={'items':[item('原报价',1000,735,2)],'company':'客户','order_nature':'EXTERNAL'}
+        current=deepcopy(old);current['items'][0]['gross_margin_basis']='production_plus_cost_freight_v1'
+        self.assertTrue(same_document(old,current))
+        current['items'][0]['freight_fee']=100
+        self.assertFalse(same_document(old,current),'an actual cost freight edit remains a business change')
 
     def test_cost_only_changes_and_reordered_identical_copies(self):
         a,b=item('甲',100,60,1,'same'),item('甲',200,120,1,'same')

@@ -60,6 +60,9 @@ class QuoteUnitRounding(unittest.TestCase):
                 item = quote_item(sample)
                 before = deepcopy(item)
                 window = SimpleNamespace(
+                    # These are recorded legacy costs; an editable new quote
+                    # intentionally opts into manufacture4/management5.
+                    _quote_scheme_read_only=True,
                     draft_items=[item], summary_table=QTableWidget(0, len(scheme2_ui.HEADERS)),
                     scheme2_quote_preview=QTableWidget(0, 8),
                     scheme2_company=SimpleNamespace(currentText=lambda: "测试公司"),

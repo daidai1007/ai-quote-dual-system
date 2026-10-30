@@ -29,7 +29,8 @@ def test_margin_and_billable_weight_columns():
     assert scheme2_ui.HEADERS[21:24] == ("毛利率", "自制件重量", "成本明细")
     # 550 base cost + 6% management = 583 per cabinet; quantity is two.
     assert values[16] == 1600 and values[18] == 1166
-    assert values[19] == "27.12%" and values[20] == "42.50" and values[21] == "明细 ›"
+    assert values[19] == "31.25%" and values[26] == "27.12%"
+    assert values[20] == "42.50" and values[21] == "明细 ›"
 
 
 def test_discount_coefficient_is_directly_editable_like_freight():

@@ -839,6 +839,9 @@ def _apply_opened_scheme(window, result, route=3, after_open=None):
                                       else result.get('can_write') is False)
         document = snapshot.get("document") if isinstance(snapshot.get("document"), dict) else {}
         window._quote_scheme_quote_date = str(document.get("quote_date") or str(result.get("created_at") or "")[:10] or date.today().isoformat())
+        # Restoration refreshes cost rows. Apply the canonical permission
+        # first, so opening a saved formal quote cannot opt it into new fees.
+        _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "CONTRACT", "ARCHIVED", "VOID") or window._name_scope_foreign)
         _apply_order_workspace_payload(window, snapshot, f"已从服务器恢复：{window._quote_scheme_id}")
         manager = getattr(window, 'quote_management', None)
         if manager is not None:

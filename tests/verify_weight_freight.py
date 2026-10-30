@@ -70,7 +70,7 @@ class WeightFreight(unittest.TestCase):
 
     def test_default_uses_cabinet_and_attachment_weights_then_order_quantity_once(self):
         self.assert_equal_weight_freight(47.5)
-        self.assertEqual(ui._row_values(self.item)[9],8.85)
+        self.assertEqual(ui._row_values(self.item)[9],12.38)  # Quote 247.50 * 5%, rounded per unit.
         column=ui.HEADERS.index('数量')
         self.w.summary_table.item(0,column).setText('3')
         self.assert_equal_weight_freight(47.5)

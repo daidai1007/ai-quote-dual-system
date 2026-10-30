@@ -112,6 +112,10 @@ class SchemeRestoreResponsiveness(unittest.TestCase):
                     self.assertEqual(w.scheme2_company.currentText(), '历史买方公司')
                     self.assertEqual(len(w.draft_items), 3)
                     self.assertEqual([scheme2_ui._row_values(item) for item in w.draft_items], expected)
+                    for saved,current in zip(result['snapshot']['draft_items'],w.draft_items):
+                        self.assertEqual(current['formula'],saved['formula'])
+                        self.assertNotIn('manufacturing_cost_basis',current)
+                        self.assertNotIn('tax_cost_basis',current)
                     self.assertEqual(w.summary_table.editTriggers(), QAbstractItemView.EditTrigger.NoEditTriggers)
                     self.assertEqual(w.scheme2_quote_preview.editTriggers(), QAbstractItemView.EditTrigger.NoEditTriggers)
                     for route in (2, 3, 2, 3):

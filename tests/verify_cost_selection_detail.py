@@ -33,7 +33,7 @@ class SelectedDetail(unittest.TestCase):
         self.w.draft_items.append(second);self.w.refresh_summary()
         self.select(1)
         values = self.w.scheme2_cost_selection_values
-        for column in (7,24,9,10,11,12,13,14,15,16,17,18,19,20,21):
+        for column in (7,24,9,10,11,12,13,14,15,16,17,18,19,20,21,25,26,27,28):
             self.assertEqual(values[column].text(),self.w.summary_table.item(1,column).text())
         self.assertEqual(values[16].text(),'12.00')
         self.assertIn('公式成本附件',values[16].toolTip())
@@ -79,8 +79,8 @@ class SelectedDetail(unittest.TestCase):
                           if label.objectName() in ('scheme2CostSelectionQuickTitle','scheme2CostSelectionFormulaTitle')],
                          ['快速报价','成本报价'])
         captions=lambda group:[tile.findChild(QLabel,'scheme2CostSelectionMetricLabel').text() for tile in group[2]]
-        self.assertEqual(captions(groups[0]),['尺寸','数量','已选附件','附件面价','固定报价','折扣面价','折扣系数','报价','报价总价'])
-        self.assertEqual(captions(groups[1]),['成本单价','材料差价','材料成本','辅材成本','人工成本','附件成本','喷涂费用','管理费用','运费','成本总价','毛利率','自制件重量'])
+        self.assertEqual(captions(groups[0]),['尺寸','数量','已选附件','附件面价','固定报价','折扣面价','折扣系数','报价','运费','报价总价'])
+        self.assertEqual(captions(groups[1]),['成本单价','材料差价','材料成本','辅材成本','制造成本','人工成本','附件成本','喷涂费用','管理费用','税费','运费','成本总价','毛利率','净利率','自制件重量'])
         OUT.mkdir(parents=True,exist_ok=True)
         for width,height in ((1560,960),(1280,800),(1024,700),(840,620)):
             self.w.resize(width,height)

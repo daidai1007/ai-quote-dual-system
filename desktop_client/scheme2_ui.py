@@ -29,9 +29,15 @@ import zipfile
 from decimal import Decimal
 from progress_style import progress_color_style
 from freight_state import self_made_weight, sync_item_freight, AUTO_FREIGHT_BASIS
+from manufacturing_cost import manufacturing_cost_snapshot, has_manufacturing_cost, MANUFACTURING_BASIS
+from tax_cost import with_tax_cost, has_tax_cost, TAX_COST_BASIS, TaxCostError
+from profit_metrics import production_total, rate as profit_rate, percentage as profit_percentage, GROSS_TOOLTIP, NET_TOOLTIP, GROSS_MARGIN_BASIS
+from standalone_attachment import is_standalone, ready as standalone_ready, update_item as update_standalone_item
 from attachment_cost_allocation import with_cost_allocation,merge_attachment_details
 from cost_detail_export import write_cost_detail_xlsx
 from quote_request_context import check_quote_response, quote_request_is_current, retire_quote_request, settle_quote_request
+from recognition_dimensions import (dimension_review_hint, parse_dimension_specification,
+                                    reconcile_recognition_dimensions)
 
 LOGGER = logging.getLogger("ai_quote.client")
 ADD_PROGRESS_COMPACT_THRESHOLD = 650
@@ -91,7 +97,7 @@ from layout_refresh import (_fit_window_minimum_to_screen, _retire_quote_action_
                             _ensure_quote_action_dock_host)
 from wheel_edit_guard import install_wheel_edit_guard
 from dropdown_style import ComboPopupDelegate as _SchemeComboItemDelegate
-from quick_discount_rules import missing_management_costs
+from quick_discount_rules import missing_management_costs, quick_freight_fee, QUICK_FREIGHT_BASIS
 try:
     from quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product, apply_management_fee,
                                      quick_attachment_line_amount, quick_discount_breakdown)
@@ -164,13 +170,17 @@ HEADERS = (
     "序号", "名称", "产品", "尺寸", "数量", "已选附件", "附件面价", "固定报价", "材料差价", "折扣系数",
     "报价", "报价总价", "成本单价", "材料成本", "辅材成本", "人工成本",
     "附件成本", "喷涂费用", "管理费用", "运费", "成本总价",
-    "毛利率", "自制件重量", "成本明细", "折扣面价",
+    "毛利率", "自制件重量", "成本明细", "折扣面价", "净利率", "制造成本", "报价运费", "税费",
 )
-COST_DISPLAY_ORDER = (0, 1, 2, 3, 11, 12, 23, 24, 22, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21, 25)
-COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 100, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88, 100)
+COST_DISPLAY_ORDER = (0, 1, 2, 3, 11, 12, 23, 24, 22, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21, 25, 26, 27, 28, 29)
+COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 100, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88, 100, 92, 92, 92, 92)
 FIXED_QUOTE_COLUMN = 7
 DISCOUNTED_QUOTE_COLUMN = 24
-COST_VISUAL_ORDER = (0, 1, 2, 3, 4, 5, 6, 8, 7, 24, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
+NET_MARGIN_COLUMN = 25
+MANUFACTURING_COLUMN = 26
+QUICK_FREIGHT_COLUMN = 27
+TAX_COST_COLUMN = 28
+COST_VISUAL_ORDER = (0, 1, 2, 3, 4, 5, 6, 8, 7, 24, 9, 10, 27, 11, 12, 13, 14, 26, 15, 16, 17, 18, 28, 19, 20, 21, 25, 22, 23)
 COST_HEADER_GROUPS = (
     ("柜体信息", 0, 3), ("数量", 4, 4), ("附件", 5, 6), ("报价结果", 7, 11),
     ("成本数据", 12, 20), ("利润率", 21, 21), ("自制件重量", 22, 22), ("操作", 23, 23),
@@ -179,18 +189,18 @@ COST_COLUMN_BACKGROUNDS = (
     "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#F5F6F8", "#F5F6F8",
     "#FFF7E6", "#FFF7E6", "#FFF7E6", "#FFF7E6", "#FFF7E6",
     "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD", "#F0F6FD",
-    "#F5F0FA", "#ECF4F1", "#F5F6F8", "#FFF7E6",
+    "#F5F0FA", "#ECF4F1", "#F5F6F8", "#FFF7E6", "#F5F0FA", "#F0F6FD", "#FFF7E6", "#F0F6FD",
 )
-COST_SELECTION_QUICK_COLUMNS = (3, 4, 5, 6, 7, 24, 9, 10, 11)
-COST_SELECTION_FORMULA_COLUMNS = (12, 8, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)
+COST_SELECTION_QUICK_COLUMNS = (3, 4, 5, 6, 7, 24, 9, 10, 27, 11)
+COST_SELECTION_FORMULA_COLUMNS = (12, 8, 13, 14, 26, 15, 16, 17, 18, 28, 19, 20, 21, 25, 22)
 COST_SELECTION_DETAIL_COLUMNS = COST_SELECTION_QUICK_COLUMNS + COST_SELECTION_FORMULA_COLUMNS
 COST_SELECTION_METRICS = {
     'inset': 12, 'group_gap': 18, 'column_gap': 12, 'row_gap': 12,
     'label_gap': 4, 'heading_gap': 8, 'stack_width': 650, 'compact_width': 360,
 }
 DETAIL_COLUMN_WIDTHS = (72, 138, 125, 260, 78, 54, 80, 92, 70, 92, 150)
-MONEY_COLUMNS = frozenset((6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 24))
-EDITABLE_COLUMNS = frozenset((1, 4, 9, 19))
+MONEY_COLUMNS = frozenset((6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 24, 26, 27, 28))
+EDITABLE_COLUMNS = frozenset((1, 4, 9, 19, 27))
 MATERIAL_DIFFERENCE_COLUMN = 8
 ROLE_ROW = int(Qt.ItemDataRole.UserRole)
 ROLE_DERIVED_SPEC = ROLE_ROW + 1
@@ -247,7 +257,11 @@ class _GroupedCostHeader(QHeaderView):
         for title, first, last in COST_HEADER_GROUPS:
             sections = [section for section in range(first, last + 1) if not self.isSectionHidden(section)]
             if title == "报价结果":
-                sections.append(DISCOUNTED_QUOTE_COLUMN)
+                sections.extend((DISCOUNTED_QUOTE_COLUMN, QUICK_FREIGHT_COLUMN))
+            elif title == '利润率':
+                sections.append(NET_MARGIN_COLUMN)
+            elif title == '成本数据':
+                sections.extend((MANUFACTURING_COLUMN, TAX_COST_COLUMN))
             if not sections:
                 continue
             left = min(self.sectionViewportPosition(section) for section in sections)
@@ -395,6 +409,8 @@ class _Scheme2PageRecognitionWorker(QThread):
                 item = self.recognition_tools.recognize_document(recognition_path)
             if not isinstance(item, dict):
                 raise ValueError("图纸识别未返回有效结果")
+            if item.get("error"):
+                raise ValueError(str(item.get("message") or item["error"]))
             self._apply_source_context(item, entry)
             self.succeeded.emit(entry["key"], item)
         except Exception as error:
@@ -531,16 +547,38 @@ def _self_made_weight(item):
     return float(self_made_weight(item))
 
 
+def _formula_with_manufacturing(item, formula):
+    freight = max(0, _number(item.get('freight_fee', item.get('freight', 0))))
+    if not has_manufacturing_cost(item) or missing_management_costs(formula):
+        return apply_management_fee(formula, freight)
+    from quick_discount_rules import quick_order_line_breakdown
+    attachments = [row for row in item.get('attachments', []) if isinstance(row, dict)]
+    quick, _ = _quote_with_popup_attachment_fee(_quick(item), attachments, _popup_quick_amount)
+    line = quick_order_line_breakdown(quick, attachments, _number(item.get('quick_discount', 1), 1),
+        max(1, int(_number(item.get('quantity', 1), 1))), _number(item.get('ganged_cabinet_count', 1), 1),
+        quick_freight_fee(item), _material_difference_amount(item))
+    result = manufacturing_cost_snapshot(formula, line['equivalent_unit_total'], freight)
+    if has_tax_cost(item):
+        try:
+            result = with_tax_cost(result, attachments, line['equivalent_unit_total'], freight)
+        except TaxCostError as error:
+            result.update(tax_cost=None, tax_cost_basis=TAX_COST_BASIS, tax_cost_error=str(error), tax_cost_error_code=error.code, total_cost=None)
+    return result
+
+
 def _recalculate_item_management(item):
     formula, _ = _quote_with_popup_attachment_fee(
         _formula(item), [row for row in item.get("attachments", []) if isinstance(row, dict)],
         _popup_formula_amount,
     )
-    updated = with_cost_allocation(apply_management_fee(formula, max(0, _number(item.get("freight_fee", item.get("freight", 0))))),
+    updated = with_cost_allocation(_formula_with_manufacturing(item, formula),
         item.get('attachments') or [])
     if updated != _formula(item):
         current = _formula(item)
         current.update(updated)
+        for key in ('tax_cost_error', 'tax_cost_error_code'):
+            if key not in updated:
+                current.pop(key, None)
         item["formula"] = current
         item.pop("cost_detail_rows", None)
     return updated
@@ -551,7 +589,7 @@ def _cost_price_components(item):
     attachments = [row for row in item.get('attachments', []) if isinstance(row, dict)]
     quick, _ = _quote_with_popup_attachment_fee(_quick(item), attachments, _popup_quick_amount)
     return quick_price_components(quick, attachments, _number(item.get('quick_discount', 1), 1),
-        max(0.0, _number(item.get('freight_fee', item.get('freight', 0)))), _material_difference_amount(item))
+        quick_freight_fee(item), _material_difference_amount(item))
 
 
 class QuickPriceBreakdownDialog(QDialog):
@@ -609,6 +647,21 @@ def _show_quick_price_breakdown(window, item, column, *, components=None):
     QuickPriceBreakdownDialog(window, HEADERS[column], components, bucket).exec()
 
 
+def _item_production_total(item):
+    formula = dict(_formula(item))
+    formula['attachment_fee'] = money_sum(_popup_formula_amount(row) for row in item.get('attachments', []) if isinstance(row, dict))
+    return production_total(_formula_with_manufacturing(item, formula), max(1, int(_number(item.get('quantity', 1), 1))))
+
+
+def _item_gross_cost_total(item):
+    production = _item_production_total(item)
+    if production is None or item.get('gross_margin_basis') != GROSS_MARGIN_BASIS:
+        return production
+    freight = max(0, _number(item.get('freight_fee', item.get('freight', 0))))
+    quantity = max(1, int(_number(item.get('quantity', 1), 1)))
+    return money_sum((production, money_product(freight, quantity)))
+
+
 def _row_values(item):
     formula = _formula(item)
     attachments = [row for row in item.get("attachments", []) if isinstance(row, dict)]
@@ -620,11 +673,12 @@ def _row_values(item):
     formula["attachment_fee"] = formula_current_fee
     quantity = max(1, int(_number(item.get("quantity", 1), 1)))
     freight = max(0.0, _number(item.get("freight_fee", item.get("freight", 0))))
-    formula = apply_management_fee(formula, freight)
+    formula = _formula_with_manufacturing(item, formula)
     formula_unit = money_sum((_number(formula.get("total_cost")), freight))
     discount = _number(item.get("quick_discount", 1), 1)
     material_difference = _material_difference_amount(item)
-    face_base = money_sum((_number(quick.get("total_cost")), freight, material_difference))
+    quick_freight = quick_freight_fee(item)
+    face_base = money_sum((_number(quick.get("total_cost")), quick_freight, material_difference))
     # The old Scheme2 summary applied the discount to the whole quick total:
     # ``(cabinet + attachments + freight) * discount``.  That bypassed the
     # shared selective-discount rules and incorrectly discounted items such
@@ -644,15 +698,16 @@ def _row_values(item):
         discount,
         quantity,
         ganged_count,
-        freight,
+        quick_freight,
         material_difference,
     )
     quote = quick_line["equivalent_unit_total"]
     quote_total = quick_line["line_total"]
     from cost_price_breakdown import quick_price_components
-    components = quick_price_components(quick, attachments, discount, freight, material_difference)
+    components = quick_price_components(quick, attachments, discount, quick_freight, material_difference)
     cost_total = money_product(formula_unit, quantity)
-    gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0
+    gross_margin = profit_rate(quote_total, _item_gross_cost_total(item))
+    net_margin = profit_rate(quote_total, cost_total) if formula.get('total_cost') is not None else None
     billable_weight = _self_made_weight(item)
     specification = str(item.get("specification") or item.get("model_code") or "—")
     name = str(item.get("name") or item.get("model_code") or "未命名")
@@ -669,10 +724,14 @@ def _row_values(item):
         _number(formula.get("management_fee")),
         freight, quantity, f"{len(attachments)} 项 ›", face_base, discount,
         quote, quote_total, formula_unit, cost_total,
-        f"{gross_margin:.2%}", _money(billable_weight), "明细 ›",
+        profit_percentage(gross_margin), _money(billable_weight), "明细 ›",
         material_difference,
         money_sum(_popup_quick_amount(row) for row in attachments),
         components['fixed']['total'], components['discounted']['total'],
+        profit_percentage(net_margin),
+        formula.get('manufacturing_cost') if has_manufacturing_cost(item) else None,
+        quick_freight,
+        formula.get("tax_cost") if has_tax_cost(item) else None,
     )
 
 
@@ -1245,6 +1304,8 @@ class AttachmentEditor(QDialog):
             self.edit_missing_dimensions(self.table.currentRow(), self.COL_SPECIFICATION, force=True)
 
     def _show_table_menu(self, position):
+        if is_standalone(self.item):
+            return  # Independent entries are added/deleted in the cost table.
         if getattr(self, "_pending_reprices", {}):
             return
         menu = QMenu(self)
@@ -1262,7 +1323,7 @@ class AttachmentEditor(QDialog):
             "custom": True, "item_name": "自定义附件", "category_level1": "其他附件", "quantity": 1}
         from attachment_v2_client import is_base_attachment, default_base_attachment, discard_automatic_amount_override, quote_item_base_height
         source = discard_automatic_amount_override(source)
-        if is_base_attachment(source):
+        if is_base_attachment(source) and not is_standalone(self.item):
             source = default_base_attachment(source, quote_item_base_height(self.item, source))
         row = self.table.rowCount()
         self.table.insertRow(row)
@@ -1270,6 +1331,8 @@ class AttachmentEditor(QDialog):
         name, spec, is_light_switch = _attachment_popup_text(source)
         self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
         specification_item = QTableWidgetItem(spec)
+        if is_standalone(self.item):
+            specification_item.setFlags(specification_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         specification_item.setData(ROLE_DERIVED_SPEC, spec)
         if is_light_switch or (name in ATTACHMENT_MODEL_OPTIONS and not source.get("custom")):
             specification_item.setFlags(specification_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1287,6 +1350,9 @@ class AttachmentEditor(QDialog):
         quantity.setAlignment(Qt.AlignmentFlag.AlignCenter)
         total_quantity = _attachment_popup_quantity(source) * self.cabinet_quantity
         quantity.setValue(total_quantity)
+        if is_standalone(self.item):
+            quantity.setValue(1)
+            quantity.setReadOnly(True)
         quantity.setProperty("previousQuantity", quantity.value())
         quantity.setToolTip(
             "单台柜子／单套并柜所需附件数量；不随主表产品数量变化\n"
@@ -1304,6 +1370,10 @@ class AttachmentEditor(QDialog):
 
     def _begin_model_edit(self, row, column):
         if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
+            return
+        if is_standalone(self.item):
+            from standalone_attachment_ui import edit_parameters
+            edit_parameters(self, row)
             return
         source_item = self.table.item(row, self.COL_NAME)
         source = source_item.data(ROLE_ROW) if source_item is not None else None
@@ -1583,6 +1653,10 @@ class AttachmentEditor(QDialog):
     def edit_missing_dimensions(self, row, column, *, force=False):
         if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
             return
+        if is_standalone(self.item):
+            from standalone_attachment_ui import edit_parameters
+            edit_parameters(self, row)
+            return
         source_item = self.table.item(row, self.COL_NAME)
         source = dict(source_item.data(ROLE_ROW) or {}) if source_item is not None else {}
         missing = self._pending_dimensions(source)
@@ -1750,6 +1824,14 @@ class AttachmentEditor(QDialog):
                 data["selection_source"] = "QUOTE_LOCAL"
             rows.append(data)
         self.item["attachments"] = rows
+        if is_standalone(self.item):
+            if len(rows) != 1:
+                QMessageBox.warning(self, '独立附件', '每行仅保留一个独立附件，请在成本表新增其他附件。')
+                return
+            update_standalone_item(self.item, rows[0])
+            self.window.refresh_summary()
+            super().accept()
+            return
         _quote_item_remark(self.item, preserve_existing=_preserve_quote_remark(self.window))
         self.item.pop("cost_detail_rows", None)
         self.item.pop("quote_display", None)
@@ -1920,7 +2002,7 @@ def _attachment_summary_product_values(item, sequence, columns=None):
         attachments.append(amount)
     attachments = tuple(attachments)
     residual = fee - listed
-    freight = max(0.0, _number(values[10]))
+    freight = quick_freight_fee(item)
     # One cabinet/set, before discount; never derive it as the residual of
     # discounted attachment columns. The shared helper also recovers legacy
     # snapshots without base_price from total_cost minus the stored fee.
@@ -2828,7 +2910,7 @@ def _quote_unit_price_changed(window, row, column):
     except ModuleNotFoundError:  # Package import used by focused tests.
         from .quick_discount_rules import quick_order_line_breakdown
     quantity = max(1, int(_number(item.get("quantity", 1), 1)))
-    freight = max(0.0, _number(item.get("freight_fee", item.get("freight", 0))))
+    freight = quick_freight_fee(item)
     ganged_count = _number(item.get("ganged_cabinet_count"), 1)
     if ganged_count <= 1 and isinstance(item.get("ganged_cabinets"), list):
         ganged_count = max(1, len(item["ganged_cabinets"]))
@@ -2973,7 +3055,13 @@ def _quote_export_items_snapshot(window, items=None):
     exported = deepcopy(getattr(window, "draft_items", []) if items is None else items)
     from quote_order_nature import current as current_nature
     for number, item in enumerate(exported, 1):
+        if is_standalone(item) and not standalone_ready(item):
+            raise ValueError(f"第{number}行独立附件（{item.get('name') or '未命名'}）尚未完善规格及成本参数，请先编辑该行附件。")
         if not _quote_remark_readonly(window): sync_item_freight(item)
+        if not _quote_remark_readonly(window):
+            item['manufacturing_cost_basis'] = MANUFACTURING_BASIS
+            item['tax_cost_basis'] = TAX_COST_BASIS
+            item['gross_margin_basis'] = GROSS_MARGIN_BASIS
         item['quote_order_nature'] = current_nature(window)
         item["pricing_basis"] = PRICING_BASIS
         attachment_rows = [
@@ -2990,7 +3078,9 @@ def _quote_export_items_snapshot(window, items=None):
             _formula(item), attachment_rows, _popup_formula_amount,
         )
         item["quick"] = quick_snapshot
-        item["formula"] = apply_management_fee(formula_snapshot, _number(item.get("freight_fee", item.get("freight", 0))))
+        item["formula"] = _formula_with_manufacturing(item, formula_snapshot)
+        if item["formula"].get("tax_cost_error"):
+            raise ValueError(f"第{number}行：{item['formula']['tax_cost_error']}")
         legacy_costs=_quote_remark_readonly(window) and not item['formula'].get('cost_allocation')
         if legacy_costs:item['preserve_legacy_cost_classes']=True
         else:item.pop('preserve_legacy_cost_classes',None)
@@ -3009,7 +3099,7 @@ def _quote_export_items_snapshot(window, items=None):
             "name": str(values[1]),
             "specification": str(values[3]),
             "quantity": _number(values[11], 1),
-            "unit": "台",
+            "unit": item.get('unit', '件') if is_standalone(item) else "台",
             "unit_price": _number(values[15]),
             "discount": _number(values[14], 1),
             "total": _number(values[16]),
@@ -3121,7 +3211,7 @@ def _refresh_quote_page(window, document=None):
                 values = _row_values(item) if document is None else None
                 amount = _number(values[16]) if values is not None else item['total']; total += amount
                 remark = _quote_item_remark(item, preserve_existing=_preserve_quote_remark(window)) if document is None else item['remark']
-                data = ((index + 1, values[1], values[3], values[11], "台", _money(values[15]), _money(amount), remark)
+                data = ((index + 1, values[1], values[3], values[11], item.get('unit', '件') if is_standalone(item) else "台", _money(values[15]), _money(amount), remark)
                         if document is None else (index+1,item['name'],item['specification'],item['quantity'],item['unit'],_money(item['unit_price']),_money(amount),remark))
                 for column, value in enumerate(data):
                     preview.item(row, column).setText(str(value))
@@ -3228,6 +3318,13 @@ def _build_quote_page(window):
     return page
 
 
+def _tax_detail_row(formula):
+    return dict(category='tax_cost', type='税费', name='税费', spec='本行单台／单套',
+                formula=f"({_money(formula.get('tax_cost_base'))}) × 0.15 = {_money(formula.get('tax_cost'))} 元",
+                quantity=1, unit='项', unit_price=formula['tax_cost'], base_amount=formula['tax_cost'], factor=1,
+                note='报价－材料－辅材－附件－成本运费－喷涂；计入成本及净利率，不扣毛利率', derived_cost=True, _scheme2_version=3)
+
+
 def _detail_rows(item, *, preserve_existing=False):
     if not preserve_existing:_recalculate_item_management(item)
     allocation=(_formula(item).get('cost_allocation') or {})
@@ -3255,7 +3352,7 @@ def _detail_rows(item, *, preserve_existing=False):
             for child_row in _detail_rows(child_item):
                 # Attachments are priced once for the complete ganged cabinet,
                 # never once per split child cabinet.
-                if child_row.get("category") in ("attachment_fee", "management_fee"):
+                if child_row.get("category") in ("attachment_fee", "management_fee", "tax_cost"):
                     continue
                 row = deepcopy(child_row)
                 row["type"] = f"柜体{cabinet_index}\n{row.get('type', '')}"
@@ -3270,6 +3367,11 @@ def _detail_rows(item, *, preserve_existing=False):
                 row["_scheme2_version"] = 3
                 rows.append(row)
 
+        if has_manufacturing_cost(item):
+            amount=_number(formula.get('manufacturing_cost'))
+            add_row(category='manufacturing_cost',type='制造成本',name='整套并柜制造成本',spec='本行单套报价×4%',
+                    formula=f"{_money(formula.get('manufacturing_quote_unit_price'))} × 0.04 = {_money(amount)} 元",
+                    quantity=1,unit='套',unit_price=amount,base_amount=amount,note='不计入管理费基数',derived_cost=True)
         attachment = _number(formula.get("attachment_fee"))
         if attachment:
             add_row(
@@ -3280,11 +3382,15 @@ def _detail_rows(item, *, preserve_existing=False):
             )
         management = _number(formula.get("management_fee"))
         base = _number(formula.get("management_fee_base"))
+        rate=.05 if has_manufacturing_cost(item) else .06
         add_row(category="management_fee", type="管理费用", name="整套并柜管理费用",
-                spec="整套材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
-                formula=f"{_money(base)} × 0.06 = {_money(management)} 元",
+                spec="本行单套报价的5%" if has_manufacturing_cost(item) else "整套材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
+                formula=f"{_money(base)} × {rate:g} = {_money(management)} 元",
+                derived_cost=has_manufacturing_cost(item),
                 quantity=1, unit="项", unit_price=management, base_amount=management,
                 note="按整套成本计费一次；不重复汇总子柜管理费")
+        if has_tax_cost(item) and formula.get("tax_cost") is not None:
+            rows.append(_tax_detail_row(formula))
         if allocation:
             rows=merge_attachment_details(rows,allocation)
         item["cost_detail_rows"] = rows
@@ -3373,27 +3479,36 @@ def _detail_rows(item, *, preserve_existing=False):
                 formula="现有报价结果", quantity=1, unit="项", unit_price=amount,
                 base_amount=amount, note="")
 
+    if has_manufacturing_cost(item):
+        amount=_number(formula.get('manufacturing_cost'))
+        add_row(category='manufacturing_cost',type='制造成本',name='制造成本',spec='本行单台／单套报价×4%',
+                formula=f"{_money(formula.get('manufacturing_quote_unit_price'))} × 0.04 = {_money(amount)} 元",
+                quantity=1,unit=item.get('unit') or '台',unit_price=amount,base_amount=amount,
+                note='计入生产成本，不计入管理费基数',derived_cost=True)
     management = _number(formula.get("management_fee"))
     if management or formula.get("management_fee_rate") is not None:
-        rate = .06
+        rate = .05 if has_manufacturing_cost(item) else .06
         base = _number(formula.get("management_fee_base"))
         terms = [_number(formula.get(key)) for key in
                  ("material_cost", "auxiliary_cost", "labor_cost", "attachment_fee", "spray_cost")]
         terms.append(_number(item.get("freight_fee", item.get("freight", 0))))
         complete = all(formula.get(key) is not None for key in
                        ("material_cost", "auxiliary_cost", "labor_cost", "attachment_fee", "spray_cost"))
-        expression = f"({' + '.join(_money(value) for value in terms)})" if complete else _money(base)
+        expression = _money(base) if has_manufacturing_cost(item) else f"({' + '.join(_money(value) for value in terms)})" if complete else _money(base)
         add_row(
             category="management_fee", type="管理费用", name="管理费用",
-            spec="材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
+            derived_cost=has_manufacturing_cost(item),
+            spec="本行单台／单套报价的5%" if has_manufacturing_cost(item) else "材料＋辅材＋柜体人工＋附件＋喷涂＋运费的 6%",
             formula=f"{expression} × {rate:g} = {_money(management)} 元",
             quantity=1, unit="项", unit_price=management, base_amount=management,
-            note=f"计费基数 {_money(base)} 元；管理费本身不参与基数" + ("" if complete else "；成本分项缺失，须重新计算整柜"),
+            note=("与制造成本分别按报价计算，不互相叠加" if has_manufacturing_cost(item) else f"计费基数 {_money(base)} 元；管理费本身不参与基数") + ("" if complete else "；成本分项缺失，须重新计算整柜"),
         )
     else:
         add_row(category="management_fee", type="管理费用", name="管理费用", spec="报价快照汇总",
                 formula="现有报价结果", quantity=1, unit="项", unit_price=management,
                 base_amount=management, note="")
+    if has_tax_cost(item) and formula.get("tax_cost") is not None:
+        rows.append(_tax_detail_row(formula))
     if allocation:
         rows=merge_attachment_details(rows,allocation)
     item["cost_detail_rows"] = rows
@@ -3518,7 +3633,7 @@ def _build_detail_page(window):
         if isinstance(item, dict) and not _quote_remark_readonly(window):
             totals = {}
             for row in item.get("cost_detail_rows", []):
-                if row.get('attachment_cost_source'):continue
+                if row.get('attachment_cost_source') or row.get('derived_cost'):continue
                 key = row.get("category")
                 totals[key] = totals.get(key, 0.0) + _number(row.get("base_amount")) * _number(row.get("factor", 1), 1)
             for key, value in totals.items():
@@ -3572,11 +3687,11 @@ def _show_detail(window, item):
         )
         for column, value in enumerate(values):
             if column == 8:
-                if detail.get('attachment_cost_source') or _quote_remark_readonly(window):
+                if detail.get('attachment_cost_source') or detail.get('derived_cost') or (has_manufacturing_cost(item) and detail.get('category')=='management_fee') or _quote_remark_readonly(window):
                     cell=QTableWidgetItem(f'{factor:.4f}')
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    cell.setToolTip('已保存成本系数；附件成本请在附件设置中修改后重新计算。')
+                    cell.setToolTip(('税费按已确认公式的15%自动计算，不可修改系数。' if detail.get('category') == 'tax_cost' else '管理费用随报价按5%自动计算，不可修改系数。' if detail.get('category') == 'management_fee' else '制造成本随报价按4%自动计算，不可修改系数。') if detail.get('derived_cost') else '已保存成本系数；附件成本请在附件设置中修改后重新计算。')
                     table.setItem(row_index,column,cell)
                     continue
                 spin = _SchemePencilSpinBox(2)
@@ -4061,6 +4176,10 @@ def _apply_cost_control(window, key, value):
         key = MATERIAL_PRICE_KEYS.get(str(item.get("material_code") or "").upper(), key)
     old = _number(state.get(key), window.scheme2_defaults.get(key, value))
     state[key] = value
+    if is_standalone(item):
+        from standalone_attachment import refresh_costs
+        refresh_costs(window, item)
+        return
     formula = _formula(item)
     if key == "waste_factor":
         base = _number(item.setdefault("scheme2_cost_bases", {}).setdefault("material_cost", formula.get("material_cost")))
@@ -4114,6 +4233,12 @@ def _build_cost_page(window):
     header.addWidget(title)
     header.addStretch(1)
     edit_coefficients = QPushButton("修改系数")
+    add_independent = QPushButton('＋ 新增独立附件')
+    add_independent.setObjectName('scheme2PrimaryAction')
+    add_independent.setAccessibleName('新增独立附件')
+    from standalone_attachment_ui import open_picker
+    add_independent.clicked.connect(lambda: open_picker(window))
+    header.addWidget(add_independent)
     edit_coefficients.setObjectName("scheme2CostEditCoefficients")
     edit_coefficients.clicked.connect(lambda: _show_cost_coefficients(window))
     header.addWidget(edit_coefficients)
@@ -4135,7 +4260,7 @@ def _build_cost_page(window):
     table.setObjectName("summaryTable")
     table.setHorizontalHeader(_GroupedCostHeader(table))
     table.setItemDelegate(_CostCellDelegate(table))
-    table.setHorizontalHeaderLabels(HEADERS)
+    table.setHorizontalHeaderLabels(["运费" if col == QUICK_FREIGHT_COLUMN else title for col, title in enumerate(HEADERS)])
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     table.setAlternatingRowColors(True)
@@ -4203,7 +4328,7 @@ def _build_cost_page(window):
             tile_layout = QVBoxLayout(tile)
             tile_layout.setContentsMargins(0, 0, 0, 0)
             tile_layout.setSpacing(COST_SELECTION_METRICS['label_gap'])
-            caption = QLabel(HEADERS[column])
+            caption = QLabel("运费" if column == QUICK_FREIGHT_COLUMN else HEADERS[column])
             caption.setObjectName("scheme2CostSelectionMetricLabel")
             caption.setWordWrap(True)
             if column in (FIXED_QUOTE_COLUMN, DISCOUNTED_QUOTE_COLUMN):
@@ -4294,6 +4419,7 @@ def _build_cost_page(window):
     window.scheme2_cost_page = page
     window.scheme2_cost_sidebar = page.findChild(QFrame, "scheme2CostSidebar")
     window.scheme2_cost_edit_coefficients = edit_coefficients
+    window.scheme2_cost_add_independent = add_independent
     window.scheme2_cost_selection_detail = selection_detail
     window.scheme2_cost_selection_context = detail_context
     window.scheme2_cost_selection_values = detail_values
@@ -4462,6 +4588,9 @@ def _edit_selected(window):
     item = _selected_item(window)
     if item is None:
         return
+    if is_standalone(item):
+        AttachmentEditor(window, item).exec()
+        return
     window._scheme2_edit_item = item
     # Every edit is a new quotation; the old row remains untouched until the
     # new database-backed calculation succeeds and replaces that exact row.
@@ -4534,12 +4663,21 @@ def _cost_cell_changed(window, row, column):
         if not _update_quote_item_name(window, items[row], cell.text()):
             window.refresh_summary()
         return
+    if column == QUICK_FREIGHT_COLUMN and not cell.text().strip():
+        items[row].update(quick_freight_basis=QUICK_FREIGHT_BASIS, quick_freight_mode="FOLLOW_COST")
+        items[row].pop("quick_freight_fee", None)
+        items[row].pop("quote_display", None)
+        window.refresh_summary()
+        return
     value = _number(cell.text(), -1)
     if not math.isfinite(value) or value < 0:
         window.refresh_summary()
         return
     item = items[row]
-    if column == 19:
+    if column == QUICK_FREIGHT_COLUMN:
+        item.update(quick_freight_fee=money(value), quick_freight_mode="MANUAL", quick_freight_basis=QUICK_FREIGHT_BASIS)
+        item.pop("quote_display", None)
+    elif column == 19:
         item["freight_fee"] = money(value)
         item.update(freight_mode='MANUAL', freight_basis=AUTO_FREIGHT_BASIS)
     elif column == 4:
@@ -4570,7 +4708,8 @@ def _cost_cell_clicked(window, row, column):
     item = items[row]
     if column == 2:
         product = _cost_product(item)
-        targets = [candidate for candidate in items if _cost_product(candidate) == product]
+        targets = [candidate for candidate in items if _cost_product(candidate) == product
+                   and (not is_standalone(item) or (candidate.get('attachments') or [{}])[0].get('item_name') == (item.get('attachments') or [{}])[0].get('item_name'))]
         FaceDiscountEditor(window, item, targets).exec()
     elif column == 5:
         AttachmentEditor(window, item).exec()
@@ -4712,6 +4851,10 @@ def _received_cost_view(window):
 
 
 def _refresh_cost_table(window):
+    add_independent = getattr(window, 'scheme2_cost_add_independent', None)
+    if add_independent is not None:
+        add_independent.setEnabled(not (_received_cost_view(window) or getattr(window, '_quote_scheme_read_only', False)
+                                       or getattr(window, '_name_scope_foreign', False) or getattr(window, '_scheme2_document_busy', False)))
     if _received_cost_view(window):
         window.quote_management.delivery.render_cost(); return
     table = window.summary_table
@@ -4726,10 +4869,11 @@ def _refresh_cost_table(window):
             empty.setVisible(not items)
             empty.raise_()
         if generate is not None:
-            generate.setEnabled(bool(items))
+            generate.setEnabled(bool(items) and all(not is_standalone(item) or standalone_ready(item) for item in items))
         if not items:
             table.setRowCount(0)
             table.setColumnHidden(MATERIAL_DIFFERENCE_COLUMN, True)
+            window._scheme2_tax_error_signature = ()
             return
         table.setColumnHidden(
             MATERIAL_DIFFERENCE_COLUMN,
@@ -4737,10 +4881,16 @@ def _refresh_cost_table(window):
         )
         table.setRowCount(len(items) + 1)
         for row, item in enumerate(items):
+            if not _quote_remark_readonly(window):
+                item['manufacturing_cost_basis'] = MANUFACTURING_BASIS
+                item['tax_cost_basis'] = TAX_COST_BASIS
+                item['gross_margin_basis'] = GROSS_MARGIN_BASIS
             _repair_missing_material_prices(item, getattr(window, "scheme2_defaults", None))
             if not _quote_remark_readonly(window): sync_item_freight(item)
             if not _quote_remark_readonly(window):_recalculate_item_management(item)
             canonical = list(_row_values(item))
+            if is_standalone(item):
+                canonical[12] = ((item.get('attachments') or [{}])[0].get('item_name') or '附件') + ' · 编辑'
             canonical[0] = row + 1
             values = [canonical[index] for index in COST_DISPLAY_ORDER]
             for column, value in enumerate(values):
@@ -4749,6 +4899,24 @@ def _refresh_cost_table(window):
                 else:
                     text = _money(value) if column in MONEY_COLUMNS else str(value)
                 cell = QTableWidgetItem(text)
+                if column == MANUFACTURING_COLUMN and not has_manufacturing_cost(item):
+                    cell.setText('未记录')
+                elif column == MANUFACTURING_COLUMN and canonical[27] is None:
+                    cell.setText('—')
+                if column == TAX_COST_COLUMN:
+                    cell.setText("未记录" if not has_tax_cost(item) else "待核对" if _formula(item).get("tax_cost_error") else _money(canonical[29]) if canonical[29] is not None else "—")
+                    cell.setToolTip("税费＝（报价－材料成本－辅材成本－附件成本－成本运费－喷涂成本）×0.15；计入成本单价和净利率，毛利率不扣税费。")
+                if _formula(item).get("tax_cost_error") and column in (12, 20, NET_MARGIN_COLUMN):
+                    cell.setText("待核对" if column != NET_MARGIN_COLUMN else "—")
+                    cell.setToolTip(_formula(item)["tax_cost_error"])
+                if is_standalone(item) and not standalone_ready(item):
+                    if column in MONEY_COLUMNS or column in (21, 22, NET_MARGIN_COLUMN):
+                        cell.setText('—')
+                    if column == 3:
+                        cell.setText('待完善')
+                    if column == 5:
+                        cell.setText('完善规格 / 参数')
+                    cell.setToolTip(item.get('standalone_error') or '点击已选附件，完善该附件自身规格及成本参数')
                 allocation=(_formula(item).get('cost_allocation') or {})
                 if allocation and not allocation.get('complete') and column in (13,14,15,17):
                     cell.setText('待重算');cell.setToolTip('；'.join(allocation.get('errors') or []))
@@ -4766,23 +4934,35 @@ def _refresh_cost_table(window):
                 if column in MONEY_COLUMNS:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
-                if column == 21:
+                if column in (21, NET_MARGIN_COLUMN):
                     cell.setForeground(QColor("#D97706"))
+                    cell.setToolTip((GROSS_TOOLTIP if item.get('gross_margin_basis') == GROSS_MARGIN_BASIS else '历史记录沿用原毛利率口径，未按当前成本运费规则重算。') if column == 21 else NET_TOOLTIP)
                 if column == 19:
                     mode = '自动' if item.get('freight_mode') == 'AUTO' and item.get('freight_basis') == AUTO_FREIGHT_BASIS else '人工/已保存'
                     cell.setToolTip(f"当前运费：{mode}。默认每套自制件重量×1元/kg；双击可改人工金额，不参与折扣，总运费再乘订单数量。")
+                if column == QUICK_FREIGHT_COLUMN:
+                    mode = '人工' if item.get('quick_freight_mode') == 'MANUAL' else '跟随成本运费'
+                    cell.setToolTip(f'快速报价单台运费：{mode}。已包含在报价中，报价总价＝报价×数量；修改不回写成本运费。清空可恢复跟随成本运费。')
+                if column == MANUFACTURING_COLUMN:
+                    cell.setToolTip('单台／单套制造成本＝本行报价×4%；订购数量在制造成本总额中只乘一次。')
                 if column == 22:
                     cell.setToolTip("单台／单套重量（kg）=柜体含损耗计价重量＋JP横梁/纵梁/左右立柱辅材重量＋当前附件单件重量×附件自身数量；扣减安装板按减项统计。\nJP辅材按已确认公式含1.2系数，不重复乘损耗或台数；底部汇总再乘订单数量。无有效重量数据的附件不计入。")
                 table.setItem(row, column, cell)
         total_row = len(items)
         quantity_total = sum(max(1, int(_number(item.get("quantity", 1), 1))) for item in items)
+        complete = all(not is_standalone(item) or standalone_ready(item) for item in items)
         quote_total = money_sum(_row_values(item)[16] for item in items)
+        tax_errors = [(row + 1, item) for row, item in enumerate(items) if _formula(item).get("tax_cost_error")]
+        if generate is not None and tax_errors:
+            generate.setEnabled(False)
         cost_total = money_sum(_row_values(item)[18] for item in items)
         weight_total = sum(
             _self_made_weight(item) * max(1, int(_number(item.get("quantity", 1), 1)))
             for item in items
         )
-        gross_margin = (quote_total - cost_total) / quote_total if quote_total else 0.0
+        production_costs = [_item_gross_cost_total(item) for item in items]
+        gross_margin = profit_rate(quote_total, money_sum(production_costs)) if complete and all(value is not None for value in production_costs) else None
+        net_margin = profit_rate(quote_total, cost_total) if complete and all(_formula(item).get('total_cost') is not None for item in items) else None
         for column in range(len(HEADERS)):
             if column == 0:
                 text = "汇总"
@@ -4793,11 +4973,21 @@ def _refresh_cost_table(window):
                                        for item in items)
                 text = f"{attachment_count} 项 ›"
             elif column == 11:
-                text = _money(quote_total)
+                text = _money(quote_total) if complete else '待完善'
             elif column == 20:
-                text = _money(cost_total)
+                text = '待核对' if tax_errors else _money(cost_total) if complete else '待完善'
             elif column == 21:
-                text = f"{gross_margin:.2%}"
+                text = profit_percentage(gross_margin)
+            elif column == NET_MARGIN_COLUMN:
+                text = profit_percentage(net_margin)
+            elif column == TAX_COST_COLUMN:
+                known = complete and all(_row_values(item)[29] is not None for item in items)
+                text = "待核对" if tax_errors else _money(money_sum(money_product(_row_values(item)[29], max(1, int(_number(item.get("quantity", 1), 1)))) for item in items)) if known else "未记录" if complete else "待完善"
+            elif column == QUICK_FREIGHT_COLUMN:
+                text = _money(money_sum(money_product(quick_freight_fee(item), max(1, int(_number(item.get("quantity", 1), 1)))) for item in items)) if complete else "待完善"
+            elif column == MANUFACTURING_COLUMN:
+                known_manufacturing=complete and all(_row_values(item)[27] is not None for item in items)
+                text = _money(money_sum(money_product(_row_values(item)[27], max(1, int(_number(item.get('quantity', 1), 1)))) for item in items)) if known_manufacturing else '待完善' if not complete else '未记录'
             elif column == 22:
                 text = _money(weight_total)
             else:
@@ -4812,8 +5002,10 @@ def _refresh_cost_table(window):
                 cell.setToolTip("累计所有产品行（含复制行）的附件项数；点击查看汇总，同名同规格合并并累计数量、成本和金额")
             cell.setFont(font)
             cell.setBackground(QColor(COST_COLUMN_BACKGROUNDS[column]))
-            if column == 21:
+            if column in (21, NET_MARGIN_COLUMN):
                 cell.setForeground(QColor("#D97706"))
+                gross_tip = GROSS_TOOLTIP if all(item.get('gross_margin_basis') == GROSS_MARGIN_BASIS for item in items) else '汇总沿用各行历史毛利率口径，不按当前规则重算旧版本。'
+                cell.setToolTip((gross_tip if column == 21 else NET_TOOLTIP) + ' 汇总按全表金额计算，不取各行百分比平均值。')
             table.setItem(total_row, column, cell)
         if 0 <= selected < len(items):
             table.selectRow(selected)
@@ -4821,6 +5013,12 @@ def _refresh_cost_table(window):
         window._scheme2_refreshing = False
         _sync_sidebar(window)
         _sync_cost_selection_detail(window)
+    problems = [(i + 1, item.get("name") or item.get("product_code") or "未命名", _formula(item).get("tax_cost_error")) for i, item in enumerate(items) if _formula(item).get("tax_cost_error_code") == "NEGATIVE_BASE"]
+    signature = tuple(problems)
+    if signature != getattr(window, "_scheme2_tax_error_signature", ()):
+        window._scheme2_tax_error_signature = signature
+        if problems and not _quote_remark_readonly(window) and callable(getattr(window, "show_error", None)):
+            window.show_error("\n".join(f"第{row}行（{name}）：{error}" for row, name, error in problems))
 
 
 def _find_nav(window):
@@ -5490,6 +5688,12 @@ def _sync_scheme2_page_navigation(window):
                 timer.stop()
         else:
             status.setText(f"图片识别进度：{recognized} / {len(pages)}{elapsed_text}")
+        current_item = pages[index].get("item") if 0 <= index < len(pages) else None
+        if isinstance(current_item, dict) and current_item.get("dimension_review_required"):
+            status.setText(status.text() + " · 尺寸待核对")
+            status.setToolTip(dimension_review_hint(current_item))
+        else:
+            status.setToolTip("")
     _sync_scheme2_quoted_badge(window)
 
 
@@ -5538,7 +5742,7 @@ def _finish_scheme2_page_recognition(window, key, item):
     _Scheme2PageRecognitionWorker._apply_source_context(item, entry)
     for candidate in candidates:
         _Scheme2PageRecognitionWorker._apply_source_context(candidate, entry)
-        _confirm_scheme2_recognition(candidate)
+        _confirm_scheme2_recognition(candidate, getattr(window, "_scheme2_specification_parser", None))
     entry["document"] = item
     entry["item"] = candidates[0]
     window.recognized_documents = [
@@ -5570,10 +5774,19 @@ def _finish_scheme2_page_recognition(window, key, item):
     _sync_scheme2_page_navigation(window)
 
 
-def _confirm_scheme2_recognition(item):
+def _confirm_scheme2_recognition(item, parser=None):
     """Make current-page recognition quote-ready without the retired review desk."""
 
     if not isinstance(item, dict):
+        return item
+    if item.get("error"):
+        item["dimension_review_required"] = True
+        item["dimension_recognition"] = {"schema_version": 1, "status": "failed", "candidates": [], "partial": {}}
+    if "dimension_recognition" not in item:
+        reconcile_recognition_dimensions(item, parser)
+    if item.get("dimension_review_required"):
+        item.update(review_status="needs_review", confirmed=False, verified=False,
+                    manual_reviewed=False, manual_confirmation_checked=False)
         return item
     item["classification"] = "cabinet"
     item["review_status"] = "confirmed"
@@ -5583,10 +5796,6 @@ def _confirm_scheme2_recognition(item):
     item["manual_confirmation_checked"] = True
     item["manual_reviewed_at"] = "scheme2-direct-recognition"
     item["remark_review_required"] = False
-    if not str(item.get("specification") or "").strip():
-        dimensions = list(item.get("dimensions") or [])
-        if dimensions and len(dimensions[0]) >= 3:
-            item["specification"] = "*".join(f"{_number(value):g}" for value in dimensions[0][:3])
     return item
 
 
@@ -5611,27 +5820,85 @@ def _apply_recognized_attachments(window, item):
     _refresh_scheme2_attachment_summary(window)
 
 
+def _parse_scheme2_dimension_input(window, specification):
+    parsed = parse_dimension_specification(specification, getattr(window, "_scheme2_specification_parser", None))
+    if parsed is not None:
+        return parsed
+    # Preserve the existing ganged saver convention: hidden legacy controls
+    # represent the first child, while the full split expression is retained.
+    from ganged_cabinet_rules import parse_ganged_specification
+    ganged = parse_ganged_specification(specification)
+    if ganged is None:
+        return None
+    first = ganged["rows"][0]
+    base = first.get("base_height_mm")
+    return {"specification": ganged["specification"],
+            "dimensions": [(first["width_mm"], first["height_mm"], first["depth_mm"])],
+            "height_kind": "base" if base is not None else "single",
+            "height_terms_mm": [first["height_mm"], base] if base is not None else []}
+
+
 def _synchronize_active_drawing_confirmation(window):
     """Confirm the current Scheme-2 fields without the retired review workbench."""
 
     item = getattr(window, "active_drawing", None)
     if not isinstance(item, dict):
-        return
-    width = _number(window.width_spin.value())
-    height = _number(window.height_spin.value())
-    depth = _number(window.depth_spin.value())
+        return True
     specification = window.quote_spec_edit.text().strip()
-    item["dimensions"] = [(width, height, depth)]
-    item["specification"] = specification or f"{width:g}*{depth:g}*{height:g}"
+    parser = getattr(window, "_scheme2_specification_parser", None)
+    parsed = _parse_scheme2_dimension_input(window, specification)
+    if parsed is None:
+        return False
+    item.update(parsed)
+    manual = "dimensions" in getattr(window, "scheme2_manual_fields", set())
+    previous = item.get("dimension_recognition") or {}
+    item["dimension_recognition"] = {**previous, "status": "manual" if manual else "recognized",
+                                     "current_specification": parsed["specification"]}
+    if manual:
+        item["ocr_confirmation_required"] = False
+        item["dimension_source"] = "manual_quote_fields"
+    item["dimension_review_required"] = False
     item["reviewed_remark"] = window.notes_text.toPlainText().strip()
-    _confirm_scheme2_recognition(item)
+    _confirm_scheme2_recognition(item, parser)
     window._quote_drawing = item
+    return True
+
+
+def _prepare_recognized_dimensions(window):
+    """Reject unresolved drawing sizes before attachment lookup or quote calls."""
+    item = getattr(window, "active_drawing", None)
+    if not isinstance(item, dict):
+        return True
+    manual = "dimensions" in getattr(window, "scheme2_manual_fields", set())
+    if not item.get("dimension_review_required") and not manual:
+        return True
+    control = window.quote_spec_edit
+    parsed = _parse_scheme2_dimension_input(window, control.text())
+    if manual and parsed is not None:
+        controls = (window.width_spin, window.height_spin, window.depth_spin)
+        values = parsed["dimensions"][0]
+        if all(spin.minimum() <= value <= spin.maximum() for spin, value in zip(controls, values)):
+            for spin, value in zip(controls, values):
+                with QSignalBlocker(spin):
+                    spin.setValue(value)
+            ready = _synchronize_active_drawing_confirmation(window)
+            if ready and getattr(window, "_scheme2_drawing_pages", None):
+                _sync_scheme2_page_navigation(window)
+            return ready
+    QMessageBox.warning(window, "尺寸待核对", dimension_review_hint(item))
+    control.setFocus()
+    return False
 
 
 def _fail_scheme2_page_recognition(window, key, message):
     entry = _scheme2_page_entry(window, key)
     if entry is not None:
         entry["error"] = str(message)
+    active = getattr(window, "active_drawing", None)
+    if isinstance(active, dict) and active.get("scheme2_page_key") == key and active.get("dimension_review_required"):
+        evidence = active.get("dimension_recognition") or {}
+        if evidence.get("status") == "pending":
+            evidence["status"] = "failed"
     _sync_scheme2_page_navigation(window)
 
 
@@ -5701,6 +5968,21 @@ def _activate_scheme2_page(window, index):
         window._quote_drawing = entry["item"]
         window._apply_confirmed_drawing_to_quote(entry["item"])
         entry["state"] = _capture_scheme2_page_state(window)
+        _set_dirty(window, False)
+    else:
+        # A new page is visible before OCR finishes. Give it an unresolved
+        # drawing context instead of leaving the previous page's size active.
+        pending = {"scheme2_page_key": entry["key"], "specification": "", "dimensions": [],
+                   "dimension_review_required": True,
+                   "dimension_recognition": {"schema_version": 1, "status": "failed" if entry.get("error") else "pending", "candidates": [], "partial": {}}}
+        _Scheme2PageRecognitionWorker._apply_source_context(pending, entry)
+        window.active_drawing = window._quote_drawing = pending
+        window.scheme2_manual_fields.clear()
+        window.quote_spec_edit.clear()
+        window.quote_spec_edit.setPlaceholderText("宽*深*高（mm）")
+        window.quote_spec_edit.setToolTip(dimension_review_hint(pending))
+        window.clear_quote_result()
+        _mark_ai(window, "dimensions")
         _set_dirty(window, False)
     _sync_scheme2_page_navigation(window)
 
@@ -5992,11 +6274,14 @@ def _mark_ai(window, key):
         return
     badge = window.scheme2_provenance_labels.get(key)
     if badge is not None:
-        badge.setText("AI ✓")
-        badge.setObjectName("scheme2ProvenanceAi")
+        drawing = getattr(window, "active_drawing", None)
+        pending = key == "dimensions" and isinstance(drawing, dict) and drawing.get("dimension_review_required")
+        badge.setText("待核对" if pending else "AI ✓")
+        badge.setObjectName("scheme2ProvenancePending" if pending else "scheme2ProvenanceAi")
+        badge.setToolTip(dimension_review_hint(drawing) if pending else "")
         shell = badge.parentWidget()
         if isinstance(shell, QFrame):
-            shell.setProperty("provenanceState", "ai")
+            shell.setProperty("provenanceState", "pending" if pending else "ai")
             shell.style().unpolish(shell)
             shell.style().polish(shell)
         badge.style().unpolish(badge)
@@ -6441,14 +6726,14 @@ QLineEdit#scheme2AttachmentSearch:focus {{ border-color:{DIALOG_COLORS['focus']}
         cards.setSpacing(6)
 
         for category in ATTACHMENT_CATEGORY_ORDER:
-            if category == "侧板" and product_code != "JP":
+            if category == "侧板" and product_code not in {"JP", "standalone_attachment"}:
                 continue
-            if category == "控制箱附件" and product_code not in CONTROL_BOX_ATTACHMENT_PRODUCTS:
+            if category == "控制箱附件" and product_code not in CONTROL_BOX_ATTACHMENT_PRODUCTS and product_code != 'standalone_attachment':
                 continue
-            if category == "控制柜附件" and product_code not in {"JS", "JP"}:
+            if category == "控制柜附件" and product_code not in {"JS", "JP", "standalone_attachment"}:
                 continue
             options = list(ATTACHMENT_OPTIONS.get(category, ()))
-            if category == "控制箱附件" and product_code != "JK":
+            if category == "控制箱附件" and product_code not in {"JK", "standalone_attachment"}:
                 options = [name for name in options if name != "JK安装板"]
             self.category_names.append(category)
             card = QFrame()
@@ -7702,6 +7987,8 @@ def _calculate_and_add(window):
     if getattr(window, "_scheme2_add_after_calculate", False) or getattr(window, "quote_calculation_in_progress", False):
         _pause_quote_calculation(window)
         return
+    if not _prepare_recognized_dimensions(window):
+        return
     window._scheme2_calculation_epoch = getattr(window, "_scheme2_calculation_epoch", 0) + 1
     epoch = window._scheme2_calculation_epoch
     window._scheme2_calculation_paused = False
@@ -8018,6 +8305,13 @@ def _synchronize_export_remark(item, remark):
 
 def _quote_item_remark(item, *, preserve_existing=False):
     """Use ordered configuration text; a complete manual override includes blanks."""
+    if is_standalone(item):
+        if item.get('quote_remark_manual') or preserve_existing:
+            return str(item.get('final_remark') or '')
+        row = (item.get('attachments') or [{}])[0]
+        value = '，'.join(str(value) for value in (row.get('item_name'), item.get('specification')) if value and value not in ('—', '待完善'))
+        _synchronize_export_remark(item, value)
+        return value
     if preserve_existing and "final_remark" in item:
         return str(item.get("final_remark") or "")
     if "quote_remark_manual" not in item:
@@ -8053,6 +8347,9 @@ def _finish_add(window):
     item["pricing_basis"] = PRICING_BASIS
     _stamp_selected_product(window, item)
     if editing_index is not None:
+        for key in ('quick_freight_fee', 'quick_freight_mode', 'quick_freight_basis'):
+            if key in editing:
+                item[key] = deepcopy(editing[key])
         window.draft_items.pop()
         window.draft_items[editing_index] = item
     window._scheme2_edit_item = None
@@ -8097,10 +8394,12 @@ def _finish_add(window):
     target_row = editing_index if editing_index is not None else len(window.draft_items) - 1
     if target_row >= 0:
         window.summary_table.selectRow(target_row)
-        for column in range(window.summary_table.columnCount()):
-            cell = window.summary_table.item(target_row, column)
-            if cell is not None:
-                cell.setBackground(QColor("#EAF3DE"))
+        # Highlighting emits cellChanged too; it is not a manual freight edit.
+        with QSignalBlocker(window.summary_table):
+            for column in range(window.summary_table.columnCount()):
+                cell = window.summary_table.item(target_row, column)
+                if cell is not None:
+                    cell.setBackground(QColor("#EAF3DE"))
         QTimer.singleShot(1000, window.refresh_summary)
 
 
@@ -8797,6 +9096,7 @@ def install_scheme2_ui(namespace):
         build_remark_with_color._scheme2_color_installed = True
         namespace["build_standardized_quote_remark"] = build_remark_with_color
     api_worker = namespace.get("ApiWorker")
+    cls._standalone_worker_class = api_worker
     if api_worker is not None and not getattr(api_worker, "_scheme2_fields_installed", False):
         original_worker_run = api_worker.run
 
@@ -8851,6 +9151,7 @@ def install_scheme2_ui(namespace):
     original_refresh = cls.refresh_summary
     original_apply_drawing = cls._apply_confirmed_drawing_to_quote
     original_add = cls.add_current_to_summary
+    original_calculate = cls.calculate
     original_load_draft_item = cls.load_draft_item
     original_confirm_and_export = cls.confirm_and_export
     original_company_catalog_loaded = getattr(cls, "company_catalog_loaded", None)
@@ -8868,6 +9169,7 @@ def install_scheme2_ui(namespace):
         window._scheme2_page_worker = None
         window._scheme2_recognition_key = None
         window._scheme2_recognition_tools = namespace["DrawingRecognitionTools"]
+        window._scheme2_specification_parser = namespace.get("parse_review_specification")
         window._scheme2_candidate_builder = namespace.get("build_review_candidates")
         window._scheme2_api_worker_class = namespace.get("ApiWorker")
         window._scheme2_accept_paths = namespace["ImportDropZone"].accepted_paths
@@ -9120,7 +9422,7 @@ def install_scheme2_ui(namespace):
         _schedule_order_workspace_save(window)
 
     def apply_drawing(window, item):
-        _confirm_scheme2_recognition(item)
+        _confirm_scheme2_recognition(item, window._scheme2_specification_parser)
         controls = {
             "dimensions": getattr(window, "quote_spec_edit", None),
             "material": getattr(window, "material_combo", None),
@@ -9128,10 +9430,13 @@ def install_scheme2_ui(namespace):
             "color": getattr(window, "scheme2_color_combo", None),
         }
         preserved = {}
+        preserved_axes = None
         for key in getattr(window, "scheme2_manual_fields", set()):
             control = controls.get(key)
             if isinstance(control, QLineEdit):
                 preserved[key] = control.text()
+                if key == "dimensions":
+                    preserved_axes = tuple(spin.value() for spin in (window.width_spin, window.height_spin, window.depth_spin))
             elif isinstance(control, QComboBox):
                 preserved[key] = control.currentIndex()
         overwrite = True
@@ -9152,8 +9457,24 @@ def install_scheme2_ui(namespace):
                     control.setText(value)
                 elif isinstance(control, QComboBox) and value >= 0:
                     control.setCurrentIndex(value)
+            if preserved_axes is not None:
+                for spin, value in zip((window.width_spin, window.height_spin, window.depth_spin), preserved_axes):
+                    with QSignalBlocker(spin):
+                        spin.setValue(value)
         else:
             window.scheme2_manual_fields.clear()
+            if item.get("dimension_review_required"):
+                # The core returns early for missing dimensions. Its prior
+                # visible size and cached quote must not survive that return.
+                window.quote_spec_edit.clear()
+                partial = (item.get("dimension_recognition") or {}).get("partial") or {}
+                window.quote_spec_edit.setPlaceholderText("*".join(
+                    f"{partial[axis]:g}" if axis in partial else "?" for axis in ("W", "D", "H")))
+                window.quote_spec_edit.setToolTip(dimension_review_hint(item))
+                window.clear_quote_result()
+            else:
+                window.quote_spec_edit.setPlaceholderText("宽*深*高（mm）")
+                window.quote_spec_edit.setToolTip("")
             for key in ("dimensions", "material", "coating"):
                 _mark_ai(window, key)
             recognized_color = str(item.get("color") or item.get("color_name") or item.get("ral_color") or "").strip()
@@ -9174,7 +9495,8 @@ def install_scheme2_ui(namespace):
         return result
 
     def add(window, *args, **kwargs):
-        _synchronize_active_drawing_confirmation(window)
+        if not _prepare_recognized_dimensions(window) or not _synchronize_active_drawing_confirmation(window):
+            return
         before = len(window.draft_items)
         position = deepcopy(getattr(window, '_door_position', None))
         manual_names = bool(getattr(window, '_attachment_names_manual_only', False))
@@ -9195,6 +9517,11 @@ def install_scheme2_ui(namespace):
                 window.draft_items[-1]['attachment_selection_mode'] = 'manual_names'
         _sync_completion(window)
         return result
+
+    def calculate(window, *args, **kwargs):
+        if not _prepare_recognized_dimensions(window):
+            return
+        return original_calculate(window, *args, **kwargs)
 
     def load_draft_item(window, item):
         # Legacy 1/1 data has one canonical orientation; do not borrow the
@@ -9227,6 +9554,7 @@ def install_scheme2_ui(namespace):
     cls.refresh_summary = refresh
     cls._apply_confirmed_drawing_to_quote = apply_drawing
     cls.add_current_to_summary = add
+    cls.calculate = calculate
     cls.load_draft_item = load_draft_item
     if callable(original_company_catalog_loaded):
         cls.company_catalog_loaded = company_catalog_loaded

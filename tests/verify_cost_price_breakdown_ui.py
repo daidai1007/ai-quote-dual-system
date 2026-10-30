@@ -70,7 +70,8 @@ class PriceBreakdownUI(unittest.TestCase):
         self.screenshot(self.w,'cost-table.png')
 
     def test_formal_save_reopen_actual_pdf_excel_and_frozen_components(self):
-        self.m.show_detail();self.export();self.assertTrue(self.path.exists(),self.messages)
+        self.m.show_detail();self.export()
+        self.assertTrue(self.path.exists(),dict(messages=self.messages,reason=self.controller.reason,state=self.controller.state,information=self.information))
         for sheet in ('快速报价单','公式法报价单'):
             self.assertIsNotNone(fixture.workbook_cell(self.path,sheet,'F11'))
         self.assertEqual(float(fixture.workbook_cell(self.path,'快速报价单','F11')),950)

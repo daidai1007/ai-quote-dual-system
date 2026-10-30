@@ -57,11 +57,12 @@ class AllocationUI(unittest.TestCase):
 
     def assert_costs(self):
         grid=self.w.summary_table
-        for col,value in ((13,135),(14,23),(15,37),(16,12),(17,15),(18,13.8),(19,8),(12,243.8),(20,731.4)):
+        for col,value in ((13,135),(14,23),(15,37),(16,12),(17,15),(18,31.05),(19,8),(12,350.09),(20,1050.27),(ui.TAX_COST_COLUMN,64.2),(ui.MANUFACTURING_COLUMN,24.84)):
             self.assertEqual(float(grid.item(0,col).text().replace(',','')),value,(col,grid.item(0,col).text()))
         self.assertEqual(self.w.draft_items[0]['formula']['attachment_fee'],62,'Original pricing ledger remains unchanged')
         self.assertEqual(float(grid.item(0,10).text().replace(',','')),621)
-        self.assertEqual(grid.item(0,21).text(),'60.74%')
+        self.assertEqual(grid.item(0,21).text(),'58.96%')
+        self.assertEqual(grid.item(0,ui.NET_MARGIN_COLUMN).text(),'43.62%')
 
     def test_repeated_refresh_detail_close_and_order_quantity_do_not_double_charge(self):
         for _ in range(4):self.w.refresh_summary();self.assert_costs()
@@ -72,24 +73,24 @@ class AllocationUI(unittest.TestCase):
         self.assertEqual(money_sum(r['base_amount'] for r in allocated),62)
         for i,row in enumerate(rows):
             if row.get('attachment_cost_source'):self.assertIsNone(self.w.scheme2_detail_table.cellWidget(i,8))
-        self.assertEqual(money_sum(r['base_amount'] for r in rows),235.8)
+        self.assertEqual(money_sum(r['base_amount'] for r in rows),342.09)
         self.screenshot('cost-detail.png');self.w.scheme2_close_detail();self.assert_costs()
         self.assertEqual(item['formula'],original)
         self.w.summary_table.item(0,4).setText('2');app.processEvents()
-        self.assertEqual(float(self.w.summary_table.item(0,20).text().replace(',','')),487.6)
+        self.assertEqual(float(self.w.summary_table.item(0,20).text().replace(',','')),700.18)
         self.assertEqual(float(self.w.summary_table.item(0,16).text()),12)
         self.w.summary_table.selectRow(0);self.w.summary_table.scrollToItem(self.w.summary_table.item(0,16))
         self.screenshot('cost-table.png')
 
     def test_save_reopen_real_pdf_and_workbook_keep_allocation_margin_and_prices(self):
         self.assert_costs();self.m.save();wait(lambda:self.w._quote_scheme_save_worker is None)
-        self.assertEqual(self.server['snapshot']['draft_items'][0]['formula']['cost_allocation']['totals'],DATA['expected'])
+        self.assertEqual(self.server['snapshot']['draft_items'][0]['formula']['cost_allocation']['totals'],dict(DATA['expected'],manufacturing_cost=24.84,management_fee=31.05,tax_cost=64.2))
         schemes._apply_opened_scheme(self.w,dict(found=True,**deepcopy(self.server),quote_management_historical_export=True),ui.QUOTE_ROUTE)
         self.w._quote_scheme_save_timer.stop();self.assert_costs()
         self.export();self.assertTrue(self.path.exists(),self.messages)
         self.assertEqual(float(fixture.workbook_cell(self.path,'快速报价单','F11')),621)
         self.assertEqual(float(fixture.workbook_cell(self.path,'快速报价单','G11')),1863)
-        self.assertEqual(float(fixture.workbook_cell(self.path,'公式法报价单','F11')),211.04)
+        self.assertEqual(float(fixture.workbook_cell(self.path,'公式法报价单','F11')),296.07)
         rows=workbook_rows(self.path,'成本明细')
         split=[r for r in rows if '合成公式附件－' in r.get('E','')]
         self.assertEqual(len(split),4)
@@ -97,7 +98,8 @@ class AllocationUI(unittest.TestCase):
         self.assertFalse(any(r.get('D')=='附件成本' and r.get('E')=='合成公式附件' for r in rows))
         frozen=self.posts()[-1]['snapshot']['contract_quote_snapshot']['items'][0]
         self.assertEqual(frozen['quote_cost_display']['values']['附件成本'],'12.00')
-        self.assertEqual(frozen['quote_cost_display']['values']['毛利率'],'60.74%')
+        self.assertEqual(frozen['quote_cost_display']['values']['毛利率'],'58.96%')
+        self.assertEqual(frozen['quote_cost_display']['values']['净利率'],'43.62%')
         pdf=Path(self.folder.name)/'allocation.pdf'
         def choose(dialog):
             p=dialog.printer();p.setOutputFormat(QPrinter.OutputFormat.PdfFormat);p.setOutputFileName(str(pdf));return QDialog.DialogCode.Accepted
@@ -117,7 +119,7 @@ class AllocationUI(unittest.TestCase):
         item['ganged_cabinet_count']=2;self.w.refresh_summary();self.assert_costs()
         rows=ui._detail_rows(item)
         self.assertEqual(len([r for r in rows if r.get('attachment_cost_source')]),9)
-        self.assertEqual(money_sum(r['base_amount'] for r in rows),235.8)
+        self.assertEqual(money_sum(r['base_amount'] for r in rows),342.09)
 
     def test_derived_allocation_does_not_invent_an_unconfirmed_business_change(self):
         item=self.w.draft_items[0]
@@ -132,6 +134,11 @@ class AllocationUI(unittest.TestCase):
 
     def test_old_formal_snapshot_keeps_legacy_cost_categories_and_output(self):
         item=self.w.draft_items[0];item['formula'].pop('cost_allocation')
+        # This fixture represents a formal version saved before the tax field.
+        item.pop('tax_cost_basis',None)
+        for key in tuple(item['formula']):
+            if key.startswith('tax_'):item['formula'].pop(key)
+        item['formula']=ui.apply_management_fee(item['formula'],item['freight_fee'])
         for row in item['attachments']:row.pop('cost_method',None)
         prior=versions.make_version([item],self.w.scheme2_company.currentText(),1,'旧正式版本','合成人员','2026-10-26','EXTERNAL')
         prior.update(sealed=True,confirmed=True)

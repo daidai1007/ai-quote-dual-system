@@ -218,6 +218,10 @@ class VersionHistoryTests(unittest.TestCase):
 
     def test_cancel_no_change_and_failed_save_do_not_drop_existing_versions(self):
         self.adjust(502,'第一次调价')
+        saved_formula=self.m.state['versions'][-1]['items'][0]['formula']
+        for key in ('manufacturing_cost','manufacturing_quote_unit_price','management_fee','tax_cost','total_cost'):
+            self.assertEqual(saved_formula[key],self.w.draft_items[0]['formula'][key],key)
+        self.assertEqual(saved_formula['manufacturing_quote_unit_price'],502)
         before=deepcopy(self.m.state)
         with patch.object(qm.AdjustQuoteDialog,'exec',return_value=QDialog.DialogCode.Rejected):self.m.adjust()
         self.assertEqual(self.m.state,before)
