@@ -1,3 +1,4 @@
+import {quickQuotationAmount} from './quotation_layout_reader.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,mkdir,rm} from 'node:fs/promises';
@@ -71,7 +72,7 @@ test('real workbook includes manufacture, 5% management, preserved quote and rec
   execFileSync(process.execPath,['export_dual_quote_workbook.mjs',input,output],{cwd:root,windowsHide:true,stdio:'pipe'});
   const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
   const quick=book.getWorksheet('报价'),formula=book.getWorksheet('成本'),details=book.getWorksheet('成本明细');
-  assert.equal(quick.getCell('F11').value,1000);assert.equal(quick.getCell('G11').value,2000);
+  assert.equal(quick.getCell('F11').value,1000);assert.equal(quickQuotationAmount(quick.getCell('G11')),2000);
   assert.equal(formula.getCell('F11').value,790);assert.equal(formula.getCell('G11').value,1580);
   let manufacturing=[],management=[];details.eachRow(row=>{
     if(row.getCell(4).value==='制造成本')manufacturing.push(row.values);

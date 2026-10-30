@@ -8,6 +8,8 @@ import ExcelJS from "@excel.js/exceljs";
 import {projectQuotationAudit} from "./quotation_layout_reader.mjs";
 import {money, moneySum, moneyProduct, quickOrderLineBreakdown, PRICING_BASIS, formulaAttachmentLineAmount, attachmentExcludedFromDiscount} from "../quick_discount_rules.mjs";
 
+const amountValue = cell => cell.value?.formula ? (cell.value.result ?? 0) : cell.value;
+
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const fixturePath = path.join(projectRoot, "tests", "fixtures", "export_formula_cost_detail.json");
 const doorMatrixFixturePath = path.join(projectRoot, "tests", "fixtures", "export_quick_door_matrix.json");
@@ -51,7 +53,7 @@ test("customer metadata survives legacy payload and Excel serialization", async 
       assert.equal(workbook.getWorksheet(name).getCell("B4").value, payload.company_name);
     }
     const detail = workbook.getWorksheet("成本明细");
-    assert.equal(detail.getCell("G2").value, "客户");
+    assert.equal(amountValue(detail.getCell("G2")), "客户");
     assert.equal(detail.getCell("H2").value, payload.company_name);
   } finally {
     await fs.rm(tempDir, {recursive: true, force: true});
@@ -116,6 +118,7 @@ test("formal workbook replaces only the door phrase using current door counts", 
 });
 
 const closeTo = (actual, expected, label) => {
+  actual = actual?.formula ? (actual.result ?? 0) : actual;
   assert.ok(Number.isFinite(Number(actual)), `${label} is not numeric: ${actual}`);
   assert.ok(Math.abs(Number(actual) - expected) < 0.01, `${label}: expected ${expected}, got ${actual}`);
 };
@@ -188,7 +191,7 @@ for (const modern of [false, true]) {
           const unit=name==='成本'?expectedCurrentFormulaUnit(payload.items[index]):sample.unit;
           const total=moneyProduct(unit,sample.quantity);
           assert.equal(sheet.getCell(`F${row}`).value,unit,`${name} ${sample.name} unit`);
-          assert.equal(sheet.getCell(`G${row}`).value,total,`${name} ${sample.name} total`);
+          assert.equal(amountValue(sheet.getCell(`G${row}`)),total,`${name} ${sample.name} total`);
           assert.equal(moneyProduct(sheet.getCell(`F${row}`).value,sample.quantity),total);
           const freightColumn = sheet.getRow(10).values.indexOf("运费");
           assert.ok(freightColumn > 0, `${name} freight column`);
@@ -214,7 +217,7 @@ for (const modern of [false, true]) {
             }
           }
         });
-        assert.equal(sheet.getCell(`G${11+cases.length}`).value,moneySum(cases.map((sample,index)=>
+        assert.equal(amountValue(sheet.getCell(`G${11+cases.length}`)),moneySum(cases.map((sample,index)=>
           name==='成本'?moneyProduct(expectedCurrentFormulaUnit(payload.items[index]),sample.quantity):sample.total)));
       }
     } finally {
@@ -281,7 +284,7 @@ test("quick public quote uses the click-time UI snapshot verbatim", async () => 
     projectQuotationAudit(workbook);
     const quickSheet = workbook.getWorksheet("报价");
     assert.deepEqual(
-      [2, 3, 4, 5, 6, 7, 8].map((column) => quickSheet.getCell(11, column).value),
+      [2, 3, 4, 5, 6, 7, 8].map((column) => amountValue(quickSheet.getCell(11, column))),
       ["人工名称", "600*230*400", 1, "台", 448.44, 448.44, "人工备注。"],
     );
     const headers = quickSheet.getRow(10).values;
@@ -690,11 +693,11 @@ test("workbook uses final attachment quantities for every ordinary row", async (
     const quickSheet = workbook.getWorksheet("报价");
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(quickSheet.getCell("F11").value, 1150, "quick per-cabinet unit total with original-price door strip");
-    closeTo(quickSheet.getCell("G11").value, 3450, "quick quote line total with original-price door strip");
+    closeTo(amountValue(quickSheet.getCell("G11")), 3450, "quick quote line total with original-price door strip");
     closeTo(quickSheet.getCell("K11").value.result, 1150, "quick cost formula keeps door strip outside discount");
     closeTo(quickSheet.getCell("L11").value, 1000, "quick per-cabinet cabinet amount");
     closeTo(
-      quickSheet.getCell("G11").value,
+      amountValue(quickSheet.getCell("G11")),
       quickSheet.getCell("F11").value * quickSheet.getCell("D11").value,
       "quick total equals unit price times cabinet quantity",
     );
@@ -709,7 +712,7 @@ test("workbook uses final attachment quantities for every ordinary row", async (
 
     const formulaSheet = workbook.getWorksheet("成本");
     closeTo(formulaSheet.getCell("F11").value, 854.62, "formula unit scales ordinary attachment rows");
-    closeTo(formulaSheet.getCell("G11").value, 2563.86, "formula line scales ordinary attachment rows");
+    closeTo(amountValue(formulaSheet.getCell("G11")), 2563.86, "formula line scales ordinary attachment rows");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(formulaSheet.getCell(11, formulaHeaderIndex("运费")).value, 150, "formula final freight");
     [360, 90, 180, 72, 55.62].forEach((expected, index) => closeTo(
@@ -718,7 +721,7 @@ test("workbook uses final attachment quantities for every ordinary row", async (
       `non-ganged formula per-cabinet component ${index + 1}`,
     ));
     closeTo(
-      formulaSheet.getCell("G11").value,
+      amountValue(formulaSheet.getCell("G11")),
       formulaSheet.getCell("F11").value * formulaSheet.getCell("D11").value,
       "formula total equals unit price times cabinet quantity",
     );
@@ -802,7 +805,7 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     const quickSheet = workbook.getWorksheet("报价");
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(quickSheet.getCell("F11").value, 2138, "ganged quick equivalent unit total with freight");
-    closeTo(quickSheet.getCell("G11").value, 4276, "ganged quick line total with freight");
+    closeTo(amountValue(quickSheet.getCell("G11")), 4276, "ganged quick line total with freight");
     closeTo(quickSheet.getCell("J11").value.result, 2350, "ganged quick original unit price");
     closeTo(quickSheet.getCell("L11").value, 4000, "ganged quick cabinet order amount");
     closeTo(quickSheet.getCell("K11").value.result, 2138, "ganged quick discounted unit formula result with freight");
@@ -815,7 +818,7 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
 
     const formulaSheet = workbook.getWorksheet("成本");
     closeTo(formulaSheet.getCell("F11").value, 948.02, "ganged formula equivalent unit excludes door transformation");
-    closeTo(formulaSheet.getCell("G11").value, 1896.04, "ganged formula line excludes door transformation");
+    closeTo(amountValue(formulaSheet.getCell("G11")), 1896.04, "ganged formula line excludes door transformation");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(formulaSheet.getCell(11, formulaHeaderIndex("运费")).value, 100, "ganged formula freight ignores split count");
     [720, 180, 360, 144, 122.04].forEach((expected, index) => closeTo(

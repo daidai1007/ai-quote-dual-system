@@ -1,3 +1,4 @@
+import {quickQuotationAmount} from './quotation_layout_reader.mjs';
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -165,7 +166,7 @@ test('actual ordinary and ganged workbooks preserve popup fan sale and formula c
       }
       const quick=book.getWorksheet('报价');
       assert.equal(quick.getCell('F11').value,payload.items[0].quote_display.unit_price);
-      assert.equal(quick.getCell('G11').value,payload.items[0].quote_display.total);
+      assert.equal(quickQuotationAmount(quick.getCell('G11')),payload.items[0].quote_display.total);
       const formula=book.getWorksheet('成本');
       assert.equal(formula.getCell('F11').value,455.8);
       assert.equal(formula.getCell('G11').value,911.6);

@@ -1,3 +1,4 @@
+import {quickQuotationAmount} from './quotation_layout_reader.mjs';
 // Real API + a fresh, owned loopback PostgreSQL cluster; synthetic orders only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -204,7 +205,7 @@ test('calculation preflight distinguishes V2 attachment IDs from legacy names', 
         assert.equal(exported.status,200,exported.status===200?'':await exported.text());
         const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(Buffer.from(await exported.arrayBuffer()));
         assert.equal(workbook.getWorksheet('报价').getCell('F11').value,amounts.equivalentUnitTotal);
-        assert.equal(workbook.getWorksheet('报价').getCell('G11').value,amounts.lineTotal);
+        assert.equal(quickQuotationAmount(workbook.getWorksheet('报价').getCell('G11')),amounts.lineTotal);
         for(const route of ['/api/quotes/preview-check','/api/quotes/confirm','/api/quotes/export']) {
           const rejected=await call(route,document,other.body.token);
           assert.equal(rejected.status,403,JSON.stringify(rejected));
@@ -306,7 +307,7 @@ test('calculation preflight distinguishes V2 attachment IDs from legacy names', 
           const sheet=workbook.getWorksheet('报价');
           amounts.forEach((amount,index)=>{
             assert.equal(sheet.getCell('F'+(11+index)).value,amount.equivalentUnitTotal);
-            assert.equal(sheet.getCell('G'+(11+index)).value,amount.lineTotal);
+            assert.equal(quickQuotationAmount(sheet.getCell('G'+(11+index))),amount.lineTotal);
           });
           const foreign=await call('/api/quotes/preview-check',document,other.body.token);
           assert.equal(foreign.status,403,JSON.stringify(foreign));

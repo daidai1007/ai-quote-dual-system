@@ -357,6 +357,7 @@ const quickLastColumn = col(quickDiscountColumnIndex);
 const quickSetupEndColumn = col(Math.max(25, quickDiscountColumnIndex));
 
 const workbook = new ExcelJS.Workbook();
+workbook.calcProperties.fullCalcOnLoad = true;
 const formulaSheet = buildQuotationTemplate(workbook);
 formulaSheet.name = "成本";
 const quickSheet = attachRangeApi(workbook.addWorksheet("报价"));
@@ -928,7 +929,9 @@ function fillSheet(sheet, method) {
     values[3] = qty;
     values[4] = String(display?.unit || "台");
     values[5] = unitCost;
-    values[6] = lineTotal;
+    values[6] = method === "quick"
+      ? { formula: `ROUND(F${row}*D${row},2)`, result: lineTotal }
+      : lineTotal;
     values[7] = note;
     const extras = method === "quick"
       ? quickAttachmentAmounts(
@@ -1046,7 +1049,9 @@ function fillSheet(sheet, method) {
     sheet.getRange(`H${row}`).format.verticalAlignment = "middle";
   });
   sheet.getRange(`B${subtotalRow}`).values = [["合计"]];
-  sheet.getRange(`G${subtotalRow}`).values = [[subtotal]];
+  sheet.getRange(`G${subtotalRow}`).values = [[method === "quick"
+    ? { formula: `SUM(G${firstRow}:G${dataEnd})`, result: subtotal }
+    : subtotal]];
   sheet.getRange(`A${subtotalRow}:${lastColumn}${subtotalRow}`).format.font = { bold: true };
   sheet.getRange(`F${firstRow}:G${subtotalRow}`).format.numberFormat = "#,##0.00";
   sheet.getRange(`L${firstRow}:${col(columnCount - 1)}${dataEnd}`).format.numberFormat = "#,##0.00";

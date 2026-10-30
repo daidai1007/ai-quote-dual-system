@@ -1,3 +1,4 @@
+import {quickQuotationAmount} from './quotation_layout_reader.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -159,6 +160,6 @@ for (const count of [1,2]) test(`real ${count}-cabinet quote/export uses new pri
     const workbook=new ExcelJS.Workbook();await workbook.xlsx.readFile(file);
     const sheet=workbook.getWorksheet('报价');
     assert.equal(sheet.getCell('F11').value,line.equivalentUnitTotal);
-    assert.equal(sheet.getCell('G11').value,line.lineTotal);
+    assert.equal(quickQuotationAmount(sheet.getCell('G11')),line.lineTotal);
   } finally { await fs.rm(folder,{recursive:true,force:true}); }
 });

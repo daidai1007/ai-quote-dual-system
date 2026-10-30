@@ -77,7 +77,7 @@ class ThicknessDropdown(unittest.TestCase):
     def test_selected_thickness_is_sent_as_numeric_api_parameter(self):
         self.combo.setValue(2.5)
         worker=SimpleNamespace(
-            parent=lambda:self.window,
+            parent=lambda:self.window, _name_frozen_session=None,
             url='https://offline.invalid/api/quotes/calculate-dual',
             payload={'cabinet_body_thickness_mm':1.5},
             progress=MagicMock(), succeeded=MagicMock(), failed=MagicMock(),

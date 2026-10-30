@@ -933,6 +933,12 @@ def match_attachment_size(
         height_rank = 0
         if size_match_attachment_name(source) in {"固定底座", "活动底座"}:
             height_rank = 0 if abs(completed[1] - target[1]) <= 0.0001 else 1
+        elif match_name == "侧板":
+            # Side-panel selection is lexicographic: physical depth first,
+            # then H+D perimeter. An unknown catalogue depth cannot outrank
+            # a known depth; it remains a fallback when no depth is recorded.
+            depth = _number(item.get("depth_mm"))
+            height_rank = abs(depth - target[2]) if depth is not None and depth > 0 else float("inf")
         return (
             height_rank,
             abs(perimeter - target_perimeter),

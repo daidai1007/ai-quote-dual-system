@@ -12,6 +12,7 @@
 !api/standalone_attachment.mjs
 !api/contract_item_row_layout.mjs
 !api/quick_match_override.mjs
+!api/quick_thickness_pricing.mjs
 !api/attachment_cost.mjs
 !api/attachment_formula.mjs
 !api/cabinet_material_service.mjs

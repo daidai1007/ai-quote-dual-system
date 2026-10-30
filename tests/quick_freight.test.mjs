@@ -1,3 +1,4 @@
+import {quickQuotationAmount} from './quotation_layout_reader.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
@@ -61,7 +62,7 @@ test('actual Excel quick total uses200, formula total uses100, both reconcile',a
   execFileSync(process.execPath,['export_dual_quote_workbook.mjs',input,output],{cwd:root,windowsHide:true,stdio:'pipe'});
   const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
   const quick=book.getWorksheet('报价'),formula=book.getWorksheet('成本');
-  assert.equal(quick.getCell('F11').value,1100);assert.equal(quick.getCell('G11').value,2200);
+  assert.equal(quick.getCell('F11').value,1100);assert.equal(quickQuotationAmount(quick.getCell('G11')),2200);
   assert.equal(formula.getCell('F11').value,799);assert.equal(formula.getCell('G11').value,1598);
  }finally{
   assert(path.resolve(folder).startsWith(path.resolve(outputRoot)+path.sep));await rm(folder,{recursive:true,force:true});
@@ -90,7 +91,7 @@ test('actual current and legacy Excel layouts route quick and cost freight to th
     assert.equal(publicRows.length,2);
     for(let index=0;index<2;index++){
      assert.equal(sheet.getRow(publicRows[index]).getCell(6).value,units[index],name+' unit');
-     assert.equal(sheet.getRow(publicRows[index]).getCell(7).value,totals[index],name+' total');
+     assert.equal((name==='报价'?quickQuotationAmount(sheet.getRow(publicRows[index]).getCell(7)):sheet.getRow(publicRows[index]).getCell(7).value),totals[index],name+' total');
     }
     if(layout==='right_vertical_v1'){
      let header;sheet.getRow(10).eachCell(cell=>{if(cell.text==='项目')header=cell;});assert.ok(header);

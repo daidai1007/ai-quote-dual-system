@@ -6,6 +6,7 @@
   "description": "PostgreSQL-driven dual quotation API and Windows desktop client",
   "license": "MIT",
   "scripts": {
+    "test:quick-thickness": "node --test tests/quick_thickness_pricing.test.mjs tests/quick_thickness_http.test.mjs",
     "test:tax-cost": "node --check tax_cost.mjs && node --test tests/tax_cost.test.mjs tests/verify_cost_column_layout.test.mjs",
     "test:quick-freight": "node --test tests/quick_freight.test.mjs tests/verify_cost_column_layout.test.mjs",
     "test:manufacturing-cost": "node --test tests/manufacturing_cost.test.mjs tests/verify_cost_column_layout.test.mjs",

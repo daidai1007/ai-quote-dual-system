@@ -199,9 +199,9 @@ class CopiedAttachmentNames(unittest.TestCase):
                 cwd=root,capture_output=True,text=True,encoding='utf-8',timeout=35)
             self.assertEqual(result.returncode,0,result.stderr)
             result=subprocess.run(['node','--input-type=module','-e',
-                "import ExcelJS from '@excel.js/exceljs';const b=new ExcelJS.Workbook();"
+                "import ExcelJS from '@excel.js/exceljs';import {quickQuotationAmount} from './tests/quotation_layout_reader.mjs';const b=new ExcelJS.Workbook();"
                 "await b.xlsx.readFile(process.argv[1]);const s=b.getWorksheet('报价');"
-                "console.log(JSON.stringify([s.getCell('F11').value,s.getCell('G11').value,s.getCell('H11').value]));",
+                "console.log(JSON.stringify([s.getCell('F11').value,quickQuotationAmount(s.getCell('G11')),s.getCell('H11').value]));",
                 str(output)],cwd=root,capture_output=True,text=True,encoding='utf-8',timeout=20)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(json.loads(result.stdout),[items[0]['quote_display']['unit_price'],

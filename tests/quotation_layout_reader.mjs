@@ -3,6 +3,15 @@
 // geometry and moved references are tested against the saved physical workbook.
 import assert from 'node:assert/strict';
 
+// Quick quotation G cells now carry an editable-price formula. Check the
+// actual saved reference and cached amount; do not unwrap unit or cost cells.
+export function quickQuotationAmount(cell){
+ assert.equal(cell.value?.formula,`ROUND(F${cell.row}*D${cell.row},2)`);
+ const amount=cell.value.result??0;
+ assert.equal(typeof amount,'number');assert(Number.isFinite(amount));
+ return amount;
+}
+
 const clone=value=>value===undefined?undefined:structuredClone(value);
 const letter=number=>{let s='';for(let n=number;n>0;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
 export function quotationLayout(sheet){

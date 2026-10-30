@@ -18,6 +18,7 @@ import { resolveRuntimeConfig } from './runtime_config.mjs';
 import { runPsqlCommand } from './psql_runner.mjs';
 import { createAttachmentService, attachmentInput } from './attachment_service.mjs';
 import { createQuickMatchOverrideService } from './quick_match_override.mjs';
+import {applyQuickThicknessResult} from './quick_thickness_pricing.mjs';
 import { applyCabinetMaterial, createCabinetMaterialService } from './cabinet_material_service.mjs';
 import { applyCabinetSpray, createCabinetSprayService } from './cabinet_spray_service.mjs';
 import { applyCabinetLabor, createCabinetLaborService } from './cabinet_labor_service.mjs';
@@ -340,7 +341,7 @@ const createQuoteServices = (readExecutor = runPsql) => {
       : input;
     const output=await runPsql(`BEGIN;\n${buildSql(databaseInput)}\nROLLBACK;`);
     const result = JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).at(-1));
-    return applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(applyCabinetMaterial(result,material),spray),auxiliary),labor,input.freight_fee??input.freight??0);
+    return applyQuickThicknessResult(applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(applyCabinetMaterial(result,material),spray),auxiliary),labor,input.freight_fee??input.freight??0),input);
   };
   for (const [name, service] of Object.entries({material: cabinetMaterialService, spray: cabinetSprayService,
     labor: cabinetLaborService, auxiliary: cabinetAuxiliaryService})) {
@@ -388,8 +389,8 @@ const calculateDualQuote = async (input, services = quoteServices) => {
   const output = await runPsql(legacySql);
   if (!output) throw new Error('database returned no quote result');
   const jsonLine = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
-  const result = applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(
-    applyCabinetMaterial(JSON.parse(jsonLine),cabinetMaterial),cabinetSpray),cabinetAuxiliary),cabinetLabor,input.freight_fee??input.freight??0);
+  const result = applyQuickThicknessResult(applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(
+    applyCabinetMaterial(JSON.parse(jsonLine),cabinetMaterial),cabinetSpray),cabinetAuxiliary),cabinetLabor,input.freight_fee??input.freight??0),input);
   result.cost_details={
     version:1,
     material_parts:cabinetMaterial?.part_details||[],

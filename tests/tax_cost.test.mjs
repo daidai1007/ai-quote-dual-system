@@ -1,3 +1,4 @@
+import {quickQuotationAmount} from './quotation_layout_reader.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -66,7 +67,7 @@ test('actual workbook records tax90 for two units, quick2000, formula1670 and no
   await fs.writeFile(input,JSON.stringify({quote_id:'LOCAL-TAX',company_name:'合成测试客户',order_nature:'EXTERNAL',quotation_detail_layout:'vertical_v1',items:[source(2)]}));
   execFileSync(process.execPath,['export_dual_quote_workbook.mjs',input,output],{cwd:root,windowsHide:true,stdio:'pipe'});
   const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
-  assert.equal(book.getWorksheet('报价').getCell('G11').value,2000);
+  assert.equal(quickQuotationAmount(book.getWorksheet('报价').getCell('G11')),2000);
   assert.equal(book.getWorksheet('成本').getCell('F11').value,835);
   assert.equal(book.getWorksheet('成本').getCell('G11').value,1670);
   const taxes=[],adjustments=[];book.getWorksheet('成本明细').eachRow(row=>{if(row.getCell(4).value==='税费')taxes.push(row);if(row.getCell(4).value==='汇总调整')adjustments.push(row);});

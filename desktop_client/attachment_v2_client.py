@@ -371,7 +371,8 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         (name == "三排安装梁" and selection.get("beam_model_manually_selected"))
         or not (
             target_dimensions is not None
-            and (installation_board(selection) or is_base_attachment(selection) or size_aware_target_changed)
+            and (installation_board(selection) or is_base_attachment(selection)
+                 or size_match_attachment_name(selection) == "侧板" or size_aware_target_changed)
         )
     ):
         exact_models = [

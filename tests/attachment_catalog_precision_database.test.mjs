@@ -1,3 +1,4 @@
+import {quickQuotationAmount} from './quotation_layout_reader.mjs';
 // Opt-in integration test: a new disposable PostgreSQL cluster on loopback only.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
@@ -179,7 +180,7 @@ test('real DB: exact catalogue audit, ordinary/ganged save, refresh and popup-dr
             assert.equal(table.getCell(11,column).value,amount,`${name}: ${sheet}`);
           }
           assert.equal(workbook.getWorksheet('报价').getCell('F11').value,item.quote_display.unit_price);
-          assert.equal(workbook.getWorksheet('报价').getCell('G11').value,item.quote_display.total);
+          assert.equal(quickQuotationAmount(workbook.getWorksheet('报价').getCell('G11')),item.quote_display.total);
           assert.equal(workbook.getWorksheet('成本').getCell('F11').value,hydrated.formula.total_cost);
           assert.equal(workbook.getWorksheet('成本').getCell('G11').value,moneyProduct(hydrated.formula.total_cost,quantity));
           const detail=workbook.getWorksheet('附件双报价明细');
