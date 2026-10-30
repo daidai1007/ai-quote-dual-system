@@ -5,13 +5,14 @@ import {snapshotWithOrderNature, snapshotOrderNature, orderNatureSql, validateOr
 import {contractQuote} from './contract_quote.mjs';
 import {displayVersion} from './quote_delivery_document.mjs';
 
-const STATUSES = Object.freeze(['DRAFT', 'QUOTED', 'REVISING', 'ARCHIVED', 'VOID']);
+const STATUSES = Object.freeze(['DRAFT', 'QUOTED', 'CONTRACT', 'REVISING', 'ARCHIVED', 'VOID']);
 const ROLES = Object.freeze(['USER', 'DEPARTMENT_MANAGER', 'ADMIN']);
 const TRANSITIONS = Object.freeze({
   DRAFT: new Set(['QUOTED', 'VOID']),
   QUOTED: new Set(['ARCHIVED', 'VOID']),
+  CONTRACT: new Set(['ARCHIVED', 'VOID']),
   REVISING: new Set(['QUOTED', 'VOID']),
-  ARCHIVED: new Set(['QUOTED', 'VOID']),
+  ARCHIVED: new Set(['QUOTED', 'CONTRACT', 'VOID']),
   VOID: new Set(),
 });
 
@@ -223,6 +224,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     return query(`SELECT COALESCE((SELECT jsonb_build_object(
       'found',TRUE,'scheme_no',s.scheme_no,'status',s.status,'version_no',s.version_no,
+      'source_kind',COALESCE(to_jsonb(s)->>'source_kind','QUOTE'),'contract_record_id',to_jsonb(s)->>'contract_record_id',
+      'contract_amount',to_jsonb(s)->'contract_amount','contracted_at',to_jsonb(s)->>'contracted_at','contract_source_kind',to_jsonb(s)->>'contract_source_kind',
       'can_write',(${writePermissionSql(principal,'s')}),
       'source_scheme_no',source.scheme_no,'source_version_no',s.source_version_no,'company_name',s.company_name,'product_summary',s.product_summary,
       'quoted_amount',s.quoted_amount,'creator_user_id',s.creator_user_id,'creator_name',s.creator_name_entered,
@@ -279,6 +282,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       'total',COALESCE(max(total_count),0),'items',COALESCE(jsonb_agg(jsonb_build_object(
         'scheme_no',scheme_no,'status',status,'version_no',version_no,'quote_version',quote_version,'source_scheme_no',source_scheme_no,'source_version_no',source_version_no,
         'company_name',company_name,'product_summary',product_summary,'quoted_amount',quoted_amount,'can_write',can_write,'order_nature',order_nature,
+        'source_kind',COALESCE(to_jsonb(matched)->>'source_kind','QUOTE'),'contract_record_id',to_jsonb(matched)->>'contract_record_id',
+        'contract_amount',to_jsonb(matched)->'contract_amount','contracted_at',to_jsonb(matched)->>'contracted_at',
         'creator_name',creator_name_entered,'creator_identity_mode',creator_identity_mode,'last_editor_name',last_editor_name_snapshot,
         'lock_version',lock_version,'updated_at',updated_at) ORDER BY updated_at DESC,scheme_id DESC),'[]'::jsonb))::text FROM matched;`);
   };
@@ -330,8 +335,8 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     if(isNamePrincipal(principal))operatorNameInput=principal.displayName;
     if (!validSchemeNo(schemeNo)) throw Object.assign(new Error('invalid scheme number'), { statusCode: 400 });
     const config = {
-      archive: { from: ['QUOTED'], to: 'ARCHIVED' }, restore: { from: ['ARCHIVED'], to: 'QUOTED' },
-      void: { from: ['DRAFT','QUOTED','REVISING','ARCHIVED'], to: 'VOID' },
+      archive: { from: ['QUOTED','CONTRACT'], to: 'ARCHIVED' }, restore: { from: ['ARCHIVED'], to: 'QUOTED' },
+      void: { from: ['DRAFT','QUOTED','CONTRACT','REVISING','ARCHIVED'], to: 'VOID' },
     }[action];
     if (!config || !positiveVersion(expectedVersion)) throw Object.assign(new Error('invalid transition request'), { statusCode: 400 });
     const operatorName = operatorNameValue({operator_name:operatorNameInput});
@@ -343,7 +348,9 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
         AND s.status=ANY(ARRAY[${config.from.map(sqlUnicodeText).join(',')}]) AND s.lock_version=${sqlNumber(expectedVersion)}
       FOR UPDATE
     ), changed AS (
-      UPDATE calc.quote_scheme s SET status=${sqlUnicodeText(config.to)},lock_version=s.lock_version+1,
+      UPDATE calc.quote_scheme s SET status=CASE WHEN ${sqlUnicodeText(config.to)}='QUOTED'
+        AND (to_jsonb(t)->>'contract_version_no')::integer=t.version_no AND to_jsonb(t)->>'contract_record_id' IS NOT NULL
+        THEN 'CONTRACT' ELSE ${sqlUnicodeText(config.to)} END,lock_version=s.lock_version+1,
         updated_at=now(),last_editor_user_id=${p.id},last_editor_name_snapshot=${sqlUnicodeText(operatorName)},
         archived_at=CASE WHEN ${sqlUnicodeText(config.to)}='ARCHIVED' THEN now() ELSE s.archived_at END,
         voided_at=CASE WHEN ${sqlUnicodeText(config.to)}='VOID' THEN now() ELSE s.voided_at END
@@ -369,7 +376,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       SELECT s.*,snap.snapshot_payload FROM calc.quote_scheme s
       JOIN calc.quote_scheme_snapshot snap USING(scheme_id)
       WHERE s.scheme_no=${sqlUnicodeText(schemeNo)} AND ${writePermissionSql(principal, 's')}
-        AND s.status='QUOTED' AND s.lock_version=${sqlNumber(expectedVersion)} FOR UPDATE
+        AND s.status IN ('QUOTED','CONTRACT') AND COALESCE(to_jsonb(s)->>'source_kind','QUOTE')='QUOTE' AND s.lock_version=${sqlNumber(expectedVersion)} FOR UPDATE
     ), frozen AS (
       INSERT INTO calc.quote_scheme_version(scheme_id,version_no,source_version_no,status,snapshot_payload,quoted_at)
       SELECT scheme_id,version_no,source_version_no,'QUOTED',snapshot_payload,quoted_at FROM target
@@ -388,7 +395,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
       FROM changed c WHERE snap.scheme_id=c.scheme_id RETURNING snap.scheme_id
     ), audit AS (
       INSERT INTO calc.quote_scheme_audit(scheme_id,action,from_status,to_status,actor_user_id,actor_name_snapshot,detail)
-      SELECT scheme_id,'REVISION_CREATED','QUOTED','REVISING',${p.id},${sqlUnicodeText(operatorName)},jsonb_build_object('source_version_no',source_version_no) FROM changed
+      SELECT c.scheme_id,'REVISION_CREATED',t.status,'REVISING',${p.id},${sqlUnicodeText(operatorName)},jsonb_build_object('source_version_no',c.source_version_no) FROM changed c JOIN target t USING(scheme_id)
     ) SELECT COALESCE((SELECT jsonb_build_object('changed',TRUE,'scheme_no',scheme_no,'status',status,
       'version_no',version_no,'source_version_no',source_version_no,'lock_version',lock_version,'updated_at',updated_at) FROM changed),
       '{"changed":false,"conflict":true}'::jsonb)::text;`);
@@ -445,6 +452,7 @@ const createQuoteSchemeService = ({ runPsql, sqlUnicodeText, sqlNumber }) => {
     const summary = frozenSnapshot ? summaryFromSnapshot(frozenSnapshot) : {company:'',productSummary:'',amount:0};
     const p = principalValues(principal);
     const result = await query(`WITH target AS (SELECT s.* FROM calc.quote_scheme s WHERE s.scheme_no=${sqlUnicodeText(schemeNo)}
+      AND COALESCE(to_jsonb(s)->>'source_kind','QUOTE')='QUOTE'
       AND ${writePermissionSql(principal, 's')} AND s.lock_version=${sqlNumber(input.expected_version)}
       ${contractConfirmation?"AND s.status IN ('DRAFT','REVISING')":''}
       ${formalSuccess ? `AND ${natureUnchanged(frozenSnapshot)} AND ${confirmedHistoryUnchanged(frozenSnapshot)}` : ''} FOR UPDATE),

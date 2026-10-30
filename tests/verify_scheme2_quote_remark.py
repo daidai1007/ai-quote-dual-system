@@ -21,7 +21,7 @@ item = {
     ],
 }
 remark = _scheme2_quote_remark(item)
-assert remark == "JP柜，镀锌板（SECC），喷塑RAL7035橘纹。配24V-0.6m照明灯/行程开关1套，配接地线-黄绿线1根，配固定立柱1件。"
+assert remark == "仿威图JP柜，侧板、后背板可拆。镀锌板（SECC），喷塑RAL7035橘纹，柜体1.5mm，门板2mm，安装板数量待确认。配24V-0.6m照明灯/行程开关1套，配接地线-黄绿线1根，配固定立柱1件。"
 assert "仿威图（JP）柜" not in remark and "仿威图(JP)柜" not in remark
 
 item['quantity'] = 3
@@ -29,11 +29,11 @@ assert _scheme2_quote_remark(item) == remark
 assert item['attachments'][0]['quantity'] == 1
 
 item["attachments"] = []
-assert _scheme2_quote_remark(item) == "JP柜，镀锌板（SECC），喷塑RAL7035橘纹。"
+assert _scheme2_quote_remark(item) == "仿威图JP柜，侧板、后背板可拆。镀锌板（SECC），喷塑RAL7035橘纹，柜体1.5mm，门板2mm，安装板数量待确认。"
 
 item["material_code"] = "SUS304"
 item["scheme2_selected_material"] = "不锈钢 SUS304"
 remark = _scheme2_quote_remark(item)
-assert "，不锈钢304，" in remark
+assert "不锈钢304，" in remark
 assert "不锈钢 SUS304" not in remark
 print("scheme2 quote remark contract passed")

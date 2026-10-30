@@ -26,13 +26,14 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.10.29.01"
+CLIENT_VERSION = "2026.10.29.02"
 STATUS_TEXT = {
-    "DRAFT": "草稿", "QUOTED": "已报价", "REVISING": "修订中",
+    "DRAFT": "草稿", "QUOTED": "已报价", "CONTRACT": "合同", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
 }
 STATUS_COLORS = {
     "DRAFT": ("#F3F4F6", "#4B5563"), "QUOTED": ("#EAF3DE", "#237804"),
+    "CONTRACT": ("#F1EBFF", "#6B21A8"),
     "REVISING": ("#FFF4E5", "#B45309"), "ARCHIVED": ("#EAF2FF", "#185FA5"),
     "VOID": ("#FDECEC", "#B42318"),
 }
@@ -727,15 +728,17 @@ def _list_loaded(window, result):
 def _row_actions(window, scheme):
     status = str(scheme.get("status") or "DRAFT")
     scheme_no = scheme["scheme_no"]
+    if scheme.get('source_kind')=='LEDGER_CONTRACT':
+        return RowActions([("查看合同",lambda _checked=False:_open_scheme(window,scheme_no))],('查看合同',))
     actions = [("报价单", lambda _checked=False: _open_scheme(window, scheme_no, 2)),
                ("打开", lambda _checked=False: _open_scheme(window, scheme_no))]
-    if status in ("QUOTED", "ARCHIVED"):
+    if status in ("QUOTED", "CONTRACT", "ARCHIVED"):
         actions.extend([
             ("打印", lambda _checked=False: _open_scheme(window, scheme_no, 2, "print")),
             ("导出", lambda _checked=False: _open_scheme(window, scheme_no, 2, "export")),
         ])
     actions.append(("复制", lambda _checked=False: _scheme_action(window, scheme, "copy")))
-    if status == "QUOTED":
+    if status in ("QUOTED","CONTRACT"):
         actions.append(("修订", lambda _checked=False: _scheme_action(window, scheme, "revision")))
         actions.append(("归档", lambda _checked=False: _confirm_transition(window, scheme, "archive")))
     elif status == "REVISING":
@@ -750,6 +753,7 @@ def _row_actions(window, scheme):
         return RowActions([(label,callback) for label,callback in actions if label in ('报价单','打开','复制')],('报价单','打开'))
     primary = {
         "DRAFT": ("打开", "复制"), "QUOTED": ("打开", "打印", "导出"),
+        "CONTRACT": ("打开", "打印", "导出"),
         "REVISING": ("打开", "修订"), "ARCHIVED": ("打开", "导出"), "VOID": ("打开",),
     }.get(status, ("打开",))
     return RowActions(actions, ("报价单", *primary[:2]))
@@ -815,6 +819,10 @@ def _apply_read_only(window, read_only):
 
 
 def _apply_opened_scheme(window, result, route=3, after_open=None):
+    if result.get('source_kind')=='LEDGER_CONTRACT':
+        page=getattr(window,'contract_management',None)
+        if page is not None:page.open_contract_record(result.get('contract_record_id'))
+        return
     from scheme2_ui import _apply_order_workspace_payload
     snapshot = deepcopy(result.get("snapshot") or {})
     # Local workspace hints cannot override the canonical API permission.
@@ -840,7 +848,7 @@ def _apply_opened_scheme(window, result, route=3, after_open=None):
             if route == 2:
                 window._qm_entry_pending = True
         window._quote_analysis_customer = deepcopy(snapshot.get("analysis_customer") or {})
-        _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID") or window._name_scope_foreign)
+        _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "CONTRACT", "ARCHIVED", "VOID") or window._name_scope_foreign)
         window.show_section(route)
         window._quote_scheme_dirty_seq = 0
         window._quote_scheme_saved_seq = 0
@@ -1259,7 +1267,7 @@ def _export_recorded(window, result, receipt=None):
     if receipt is not None and not receipt.get('historical'):
         window._quote_order_nature_locked = True
     window._quote_scheme_version = int(result.get("lock_version") or window._quote_scheme_version)
-    _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "ARCHIVED", "VOID"))
+    _apply_read_only(window, window._quote_scheme_status in ("QUOTED", "CONTRACT", "ARCHIVED", "VOID"))
     manager = getattr(window, 'quote_management', None)
     if manager is not None:
         if receipt is not None and not receipt.get('historical'):

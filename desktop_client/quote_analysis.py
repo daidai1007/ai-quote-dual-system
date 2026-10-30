@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from decimal import Decimal
 import json
 import urllib.error
 import urllib.parse
@@ -22,7 +23,8 @@ from quote_order_nature import LABELS as NATURE_LABELS, normalize as nature_valu
 from quote_scheme_widgets import SchemeComboBox, QueryLineEdit
 
 METRICS = {"inset": 16, "gap": 10, "chart_height": 190, "table_row": 38, "field_height": 36,
-           "short_window": 1050, "dialog_width": 620}
+           "short_window": 1050, "dialog_width": 620, "product_row": 38, "product_name_width": 110,
+           "product_value_width": 125, "product_share_width": 60, "product_bar_height": 12}
 COLORS = {"bg":"#f3f5f8", "panel":"#ffffff", "brand":"#2563eb", "deep":"#173e76",
           "text":"#243447", "secondary":"#5d7087", "muted":"#8a99aa",
           "border":"#c9d5e2", "soft":"#dce4ec", "head":"#eaf1f8",
@@ -245,6 +247,97 @@ class CostDonut(QWidget):
         if event.button()==Qt.MouseButton.LeftButton:self.selected.emit()
 
 
+class AnalysisActionButton(QPushButton):
+    def event(self,event):
+        # These controls own Return, just like the existing query fields;
+        # the workbench's global shortcut must not add a quotation line.
+        if event.type()==QEvent.Type.ShortcutOverride and event.key() in (Qt.Key.Key_Return,Qt.Key.Key_Enter):
+            event.accept();return True
+        return super().event(event)
+
+    def keyPressEvent(self,event):
+        if event.key() in (Qt.Key.Key_Return,Qt.Key.Key_Enter):
+            self.click();event.accept();return
+        super().keyPressEvent(event)
+
+
+class ProductBarRow(AnalysisActionButton):
+    def __init__(self, chart, row=None):
+        super().__init__(row['product_name'] if row else '', chart)
+        self.chart,self.row=chart,row
+        self.setFixedHeight(METRICS['product_row'])
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+        if row:
+            self.setAccessibleName(f"{row['product_name']}，金额 {number(row.get('amount'),True)}，数量 {number(row.get('quantity'))} 台，查看明细")
+            self.setToolTip(self.accessibleName()+f"；金额覆盖 {row.get('amount_coverage',0)}/{row.get('line_count',0)} 行，台数覆盖 {row.get('quantity_coverage',0)}/{row.get('line_count',0)} 行")
+        else:
+            self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def paintEvent(self,event):
+        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font=QFont(self.font());font.setPixelSize(TABLE_PX);p.setFont(font)
+        gap=METRICS['gap'];w=self.width();h=self.height()
+        name_w=min(METRICS['product_name_width'],w*.24)
+        value_w=min(self.chart.value_width,w*.34)
+        share_w=min(METRICS['product_share_width'],w*.15)
+        start=name_w+gap;bar_w=max(1,w-start-value_w-share_w-gap*3)
+        if self.row and (self.underMouse() or self.hasFocus()):
+            p.fillRect(self.rect(),QColor(COLORS['head']))
+        if self.hasFocus():
+            p.setPen(QPen(QColor(COLORS['brand']),1,Qt.PenStyle.DotLine));p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(1,1,-1,-1),3,3)
+        row=self.row;metric=self.chart.metric
+        name=row['product_name'] if row else '产品类型'
+        value=row.get(metric) if row else None
+        shown=number(value,metric=='amount') if row else ('报价金额（元）' if metric=='amount' else '报价台数（台）')
+        share=row.get(metric+'_share') if row else None
+        p.setPen(QColor(COLORS['text'] if row else COLORS['secondary']))
+        for text,rect,alignment in [(name,QRectF(4,0,name_w-4,h),Qt.AlignmentFlag.AlignLeft),
+          (shown,QRectF(start+bar_w+gap,0,value_w,h),Qt.AlignmentFlag.AlignRight),
+          ('占比' if not row else '—' if share is None else f'{share*100:.1f}%',QRectF(w-share_w-4,0,share_w,h),Qt.AlignmentFlag.AlignRight)]:
+            p.drawText(rect,alignment|Qt.AlignmentFlag.AlignVCenter,p.fontMetrics().elidedText(text,Qt.TextElideMode.ElideRight,max(1,int(rect.width()))))
+        if row:
+            track=QRectF(start,(h-METRICS['product_bar_height'])/2,bar_w,METRICS['product_bar_height'])
+            p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(COLORS['head']));p.drawRoundedRect(track,2,2)
+            if value is not None and self.chart.maximum:
+                p.setBrush(QColor(COLORS['brand']))
+                p.drawRoundedRect(QRectF(track.x(),track.y(),bar_w*max(0,float(value))/self.chart.maximum,track.height()),2,2)
+
+
+class ProductBreakdownChart(QWidget):
+    selected=Signal(str)
+
+    def __init__(self):
+        super().__init__();self.rows=[];self.metric='amount';self.maximum=1
+        self.value_width=METRICS['product_value_width'];self.buttons=[]
+        self.setMinimumWidth(0)
+        self.setAccessibleName('按产品分类的正式报价金额或台数；可用 Tab 与回车打开产品明细')
+        self.column=QVBoxLayout(self);self.column.setContentsMargins(0,0,0,0);self.column.setSpacing(2)
+        self.empty=label('当前条件下暂无产品分类数据')
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.header=ProductBarRow(self)
+        self.column.addWidget(self.header);self.column.addWidget(self.empty)
+
+    def set_rows(self,rows):
+        self.rows=list(rows);self.set_metric(self.metric)
+
+    def set_metric(self,metric):
+        self.metric=metric
+        for button in self.buttons:
+            self.column.removeWidget(button);button.hide();button.deleteLater()
+        self.buttons=[]
+        ordered=sorted(self.rows,key=lambda r:(r.get(metric) is None,-float(r.get(metric) or 0),r['product_name']))
+        self.maximum=max(1,max((float(r.get(metric) or 0) for r in ordered),default=0))
+        self.value_width=max(METRICS['product_value_width'],max((self.fontMetrics().horizontalAdvance(number(r.get(metric),metric=='amount'))+16 for r in ordered),default=0))
+        self.empty.setVisible(not ordered);self.header.setVisible(bool(ordered))
+        for row in ordered:
+            button=ProductBarRow(self,row);button.clicked.connect(lambda _=False,code=row['product_code']:self.selected.emit(code))
+            self.column.addWidget(button);button.show();self.buttons.append(button)
+        self.header.update();self.updateGeometry()
+
+
 class TrendChart(QWidget):
     """Native, accessible trend chart; values are the returned frozen quote counts."""
     selected = Signal(str)
@@ -254,11 +347,11 @@ class TrendChart(QWidget):
         self.rows = []
         self.setFixedHeight(METRICS["chart_height"])
         self.setMinimumWidth(0)
-        self.setAccessibleName("方案与报价数量趋势：蓝色新建方案，绿色已报价")
+        self.setAccessibleName("合同与已报价数量趋势：蓝色虚线为合同，绿色实线为已报价；按日期统计份数")
 
     def set_rows(self, rows):
         self.rows = list(rows)
-        self.setToolTip("；".join(f"{r['date']}：新建 {r.get('created_count',0)} 个，已报价 {r['count']} 个" for r in rows) or "当前条件下暂无正式报价")
+        self.setToolTip("；".join(f"{r['date']}：合同 {r.get('contract_count',0)} 份，已报价 {r.get('quoted_count',0)} 份" for r in rows) or "当前条件下暂无合同或正式报价")
         self.update()
 
     def paintEvent(self, event):
@@ -266,10 +359,10 @@ class TrendChart(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if not self.rows:
             painter.setPen(QColor(DIALOG_COLORS["text"]))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "当前条件下暂无正式报价")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "当前条件下暂无合同或正式报价")
             return
         left, top, width, height = 35, 15, max(1, self.width()-55), self.height()-45
-        maximum = max(3, max(max(int(r["count"]),int(r.get("created_count",0))) for r in self.rows))
+        maximum = max(3, max(max(int(r.get('quoted_count',0)),int(r.get('contract_count',0))) for r in self.rows))
         font=QFont(self.font());font.setPixelSize(11);painter.setFont(font)
         painter.setPen(QColor(COLORS["soft"]))
         for part in range(4):
@@ -278,10 +371,10 @@ class TrendChart(QWidget):
             painter.setPen(QColor(COLORS["muted"]))
             painter.drawText(0, int(y+4), str(round(maximum*(1-part/3))))
             painter.setPen(QColor(COLORS["soft"]))
-        for key,color in (("created_count",COLORS['brand']),("count",COLORS['green'])):
+        for key,color in (("contract_count",COLORS['brand']),("quoted_count",COLORS['green'])):
             points = [QPointF(left+i*width/max(1,len(self.rows)-1), top+height*(1-int(row.get(key,0))/maximum))
                       for i,row in enumerate(self.rows)]
-            painter.setPen(QPen(QColor(color), 2))
+            painter.setPen(QPen(QColor(color),2,Qt.PenStyle.DashLine if key=='contract_count' else Qt.PenStyle.SolidLine))
             for a,b in zip(points,points[1:]):painter.drawLine(a,b)
             if len(points)<=7:
                 for point in points:painter.drawEllipse(point,3,3)
@@ -550,7 +643,7 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         self.kpi_layout = QGridLayout()
         self.kpi_layout.setSpacing(10)
         self.kpis = {}
-        for key,caption,note in [("schemes","本期方案数","点击查看方案明细"),("quoted","已报价","正式报价快照"),("drafts","草稿","按创建时间统计"),("amount","报价总金额","正式报价金额合计"),
+        for key,caption,note in [("schemes","本期方案数","点击查看方案明细"),("quoted","已报价","正式报价快照"),("contracts","合同","报价及台账生成的合同方案；不自动计为成交"),("drafts","草稿","按创建时间统计"),("amount","报价总金额","正式报价金额合计"),
                             ("average","平均报价额","按金额完整方案计算"),("active_customers","活跃客户","客户归属明确的正式报价"),("failures","异常 / 失败","已记录的导出失败")]:
             button = KpiCard(caption,note)
             button.clicked.connect(lambda _=False,k=key:self.show_details(k))
@@ -560,13 +653,16 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         self.dashboard_grid.setSpacing(10)
         self.dashboard_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         column.addLayout(self.dashboard_grid)
-        self.trend_card,trend_column=self.card("方案与报价趋势","● 新建方案   ● 已报价")
+        self.trend_card,trend_column=self.card("合同与已报价趋势","合同   已报价")
         legend=trend_column.itemAt(0).widget().findChildren(QLabel)[-1]
         legend.setTextFormat(Qt.TextFormat.RichText)
-        legend.setText('<span style="color:#2563eb">●</span> 新建方案　<span style="color:#79a943">●</span> 已报价')
+        legend.setText(f'<span style="color:{COLORS["brand"]}">┄</span> 合同　<span style="color:{COLORS["green"]}">━</span> 已报价')
         self.chart = TrendChart()
         self.chart.selected.connect(lambda date:self.show_details("date",date))
         trend_column.addWidget(self.chart)
+        self.trend_basis=label('合同按生成日期 · 已报价按正式报价日期')
+        self.trend_basis.setToolTip('合同按已登记的新生成合同逐份统计；已报价按现有正式报价方案统计。不使用新建草稿日期，也不自动登记成交。')
+        trend_column.addWidget(self.trend_basis)
         self.ranking_card,rank_column=self.card("客户 Top 5","按正式报价金额")
         self.ranking = CustomerRankChart()
         self.ranking.selected.connect(self.pick_customer)
@@ -578,6 +674,22 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         self.coverage = label()
         self.coverage.setToolTip("只汇总完整的历史成本快照；缺失金额不按 0 元补齐。")
         cost_column.addWidget(self.coverage)
+        self.product_card,product_column=self.card('按产品分类')
+        product_header_widget=self.product_card.layout().itemAt(0).widget()
+        product_header_widget.setFixedHeight(METRICS['field_height'])
+        product_header=product_header_widget.layout()
+        self.product_amount=AnalysisActionButton('报价金额');self.product_quantity=AnalysisActionButton('报价台数')
+        for control,metric in ((self.product_amount,'amount'),(self.product_quantity,'quantity')):
+            control.setCheckable(True);control.setStyleSheet(button_style('secondary'))
+            control.clicked.connect(lambda _=False,key=metric:self.set_product_metric(key));product_header.addWidget(control)
+        self.product_amount.setChecked(True)
+        self.product_amount.setStyleSheet(button_style('primary'))
+        self.controls.extend([self.product_amount,self.product_quantity])
+        self.product_scope=label('尚未取得产品分类数据')
+        product_column.addWidget(self.product_scope)
+        self.product_chart=ProductBreakdownChart()
+        self.product_chart.selected.connect(self.show_product_details)
+        product_column.addWidget(self.product_chart)
         self.recent_card,recent_column=self.card("最近报价方案","复用报价方案的打开流程")
         self.recent = table(["方案编号","客户","产品","状态","报价金额","创建人","最后修改人","更新时间","操作"],"analysisRecent")
         self.recent.horizontalHeader().setMinimumSectionSize(80)
@@ -654,11 +766,11 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
     def position_content(self):
         if not hasattr(self,'kpis'):return
         width=self.window.width()
-        columns=7 if width>=1500 else 4 if width>=1000 else 2
+        columns=8 if width>=1500 else 4 if width>=1000 else 2
         while self.kpi_layout.count():self.kpi_layout.takeAt(0)
         for i,(button,_) in enumerate(self.kpis.values()):
             self.kpi_layout.addWidget(button,i//columns,i%columns)
-        for i in range(7):self.kpi_layout.setColumnStretch(i,1 if i<columns else 0)
+        for i in range(8):self.kpi_layout.setColumnStretch(i,1 if i<columns else 0)
         while self.filter_layout.count():self.filter_layout.takeAt(0)
         filter_columns=5 if width>=1500 else 3 if width>=1100 else 2
         for i,field in enumerate(self.filter_fields):
@@ -667,13 +779,13 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         for i in range(6):self.filter_layout.setColumnStretch(i,1 if i<filter_columns else 0)
         while self.dashboard_grid.count():self.dashboard_grid.takeAt(0)
         if width>=1500:
-            positions=[(self.trend_card,0,0,1,1),(self.ranking_card,0,1,1,1),(self.cost_card,0,2,1,1),(self.recent_card,1,0,1,2),(self.events_card,1,2,1,1)]
+            positions=[(self.trend_card,0,0,1,1),(self.ranking_card,0,1,1,1),(self.cost_card,0,2,1,1),(self.product_card,1,0,1,3),(self.recent_card,2,0,1,2),(self.events_card,2,2,1,1)]
             stretches=(165,100,100)
         elif width>=1100:
-            positions=[(self.trend_card,0,0,1,1),(self.ranking_card,0,1,1,1),(self.cost_card,1,0,1,1),(self.events_card,1,1,1,1),(self.recent_card,2,0,1,2)]
+            positions=[(self.trend_card,0,0,1,1),(self.ranking_card,0,1,1,1),(self.cost_card,1,0,1,1),(self.events_card,1,1,1,1),(self.product_card,2,0,1,2),(self.recent_card,3,0,1,2)]
             stretches=(150,100,0)
         else:
-            positions=[(widget,i,0,1,1) for i,widget in enumerate((self.trend_card,self.ranking_card,self.cost_card,self.recent_card,self.events_card))]
+            positions=[(widget,i,0,1,1) for i,widget in enumerate((self.trend_card,self.ranking_card,self.cost_card,self.product_card,self.recent_card,self.events_card))]
             stretches=(1,0,0)
         for widget,r,c,rs,cs in positions:self.dashboard_grid.addWidget(widget,r,c,rs,cs)
         for i,stretch in enumerate(stretches):self.dashboard_grid.setColumnStretch(i,stretch)
@@ -717,6 +829,7 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
             self.reload()
 
     def set_busy(self,busy):
+        self.product_chart.setEnabled(not busy)
         self.query_button.setEnabled(not busy)
         self.query_button.setText("加载中…" if busy else "查询")
         for control in self.controls:
@@ -766,6 +879,8 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         for button,caption in self.kpis.values():
             button.setText(caption+"\n—")
         self.chart.set_rows([])
+        self.product_chart.set_rows([])
+        self.product_scope.setText('尚未取得当前条件的产品分类数据')
         self.discount_scope.setText("尚未取得当前条件的数据。")
         self.ranking.set_rows([])
         self.costs.set_rows({})
@@ -815,7 +930,13 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         summary = result["summary"]
         for key,(button,caption) in self.kpis.items():
             button.setText(caption+"\n"+number(summary.get(key),key in ("amount","average")))
-        self.chart.set_rows(result.get("trend",[]))
+        contract_card=self.kpis['contracts'][0]
+        contract_card.note='合同金额：'+number(summary.get('contract_amount'),True)
+        contract_card.setToolTip(contract_card.text().replace('\n','：')+'；'+contract_card.note+'。按当前筛选统计；不自动计为成交。按产品无法拆分的合同金额显示—。')
+        self.chart.set_rows(result.get('contract_quoted_trend',[]))
+        self.trend_basis.setText('合同按生成日期 · 已报价按正式报价日期'+('；合同状态配套尚未启用' if not result.get('contract_trend_available') else ''))
+        self.product_chart.set_rows(result.get('product_breakdown',[]))
+        self.update_product_scope()
         self.ranking.set_rows(result.get("ranking",[]))
         self.costs.set_rows(result.get("costs",{}))
         self.coverage.setText(f"金额覆盖 {summary.get('amount_coverage',0)}/{summary.get('quoted',0)} 个方案 · 完整成本 {result.get('cost_coverage',0)} 行")
@@ -922,6 +1043,37 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         if self.data and row<len(self.data.get("recent",[])):
             schemes._open_scheme(self.window,self.data["recent"][row]["scheme_no"])
 
+    def set_product_metric(self,metric):
+        self.product_amount.setChecked(metric=='amount');self.product_quantity.setChecked(metric=='quantity')
+        for button,key in ((self.product_amount,'amount'),(self.product_quantity,'quantity')):
+            button.setStyleSheet(button_style('primary' if metric==key else 'secondary'))
+        self.product_chart.set_metric(metric)
+        self.position_content()
+
+    def update_product_scope(self):
+        if self.data is None:return
+        if 'product_breakdown' not in self.data:
+            self.product_scope.setText('产品分类图服务尚未部署，请更新配套 API 后查询。');return
+        rows=self.data['product_breakdown']
+        amounts=[Decimal(str(r['amount'])) for r in rows if r.get('amount') is not None]
+        quantities=[Decimal(str(r['quantity'])) for r in rows if r.get('quantity') is not None]
+        total=number(sum(amounts),True) if amounts else '—'
+        count=format(sum(quantities).normalize(),'f') if quantities else '—'
+        text=f"{self.product.currentText()} · 正式报价明细 · {len(rows)} 类 · {count} 台 · {total}"
+        missing_amount=sum(r['line_count']-r['amount_coverage'] for r in rows)
+        missing_quantity=sum(r['line_count']-r['quantity_coverage'] for r in rows)
+        if missing_amount or missing_quantity:text+=f'；金额缺失 {missing_amount} 行，台数缺失 {missing_quantity} 行'
+        self.product_scope.setText(text)
+        self.product_scope.setToolTip('按产品自身冻结行金额和数量归类；多产品订单不重复计整单金额。未知金额或台数不补零。')
+
+    def show_product_details(self,code):
+        if self.data is None:return
+        group=next((g for g in self.data.get('product_breakdown',[]) if g['product_code']==code),None)
+        if group is None:return
+        rows=group['items']
+        self.detail_dialog('按产品分类 · '+group['product_name'],['方案编号','客户','产品','数量（台）','报价金额','状态','正式报价日期'],
+          [(r['scheme_no'],r.get('customer_name') or '客户待确认',group['product_name'],number(r.get('quantity')),number(r.get('analysis_amount'),True),schemes.STATUS_TEXT.get(r['status'],r['status']),r.get('formal_date') or '—') for r in rows],rows)
+
     def show_details(self,key,value=None):
         if not self.data:
             return
@@ -930,8 +1082,13 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
             rows = [s for s in rows if s.get("formal_date") and s["status"]!="VOID"]
         elif key=="drafts":
             rows = [s for s in rows if s["status"]=="DRAFT"]
+        elif key=="contracts":
+            rows = [s for s in rows if s["status"]=="CONTRACT"]
         elif key=="date":
-            rows = [s for s in self.data.get("trend_details",rows) if s.get("formal_date")==value or s.get("created_date")==value]
+            events=[r for r in self.data.get('contract_quoted_details',[]) if r['event_date']==value]
+            self.detail_dialog('合同与已报价趋势 · '+str(value),['类型','方案编号','日期','客户','金额'],
+              [('合同' if r['event_kind']=='CONTRACT' else '已报价',r['scheme_no'],r['event_date'],r.get('customer_name') or '客户待确认',number(r.get('amount') if r['event_kind']=='CONTRACT' else r.get('analysis_amount'),True)) for r in events],events)
+            return
         elif key=="failures":
             events = self.data.get("failures",[])
             self.detail_dialog("已记录的导出失败",["方案编号","日期","类型"],
@@ -956,7 +1113,10 @@ QWidget#quoteAnalysisPage QProgressBar::chunk {{ background:{COLORS['brand']}; b
         if schemes_rows is not None:
             def open_row(row,col):
                 dialog.close()
-                schemes._open_scheme(self.window,schemes_rows[row]["scheme_no"])
+                selected=schemes_rows[row]
+                if selected.get('event_kind')=='CONTRACT' and selected.get('contract_record_id'):
+                    self.window.contract_management.open_contract_record(selected['contract_record_id'])
+                else:schemes._open_scheme(self.window,selected['scheme_no'])
             grid.cellDoubleClicked.connect(open_row)
         close = QPushButton("关闭")
         close.clicked.connect(dialog.close)

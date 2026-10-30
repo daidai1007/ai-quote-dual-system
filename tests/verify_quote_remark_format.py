@@ -33,8 +33,8 @@ def product():
 class ConfigurationFormat(unittest.TestCase):
     def test_full_template_exact_order_units_and_single_cabinet_counts(self):
         item=product();before=deepcopy(item)
-        expected=('D-001/M-01，JP柜，不锈钢304，喷塑RAL7035橘纹，柜体1.5mm，门板2mm，配2.5mm镀锌安装板1块（后部）。'
-            '前单开门，后背板，侧板可拆，后背板不可拆；配100mm高黑色固定底座1件。'
+        expected=('D-001/M-01，仿威图JP柜，侧板、后背板可拆。不锈钢304，喷塑RAL7035橘纹，柜体1.5mm，门板2mm，配2.5mm镀锌安装板1块（后部）。'
+            '前单开门，后背板；配100mm高黑色固定底座1件。'
             '配MS821门锁2把，配220V照明灯及行程开关1套，配门限位器2套，配接地线3根，配A4文件夹1个，'
             '配国产220VSG220风机2只，配国产FU9804滤网4只，配三排纵梁4根（左右各2根），配木托（按图）1件。'
             '按图开孔、丝印；不含空调；IP54；木箱包装；安装板先发。')
@@ -47,8 +47,8 @@ class ConfigurationFormat(unittest.TestCase):
         self.assertEqual(build({}), '')
         self.assertEqual(build(dict(material_code='SUS316',attachments=[])),'不锈钢316。')
         actual=build(dict(product_family='JP',attachments=[dict(item_name='风机')]))
-        self.assertEqual(actual,'JP柜。')
-        for value in ('1.5','2.5','RAL7035','IP54','后背板','不可拆','不含','【'):
+        self.assertEqual(actual,'仿威图JP柜，侧板、后背板可拆。柜体1.5mm，门板2mm，安装板数量待确认。')
+        for value in ('2.5','RAL7035','IP54','不可拆','不含','【'):
             self.assertNotIn(value,actual)
 
     def test_source_requirements_are_copied_and_parsed_without_business_terms(self):

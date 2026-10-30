@@ -504,7 +504,7 @@ class QuoteManagement:
             signal.connect(lambda *_: self.product_sync.start())
         self.sync_filter_products()
         self.status = SchemeComboBox(); self.status.setAccessibleName('状态筛选')
-        for text, code in (('全部',''), ('草稿','DRAFT'), ('已报价','QUOTED'), ('修订中','REVISING'), ('已归档','ARCHIVED'), ('已作废','VOID')):
+        for text, code in (('全部',''), ('草稿','DRAFT'), ('已报价','QUOTED'), ('合同','CONTRACT'), ('修订中','REVISING'), ('已归档','ARCHIVED'), ('已作废','VOID')):
             self.status.addItem(text, code)
         self.status.setCurrentIndex(self.status.findData('QUOTED'))
         self.filters['order_nature'] = SchemeComboBox()
@@ -700,7 +700,7 @@ class QuoteManagement:
             entry['pending_confirmation'] = True
             entry.pop('confirmed', None)
         self.sync()
-        if self.state['versions'] and self.window._quote_scheme_status in ('QUOTED','ARCHIVED','VOID'):
+        if self.state['versions'] and self.window._quote_scheme_status in ('QUOTED','CONTRACT','ARCHIVED','VOID'):
             self.state['versions'][-1]['sealed'] = True
         self.remember_saved()
 
@@ -795,7 +795,7 @@ class QuoteManagement:
 
     def selection_changed(self):
         index=self.list_table.currentRow()
-        eligible = 0 <= index < len(self.rows) and self.rows[index].get('can_write') is not False and self.rows[index].get('order_nature') == 'EXTERNAL' and self.rows[index].get('status') in ('QUOTED','ARCHIVED','REVISING')
+        eligible = 0 <= index < len(self.rows) and self.rows[index].get('source_kind')!='LEDGER_CONTRACT' and self.rows[index].get('can_write') is not False and self.rows[index].get('order_nature') == 'EXTERNAL' and self.rows[index].get('status') in ('QUOTED','CONTRACT','ARCHIVED','REVISING')
         self.contract_button.setEnabled(eligible)
         self.contract_button.setToolTip('仅外部正式报价可生成合同')
         selection = self.list_table.cellWidget(self.list_table.currentRow(), 0)
@@ -981,7 +981,7 @@ class QuoteManagement:
         if getattr(w,'_name_scope_foreign',False):return
         if self.history_version is not None or getattr(w, '_scheme2_document_busy', False): return
         if w._quote_scheme_read_only:
-            if w._quote_scheme_status != 'QUOTED':
+            if w._quote_scheme_status not in ('QUOTED','CONTRACT'):
                 QMessageBox.information(w, '报价只读', '请先在报价方案中恢复或修订后再调整。'); return
             operator = centre._require_operator(w, True)
             if not operator: return

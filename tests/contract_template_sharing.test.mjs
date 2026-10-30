@@ -33,6 +33,7 @@ function fixture({format='docx',customer=CUSTOMER,enabled=true,configured=true,i
  };
  const as=p=>createContractService({sqlUnicodeText:q,runPsql:async sql=>{
   statements.push(sql);
+  if(sql.includes('AS matching_customer_template'))return 'true';
   if(sql.includes("to_regclass('calc.ledger_contract_generation')"))return 'false';
   if(sql.includes("to_regclass('calc.contract_generation')"))return 'true';
   if(sql.includes("'snapshot',v.snapshot_payload")){

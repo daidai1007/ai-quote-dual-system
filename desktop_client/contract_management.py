@@ -141,6 +141,31 @@ def index_of(combo,value):
     return next((i for i in range(combo.count()) if combo.itemData(i)==value),-1)
 
 
+def template_matches_customer(row,code=None,name=''):
+    return row.get('customer_code')==code if code is not None else str(row.get('customer_name','')).strip()==name.strip()
+
+
+def contract_template_choices(rows,code=None,name='',ledger=False):
+    usable=[r for r in rows if r.get('enabled') and r.get('can_use',r.get('can_write',code is None))]
+    own=[r for r in usable if template_matches_customer(r,code,name)]
+    if any(r.get('configured') and (not ledger or r.get('ledger_compatible',True)) for r in own):return own
+    return own+[r for r in usable if not template_matches_customer(r,code,name) and r.get('configured') and r.get('buyer_configured') and (not ledger or r.get('ledger_compatible'))]
+
+
+def borrowed_template_label(row,code=None,name=''):
+    return '' if template_matches_customer(row,code,name) else ' · 借用：'+row.get('customer_name','其他客户')
+
+
+def contract_schemes_changed(window,schemes_changed):
+    for scheme in schemes_changed:
+        if not scheme:continue
+        if scheme.get('scheme_no')==getattr(window,'_quote_scheme_id',None) and scheme.get('status')=='CONTRACT':
+            window._quote_scheme_status='CONTRACT'
+            window._quote_scheme_version=scheme['lock_version']
+            schemes._apply_read_only(window,True)
+            schemes._set_state(window,scheme['scheme_no']+' · 合同','ok')
+
+
 def card(title, note=''):
     frame = QFrame(); frame.setObjectName('contractCard')
     box = QVBoxLayout(frame); box.setContentsMargins(16,14,16,14); box.setSpacing(10)
@@ -669,10 +694,12 @@ class ContractManagement(QWidget):
         self.populating=True; self.source.clear(); self.source.addItem('请选择正式报价',None); self.template.clear(); self.template.addItem('请选择客户模板',None)
         for r in self.data.get('sources',[]):
             self.source.addItem(r['scheme_no']+' / 正式 V'+str(r.get('quote_version') or r['version_no']),(r['scheme_no'],r['version_no']))
-        for r in self.data.get('templates',[]):
-            if r['customer_code']==code and r.get('can_use',r.get('can_write')) and r['enabled']:
-                self.template.addItem(r['template_name']+' · '+r['file_format'].upper()+' · V'+str(r['version_no'])+(' · 待配置' if not r['configured'] else ''),r['template_version_id'])
-        default=next((r for r in self.data.get('templates',[]) if r['customer_code']==code and r.get('can_use',r.get('can_write')) and r['enabled'] and r['configured'] and r['is_default']),None)
+        choices=contract_template_choices(self.data.get('templates',[]),code) if code else []
+        for r in choices:
+            self.template.addItem(r['template_name']+' · '+r['file_format'].upper()+' · V'+str(r['version_no'])+(' · 待配置' if not r['configured'] else '')+borrowed_template_label(r,code),r['template_version_id'])
+        default=next((r for r in choices if template_matches_customer(r,code) and r.get('configured') and r.get('is_default')),None)
+        if default is None:default=next((r for r in choices if not template_matches_customer(r,code)),None)
+        self.template.setToolTip('没有当前客户的可用模板时，可借用其他模板；需方和金额仍取当前报价，请核对模板固定条款。' if any(not template_matches_customer(r,code) for r in choices) else '')
         if default:self.template.setCurrentIndex(self.template.findData(default['template_version_id']))
         self.populating=False; self.selection_changed()
         if default:self.template_changed()
@@ -803,6 +830,7 @@ class ContractManagement(QWidget):
         self.request('/generate',payload,self.generated)
 
     def generated(self,result):
+        contract_schemes_changed(self.window,[result.get('scheme')])
         self.record=result; self.unsaved=False; self.download(result)
 
     def download(self,record,export=False):
@@ -929,6 +957,12 @@ class ContractManagement(QWidget):
         if not t or not t.get('can_use',t.get('can_write')) or not t['enabled']:self.notice.setText('请选择有权使用的可用模板。');return
         if self.source_mode.currentIndex()==1:
             from contract_ledger import CUSTOMERS
+            current_name=CUSTOMERS[self.ledger.customer.currentData()]['name']
+            choices=contract_template_choices(self.data.get('templates',[]),name=current_name,ledger=True)
+            if not template_matches_customer(t,name=current_name) and any(r['template_version_id']==t['template_version_id'] for r in choices):
+                self.ledger.info['templates']=self.data.get('templates',[]);self.ledger.sync_templates(t['template_version_id'])
+                if self.ledger.imported:self.ledger.changed()
+                self.tabs.setCurrentIndex(0);return
             key=next((key for key,c in CUSTOMERS.items() if c['name']==t['customer_name']),None)
             if not key:self.notice.setText('该客户未配置台账导入规则，请使用原报价单流程。');return
             if not t['configured']:self.notice.setText('请先配置模板中的产品明细及备注位置。');return
@@ -937,6 +971,11 @@ class ContractManagement(QWidget):
             self.ledger.info['templates']=self.data.get('templates',[]);self.ledger.sync_templates(t['template_version_id'])
             if self.ledger.imported:self.ledger.changed()
             self.tabs.setCurrentIndex(0);return
+        if self.source.currentData() and not template_matches_customer(t,self.selected_customer):
+            choices=contract_template_choices(self.data.get('templates',[]),self.selected_customer)
+            if any(r['template_version_id']==t['template_version_id'] for r in choices):
+                index=self.template.findData(t['template_version_id'])
+                if index>=0:self.template.setCurrentIndex(index);self.tabs.setCurrentIndex(0);return
         customer_index=self.customer.findData(t['customer_code'])
         if customer_index<0:
             self.notice.setText('当前没有该客户可用的正式报价，请先准备该客户的正式报价后再使用此模板。');return
@@ -1004,6 +1043,22 @@ class ContractManagement(QWidget):
             if selected.get('can_write'):self.download(result,export)
             else:self.notice.setText('可查看该历史合同信息；原文件打开、打印与输出仅限生成人。')
         self.request('/records/'+selected['record_id'],None,received)
+
+    def open_contract_record(self,record_id):
+        if not record_id:self.notice.setText('未找到关联合同记录，请重新加载报价方案。');return
+        if self.busy or self.has_unsaved():self.notice.setText('请先完成当前合同操作或保存草稿，再查看合同。');return
+        self.invalidate()
+        def received(result):
+            can_download=result.get('owner_user_id')==person_key(self.window)
+            if result.get('source_kind')=='LEDGER':
+                self.source_mode.setCurrentIndex(1);self.ledger.show_history(result,can_download)
+            else:
+                self.source_mode.setCurrentIndex(0);self.show_history(result)
+                if can_download:self.download(result)
+                else:self.notice.setText('可查看该合同信息；原文件打开、打印与输出仅限生成人。')
+            self.tabs.setCurrentIndex(0)
+            self.window.show_section(self.window.contract_management_route)
+        self.request('/records/'+str(record_id),None,received)
 
     def open_source(self):
         if self.historical and self.record:
@@ -1077,7 +1132,7 @@ def install_contract_management(namespace):
                 page.customer.setCurrentIndex(0);page.customer_changed()
                 page.source_mode.setCurrentIndex(0)
                 page.pending_scheme=selected['scheme_no']
-                page.pending_version=int(selected['version_no']) if selected.get('status') in ('QUOTED','ARCHIVED') and selected.get('version_no') else None
+                page.pending_version=int(selected['version_no']) if selected.get('status') in ('QUOTED','CONTRACT','ARCHIVED') and selected.get('version_no') else None
                 page.pending_customer_name=str(selected.get('company_name') or '')
                 page.display_customer(page.pending_customer_name)
                 page.source_info.setText('待加载来源报价：'+page.pending_scheme);window.show_section(route)

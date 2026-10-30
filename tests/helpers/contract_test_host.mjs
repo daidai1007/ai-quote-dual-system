@@ -17,6 +17,7 @@ try{
  for(const migration of ['quote_scheme_center_v1.sql','quote_analysis_v1.sql','quote_name_scope_v1.sql','contract_templates_v1.sql']){
   pg.query(await fs.readFile(path.join(root,'database/migrations',migration),'utf8'));
  }
+ pg.query(await fs.readFile(path.join(root,'database/migrations/contract_scheme_status_v1.sql'),'utf8'));
  if(process.argv.includes('--quote-delivery'))pg.query(await fs.readFile(path.join(root,'database/migrations/quote_delivery_v1.sql'),'utf8'));
  if(process.argv.includes('--ledger'))pg.query(await fs.readFile(path.join(root,'database/migrations/contract_ledger_v1.sql'),'utf8'));
  const q=v=>v==null?'NULL':`'${String(v).replaceAll("'","''")}'`;

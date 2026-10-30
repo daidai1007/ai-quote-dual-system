@@ -39,6 +39,9 @@
 !api/contract_quote.mjs
 !api/contract_service.mjs
 !api/contract_customer.mjs
+!api/contract_template_policy.mjs
+!api/contract_status.mjs
+!api/analysis_product_charts.mjs
 !api/customer_profile.mjs
 !api/experience_dimension_match.mjs
 !api/contract_ledger_data.mjs

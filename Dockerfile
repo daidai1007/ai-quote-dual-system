@@ -18,6 +18,9 @@ COPY api/server.mjs api/attachment_catalog_rules.mjs api/attachment_catalog_quer
 COPY api/formula_template_query.mjs api/ganged_quote_service.mjs api/quote_telemetry.mjs api/psql_runner.mjs api/quote_scheme_service.mjs api/quick_match_override.mjs ./api/
 COPY api/quote_analysis_service.mjs api/name_login_service.mjs api/quote_access_scope.mjs ./api/
 COPY api/contract_document.mjs api/contract_formula.mjs api/contract_quote.mjs api/contract_customer.mjs api/contract_service.mjs ./api/
+COPY api/contract_template_policy.mjs ./api/
+COPY api/contract_status.mjs ./api/
+COPY api/analysis_product_charts.mjs ./api/
 COPY api/customer_profile.mjs ./api/
 COPY api/experience_dimension_match.mjs ./api/
 COPY api/contract_ledger_data.mjs api/contract_ledger_service.mjs ./api/

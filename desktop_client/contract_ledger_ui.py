@@ -22,6 +22,7 @@ from contract_ledger import (CUSTOMERS, LedgerError, read_ledger, contract_group
 
 METRICS = dict(gap=12, selection_height=200, row_height=64, preview_height=260)
 READ_ONLY = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+SERVICE_WAIT_MESSAGE = '台账合同服务暂未就绪，可先选择并核对 Excel 台账；暂不能保存或生成合同。可点击“重新加载”重试。'
 
 
 class ReadWorker(QThread):
@@ -138,24 +139,32 @@ class LedgerContractPanel(QWidget):
         self.preview_scroll.setWidget(tray);box.addWidget(self.preview_scroll,1);self.stack.addWidget(page)
 
     def reload(self):
-        self.request('/ledger/bootstrap',None,self.received)
+        self.request('/ledger/bootstrap',None,self.received,on_error=self.bootstrap_failed)
+
+    def bootstrap_failed(self,message):
+        # Keep locally read rows and remarks when the remote service is down.
+        self.info={**self.info,'ready':False}
+        self.notice.setText(message);self.sync_actions()
 
     def received(self,result):
         self.info=result;selected=self.template.currentData();self.sync_templates(selected)
         with QSignalBlocker(self.drafts):
             self.drafts.clear();self.drafts.addItem('打开台账合同草稿',None)
             for d in result.get('drafts',[]):self.drafts.addItem(d['customer_name']+' · '+d['filename']+' · '+str(d['item_count'])+' 行',d['draft_id'])
-        if not result.get('ready'):self.notice.setText(result.get('message','台账合同服务尚未启用。'))
+        if not result.get('ready'):self.notice.setText(SERVICE_WAIT_MESSAGE)
         else:self.notice.setText('台账合同模板与本人草稿已加载。')
         self.sync_actions()
 
     def sync_templates(self,selected=None):
+        name=CUSTOMERS[self.customer.currentData()]['name']
+        choices=contracts.contract_template_choices([t for t in self.info.get('templates',[]) if t.get('configured')],name=name,ledger=True)
         with QSignalBlocker(self.template):
             self.template.clear();self.template.addItem('请选择已配置的客户模板',None)
-            for t in self.info.get('templates',[]):
-                if t['customer_name']==CUSTOMERS[self.customer.currentData()]['name'] and t['enabled'] and t['configured']:
-                    self.template.addItem(t['template_name']+' · V'+str(t['version_no']),t['template_version_id'])
-            self.template.setCurrentIndex(max(0,self.template.findData(selected)))
+            for t in choices:
+                self.template.addItem(t['template_name']+' · V'+str(t['version_no'])+contracts.borrowed_template_label(t,name=name),t['template_version_id'])
+            default=next((t for t in choices if not contracts.template_matches_customer(t,name=name)),None) if selected is None else None
+            self.template.setCurrentIndex(max(0,self.template.findData(default['template_version_id'] if default else selected)))
+        self.template.setToolTip('借用其他客户模板时，需方和金额仍取当前台账，请核对模板固定条款。' if any(not contracts.template_matches_customer(t,name=name) for t in choices) else '')
 
     def confirm_discard(self):
         return not self.unsaved or QMessageBox.question(self,'合同信息尚未保存','放弃当前未保存的台账合同信息？',QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Cancel)==QMessageBox.StandardButton.Discard
@@ -192,6 +201,7 @@ class LedgerContractPanel(QWidget):
         if self.imported:self.changed()
 
     def pick_file(self):
+        if self.busy:return
         path,_=QFileDialog.getOpenFileName(self,'选择客户 Excel 台账','','Excel 台账 (*.xls *.xlsx)')
         if path:self.read_file(path)
 
@@ -203,7 +213,8 @@ class LedgerContractPanel(QWidget):
         def success(result):
             if identity!=self.identity:return
             self.protected_paths.add(Path(path).resolve())
-            self.busy=False;self.load_import(result);self.notice.setText('台账已只读加载，请选择记录。双击记录可核对来源字段。')
+            self.busy=False;self.load_import(result)
+            self.notice.setText('台账已只读加载，请选择记录。双击记录可核对来源字段。' if self.info.get('ready') else '台账已只读加载；服务暂未就绪，可先核对，暂不能保存或生成合同。')
         def failed(message):
             if identity!=self.identity:return
             self.busy=False;self.notice.setText(message);self.manager.sync_actions()
@@ -350,9 +361,12 @@ class LedgerContractPanel(QWidget):
             if index==2 and not self.record:raise LedgerError('请先核对并生成合同，再预览实际文件')
             if self.historical and index!=2:raise LedgerError('历史合同为只读文件，请重新选择台账创建新合同')
             self.stack.setCurrentIndex(index);self.sync_actions()
+            if index==1 and not self.info.get('ready'):self.notice.setText(SERVICE_WAIT_MESSAGE)
         except LedgerError as error:self.notice.setText(str(error))
 
     def input_data(self):
+        if not self.info.get('ready'):
+            raise LedgerError(SERVICE_WAIT_MESSAGE)
         if self.stack.currentIndex()==0:self.prepare_review()
         if not self.payload:raise LedgerError('请先选择台账记录')
         if not self.template.currentData():raise LedgerError('请选择已配置的客户合同模板')
@@ -382,6 +396,7 @@ class LedgerContractPanel(QWidget):
         self.request('/ledger/generate',value,self.generated)
 
     def generated(self,result):
+        contracts.contract_schemes_changed(self.window,[r.get('scheme') for r in result['records']])
         self.generated_records=result['records'];self.unsaved=False
         self.output_choice.clear()
         for r in self.generated_records:self.output_choice.addItem(r['generation_snapshot']['fields']['contract_no']+' · '+r['record_no'],r['record_id'])
@@ -452,10 +467,14 @@ class LedgerContractPanel(QWidget):
     def sync_actions(self):
         available=not self.busy
         self.stack.setEnabled(available)
-        self.read_button.setEnabled(available and bool(self.info.get('ready')))
+        # Reading a local Excel is independent of API/database readiness and
+        # template choice. Only remote persistence/generation needs readiness.
+        ready=bool(self.info.get('ready'))
+        self.read_button.setEnabled(available)
+        self.read_button.setToolTip('' if ready else SERVICE_WAIT_MESSAGE)
         for control in (self.customer,self.sheet,self.search,self.template,self.selection,self.items,self.documents,self.drafts):control.setEnabled(available)
-        self.save_button.setEnabled(available and bool(self.selected_keys) and not self.historical)
-        self.generate_button.setEnabled(available and bool(self.selected_keys) and not self.historical)
+        self.save_button.setEnabled(available and ready and bool(self.selected_keys) and not self.historical)
+        self.generate_button.setEnabled(available and ready and bool(self.selected_keys) and not self.historical)
         self.generate_button.setVisible(self.stack.currentIndex()!=0)
         self.original_button.setEnabled(available and self.output is not None)
         self.export_button.setEnabled(available and self.output is not None)

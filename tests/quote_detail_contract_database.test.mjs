@@ -20,6 +20,7 @@ test('first quotation confirms for contract without adjustment/export; display v
  try{
   pg.query("CREATE SCHEMA calc;CREATE TABLE calc.dual_quote_result(quote_id text);CREATE TABLE calc.ordering_company(company_code text,company_name text);INSERT INTO calc.ordering_company VALUES('LOCAL-A','本机测试客户 A');");
   for(const name of ['quote_scheme_center_v1.sql','quote_analysis_v1.sql','quote_name_scope_v1.sql','contract_templates_v1.sql'])pg.query(await readFile(new URL('../database/migrations/'+name,import.meta.url),'utf8'));
+  pg.query(await readFile(new URL('../database/migrations/contract_scheme_status_v1.sql',import.meta.url),'utf8'));
   const first=await quoteService.create(owner,{snapshot:snapshot(),operator_name:owner.displayName});
   const firstInput=input(snapshot());
   const result=await quoteService.confirmForContract(owner,first.scheme_no,firstInput);

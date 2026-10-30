@@ -39,7 +39,7 @@ test('formal sheet company precedes summary and legacy fallback; analysis name n
  assert.ok(!sql.includes('analysis_customer'));
 });
 
-function offline({format='docx', denied=false, internal=false, templateCode, buyerName=NAME}={}) {
+function offline({format='docx', denied=false, internal=false, templateCode, buyerName=NAME,matchingTemplate=true}={}) {
  const statements=[];let generated;
  const bytes=format==='docx'?wordTemplate():excelTemplate();
  const mapping=mapped(inspectContractTemplate(bytes,format),format);
@@ -52,6 +52,7 @@ function offline({format='docx', denied=false, internal=false, templateCode, buy
  const source={...buyerRow,scheme_id:77,snapshot};
  const service=createContractService({sqlUnicodeText:q,runPsql:async sql=>{
   statements.push(sql);
+  if(sql.includes('AS matching_customer_template'))return JSON.stringify(matchingTemplate);
   if(sql.includes("to_regclass('calc.ledger_contract_generation')"))return 'false';
   if(sql.includes("to_regclass('calc.contract_generation')"))return 'true';
   if(sql.includes("'snapshot',v.snapshot_payload"))return JSON.stringify(denied?null:source);
@@ -104,4 +105,13 @@ test('formal-source permissions, external-only gate and cross-customer template 
  await assert.rejects(offline().service.quote({},{scheme_no:row.scheme_no,version_no:2,method:'QUICK'}),/姓名会话/);
  await assert.rejects(offline({templateCode:'OTHER'}).service.generate(principal,{scheme_no:row.scheme_no,version_no:2,template_version_id:1,method:'QUICK',
   request_id:'77777777-7777-4777-8777-777777777777',fields:{contract_no:'LOCAL'}}),/客户模板与正式报价客户不一致/);
+});
+
+for(const format of ['docx','xlsx'])for(const method of ['QUICK','FORMULA'])test(`borrowed ${format} ${method} template keeps literal quotation buyer 无 and frozen amounts`,async()=>{
+ const o=offline({format,buyerName:'无',templateCode:'OTHER',matchingTemplate:false});
+ const response=await o.service.generate(principal,{scheme_no:row.scheme_no,version_no:2,template_version_id:1,method,
+  request_id:'77777777-7777-4777-8777-777777777777',fields:{sign_date:'2026-10-29'}});
+ assert.equal(response.generation_snapshot.fields.buyer_name,'无');
+ const xml=strFromU8(unzipSync(o.bytes())[format==='docx'?'word/document.xml':'xl/worksheets/sheet1.xml']);
+ assert.ok(xml.includes('无'));assert.ok(xml.includes(method==='QUICK'?'175':'100'));
 });

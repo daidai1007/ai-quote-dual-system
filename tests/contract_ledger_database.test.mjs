@@ -4,6 +4,8 @@ import {randomUUID,createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {unzipSync,strFromU8} from 'fflate';
 import {createContractService} from '../api/contract_service.mjs';
+import {createQuoteSchemeService} from '../api/quote_scheme_service.mjs';
+import {createQuoteAnalysisService} from '../api/quote_analysis_service.mjs';
 import {startLocalPostgres} from './helpers/local_postgres.mjs';
 import {ledgerFixture,ledgerExcelTemplate,ledgerWordTemplate} from './helpers/contract_ledger_fixtures.mjs';
 import {wordTemplate} from './helpers/contract_fixtures.mjs';
@@ -15,12 +17,28 @@ test('ledger contracts use real local SQL, shared templates, private drafts, imm
  try{
   pg.query("CREATE SCHEMA calc;CREATE TABLE calc.ordering_company(company_code text,company_name text);INSERT INTO calc.ordering_company VALUES('LOCAL-NY','杭州诺玥科技有限公司'),('LOCAL-FY','杭州方圆塑机股份有限公司');");
   for(const file of ['quote_scheme_center_v1.sql','contract_templates_v1.sql'])pg.query(await readFile(new URL('../database/migrations/'+file,import.meta.url),'utf8'));
+  const statusMigration=await readFile(new URL('../database/migrations/contract_scheme_status_v1.sql',import.meta.url),'utf8');pg.query(statusMigration);pg.query(statusMigration);
   const service=createContractService({runPsql:async sql=>pg.query(sql),sqlUnicodeText:q});
   assert.equal((await service.ledger.bootstrap(owner)).ready,false);
   const migration=await readFile(new URL('../database/migrations/contract_ledger_v1.sql',import.meta.url),'utf8');pg.query(migration);pg.query(migration);
+  pg.query(await readFile(new URL('../database/migrations/contract_scheme_status_v1.preflight.sql',import.meta.url),'utf8'));
+  const rollback=await readFile(new URL('../database/migrations/contract_scheme_status_v1.rollback.sql',import.meta.url),'utf8');
+  pg.query(rollback);assert.equal(pg.query("SELECT to_regprocedure('calc.register_generated_contract(text,uuid,text)') IS NULL;"),'t');
+  pg.query(statusMigration);
   await assert.rejects(()=>service.ledger.bootstrap({userId:'shared-client:legacy'}),e=>e.statusCode===401);
   const template=await service.ledger.upload(owner,{customer_key:'NUOYUE',template_name:'本机合成台账模板',filename:'synthetic.xlsx',format:'xlsx',content:ledgerExcelTemplate().toString('base64')});
   assert.equal(template.auto_configured,true);
+  const borrowedInput={...ledgerFixture('FANGYUAN'),template_version_id:template.template_version_id,request_id:randomUUID()};
+  const borrowedDraft=await service.ledger.saveDraft(owner,borrowedInput);
+  assert.equal((await service.ledger.draft(owner,borrowedDraft.draft_id)).input_payload.template_version_id,template.template_version_id);
+  const borrowed=await service.ledger.generate(owner,borrowedInput);
+  assert.equal(borrowed.records[0].generation_snapshot.fields.buyer_name,'杭州方圆塑机股份有限公司');
+  assert.equal(borrowed.records[0].generation_snapshot.template_borrowed,true);
+  assert.equal(borrowed.records[0].scheme.status,'CONTRACT');assert.equal(borrowed.records[0].scheme.source_kind,'LEDGER_CONTRACT');
+  assert.equal(pg.query(`SELECT customer_code FROM calc.ledger_contract_generation WHERE record_id=${q(borrowed.records[0].record_id)}::uuid;`),'LOCAL-FY');
+  const borrowedFile=await service.download(owner,borrowed.records[0].record_id);
+  const borrowedXml=strFromU8(unzipSync(borrowedFile.bytes)['xl/worksheets/sheet1.xml']);
+  assert.ok(borrowedXml.includes('杭州方圆塑机股份有限公司'));assert.ok(!borrowedXml.includes('杭州诺玥科技有限公司'));
   const input={...ledgerFixture(),template_version_id:template.template_version_id,request_id:randomUUID()};
   const draft=await service.ledger.saveDraft(owner,input);const opened=await service.ledger.draft(owner,draft.draft_id);
   const numericRows=rows=>rows.map(r=>({...r,quantity:Number(r.quantity),unit_price:Number(r.unit_price),total:Number(r.total)}));
@@ -39,20 +57,23 @@ test('ledger contracts use real local SQL, shared templates, private drafts, imm
   assert(xml.includes('本机修改备注，保存后冻结'));assert(xml.includes('原有条款金额500元，不参与替换'));
   assert(xml.includes('650.3'));assert(strFromU8(parts['xl/workbook.xml']).includes("$A$1:$H$14"));
   assert.equal((await service.ledger.generate(owner,input)).records.length,2);
-  assert.equal(Number(pg.query('SELECT count(*) FROM calc.ledger_contract_generation;')),2);
+  assert.equal(Number(pg.query(`SELECT count(*) FROM calc.ledger_contract_generation WHERE request_id=${q(input.request_id)}::uuid;`)),2);
   await assert.rejects(()=>service.ledger.generate(owner,{...input,remarks:{}}),e=>e.statusCode===409);
   assert.throws(()=>pg.query(`UPDATE calc.ledger_contract_generation SET customer_contract_no='changed';`),/immutable/);
   await assert.rejects(()=>service.record(other,first.record_id),e=>e.statusCode===404);
   assert.equal((await service.record(all,first.record_id)).source_kind,'LEDGER');
   await assert.rejects(()=>service.download(all,first.record_id),e=>e.statusCode===404);
-  assert.equal((await service.listRecords(owner)).total,2);assert.equal((await service.listRecords(other)).total,0);
+  assert.equal((await service.listRecords(owner)).total,2+borrowed.records.length);assert.equal((await service.listRecords(other)).total,0);
   assert.equal((await service.listRecords(all)).items[0].source_kind,'LEDGER');
   // Named colleagues may use the template, not alter another maintainer's copy.
   const shared=await service.ledger.bootstrap(other);assert.equal(shared.templates[0].can_use,true);assert.equal(shared.templates[0].can_write,false);
   await assert.rejects(()=>service.configure(other,template.template_version_id,{mapping:{},expected_version:1}),e=>e.statusCode===404);
   const ownCopy=await service.ledger.generate(other,{...input,request_id:randomUUID()});assert.equal(ownCopy.records[0].owner_user_id,other.userId);
   // New ledger support must never manufacture a quote or loosen its source FK.
-  assert.equal(Number(pg.query('SELECT count(*) FROM calc.quote_scheme;')),0);
+  assert.equal(Number(pg.query("SELECT count(*) FROM calc.quote_scheme WHERE source_kind='QUOTE';")),0);
+  assert.equal(Number(pg.query("SELECT count(*) FROM calc.quote_scheme WHERE source_kind='LEDGER_CONTRACT';")),Number(pg.query('SELECT count(*) FROM calc.ledger_contract_generation;')));
+  assert.equal(Number(pg.query('SELECT count(*) FROM calc.quote_scheme_export;')),0);
+  assert.equal(pg.query("SELECT bool_and(status='CONTRACT' AND NOT has_successful_export AND quoted_at IS NULL) FROM calc.quote_scheme;"),'t');
   assert.equal(Number(pg.query("SELECT count(*) FROM information_schema.columns WHERE table_schema='calc' AND table_name='contract_generation' AND column_name='source_scheme_id' AND is_nullable='NO';")),1);
   await assert.rejects(()=>service.generate(owner,{scheme_no:'BJ-20261029-000001',version_no:1,template_version_id:template.template_version_id,method:'QUICK',fields:{},request_id:randomUUID()}),e=>e.statusCode===404);
   const fy=await service.ledger.upload(owner,{customer_key:'FANGYUAN',template_name:'本机方圆合成模板',filename:'synthetic.docx',format:'docx',content:ledgerWordTemplate().toString('base64')});
@@ -71,6 +92,26 @@ test('ledger contracts use real local SQL, shared templates, private drafts, imm
   assert.equal((await service.ledger.draft(owner,draft.draft_id)).input_payload.template_version_id,template.template_version_id);
   const fromOldVersion=await service.ledger.generate(owner,{...input,request_id:randomUUID()});
   assert(fromOldVersion.records.every(r=>r.generation_snapshot.template_version_id===template.template_version_id));
+  const schemes=createQuoteSchemeService({runPsql:async sql=>pg.query(sql),sqlUnicodeText:q,sqlNumber:v=>String(Number(v))});
+  const listed=await schemes.list(owner,{status:'CONTRACT'});
+  const owned=Number(pg.query(`SELECT count(*) FROM calc.ledger_contract_generation WHERE owner_user_id=${q(owner.userId)};`));
+  assert.equal(listed.total,owned);assert(listed.items.every(row=>row.status==='CONTRACT'&&row.source_kind==='LEDGER_CONTRACT'));
+  const openedScheme=await schemes.get(owner,listed.items[0].scheme_no);
+  assert.equal(openedScheme.contract_record_id,listed.items[0].contract_record_id);
+  assert(!openedScheme.snapshot.draft_items.some(row=>row.formula||row.quick),'do not invent formula or quick calculations from a ledger');
+  await assert.rejects(schemes.revision(owner,openedScheme.scheme_no,openedScheme.lock_version,owner.displayName),e=>e.statusCode===409);
+  const analysis=createQuoteAnalysisService({runPsql:async sql=>pg.query(sql),sqlUnicodeText:q});
+  const metrics=await analysis.analyze(owner,{status:'CONTRACT',date_from:'2020-01-01',date_to:'2030-12-31'});
+  assert.equal(metrics.summary.contracts,owned);assert.equal(metrics.summary.quoted,0);assert.equal(metrics.cost_coverage,0);
+  const total=Number(pg.query(`SELECT sum((generation_snapshot#>>'{quote,total}')::numeric) FROM calc.ledger_contract_generation WHERE owner_user_id=${q(owner.userId)};`));
+  assert.equal(Number(metrics.summary.contract_amount),total);
+  assert.equal(metrics.contract_quoted_trend.reduce((n,r)=>n+r.contract_count,0),owned);
+  assert.equal(metrics.contract_quoted_trend.reduce((n,r)=>n+r.quoted_count,0),0);
+  assert.deepEqual(metrics.product_breakdown,[],'ledger contracts must not acquire invented formal quote prices or categories');
+  assert(metrics.contract_quoted_details.every(r=>r.contract_record_id&&r.event_kind==='CONTRACT'));
+  const statusVerify=await readFile(new URL('../database/migrations/contract_scheme_status_v1.verify.sql',import.meta.url),'utf8');
+  assert.equal(pg.query(statusVerify).split('\n').at(-1),'0');
+  assert.throws(()=>pg.query(rollback),/rollback refused/,'rollback must preserve all newly generated business records');
   pg.query(await readFile(new URL('../database/migrations/contract_ledger_v1.preflight.sql',import.meta.url),'utf8'));
   const verifySql=await readFile(new URL('../database/migrations/contract_ledger_v1.verify.sql',import.meta.url),'utf8');
   assert.equal(pg.query(verifySql).split('\n').at(-1),'t|t');
@@ -80,6 +121,23 @@ test('ledger contracts use real local SQL, shared templates, private drafts, imm
   assert.equal(pg.query('SET ROLE synthetic_ledger_readonly;'+verifySql+'RESET ROLE;').split('\n').at(-1),'f|f');
   pg.query('GRANT INSERT,UPDATE ON calc.ledger_contract_draft TO synthetic_ledger_readonly; GRANT INSERT ON calc.ledger_contract_generation TO synthetic_ledger_readonly;');
   assert.equal(pg.query('SET ROLE synthetic_ledger_readonly;'+verifySql+'RESET ROLE;').split('\n').at(-1),'t|t');
-  console.log('PASS: disposable DB, batch idempotency/immutability, CAS drafts, rendered bytes and unchanged quotation constraints');
+  const counts=()=>pg.query("SELECT jsonb_build_array((SELECT count(*) FROM calc.ledger_contract_generation),(SELECT count(*) FROM calc.quote_scheme),(SELECT count(*) FROM calc.quote_scheme_contract_link));");
+  const beforeFailedGeneration=counts();
+  pg.query("CREATE FUNCTION calc.synthetic_reject_link() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic registration failure'; END $$; CREATE TRIGGER synthetic_reject_link BEFORE INSERT ON calc.quote_scheme_contract_link FOR EACH ROW EXECUTE FUNCTION calc.synthetic_reject_link();");
+  await assert.rejects(service.ledger.generate(owner,{...input,request_id:randomUUID()}));
+  assert.equal(counts(),beforeFailedGeneration,'failed status registration rolls back contract files and all scheme rows atomically');
+  pg.query('DROP TRIGGER synthetic_reject_link ON calc.quote_scheme_contract_link; DROP FUNCTION calc.synthetic_reject_link();');
+  // Simulate a pre-deployment immutable contract. Rerunning the migration and
+  // opening history must not manufacture a scheme for it.
+  const legacyId=randomUUID(),legacyRequest=randomUUID();
+  pg.query(`INSERT INTO calc.ledger_contract_generation SELECT (jsonb_populate_record(NULL::calc.ledger_contract_generation,
+    to_jsonb(g)||jsonb_build_object('record_id',${q(legacyId)},'record_no',${q('LEGACY-'+legacyId)},'request_id',${q(legacyRequest)}))).*
+    FROM calc.ledger_contract_generation g WHERE record_id=${q(first.record_id)}::uuid;`);
+  const beforeMigration=counts();
+  pg.query(await readFile(new URL('../database/migrations/contract_scheme_status_v1.sql',import.meta.url),'utf8'));
+  assert.equal(counts(),beforeMigration,'migration does not backfill historical contracts');
+  assert.equal((await service.record(owner,legacyId)).scheme,null);
+  assert.equal(counts(),beforeMigration,'history read does not backfill historical contracts');
+  console.log('PASS: disposable DB, batch idempotency/immutability, CAS drafts, atomic status registration and future-only contract schemes');
  }finally{await pg.close();}
 });

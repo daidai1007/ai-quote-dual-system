@@ -3,6 +3,7 @@
 import {permissionSql, writePermissionSql, operatorNameValue} from './quote_scheme_service.mjs';
 import {sessionOperator} from './quote_access_scope.mjs';
 import {orderNature,orderNatureSql,validateOrderNature,ORDER_NATURES} from '../quote_order_nature.mjs';
+import {productBreakdown,contractQuotedTrend} from './analysis_product_charts.mjs';
 
 const fail=(message,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 const text=value=>String(value??'').trim().normalize('NFC');
@@ -41,7 +42,7 @@ const normalizeFilters=(input={})=>{
   result.product=productType(result.product);
   result.order_nature=text(input.order_nature);
   if(result.order_nature)validateOrderNature(result.order_nature);
-  if(result.status && !['DRAFT','QUOTED','REVISING','ARCHIVED','VOID'].includes(result.status)) throw fail('无效方案状态。');
+  if(result.status && !['DRAFT','QUOTED','CONTRACT','REVISING','ARCHIVED','VOID'].includes(result.status)) throw fail('无效方案状态。');
   if(result.method && !['QUICK','FORMULA'].includes(result.method)) throw fail('无效报价方式。');
   return result;
 };
@@ -76,7 +77,7 @@ export function buildAnalysis(data,input={}) {
   const baseSchemes=schemes.filter(s=>(!filters.creator||text(s.creator).includes(filters.creator))&&(!filters.status||s.status===filters.status));
   const allowedSchemes=schemes.filter(matches);
   const rows=allowedSchemes.filter(s=>inRange(s.formal_date||s.created_date,filters));
-  const formal=rows.filter(s=>s.formal_date && s.status!=='VOID');
+  const formal=rows.filter(s=>s.formal_date && s.status!=='VOID' && s.source_kind!=='LEDGER_CONTRACT');
   // Selecting a product counts only that product's frozen face totals. Never
   // add the entire multi-product quote to each product subtotal.
   const amountOf=s=>filters.product ? (()=>{
@@ -84,6 +85,8 @@ export function buildAnalysis(data,input={}) {
     return amounts.length&&amounts.every(x=>x!==null)?amounts.reduce((a,b)=>a+b,0):null;
   })() : cents(s.amount);
   const known=formal.map(amountOf).filter(n=>n!==null), total=known.reduce((a,b)=>a+b,0);
+  const contracts=rows.filter(s=>s.status==='CONTRACT');
+  const contractAmounts=filters.product?[]:contracts.map(s=>cents(s.contract_amount)).filter(n=>n!==null);
   const customers=new Map(), products=new Map(), ranks=new Map(), trend=new Map(), costs={};
   for(const s of schemes) {
     customers.set(s.customer_code||'__unassigned__',s.customer_name&&s.customer_code?s.customer_name:'客户待确认');
@@ -132,14 +135,20 @@ export function buildAnalysis(data,input={}) {
   const selectedSchemeNos=new Set(allowedSchemes.map(s=>s.scheme_no));
   const failures=(data.failures||[]).filter(e=>selectedSchemeNos.has(e.scheme_no)&&inRange(e.date,filters));
   const detailRows=rows.map(s=>({...s,analysis_amount:money(amountOf(s))}));
+  const contractRows=(data.contracts||[]).map(s=>({...s,order_nature:orderNature(s.order_nature)}))
+    .filter(s=>s.status!=='VOID'&&matches(s)&&inRange(s.contract_date,filters));
+  const chartTrend=contractQuotedTrend(formal.map(s=>({...s,analysis_amount:money(amountOf(s))})),contractRows);
   return {filters,product_filter_mode:'family-v1',customers:[...customers].map(([code,name])=>({code,name})),products:orderedProducts.map(([code,name])=>({code,name})),
+    product_breakdown:productBreakdown(formal,{productType,types:PRODUCT_TYPE_ORDER,product:filters.product}),
+    contract_quoted_trend:chartTrend.rows,contract_quoted_details:chartTrend.details,
+    contract_trend_available:Boolean(data.contracts_available),
     outcomes_available:Boolean(data.outcomes_available),
     order_nature_summary:ORDER_NATURES.map(order_nature=>{
       const quotes=formal.filter(s=>s.order_nature===order_nature),values=quotes.map(amountOf).filter(v=>v!==null);
       return {order_nature,count:rows.filter(s=>s.order_nature===order_nature).length,
         amount:quotes.length&&!values.length?null:money(values.reduce((a,b)=>a+b,0)),amount_coverage:values.length};
     }),
-    summary:{schemes:rows.length,quoted:formal.length,drafts:rows.filter(s=>s.status==='DRAFT').length,
+    summary:{schemes:rows.length,quoted:formal.length,contracts:contracts.length,contract_amount:contractAmounts.length?money(contractAmounts.reduce((a,b)=>a+b,0)):null,drafts:rows.filter(s=>s.status==='DRAFT').length,
       amount:known.length?money(total):null,average:known.length?money(Math.round(total/known.length)):null,
       amount_coverage:known.length,active_customers:new Set(formal.map(s=>s.customer_code).filter(Boolean)).size,failures:failures.length},
     trend:[...trend.values()].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>({...t,created_count:t.created_count||0,amount:money(t.cents)})),
@@ -154,9 +163,10 @@ export function buildAnalysis(data,input={}) {
 
 const compactItemsSql=payload=>`COALESCE((SELECT jsonb_agg(jsonb_build_object(
   'product_code',COALESCE(item->>'scheme2_selected_product_code',item->>'product_code'),
-  'product_name',COALESCE(item->>'scheme2_selected_product_name',item->>'product_code'),
+  'product_name',COALESCE(item->>'scheme2_selected_product_name',item->>'product_code',item->>'name'),
   'amount',item#>>'{quote_display,total}','discount',item#>>'{quote_display,discount}',
   'quantity',COALESCE(item#>>'{quote_display,quantity}',item->>'quantity','1'),
+  'chart_quantity',COALESCE(item#>>'{quote_display,quantity}',item->>'quantity'),
   'quote_method',COALESCE(item->>'quote_method','QUICK'),
   'costs',CASE WHEN item#>>'{formula,cost_allocation,basis}'='formula_attachments_v1'
       AND item#>>'{formula,cost_allocation,complete}'='true'
@@ -168,23 +178,29 @@ const compactItemsSql=payload=>`COALESCE((SELECT jsonb_agg(jsonb_build_object(
 export function createQuoteAnalysisService({runPsql,sqlUnicodeText:q}) {
   const query=async sql=>JSON.parse(String(await runPsql(sql)).trim().split(/\r?\n/).at(-1)||'null');
   const read=async(principal)=>{
-    const readiness=await query(`SELECT jsonb_build_object('ready',to_regclass('calc.quote_analysis_outcome') IS NOT NULL)::text;`);
+    const readiness=await query(`SELECT jsonb_build_object('ready',to_regclass('calc.quote_analysis_outcome') IS NOT NULL,
+      'contracts_available',to_regclass('calc.quote_scheme_contract_link') IS NOT NULL AND to_regclass('calc.contract_generation') IS NOT NULL,
+      'ledger_available',to_regclass('calc.ledger_contract_generation') IS NOT NULL)::text;`);
     const schemes=await query(`WITH permitted AS (
-      SELECT s.*,v.snapshot_payload AS formal_payload,v.version_no AS formal_version,v.quoted_at AS formal_at,
+      SELECT s.*,COALESCE(to_jsonb(s)->>'source_kind','QUOTE') AS analysis_source_kind,
+        to_jsonb(s)->>'contract_record_id' AS analysis_contract_record_id,to_jsonb(s)->'contract_amount' AS analysis_contract_amount,
+        to_jsonb(s)->>'contracted_at' AS analysis_contracted_at,v.snapshot_payload AS formal_payload,v.version_no AS formal_version,v.quoted_at AS formal_at,
         COALESCE(v.snapshot_payload,snap.snapshot_payload,'{}'::jsonb) AS payload
       FROM calc.quote_scheme s LEFT JOIN calc.quote_scheme_snapshot snap USING(scheme_id)
       LEFT JOIN LATERAL (SELECT v.* FROM calc.quote_scheme_version v WHERE v.scheme_id=s.scheme_id
         ORDER BY v.version_no DESC LIMIT 1) v ON TRUE WHERE ${permissionSql(principal,'s')}
     ), compact AS (
       SELECT s.scheme_id,s.scheme_no,s.status,s.version_no,s.lock_version,s.creator_name_entered AS creator,
+        analysis_source_kind AS source_kind,analysis_contract_record_id AS contract_record_id,
+        analysis_contract_amount AS contract_amount,analysis_contracted_at AS contracted_at,
         s.last_editor_name_snapshot AS last_editor,s.updated_at,
         to_char(s.created_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') AS created_date,
-        CASE WHEN formal_version IS NOT NULL THEN COALESCE(NULLIF(payload#>>'{document,quote_date}',''),to_char(formal_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD')) END AS formal_date,
+        CASE WHEN formal_version IS NOT NULL AND analysis_source_kind='QUOTE' THEN COALESCE(NULLIF(payload#>>'{document,quote_date}',''),to_char(formal_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD')) END AS formal_date,
         CASE WHEN formal_version IS NOT NULL THEN payload#>>'{scheme_summary,quoted_amount}' ELSE s.quoted_amount::text END AS amount,
         COALESCE(NULLIF(payload#>>'{analysis_customer,customer_code}',''), CASE WHEN catalog.matches=1 THEN catalog.code END) AS customer_code,
         COALESCE(catalog.current_name,s.company_name) AS customer_name,formal_version,
         ${orderNatureSql('s.payload')} AS order_nature,
-        ${compactItemsSql('s.payload')} AS products,${writePermissionSql(principal,'s')} AS can_record
+        ${compactItemsSql('s.payload')} AS products,(${writePermissionSql(principal,'s')} AND analysis_source_kind='QUOTE') AS can_record
       FROM permitted s LEFT JOIN LATERAL (SELECT count(*) AS matches,min(company_code) AS code,min(company_name) AS current_name
         FROM calc.ordering_company c WHERE CASE WHEN NULLIF(s.payload#>>'{analysis_customer,customer_code}','') IS NOT NULL
           THEN c.company_code=s.payload#>>'{analysis_customer,customer_code}' ELSE c.company_name=s.company_name END) catalog ON TRUE
@@ -200,7 +216,19 @@ export function createQuoteAnalysisService({runPsql,sqlUnicodeText:q}) {
     const failures=await query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('scheme_no',s.scheme_no,
       'date',to_char(e.created_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'),'kind',e.export_kind)),'[]'::jsonb)::text
       FROM calc.quote_scheme_export e JOIN calc.quote_scheme s USING(scheme_id) WHERE NOT e.succeeded AND ${permissionSql(principal,'s')};`);
-    return {schemes,outcomes,failures,outcomes_available:readiness.ready};
+    const contracts=readiness.contracts_available?await query(`SELECT COALESCE(jsonb_agg(jsonb_build_object(
+      'scheme_no',s.scheme_no,'status',s.status,'formal_version',l.scheme_version_no,'contract_record_id',l.contract_record_id,
+      'contract_source_kind',l.source_kind,'contract_amount',l.contract_amount,'amount',l.contract_amount,
+      'contract_date',to_char(COALESCE(cg.created_at,${readiness.ledger_available?'lg.created_at,':''}l.created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'),
+      'customer_code',v.snapshot_payload#>>'{analysis_customer,customer_code}','customer_name',COALESCE(cg.customer_name,${readiness.ledger_available?'lg.customer_name,':''}s.company_name),
+      'creator',s.creator_name_entered,'updated_at',l.created_at,'order_nature',${orderNatureSql('v.snapshot_payload')},
+      'products',${compactItemsSql("COALESCE(v.snapshot_payload,'{}'::jsonb)")})),'[]'::jsonb)::text
+      FROM calc.quote_scheme_contract_link l JOIN calc.quote_scheme s USING(scheme_id)
+      JOIN calc.quote_scheme_version v ON v.scheme_id=l.scheme_id AND v.version_no=l.scheme_version_no
+      LEFT JOIN calc.contract_generation cg ON l.source_kind='QUOTE' AND cg.record_id=l.contract_record_id
+      ${readiness.ledger_available?"LEFT JOIN calc.ledger_contract_generation lg ON l.source_kind='LEDGER' AND lg.record_id=l.contract_record_id":''}
+      WHERE ${permissionSql(principal,'s')};`):[];
+    return {schemes,outcomes,failures,contracts,contracts_available:readiness.contracts_available,outcomes_available:readiness.ready};
   };
   const analyze=async(principal,filters)=>{normalizeFilters(filters);return buildAnalysis(await read(principal),filters);};
   const recordOutcome=async(principal,input)=>{
@@ -222,7 +250,7 @@ export function createQuoteAnalysisService({runPsql,sqlUnicodeText:q}) {
       JOIN calc.quote_scheme_version v USING(scheme_id) WHERE s.scheme_no=${q(scheme)} AND v.version_no=${version}
       AND v.version_no=(SELECT max(v2.version_no) FROM calc.quote_scheme_version v2 WHERE v2.scheme_id=s.scheme_id
         AND COALESCE(v2.snapshot_payload#>>'{document,quote_date}',to_char(v2.quoted_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'))<=${q(resultDate)})
-      AND s.status<>'VOID' AND ${writePermissionSql(principal,'s')}), 'null'::jsonb)::text;`);
+      AND s.status<>'VOID' AND COALESCE(to_jsonb(s)->>'source_kind','QUOTE')='QUOTE' AND ${writePermissionSql(principal,'s')}), 'null'::jsonb)::text;`);
     if(!source||source.customer_code!==customer) throw fail('无权登记、客户归属待确认或正式版本不存在。',409);
     if(resultDate<source.formal_date) throw fail('成交结果日期不能早于关联正式报价日期。');
     const lines=(source.products||[]).filter(p=>p.product_code===product);

@@ -143,8 +143,9 @@ class QuoteRemarks(unittest.TestCase):
         self.assertEqual(counts,[2,3,-2,1,-3])
         actual=ui._scheme2_quote_remark(item)
         for phrase in ('内门2件（柜体1，单台）','内门3件（柜体2，单台）',
-                       '扣减安装板2块（每组）','配安装板1块（每组）','扣减安装板3块（每组）'):
+                       '扣减2.5mm镀锌安装板2块（每组）','配2.5mm镀锌安装板1块（每组）','扣减2.5mm镀锌安装板3块（每组）'):
             self.assertIn(phrase,actual)
+        self.assertNotIn('不含安装板',actual)
         self.assertEqual(item['attachments'],before['attachments'])
         dialog.reject()
 

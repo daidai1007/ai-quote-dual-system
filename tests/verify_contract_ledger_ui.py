@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QDialog
 from PySide6.QtPrintSupport import QPrinter
 import contract_management as ui
 import contract_ledger_ui as ledger_ui
+import quote_scheme_center as schemes
 
 class LedgerUITests(unittest.TestCase):
     host_arguments=['--ledger']
@@ -59,6 +60,7 @@ class LedgerUITests(unittest.TestCase):
         self.l.save_draft();self.settled();draft=deepcopy(self.l.draft);self.assertFalse(self.l.unsaved,self.p.notice.text())
         self.screenshot('02_实际程序_诺玥核对与备注编辑.png')
         path,digest,modified=self.original;self.assertEqual(sha256(path.read_bytes()).hexdigest(),digest);self.assertEqual(path.stat().st_mtime_ns,modified)
+
         path.unlink();self.l.new_contract();self.l.open_draft(self.l.drafts.findData(draft['draft_id']));self.settled()
         self.assertEqual(self.l.items.item(0,7).text(),'人工确认备注\n保留第二行');self.assertEqual(self.l.items.item(1,7).text(),'')
         self.l.generate();self.settled();self.assertEqual(len(self.l.generated_records),2,self.p.notice.text())
@@ -124,5 +126,16 @@ class LedgerUITests(unittest.TestCase):
         invalid=self.l.input_data();invalid['order_nature']='INTERNAL'
         with self.assertRaises(urllib.error.HTTPError):self.api('/ledger/drafts',invalid)
         path,digest,modified=self.original;self.assertEqual(sha256(path.read_bytes()).hexdigest(),digest);self.assertEqual(path.stat().st_mtime_ns,modified)
+        # Open the new ledger scheme through the actual scheme API and contract
+        # router; no ledger-derived lines may replace the cost workspace.
+        record=deepcopy(self.l.record);before=deepcopy(self.w.draft_items)
+        self.assertEqual(record['scheme']['status'],'CONTRACT')
+        self.assertEqual(record['scheme']['source_kind'],'LEDGER_CONTRACT')
+        schemes._open_scheme(self.w,record['scheme']['scheme_no'])
+        base.wait(lambda:not self.w._quote_scheme_workers);self.settled()
+        self.assertTrue(self.l.historical,self.p.notice.text())
+        self.assertEqual(self.l.record['record_id'],record['record_id'])
+        self.assertEqual(sha256(self.l.output['bytes']).hexdigest(),record['file_sha256'])
+        self.assertEqual(self.w.draft_items,before)
 
 if __name__=='__main__':unittest.main(verbosity=2)

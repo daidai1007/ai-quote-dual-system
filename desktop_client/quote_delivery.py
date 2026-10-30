@@ -244,7 +244,7 @@ class QuoteDelivery:
         from quote_order_nature import current
         if current(w) == 'UNCLASSIFIED':
             self.send_feedback_context = context
-            if w._quote_scheme_status == 'QUOTED' or m.history_version is not None:
+            if w._quote_scheme_status in ('QUOTED','CONTRACT') or m.history_version is not None:
                 message = '当前报价的订单性质为“待分类”，暂不能发送。请回到最新版本，点击“调整报价”创建修订版，选择“内部”或“外部”，核对金额后成功打印或导出，再发送给同事。'
             else:
                 message = '请先在客户旁选择订单性质“内部”或“外部”，核对金额后成功打印或导出，再发送给同事。'

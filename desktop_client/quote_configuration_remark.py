@@ -12,12 +12,15 @@ from decimal import Decimal, InvalidOperation
 import re
 
 from ganged_cabinet_rules import DOOR_POSITION_COUNTS
+from confirmed_quote_remark_rules import product_rule, installation_state, structural_review, PLATE_QUANTITY_KEYS
 
 CONFIG_FIELDS = (
     'drawing_number', 'material_number', 'body_thickness_mm', 'door_thickness_mm', 'surface_treatment',
     'texture', 'side_panel_removable', 'rear_panel_removable', 'processing_requirements',
     'excluded_items', 'special_requirements', 'protection_rating', 'packaging_requirements',
     'installation_plate_delivery', 'front_door', 'rear_structure', 'base_color',
+    *PLATE_QUANTITY_KEYS, 'installation_plate_thickness_mm', 'installation_plate_material',
+    'component_list', 'modification_requirements',
 )
 MATERIAL_NAMES = {'SUS304':'不锈钢304', 'SUS316':'不锈钢316', 'SECC':'SECC'}
 DOOR_NAMES = {'SINGLE':'单开门', 'DOUBLE':'双开门', 'PANEL':'背板'}
@@ -85,6 +88,10 @@ def _configuration(item):
         match = re.search(pattern, raw, re.I)
         if match:
             fields[key] = match.group(1).strip()
+    grouped = re.search(r'(?:侧板[、和及，,\s]*后背板|后背板[、和及，,\s]*侧板)(?:均|都)?\s*(不可拆(?:卸)?|可拆(?:卸)?)',raw)
+    if grouped:
+        fields.setdefault('side_panel_removable',grouped.group(1))
+        fields.setdefault('rear_panel_removable',grouped.group(1))
     # Keep each explicit machining/delivery clause, not the entire OCR page or
     # unrelated commercial terms. No guessed IP rating, color or thickness.
     processing, excluded, special = [], [], []
@@ -109,7 +116,8 @@ def _configuration(item):
         if key in item and item[key] not in (None, ''):
             fields[key] = item[key]
     if isinstance(item.get('quote_configuration'), dict):
-        fields.update({key:value for key,value in item['quote_configuration'].items() if value not in (None, '')})
+        fields.update({key:value for key,value in item['quote_configuration'].items()
+                       if value not in (None, '') or key in PLATE_QUANTITY_KEYS})
     return fields
 
 
@@ -215,9 +223,8 @@ def _label(row, kind):
 def build_configuration_remark(item):
     fields = _configuration(item)
     product = text(first(item,'scheme2_selected_product_name','scheme2_selected_product_code','product_family','product_code'))
-    product = re.sub(r'_(?:SINGLE|DOUBLE|DEFAULT)$','',product,flags=re.I)
-    if re.fullmatch('[A-Z]{2}',product):
-        product += '箱' if product in ('JA','JE','JK') else '柜'
+    rule = product_rule(product)
+    product = rule['label']
     children = [row for row in item.get('ganged_cabinets',[]) if isinstance(row,dict)]
     count = number(item.get('ganged_cabinet_count')) or len(children)
     if count > 1:
@@ -243,16 +250,36 @@ def build_configuration_remark(item):
         color = texture = ''
     header = [joined([text(fields.get('drawing_number')),text(fields.get('material_number'))], '/'), product,
               material, finish+color+(texture if texture not in finish else '')]
-    body = thickness(item.get('cabinet_body_thickness_mm') or fields.get('body_thickness_mm'))
+    if rule['fixed']:
+        # Fixed JS/JP structure precedes variable material and door details.
+        header.insert(2,rule['fixed']+'。')
+    body = thickness(item.get('cabinet_body_thickness_mm') or fields.get('body_thickness_mm') or
+                     _part_value(item,r'^(?:柜体|箱体|柜体板|箱体板)$','sheet_thickness_mm'))
     door = thickness(fields.get('door_thickness_mm') or _part_value(item,r'^(?:前门|后门|门板|单开门|双开门)(?:板)?$', 'sheet_thickness_mm'))
+    if rule['standard']:
+        body = body or '1.5'
+        door = door or '2'
     if body: header.append('柜体'+body+'mm')
     if door: header.append('门板'+door+'mm')
     rows = [(row,_category(row)) for row in item.get('attachments',[]) if isinstance(row,dict)]
+    plate = installation_state(item,fields,rows,standard=rule['standard'])
+    if plate['mode']=='none':
+        if rule['fixed']: header[2]=rule['fixed']+'，不含安装板。'
+        else: header.insert(2,'不含安装板')
+    elif plate['mode']=='unknown' or (plate['mode']=='rows' and any(number(row.get('quantity')) is None for row,kind in rows if kind=='plate')):
+        header.append('安装板数量待确认')
+    if plate['mode']=='positive' and not any(kind=='plate' for _,kind in rows):
+        rows.append((dict(item_name='安装板',quantity=plate['quantity'],
+                         thickness_mm=fields.get('installation_plate_thickness_mm') or 2.5,
+                         material_name=fields.get('installation_plate_material') or '镀锌'), 'plate'))
     fragments = {key:[] for key in ('plate','base','lock','light','switch','limiter','ground','folder','fan','filter','beam','other')}
     default_units = {'plate':'块','base':'件','lock':'件','light':'套','switch':'套','limiter':'件',
                      'ground':'根','folder':'个','fan':'只','filter':'只','beam':'根','other':'件'}
     for row,kind in rows:
+        if kind=='plate' and plate['mode'] in ('none','unknown'): continue
         quantity = number(row.get('quantity'))
+        if kind=='plate' and quantity is None and plate['mode']=='positive' and sum(kind=='plate' for _,kind in rows)==1:
+            quantity=plate['quantity']
         if quantity is None or quantity == 0: continue
         signed = quantity * (-1 if row.get('attachment_price_sign') == -1 and quantity > 0 else 1)
         effective_row = row
@@ -261,8 +288,8 @@ def build_configuration_remark(item):
         label = _label(effective_row,kind)
         if not label: continue
         if kind == 'plate' and not first(row,'sheet_thickness_mm','thickness_mm'):
-            plate_thickness = thickness(_part_value(item,r'^安装板$', 'sheet_thickness_mm'))
-            material = _part_value(item,r'^安装板$', 'material_code')
+            plate_thickness = thickness(fields.get('installation_plate_thickness_mm') or _part_value(item,r'^安装板$', 'sheet_thickness_mm')) or ('2.5' if rule['standard'] else '')
+            material = fields.get('installation_plate_material') or _part_value(item,r'^安装板$', 'material_code') or ('镀锌' if rule['standard'] else '')
             if plate_thickness and not re.search(r'\d+(?:\.\d+)?\s*mm',label):
                 label = plate_thickness+'mm'+MATERIAL_NAMES.get(material,material)+label
         unit = text(row.get('unit')) or default_units[kind]
@@ -282,22 +309,58 @@ def build_configuration_remark(item):
     else:
         structure.append(_doors(item,fields))
     for key,label in (('side_panel_removable','侧板'),('rear_panel_removable','后背板')):
+        if rule['fixed']: continue
         value = fields.get(key)
         if isinstance(value,bool): value='可拆' if value else '不可拆'
         if text(value): structure.append(label+text(value))
     structure_text = joined(structure)
     if fragments['base']: structure_text=joined((structure_text,joined(fragments['base'])), '；')
     accessories = joined(phrase for kind in ('lock','light','switch','limiter','ground','folder','fan','filter','beam','other') for phrase in fragments[kind])
+    components = fields.get('component_list')
+    if isinstance(components,list): components=joined(components,'、')
+    if text(components): accessories=joined(('包含'+text(components),accessories),'；')
     processing = text(fields.get('processing_requirements'))
     if processing and not processing.startswith('按图'): processing='按图'+processing
+    if text(fields.get('modification_requirements')):
+        processing=joined(('改造内容：'+text(fields['modification_requirements']),processing),'；')
     excluded = fields.get('excluded_items') or []
     if isinstance(excluded,str): excluded=[excluded]
+    if plate['mode']=='none': excluded=[entry for entry in excluded if text(entry).strip() not in ('安装板','不含安装板','不配安装板')]
+    excluded=list(dict.fromkeys(text(entry) for entry in excluded if text(entry)))
     exclusions = ('不含'+joined(excluded,'、')) if excluded else ''
     specials=[]
     for key in ('protection_rating','packaging_requirements','installation_plate_delivery','special_requirements'):
+        if key=='installation_plate_delivery' and plate['mode']=='none': continue
         value=fields.get(key)
         for phrase in value if isinstance(value,list) else [value]:
             if text(phrase) and text(phrase) not in specials: specials.append(text(phrase))
     tail=joined((processing,exclusions,*specials),'；')
-    result=joined((joined(header),structure_text,accessories,tail),'。')
+    header_text=joined(header)
+    if rule['fixed']:
+        fixed_end=rule['fixed']+('，不含安装板' if plate['mode']=='none' else '')
+        header_text=header_text.replace(fixed_end+'，',fixed_end+'。',1)
+    result=joined((header_text,structure_text,accessories,tail),'。')
+    result=re.sub(r'。+[，；]+','。',result)
     return result+'。' if result else ''
+
+def configuration_remark_review_issues(item):
+    """Review messages belong to editor tooltips, never to exported remarks."""
+    fields=_configuration(item)
+    product=text(first(item,'scheme2_selected_product_name','scheme2_selected_product_code','product_family','product_code'))
+    rule=product_rule(product)
+    rows=[(row,_category(row)) for row in item.get('attachments',[]) if isinstance(row,dict)]
+    issues=structural_review(rule,fields,text(item.get('quote_remark_source')))
+    actual_body=thickness(item.get('cabinet_body_thickness_mm'))
+    requested_body=thickness(fields.get('body_thickness_mm'))
+    if actual_body and requested_body and actual_body!=requested_body:
+        issues.append('报价与来源的柜体板厚不一致，请核对')
+    state=installation_state(item,fields,rows,standard=rule['standard']);issues.extend(state['issues'])
+    if state['mode']=='none' and fields.get('installation_plate_delivery'):
+        issues.append('不含安装板与安装板交付要求冲突，请核对')
+    excluded=fields.get('excluded_items') or []
+    if isinstance(excluded,str):excluded=[excluded]
+    for row,kind in rows:
+        if number(row.get('quantity')) is not None and number(row['quantity'])>0 and row.get('attachment_price_sign')!=-1:
+            if any(text(entry) and text(entry) in _label(row,kind) for entry in excluded):
+                issues.append('附件同时出现配与不含，请核对')
+    return list(dict.fromkeys(issues))

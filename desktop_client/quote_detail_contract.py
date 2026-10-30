@@ -72,7 +72,7 @@ class DetailContractController(QObject):
         if not self.current():self.finish('当前报价已变化，请重新操作。');return
         if not result.get('ready'):self.finish(result.get('message','合同服务尚未启用。'));return
         self.bootstrap=result
-        if self.manager.history_version is not None or self.window._quote_scheme_status in ('QUOTED','ARCHIVED'):
+        if self.manager.history_version is not None or self.window._quote_scheme_status in ('QUOTED','CONTRACT','ARCHIVED'):
             self.open_formal(result);return
         if self.window._quote_scheme_status not in ('','DRAFT','REVISING'):
             self.finish('当前报价状态不支持生成合同。');return

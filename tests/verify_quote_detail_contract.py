@@ -62,6 +62,8 @@ class DetailContractTests(unittest.TestCase):
         self.p.template.setCurrentIndex(1);self.settled();self.p.generate();self.settled()
         self.assertIsNotNone(self.p.output,self.p.notice.text());self.assertTrue(self.p.preview_pages,self.p.notice.text())
         record=self.p.record;self.assertEqual(record['generation_snapshot']['source_quote_version'],1);self.assertEqual(record['generation_snapshot']['quote']['total'],400)
+        self.assertEqual(self.w._quote_scheme_status,'CONTRACT')
+        self.assertEqual(record['scheme']['status'],'CONTRACT')
         target=self.folder/'direct-first-contract.docx'
         with patch.object(contracts.QFileDialog,'getSaveFileName',return_value=(str(target),'')):self.p.export_file()
         self.assertEqual(sha256(target.read_bytes()).hexdigest(),record['file_sha256'])

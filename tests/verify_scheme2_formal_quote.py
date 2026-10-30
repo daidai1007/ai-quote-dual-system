@@ -97,7 +97,21 @@ def test_quote_table_wraps_full_remarks_and_company_change_refreshes_it():
     source = open(scheme2_ui.__file__, encoding="utf-8").read()
     assert "preview.setWordWrap(True)" in source
     assert "preview.setTextElideMode(Qt.TextElideMode.ElideNone)" in source
-    assert "preview.setRowHeight(row, max(72, preview.rowHeight(row)))" in source
+    assert scheme2_ui.QUOTE_REMARK_MIN_ROW_HEIGHT == 72
+    table = scheme2_ui._new_quote_document_table()
+    window = SimpleNamespace(
+        _scheme2_refreshing_quote=False,
+        draft_items=[{"name": "行高回归产品", "quantity": 1,
+                      "quick": {"total_cost": 100}, "formula": {"total_cost": 60},
+                      "final_remark": "完整备注换行验证。" * 30}],
+        scheme2_quote_preview=table,
+        scheme2_company=SimpleNamespace(currentText=lambda: "本机合成客户"),
+        scheme2_order_number=QLineEdit(), refresh_summary=lambda: None,
+    )
+    scheme2_ui._refresh_quote_page(window)
+    assert table.wordWrap()
+    assert table.textElideMode() == scheme2_ui.Qt.TextElideMode.ElideNone
+    assert table.rowHeight(10) >= 72
     assert "window.scheme2_company.currentTextChanged.connect" in source
 
 

@@ -50,6 +50,29 @@ class ContractTemplateSharing(unittest.TestCase):
     def settle(self):
         fixture.wait(lambda:not self.p.busy and not self.p.workers and not self.p.queue)
 
+    def test_missing_customer_template_borrows_without_switching_source_or_buyer(self):
+        other={**self.rows[1],'buyer_configured':True}
+        self.p.data['templates']=[other];self.rows=[other]
+        self.p.customer_changed()
+        self.p.source.setCurrentIndex(ui.index_of(self.p.source,(NO_A,2)));self.settle()
+        self.assertEqual(self.p.template.currentData(),2)
+        self.assertIn('借用',self.p.template.currentText())
+        self.assertEqual(self.p.customer.currentData(),'A')
+        self.assertEqual(self.p.customer_display.text(),'本机客户A')
+        self.assertEqual(self.p.source.currentData(),(NO_A,2))
+        self.assertEqual(self.p.amount.text(),'¥ 650.30')
+        self.p.library.setRowCount(1);self.p.library.selectRow(0)
+        self.p.tabs.setCurrentIndex(1);self.p.use_template();self.settle()
+        self.assertEqual(self.p.customer.currentData(),'A');self.assertEqual(self.p.source.currentData(),(NO_A,2))
+        self.w.show_section(self.w.contract_management_route);self.w.resize(1519,986)
+        fixture.APP.processEvents();fixture.QTest.qWait(100)
+        self.assertTrue(self.w.grab().save(str(fixture.ROOT/'.codex-tmp'/'template-fallback-quotation.png')))
+
+    def test_usable_matching_template_takes_priority_over_other_customer_templates(self):
+        self.p.data['templates']=[dict(r,buyer_configured=True) for r in self.rows]
+        self.p.customer_changed();self.settle()
+        self.assertLess(self.p.template.findData(2),0)
+
     def choose(self,number):
         self.p.template.setCurrentIndex(self.p.template.findData(number));self.settle()
 

@@ -32,6 +32,9 @@ test('real PostgreSQL analytics, permissions, frozen amounts, outcome audit and 
       assert.equal(data.summary.amount,'200.20');
       assert.equal(data.details.length,1);
       assert.equal(data.discount.sample,0);
+      assert.equal(data.contract_trend_available,false);
+      assert.equal(data.contract_quoted_trend[0].quoted_count,1);
+      assert.equal(data.product_breakdown[0].amount,'200.20');assert.equal(data.product_breakdown[0].quantity,2);
     });
     const migration=await readFile(new URL('../database/migrations/quote_analysis_v1.sql',import.meta.url),'utf8');
     pg.query(migration);pg.query(migration);

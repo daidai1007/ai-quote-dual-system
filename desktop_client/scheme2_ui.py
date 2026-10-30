@@ -104,7 +104,7 @@ from attachment_category_browser import (COMPUTER_TRAY_MODEL_DEPTHS, SUPPORT_PLA
     door_transformation_default_names, size_match_display_text, attachment_names_manual_only)
 from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
 from ganged_cabinet_rules import DOOR_POSITION_COUNTS, door_counts_for_positions, door_positions_for_counts
-from quote_configuration_remark import build_configuration_remark, source_configuration
+from quote_configuration_remark import build_configuration_remark, source_configuration, configuration_remark_review_issues
 from ui_typography import (
     AUXILIARY_PX,
     BODY_PX,
@@ -157,7 +157,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.29.01"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.29.02"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -3133,6 +3133,15 @@ def _refresh_quote_page(window, document=None):
                     if not getattr(window, "_qm_view_history", False) and not getattr(window, "_name_scope_foreign", False) and not getattr(window, "_scheme2_document_busy", False):
                         preview.item(row, 7).setFlags(preview.item(row, 7).flags() | Qt.ItemFlag.ItemIsEditable)
                         preview.item(row, 7).setToolTip("双击编辑整段备注，Ctrl+Enter 保存；人工修改后以手工内容为准")
+                if document is None and not _preserve_quote_remark(window) and not item.get('quote_remark_manual'):
+                    issues=configuration_remark_review_issues(item)
+                    if issues:
+                        from PySide6.QtWidgets import QStyle
+                        cell=preview.item(row,7)
+                        cell.setIcon(preview.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning))
+                        review='需复核：'+'；'.join(issues)
+                        cell.setToolTip(cell.toolTip()+'\n'+review)
+                        cell.setData(Qt.ItemDataRole.AccessibleDescriptionRole,review)
             total_row = 10 + len(items)
             preview.item(total_row, 1).setText("合计")
             preview.item(total_row, 6).setText(_money(total))
@@ -5301,7 +5310,7 @@ def _load_order_workspace(window):
         if user_id() is not None:
             window._name_scope_foreign=bool(result.get('legacy_read_only') or (result.get('owner_user_id') and result['owner_user_id']!=user_id()))
             from quote_scheme_center import _apply_read_only
-            _apply_read_only(window,window._name_scope_foreign or window._quote_scheme_status in ('QUOTED','ARCHIVED','VOID'))
+            _apply_read_only(window,window._name_scope_foreign or window._quote_scheme_status in ('QUOTED','CONTRACT','ARCHIVED','VOID'))
 
     worker.succeeded.connect(loaded)
     def failed(_message):

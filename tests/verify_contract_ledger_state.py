@@ -1,5 +1,6 @@
 """Offline Qt state, source identity and layout using artificial ledgers."""
 from copy import deepcopy
+from hashlib import sha256
 from pathlib import Path
 import os,tempfile,unittest
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from contract_ledger import CUSTOMERS,read_ledger,reopen_import,record_key
 from contract_ledger_test_data import write_ledger
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
+from PySide6.QtTest import QTest
 
 class LedgerStateTests(unittest.TestCase):
     window=fixture.LoginTests.window
@@ -20,7 +22,7 @@ class LedgerStateTests(unittest.TestCase):
         self.folder=Path(self.temp.name);self.w=self.window();self.p=self.w.contract_management;self.l=self.p.ledger
         self.transport2=patch.object(self.p,'request',return_value=True);self.transport2.start()
         self.p.source_mode.setCurrentIndex(1);self.p.source_stack.setCurrentIndex(1)
-        self.w.stack.setCurrentIndex(self.w.contract_management_route)
+        self.w.show_section(self.w.contract_management_route)
         self.l.received(dict(ready=True,drafts=[],templates=[dict(customer_name=c['name'],template_name='合成模板',enabled=True,configured=True,template_version_id=i+1,version_no=1) for i,c in enumerate(CUSTOMERS.values())]))
     def tearDown(self):
         self.transport2.stop();self.l.unsaved=False;self.p.unsaved=False;self.p.busy=False;self.p.queue.clear();self.p.shutdown();fixture.LoginTests.tearDown(self)
@@ -28,6 +30,78 @@ class LedgerStateTests(unittest.TestCase):
     def load(self,customer):
         self.l.customer.setCurrentIndex(self.l.customer.findData(customer));self.l.template.setCurrentIndex(1)
         data=read_ledger(write_ledger(self.folder/'synthetic.xls',customer),customer);self.l.load_import(data);return data
+
+    def test_local_picker_reads_ledger_before_service_and_template_are_ready(self):
+        self.l.received(dict(ready=False,templates=[],drafts=[],message='合成服务未启用'))
+        path=write_ledger(self.folder/'synthetic-offline.xls')
+        before=(sha256(path.read_bytes()).hexdigest(),path.stat().st_mtime_ns)
+        self.assertTrue(self.l.read_button.isEnabled())
+        with patch.object(ui.QFileDialog,'getOpenFileName',return_value=(str(path),'')) as picker,patch.object(self.p,'request') as remote:
+            QTest.mouseClick(self.l.read_button,Qt.MouseButton.LeftButton)
+            fixture.wait(lambda:self.l.imported is not None and not self.p.busy and not self.p.workers)
+            picker.assert_called_once();remote.assert_not_called()
+            self.l.select_all();self.l.go(1)
+            self.assertEqual(self.l.items.rowCount(),3)
+            self.assertFalse(self.l.save_button.isEnabled());self.assertFalse(self.l.generate_button.isEnabled())
+        self.assertEqual(before,(sha256(path.read_bytes()).hexdigest(),path.stat().st_mtime_ns))
+        self.l.go(0)
+        self.assertIn('核对',self.l.read_button.toolTip())
+        self.assertIn('服务',self.p.notice.text())
+        screenshot=Path(os.environ.get('AI_QUOTE_CONTRACT_SCREENSHOT_DIR',str(self.folder)));screenshot.mkdir(parents=True,exist_ok=True)
+        self.w.resize(1519,986);fixture.APP.processEvents();QTest.qWait(100)
+        self.w.grab().save(str(screenshot/'台账服务未就绪_本机Excel仍可读取.png'))
+
+    def test_local_picker_is_available_before_any_bootstrap_result(self):
+        self.l.info={};self.l.sync_actions()
+        self.assertTrue(self.l.read_button.isEnabled())
+        self.assertFalse(self.l.save_button.isEnabled());self.assertFalse(self.l.generate_button.isEnabled())
+
+    def test_missing_ledger_customer_template_borrows_and_keeps_current_customer(self):
+        other=dict(customer_name='本机第三方模板客户',customer_code='THIRD',template_name='可借用模板',enabled=True,configured=True,buyer_configured=True,ledger_compatible=True,can_use=True,template_version_id=88,version_no=1)
+        self.l.received(dict(ready=True,templates=[other],drafts=[]))
+        self.assertEqual(self.l.template.currentData(),88);self.assertIn('借用',self.l.template.currentText())
+        self.assertEqual(self.l.customer.currentData(),'NUOYUE')
+        self.p.data['templates']=[other];self.p.library.setRowCount(1);self.p.library.selectRow(0)
+        self.p.use_template();self.assertEqual(self.l.customer.currentData(),'NUOYUE')
+        self.assertEqual(self.l.template.currentData(),88)
+        self.load('NUOYUE');self.l.select_all();self.l.go(1)
+        self.assertEqual(self.l.input_data()['customer_key'],'NUOYUE')
+        self.assertEqual(self.l.input_data()['template_version_id'],88)
+        self.l.go(0);self.w.resize(1519,986);fixture.APP.processEvents();QTest.qWait(100)
+        self.assertTrue(self.w.grab().save(str(fixture.ROOT/'.codex-tmp'/'template-fallback-ledger.png')))
+        self.l.received(dict(self.l.info,templates=[other,dict(other,customer_name=CUSTOMERS['NUOYUE']['name'],template_version_id=89)]))
+        self.assertLess(self.l.template.findData(88),0)
+        self.assertGreater(self.l.template.findData(89),0)
+
+    def test_unready_service_blocks_remote_writes_even_with_previous_template_and_rows(self):
+        self.load('NUOYUE');self.l.select_all();self.l.go(1)
+        self.l.info['ready']=False;self.l.sync_actions()
+        self.assertFalse(self.l.save_button.isEnabled());self.assertFalse(self.l.generate_button.isEnabled())
+        with patch.object(self.p,'request') as remote:
+            self.l.save_draft();self.l.generate();remote.assert_not_called()
+        self.assertIn('服务',self.p.notice.text())
+        self.l.received(dict(self.l.info,ready=True))
+        self.assertTrue(self.l.save_button.isEnabled());self.assertTrue(self.l.generate_button.isEnabled())
+        self.assertEqual(self.l.read_button.toolTip(),'')
+
+    def test_failed_bootstrap_keeps_local_reading_and_rows_available(self):
+        self.load('NUOYUE');self.l.select_all();keys=set(self.l.selected_keys)
+        with patch.object(self.p,'request') as remote:
+            self.l.reload()
+            remote.call_args.kwargs['on_error']('合成网络不可用')
+        self.assertFalse(self.l.info['ready']);self.assertTrue(self.l.read_button.isEnabled())
+        self.assertEqual(self.l.selected_keys,keys);self.assertIsNotNone(self.l.imported)
+        self.assertFalse(self.l.generate_button.isEnabled())
+
+    def test_busy_picker_and_discard_cancellation_still_protect_local_work(self):
+        self.load('NUOYUE');original=self.l.imported
+        self.p.busy=True;self.l.sync_actions()
+        with patch.object(ui.QFileDialog,'getOpenFileName') as picker:
+            QTest.mouseClick(self.l.read_button,Qt.MouseButton.LeftButton);picker.assert_not_called()
+        self.p.busy=False;self.l.sync_actions()
+        with patch.object(ui.QMessageBox,'question',return_value=ui.QMessageBox.StandardButton.Cancel):
+            self.l.read_file(self.folder/'must-not-read.xls')
+        self.assertIs(self.l.imported,original)
 
     def test_sheet_selections_and_reopen_preserve_all_rows_and_remarks(self):
         data=self.load('FANGYUAN');row=deepcopy(data['records'][0]);row.update(sheet='方圆接手2026',source_row=2)
