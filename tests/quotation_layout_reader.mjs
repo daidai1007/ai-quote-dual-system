@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 const clone=value=>value===undefined?undefined:structuredClone(value);
 const letter=number=>{let s='';for(let n=number;n>0;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
 export function quotationLayout(sheet){
- const first=sheet.name==='公式法报价单'?12:10;
+ const first=sheet.name==='成本'?12:10;
  if(sheet.getCell(10,first).text!=='项目')return null;
  const products=[],blocks=[];let subtotal;
  const master=cell=>!cell.isMerged||cell.master.address===cell.address;
@@ -52,7 +52,7 @@ export function publicQuotationCell(sheet,logicalAddress){
 }
 
 export function projectQuotationAudit(workbook){
- for(const name of ['公式法报价单','快速报价单']){
+ for(const name of ['成本','报价']){
   const sheet=workbook.getWorksheet(name);if(!sheet)continue;
   const plan=quotationLayout(sheet);if(!plan)continue;
   const cells=[],addresses=new Map();

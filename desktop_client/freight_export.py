@@ -15,6 +15,7 @@ from quick_discount_rules import PRICING_BASIS, quick_freight_fee
 
 NS = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 REL = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'
+SHEET_NAMES = {'公式法报价单': '成本', '快速报价单': '报价'}
 
 
 def fill_freight_cells(path, amounts):
@@ -56,14 +57,21 @@ def fill_freight_cells(path, amounts):
 
     changed = {}
     for sheet in ET.fromstring(parts['xl/workbook.xml']).findall('m:sheets/m:sheet', NS):
-        values = amounts.get(sheet.get('name'))
+        original_name = sheet.get('name')
+        canonical_name = SHEET_NAMES.get(original_name, original_name)
+        values = amounts.get(original_name)
+        if values is None:
+            values = amounts.get(canonical_name)
+        if values is None:
+            legacy_name = next((old for old,new in SHEET_NAMES.items() if new == canonical_name), None)
+            values = amounts.get(legacy_name)
         if values is None:
             continue
         target = relations[sheet.get(REL)]
         name = target.lstrip('/') if target.startswith('/') else posixpath.normpath('xl/' + target)
         xml = parts[name].decode('utf-8')
         root = ET.fromstring(xml)
-        detail_header = 'L10' if sheet.get('name') == '公式法报价单' else 'J10'
+        detail_header = 'L10' if canonical_name == '成本' else 'J10'
         if any(c.get('r') == detail_header and text(c).strip() == '项目'
                for c in root.findall('.//m:sheetData/m:row/m:c', NS)):
             # The server already wrote each product's freight in its vertical
@@ -121,13 +129,13 @@ def install_freight_export(namespace):
         # Freeze the same quote snapshot sent to the existing export endpoint.
         payload = deepcopy(payload)
         payload['quotation_detail_layout'] = 'right_vertical_v1'
-        amounts = {'公式法报价单': [], '快速报价单': []}
+        amounts = {'成本': [], '报价': []}
         for item in payload.get('items', []):
             # Current detail columns show per-unit/set freight; legacy rows
             # show the whole order-line amount. Match the server's basis.
             freight_key = 'freight_fee' if item.get('pricing_basis') == PRICING_BASIS else 'freight_total'
-            amounts['公式法报价单'].append(_formula_order_line_breakdown(item)[freight_key])
-            amounts['快速报价单'].append(quick_order_line_breakdown(
+            amounts['成本'].append(_formula_order_line_breakdown(item)[freight_key])
+            amounts['报价'].append(quick_order_line_breakdown(
                 item.get('quick', {}), item.get('attachments', []),
                 item.get('quick_discount', 1), item.get('quantity') or 1,
                 ganged_split_count(item), quick_freight_fee(item),

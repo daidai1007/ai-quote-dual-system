@@ -155,9 +155,9 @@ class WeightFreight(unittest.TestCase):
         receipt=self.posts()[-1]['snapshot']
         self.assertEqual(receipt['draft_items'][0]['freight_fee'],52.5)
         self.assertEqual(receipt['quote_management']['versions'][-1]['items'][0]['freight_fee'],52.5)
-        for sheet in ('快速报价单','公式法报价单'):
+        for sheet in ('报价','成本'):
             self.assertEqual(float(fixture.workbook_cell(self.path,sheet,'G11')),
-                ui._row_values(self.item)[16] if sheet=='快速报价单' else ui._row_values(self.item)[18])
+                ui._row_values(self.item)[16] if sheet=='报价' else ui._row_values(self.item)[18])
         ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
         with ZipFile(self.path) as book:
             shared=[''.join(node.itertext()) for node in ET.fromstring(book.read('xl/sharedStrings.xml'))]

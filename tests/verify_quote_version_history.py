@@ -211,8 +211,8 @@ class VersionHistoryTests(unittest.TestCase):
                 text=''.join(page.extract_text() for page in PdfReader(str(destination)).pages)
                 self.assertIn(f'{price:,.2f}',text)
                 self.h.export()
-                self.assertEqual(float(fixture.workbook_cell(self.h.path,'快速报价单','F11')),price)
-                self.assertEqual(float(fixture.workbook_cell(self.h.path,'快速报价单','G11')),price*2)
+                self.assertEqual(float(fixture.workbook_cell(self.h.path,'报价','F11')),price)
+                self.assertEqual(float(fixture.workbook_cell(self.h.path,'报价','G11')),price*2)
                 self.assertEqual(self.h.server['snapshot'],frozen)
                 self.m.restore_latest()
 
@@ -257,7 +257,7 @@ class VersionHistoryTests(unittest.TestCase):
         self.assertEqual(ui._row_values(self.w.draft_items[0])[15],502)
         self.assertTrue(self.w._quote_scheme_read_only)
         self.h.export()
-        self.assertEqual(float(fixture.workbook_cell(self.h.path,'快速报价单','F11')),502)
+        self.assertEqual(float(fixture.workbook_cell(self.h.path,'报价','F11')),502)
         self.assertEqual(self.h.server['snapshot']['draft_items'][0]['quick_discount'],self.m.latest_workspace['items'][0]['quick_discount'])
         self.m.restore_latest()
         # Confirmation records the staged edit even when the dialog needs no

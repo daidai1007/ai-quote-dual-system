@@ -158,15 +158,15 @@ test('actual ordinary and ganged workbooks preserve popup fan sale and formula c
       await fs.writeFile(input,JSON.stringify(payload));
       await promisify(execFile)(process.execPath,[path.resolve('export_dual_quote_workbook.mjs'),input,output],{windowsHide:true});
       const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);projectQuotationAudit(book);
-      for(const [sheet,amount] of [['快速报价单',480],['公式法报价单',280]]){
+      for(const [sheet,amount] of [['报价',480],['成本',280]]){
         const table=book.getWorksheet(sheet),column=table.getRow(10).values.findIndex(value=>value===fan.item_name);
         assert.ok(column>0,`${sheet} missing fan column`);
         assert.equal(table.getCell(11,column).value,amount);
       }
-      const quick=book.getWorksheet('快速报价单');
+      const quick=book.getWorksheet('报价');
       assert.equal(quick.getCell('F11').value,payload.items[0].quote_display.unit_price);
       assert.equal(quick.getCell('G11').value,payload.items[0].quote_display.total);
-      const formula=book.getWorksheet('公式法报价单');
+      const formula=book.getWorksheet('成本');
       assert.equal(formula.getCell('F11').value,455.8);
       assert.equal(formula.getCell('G11').value,911.6);
       const details=book.getWorksheet('成本明细');

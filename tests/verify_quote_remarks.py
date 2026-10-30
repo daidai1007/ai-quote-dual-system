@@ -64,7 +64,7 @@ class QuoteRemarks(unittest.TestCase):
         expected_prices=ui._row_values(self.w.draft_items[0])[15:17]
         self.export()
         self.assertTrue(self.path.exists(),self.messages)
-        for sheet in ('快速报价单','公式法报价单'):
+        for sheet in ('报价','成本'):
             self.assertEqual(fixture.workbook_cell(self.path,sheet,'H11'),value)
         for _url,payload in self.requests:
             if 'items' in payload:

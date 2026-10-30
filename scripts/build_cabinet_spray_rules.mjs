@@ -42,7 +42,7 @@ const layouts={
   JP:[{startCol:1,startRow:3,endRow:48,body:null,label:'标准'}],
   JA:[{startCol:1,startRow:3,endRow:13,body:1.5,label:'标准箱体1.5'},{startCol:1,startRow:17,endRow:27,body:2,label:'箱体料厚改2'}],
   JE:[{startCol:1,startRow:3,endRow:13,body:null,label:'标准'}],
-  JM:[{startCol:1,startRow:3,endRow:7,body:null,label:'标准'}],
+  JM:[{startCol:1,startRow:3,endRow:7,body:1.5,label:'标准箱体1.5'},{startCol:1,startRow:11,endRow:15,body:2,label:'箱体料厚改2'}],
   JK:[{startCol:1,startRow:3,endRow:8,body:null,label:'标准'}],
 };
 
@@ -102,7 +102,7 @@ for(const [sheetName,config] of Object.entries(fixedConfigs)){
       source_sheet:sheetName,source_row_no:rowNo});
   }
 }
-if(rules.length!==202)throw new Error(`喷塑面积规则应为 202 条，实际 ${rules.length}`);
+if(rules.length!==207)throw new Error(`喷塑面积规则应为 207 条，实际 ${rules.length}`);
 if(fixedRules.length!==46)throw new Error(`固定喷塑价格应为 46 条，实际 ${fixedRules.length}`);
 const fixedIdentities=new Set();
 for(const rule of fixedRules){
@@ -121,14 +121,16 @@ for(const rule of rules){
   else identities.set(key,rule);
 }
 
-const version=`cabinet-spray-${sourceSha256.slice(0,16)}-v2`;
+const generatorRevision='jm-body-thickness-profiles-1p5-2-v1';
+const versionDigest=crypto.createHash('sha256').update(sourceSha256+'\nGENERATOR:'+generatorRevision+'\n').digest('hex');
+const version=`cabinet-spray-${versionDigest.slice(0,16)}-v2`;
 const counts=Object.fromEntries(Object.keys(layouts).map(family=>[family,rules.filter(r=>r.family===family).length]));
 const fixedCounts=Object.fromEntries([...new Set(fixedRules.map(r=>r.product_code))].map(code=>[code,fixedRules.filter(r=>r.product_code===code).length]));
 const sourceFiles=[
   {kind:'AREA_FORMULA',name:path.basename(formulaSource),sha256:formulaSha256},
   {kind:'FIXED_PRICE',name:path.basename(fixedSource),sha256:fixedSha256},
 ];
-const bundle={data_version:version,source_file:sourceFiles.map(x=>x.name).join('; '),source_sha256:sourceSha256,source_files:sourceFiles,rules,fixed_rules:fixedRules};
+const bundle={data_version:version,generator_revision:generatorRevision,source_file:sourceFiles.map(x=>x.name).join('; '),source_sha256:sourceSha256,source_files:sourceFiles,rules,fixed_rules:fixedRules};
 fs.mkdirSync(outDir,{recursive:true});fs.mkdirSync(webDir,{recursive:true});
 fs.writeFileSync(path.join(outDir,'spray-audit.json'),JSON.stringify({version,sourceSha256,area_rules:rules.length,fixed_rules:fixedRules.length,counts,fixedCounts,issues},null,2)+'\n');
 const oldBlocked=path.join(outDir,'cabinet-spray-bundle.blocked.json');if(fs.existsSync(oldBlocked))fs.unlinkSync(oldBlocked);

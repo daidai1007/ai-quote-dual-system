@@ -248,7 +248,7 @@ class ManagementTests(unittest.TestCase):
                 self.assertIsNone(book.testzip())
                 ns={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
                 document=ET.fromstring(book.read('xl/workbook.xml'))
-                quick=next(s for s in document.findall('s:sheets/s:sheet',ns) if s.get('name')=='快速报价单')
+                quick=next(s for s in document.findall('s:sheets/s:sheet',ns) if s.get('name')=='报价')
                 rel=quick.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
                 relations=ET.fromstring(book.read('xl/_rels/workbook.xml.rels'))
                 target=next(r.get('Target') for r in relations if r.get('Id')==rel)

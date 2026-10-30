@@ -70,7 +70,7 @@ test('real workbook includes manufacture, 5% management, preserved quote and rec
     quotation_detail_layout:'vertical_v1',items:[source(2)]}));
   execFileSync(process.execPath,['export_dual_quote_workbook.mjs',input,output],{cwd:root,windowsHide:true,stdio:'pipe'});
   const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
-  const quick=book.getWorksheet('快速报价单'),formula=book.getWorksheet('公式法报价单'),details=book.getWorksheet('成本明细');
+  const quick=book.getWorksheet('报价'),formula=book.getWorksheet('成本'),details=book.getWorksheet('成本明细');
   assert.equal(quick.getCell('F11').value,1000);assert.equal(quick.getCell('G11').value,2000);
   assert.equal(formula.getCell('F11').value,790);assert.equal(formula.getCell('G11').value,1580);
   let manufacturing=[],management=[];details.eachRow(row=>{

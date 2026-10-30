@@ -358,8 +358,8 @@ const quickSetupEndColumn = col(Math.max(25, quickDiscountColumnIndex));
 
 const workbook = new ExcelJS.Workbook();
 const formulaSheet = buildQuotationTemplate(workbook);
-formulaSheet.name = "公式法报价单";
-const quickSheet = attachRangeApi(workbook.addWorksheet("快速报价单"));
+formulaSheet.name = "成本";
+const quickSheet = attachRangeApi(workbook.addWorksheet("报价"));
 quickSheet.views = [{ showGridLines: false }];
 quickSheet.getRange("A1:Y20").copyFrom(formulaSheet.getRange("A1:Y20"), "all");
 applyTemplateGeometry(quickSheet, true);
@@ -1778,7 +1778,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
   const items = payload.items || [];
   const formulaPublicHeaders = LEGACY_FORMULA_HEADERS;
   const audit = {};
-  for (const [sheetName, method] of [["公式法报价单", "formula"], ["快速报价单", "quick"]]) {
+  for (const [sheetName, method] of [["成本", "formula"], ["报价", "quick"]]) {
     const sheet = attachRangeApi(candidateWorkbook.getWorksheet(sheetName));
     if (!sheet) throw new Error(`saved workbook is missing sheet: ${sheetName}`);
     const publicHeaders = method === "quick"
@@ -1841,11 +1841,11 @@ const verifyWorkbookContents = (candidateWorkbook) => {
   }
 
   if (!verticalDetailsRequested) {
-    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("公式法报价单"), "L10:P10")[0],
+    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("成本"), "L10:P10")[0],
       ["材料成本", "辅材成本", "人工成本", "喷塑费用", "管理费用"], "formula cost headers");
-    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("公式法报价单"), `Q10:${formulaLastColumn}10`)[0],
+    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("成本"), `Q10:${formulaLastColumn}10`)[0],
       formulaCostHeaders, "formula attachment-name headers");
-    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("快速报价单"), `J10:${quickLastColumn}10`)[0],
+    assertRow(rangePlainValues(candidateWorkbook.getWorksheet("报价"), `J10:${quickLastColumn}10`)[0],
       quickCostHeaders, "quick cost headers");
   }
   audit.quotation_layout = {};

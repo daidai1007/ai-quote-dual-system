@@ -105,10 +105,10 @@ class ExportCustomer(unittest.TestCase):
                 self.assertEqual(payload['company_name'],name)
                 self.assertEqual(payload['company_code'],code)
         self.assertEqual(self.workbooks[-1]['company_name'],name)
-        for sheet,cell in [('公式法报价单','B4'),('快速报价单','B4'),('成本明细','H2')]:
+        for sheet,cell in [('成本','B4'),('报价','B4'),('成本明细','H2')]:
             self.assertEqual(workbook_cell(self.path,sheet,cell),name,sheet)
-        self.assertEqual(float(workbook_cell(self.path,'快速报价单','F11')),float(amounts[15]))
-        self.assertEqual(float(workbook_cell(self.path,'快速报价单','G11')),float(amounts[16]))
+        self.assertEqual(float(workbook_cell(self.path,'报价','F11')),float(amounts[15]))
+        self.assertEqual(float(workbook_cell(self.path,'报价','G11')),float(amounts[16]))
         self.assertEqual(self.posts()[-1]['snapshot']['company'],name)
         self.assertEqual(self.posts()[-1]['snapshot']['analysis_customer']['customer_name'],name)
         self.assertIn(name,ui._printable_quote_html(self.window))

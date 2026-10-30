@@ -203,8 +203,8 @@ test('calculation preflight distinguishes V2 attachment IDs from legacy names', 
         const exported=await request('/api/quotes/export',document,active);
         assert.equal(exported.status,200,exported.status===200?'':await exported.text());
         const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(Buffer.from(await exported.arrayBuffer()));
-        assert.equal(workbook.getWorksheet('快速报价单').getCell('F11').value,amounts.equivalentUnitTotal);
-        assert.equal(workbook.getWorksheet('快速报价单').getCell('G11').value,amounts.lineTotal);
+        assert.equal(workbook.getWorksheet('报价').getCell('F11').value,amounts.equivalentUnitTotal);
+        assert.equal(workbook.getWorksheet('报价').getCell('G11').value,amounts.lineTotal);
         for(const route of ['/api/quotes/preview-check','/api/quotes/confirm','/api/quotes/export']) {
           const rejected=await call(route,document,other.body.token);
           assert.equal(rejected.status,403,JSON.stringify(rejected));
@@ -303,7 +303,7 @@ test('calculation preflight distinguishes V2 attachment IDs from legacy names', 
           const exported=await request('/api/quotes/export',document,token);
           assert.equal(exported.status,200,exported.status===200?'':await exported.text());
           const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(Buffer.from(await exported.arrayBuffer()));
-          const sheet=workbook.getWorksheet('快速报价单');
+          const sheet=workbook.getWorksheet('报价');
           amounts.forEach((amount,index)=>{
             assert.equal(sheet.getCell('F'+(11+index)).value,amount.equivalentUnitTotal);
             assert.equal(sheet.getCell('G'+(11+index)).value,amount.lineTotal);

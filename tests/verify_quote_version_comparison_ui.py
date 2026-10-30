@@ -55,13 +55,15 @@ class VersionComparisonUI(unittest.TestCase):
         self.assertIn('首次报价',grid.item(0,0).text())
         self.assertEqual(grid.item(2,0).text(),'V1 → V2');self.assertEqual(grid.item(4,0).text(),'V2 → V3')
         self.assertIn('金额：-20.00',grid.item(2,5).text())
-        self.assertIn('-6.67 个百分点',grid.item(2,5).text())
+        # Current gross basis: production 56.60 plus manufacture 4% of
+        # quote. V1/V2 margins are 39.40% and 33.111...%, freight is zero.
+        self.assertIn('-6.29 个百分点',grid.item(2,5).text())
         self.screenshot('all-versions.png')
         self.m.from_version.setCurrentIndex(self.m.from_version.findData(1))
         self.m.to_version.setCurrentIndex(self.m.to_version.findData(3));app.processEvents()
         self.assertEqual(grid.rowCount(),2);self.assertEqual(grid.item(0,0).text(),'V1 → V3')
         self.assertIn('金额：-10.00',grid.item(0,5).text())
-        self.assertIn('-3.16 个百分点',grid.item(0,5).text())
+        self.assertIn('-2.98 个百分点',grid.item(0,5).text())  # V3=(95-56.6-3.8)/95.
         self.screenshot('selected-v1-v3.png')
         QTest.mouseClick(self.m.compare_clear,Qt.MouseButton.LeftButton);app.processEvents()
         self.assertEqual(grid.rowCount(),6)
@@ -88,8 +90,8 @@ class VersionComparisonUI(unittest.TestCase):
              set(self.w.draft_items[0])|set(self.m.state['versions'][-1]['items'][0]) if key not in ('quote_display','quote_cost_display','cost_detail_rows')
              and self.w.draft_items[0].get(key)!=self.m.state['versions'][-1]['items'][0].get(key)})
         self.export();self.assertTrue(self.path.exists(),self.messages)
-        self.assertEqual(float(fixture.workbook_cell(self.path,'快速报价单','F11')),95)
-        self.assertEqual(float(fixture.workbook_cell(self.path,'快速报价单','G11')),190)
+        self.assertEqual(float(fixture.workbook_cell(self.path,'报价','F11')),95)
+        self.assertEqual(float(fixture.workbook_cell(self.path,'报价','G11')),190)
         pdf=Path(self.folder.name)/'comparison-current.pdf'
         def choose(dialog):
             printer=dialog.printer();printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat);printer.setOutputFileName(str(pdf))

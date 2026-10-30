@@ -157,7 +157,7 @@ for (const count of [1,2]) test(`real ${count}-cabinet quote/export uses new pri
     await fs.writeFile(input,JSON.stringify({...output,quote_id:'MANUAL-MATCH-TEST',quote_date:'2026-10-19'}));
     await promisify(execFile)(process.execPath,[path.resolve('export_dual_quote_workbook.mjs'),input,file],{windowsHide:true});
     const workbook=new ExcelJS.Workbook();await workbook.xlsx.readFile(file);
-    const sheet=workbook.getWorksheet('快速报价单');
+    const sheet=workbook.getWorksheet('报价');
     assert.equal(sheet.getCell('F11').value,line.equivalentUnitTotal);
     assert.equal(sheet.getCell('G11').value,line.lineTotal);
   } finally { await fs.rm(folder,{recursive:true,force:true}); }

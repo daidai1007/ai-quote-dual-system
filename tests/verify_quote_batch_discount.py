@@ -214,10 +214,10 @@ class BatchDiscountTests(unittest.TestCase):
             result=subprocess.run(['node',str(fixture.ROOT/'export_dual_quote_workbook.mjs'),str(source),str(output)],
                 cwd=fixture.ROOT,capture_output=True,text=True,encoding='utf-8',timeout=40)
             self.assertEqual(result.returncode,0,result.stderr)
-            self.assertEqual(float(workbook_cell(output,'快速报价单','F11')),732)
-            self.assertEqual(float(workbook_cell(output,'快速报价单','G11')),2196)
-            self.assertEqual(float(workbook_cell(output,'快速报价单','F12')),612)
-            self.assertEqual(float(workbook_cell(output,'快速报价单','G12')),612)
+            self.assertEqual(float(workbook_cell(output,'报价','F11')),732)
+            self.assertEqual(float(workbook_cell(output,'报价','G11')),2196)
+            self.assertEqual(float(workbook_cell(output,'报价','F12')),612)
+            self.assertEqual(float(workbook_cell(output,'报价','G12')),612)
 
 
 if __name__=='__main__':unittest.main()

@@ -94,8 +94,8 @@ BEGIN
   IF jsonb_typeof(p_payload->'source_files')<>'array' OR jsonb_array_length(p_payload->'source_files')<>2 THEN
     RAISE EXCEPTION 'Expected exactly two cabinet material source files';
   END IF;
-  IF jsonb_typeof(p_payload->'rules')<>'array' OR jsonb_array_length(p_payload->'rules')<>241 THEN
-    RAISE EXCEPTION 'Expected exactly 241 cabinet material area rules';
+  IF jsonb_typeof(p_payload->'rules')<>'array' OR jsonb_array_length(p_payload->'rules') NOT IN (241,247) THEN
+    RAISE EXCEPTION 'Expected 241 legacy or 247 JM-paired cabinet material area rules';
   END IF;
   IF jsonb_typeof(p_payload->'fixed_rules')<>'array' OR jsonb_array_length(p_payload->'fixed_rules')<>46 THEN
     RAISE EXCEPTION 'Expected exactly 46 cabinet material fixed rules';
@@ -106,7 +106,7 @@ BEGIN
   IF EXISTS(SELECT 1 FROM calc.cabinet_material_catalog_version WHERE data_version=v_version AND status='ACTIVE') THEN
     RAISE EXCEPTION 'Cannot overwrite ACTIVE cabinet material version %',v_version;
   END IF;
-  DELETE FROM calc.cabinet_material_catalog_version WHERE data_version=v_version;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_material_catalog_version WHERE data_version=v_version) THEN RAISE EXCEPTION 'Version already exists; do not replace catalog history %',v_version; END IF;
   INSERT INTO calc.cabinet_material_catalog_version(data_version,source_file,source_sha256,source_files,status,default_waste_factor)
   VALUES(v_version,p_payload->>'source_file',p_payload->>'source_sha256',p_payload->'source_files','STAGED',
     (p_payload->>'default_waste_factor')::numeric);
@@ -129,8 +129,23 @@ BEGIN
       coalesce((v_rule->>'apply_waste_factor')::boolean,false),v_rule->>'source_sheet',(v_rule->>'source_row_no')::integer);
   END LOOP;
   SELECT count(*) INTO v_count FROM calc.cabinet_material_rule WHERE data_version=v_version;
-  IF v_count<>241 OR (SELECT count(DISTINCT family) FROM calc.cabinet_material_rule WHERE data_version=v_version)<>6 THEN
+  IF v_count NOT IN (241,247) OR (SELECT count(DISTINCT family) FROM calc.cabinet_material_rule WHERE data_version=v_version)<>6 THEN
     RAISE EXCEPTION 'Staged cabinet material area catalog is incomplete';
+  END IF;
+
+  -- JM_PROFILE_PAIR_V1: retain legacy catalogs, require both complete JM profiles in new catalogs.
+  IF (SELECT count(*) FROM calc.cabinet_material_rule WHERE data_version=v_version AND family='JM')<>(CASE WHEN v_count=241 THEN 6 ELSE 12 END)
+     OR (v_count=241 AND EXISTS(SELECT 1 FROM calc.cabinet_material_rule WHERE data_version=v_version AND family='JM' AND body_thickness_profile_mm IS NOT NULL))
+     OR (v_count=247 AND ((SELECT count(*) FROM calc.cabinet_material_rule WHERE data_version=v_version AND family='JM' AND body_thickness_profile_mm=1.5)<>6
+       OR (SELECT count(*) FROM calc.cabinet_material_rule WHERE data_version=v_version AND family='JM' AND body_thickness_profile_mm=2)<>6)) THEN
+    RAISE EXCEPTION 'JM material profile pair is incomplete';
+  END IF;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_material_rule WHERE data_version=v_version AND family='JM'
+    AND (single_door_count<>1 OR double_door_count<>0 OR part_name NOT IN ('安装板','箱体（上下堵头）','箱体顶板','箱体底板','走线弯角件','前单门')
+      OR quantity_rule IS DISTINCT FROM jsonb_build_object('kind','CONSTANT','value',CASE WHEN part_name='走线弯角件' THEN 2 ELSE 1 END)
+      OR sheet_thickness_mm<>(CASE part_name WHEN '安装板' THEN 2.5 WHEN '前单门' THEN 2 ELSE coalesce(body_thickness_profile_mm,1.5) END)))
+    OR EXISTS(SELECT 1 FROM calc.cabinet_material_rule WHERE data_version=v_version AND family='JM' GROUP BY body_thickness_profile_mm HAVING count(DISTINCT part_name)<>6) THEN
+    RAISE EXCEPTION 'JM material parts, door counts, quantity or thickness are invalid';
   END IF;
   SELECT count(*) INTO v_count FROM calc.cabinet_material_fixed_rule WHERE data_version=v_version;
   IF v_count<>46 OR (SELECT count(DISTINCT product_code) FROM calc.cabinet_material_fixed_rule WHERE data_version=v_version)<>5 THEN
@@ -155,8 +170,23 @@ BEGIN
   SELECT count(*),count(DISTINCT family) INTO v_area,v_families FROM calc.cabinet_material_rule WHERE data_version=p_version;
   SELECT count(*),count(DISTINCT product_code) INTO v_fixed,v_products FROM calc.cabinet_material_fixed_rule WHERE data_version=p_version;
   IF NOT EXISTS(SELECT 1 FROM calc.cabinet_material_catalog_version WHERE data_version=p_version AND status='STAGED')
-     OR v_area<>241 OR v_families<>6 OR v_fixed<>46 OR v_products<>5 THEN
+     OR v_area NOT IN (241,247) OR v_families<>6 OR v_fixed<>46 OR v_products<>5 THEN
     RAISE EXCEPTION 'Version % is not a complete STAGED cabinet material V2 catalog',p_version;
+  END IF;
+
+  -- JM_PROFILE_PAIR_V1: retain legacy catalogs, require both complete JM profiles in new catalogs.
+  IF (SELECT count(*) FROM calc.cabinet_material_rule WHERE data_version=p_version AND family='JM')<>(CASE WHEN v_area=241 THEN 6 ELSE 12 END)
+     OR (v_area=241 AND EXISTS(SELECT 1 FROM calc.cabinet_material_rule WHERE data_version=p_version AND family='JM' AND body_thickness_profile_mm IS NOT NULL))
+     OR (v_area=247 AND ((SELECT count(*) FROM calc.cabinet_material_rule WHERE data_version=p_version AND family='JM' AND body_thickness_profile_mm=1.5)<>6
+       OR (SELECT count(*) FROM calc.cabinet_material_rule WHERE data_version=p_version AND family='JM' AND body_thickness_profile_mm=2)<>6)) THEN
+    RAISE EXCEPTION 'JM material profile pair is incomplete';
+  END IF;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_material_rule WHERE data_version=p_version AND family='JM'
+    AND (single_door_count<>1 OR double_door_count<>0 OR part_name NOT IN ('安装板','箱体（上下堵头）','箱体顶板','箱体底板','走线弯角件','前单门')
+      OR quantity_rule IS DISTINCT FROM jsonb_build_object('kind','CONSTANT','value',CASE WHEN part_name='走线弯角件' THEN 2 ELSE 1 END)
+      OR sheet_thickness_mm<>(CASE part_name WHEN '安装板' THEN 2.5 WHEN '前单门' THEN 2 ELSE coalesce(body_thickness_profile_mm,1.5) END)))
+    OR EXISTS(SELECT 1 FROM calc.cabinet_material_rule WHERE data_version=p_version AND family='JM' GROUP BY body_thickness_profile_mm HAVING count(DISTINCT part_name)<>6) THEN
+    RAISE EXCEPTION 'JM material parts, door counts, quantity or thickness are invalid';
   END IF;
   UPDATE calc.cabinet_material_catalog_version SET status='RETIRED',activated_at=NULL WHERE status='ACTIVE';
   UPDATE calc.cabinet_material_catalog_version SET status='ACTIVE',activated_at=current_timestamp WHERE data_version=p_version;

@@ -56,10 +56,10 @@ class FreightOutputTests(unittest.TestCase):
                     response.read.return_value=original
                     with patch('urllib.request.urlopen',return_value=response):
                         self.w.export_workbook(str(output),payload)
-                    self.assertEqual(float(workbook_cell(output,'快速报价单','F11')),1100)
-                    self.assertEqual(float(workbook_cell(output,'快速报价单','G11')),2200)
-                    self.assertEqual(float(workbook_cell(output,'公式法报价单','F11')),488)
-                    self.assertEqual(float(workbook_cell(output,'公式法报价单','G11')),976)
+                    self.assertEqual(float(workbook_cell(output,'报价','F11')),1100)
+                    self.assertEqual(float(workbook_cell(output,'报价','G11')),2200)
+                    self.assertEqual(float(workbook_cell(output,'成本','F11')),488)
+                    self.assertEqual(float(workbook_cell(output,'成本','G11')),976)
                     if layout=='right_vertical_v1':
                         self.assertEqual(output.read_bytes(),original,'Horizontal repair must not touch vertical labels/values')
                     else:

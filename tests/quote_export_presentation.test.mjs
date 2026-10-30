@@ -47,7 +47,7 @@ test("customer metadata survives legacy payload and Excel serialization", async 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    for (const name of ["公式法报价单", "快速报价单"]) {
+    for (const name of ["成本", "报价"]) {
       assert.equal(workbook.getWorksheet(name).getCell("B4").value, payload.company_name);
     }
     const detail = workbook.getWorksheet("成本明细");
@@ -101,7 +101,7 @@ test("formal workbook replaces only the door phrase using current door counts", 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    for (const sheetName of ["公式法报价单", "快速报价单"]) {
+    for (const sheetName of ["成本", "报价"]) {
       const sheet = workbook.getWorksheet(sheetName);
       cases.forEach(([, , expected], index) => {
         assert.equal(
@@ -181,11 +181,11 @@ for (const modern of [false, true]) {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-      for (const name of ["公式法报价单","快速报价单"]) {
+      for (const name of ["成本","报价"]) {
         const sheet = workbook.getWorksheet(name);
         cases.forEach((sample,index) => {
           const row = 11 + index;
-          const unit=name==='公式法报价单'?expectedCurrentFormulaUnit(payload.items[index]):sample.unit;
+          const unit=name==='成本'?expectedCurrentFormulaUnit(payload.items[index]):sample.unit;
           const total=moneyProduct(unit,sample.quantity);
           assert.equal(sheet.getCell(`F${row}`).value,unit,`${name} ${sample.name} unit`);
           assert.equal(sheet.getCell(`G${row}`).value,total,`${name} ${sample.name} total`);
@@ -194,7 +194,7 @@ for (const modern of [false, true]) {
           assert.ok(freightColumn > 0, `${name} freight column`);
           assert.equal(money(sheet.getCell(row,freightColumn).value || 0),
             moneyProduct(sample.freight,modern ? 1 : sample.quantity), `${sample.name} undiscounted freight`);
-          if (name === "快速报价单") {
+          if (name === "报价") {
             if (!modern && sample.ganged > 1) {
               // Frozen baseline from before the rounding task: this separate
               // historical branch is not part of current per-set exports.
@@ -215,7 +215,7 @@ for (const modern of [false, true]) {
           }
         });
         assert.equal(sheet.getCell(`G${11+cases.length}`).value,moneySum(cases.map((sample,index)=>
-          name==='公式法报价单'?moneyProduct(expectedCurrentFormulaUnit(payload.items[index]),sample.quantity):sample.total)));
+          name==='成本'?moneyProduct(expectedCurrentFormulaUnit(payload.items[index]),sample.quantity):sample.total)));
       }
     } finally {
       await fs.rm(tempDir,{recursive:true,force:true});
@@ -279,7 +279,7 @@ test("quick public quote uses the click-time UI snapshot verbatim", async () => 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    const quickSheet = workbook.getWorksheet("快速报价单");
+    const quickSheet = workbook.getWorksheet("报价");
     assert.deepEqual(
       [2, 3, 4, 5, 6, 7, 8].map((column) => quickSheet.getCell(11, column).value),
       ["人工名称", "600*230*400", 1, "台", 448.44, 448.44, "人工备注。"],
@@ -314,7 +314,7 @@ test("both quotation sheets preserve cleared and multiline manual remarks", asyn
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-      for (const sheetName of ["公式法报价单", "快速报价单"]) {
+      for (const sheetName of ["成本", "报价"]) {
         assert.equal(String(workbook.getWorksheet(sheetName).getCell("H11").value ?? ""), remark);
       }
     }
@@ -357,7 +357,7 @@ test("ganged quick export keeps the click-time attachment amount", async () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    const quickSheet = workbook.getWorksheet("快速报价单");
+    const quickSheet = workbook.getWorksheet("报价");
     const headers = quickSheet.getRow(10).values;
     const fanColumn = headers.findIndex((value) => value === "风机SG22060HA2/220V（国产）");
     assert.ok(fanColumn > 0, "ganged fan audit column is missing");
@@ -394,8 +394,8 @@ test("formula quotation mirrors quick attachment-name detail columns", async () 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    const formulaSheet = workbook.getWorksheet("公式法报价单");
-    const quickSheet = workbook.getWorksheet("快速报价单");
+    const formulaSheet = workbook.getWorksheet("成本");
+    const quickSheet = workbook.getWorksheet("报价");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
     const quickHeaderIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
     for (const name of ["A4资料盒", "平面锁改为MS830锁"]) {
@@ -447,8 +447,8 @@ test("door limiter and reinforcement quantities reach quick columns and cost-det
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    const formulaSheet = workbook.getWorksheet("公式法报价单");
-    const quickSheet = workbook.getWorksheet("快速报价单");
+    const formulaSheet = workbook.getWorksheet("成本");
+    const quickSheet = workbook.getWorksheet("报价");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(formulaSheet.getCell(11, formulaHeaderIndex("门限位器")).value, 90, "formula limiter per-cabinet amount after discount");
     const limiterColumn = quickSheet.getRow(10).values.findIndex((value) => value === "门限位器");
@@ -503,7 +503,7 @@ test("formal workbook preserves the legacy desktop quotation format", async () =
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
     assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), [
-      "公式法报价单", "快速报价单", "成本明细",
+      "成本", "报价", "成本明细",
     ]);
 
     const expectedSeller = [
@@ -514,14 +514,14 @@ test("formal workbook preserves the legacy desktop quotation format", async () =
       "",
     ];
     for (const [sheetName, expectedAmounts] of [
-      ["公式法报价单", (JSON.parse(await fs.readFile(fixturePath,'utf8')).items).map(item=>{
+      ["成本", (JSON.parse(await fs.readFile(fixturePath,'utf8')).items).map(item=>{
         const unit=expectedCurrentFormulaUnit(item);return [unit,moneyProduct(unit,item.quantity)];
       })],
-      ["快速报价单", [[3200, 6400], [4100, 4100]]],
+      ["报价", [[3200, 6400], [4100, 4100]]],
     ]) {
       const sheet = workbook.getWorksheet(sheetName);
-      assert.equal(sheet.getCell("F10").text, sheetName === "快速报价单" ? "折后单价" : "单价");
-      assert.equal(sheet.getCell("G10").text, sheetName === "快速报价单" ? "折后总价" : "总价");
+      assert.equal(sheet.getCell("F10").text, sheetName === "报价" ? "折后单价" : "单价");
+      assert.equal(sheet.getCell("G10").text, sheetName === "报价" ? "折后总价" : "总价");
       assert.deepEqual([4, 5, 6, 7, 8].map((row) => sheet.getCell(row, 6).text), expectedSeller);
       expectedAmounts.forEach(([unitPrice, totalPrice], index) => {
         closeTo(sheet.getCell(11 + index, 6).value, unitPrice, `${sheetName} unit price row ${11 + index}`);
@@ -529,7 +529,7 @@ test("formal workbook preserves the legacy desktop quotation format", async () =
       });
     }
 
-    const quickSheet = workbook.getWorksheet("快速报价单");
+    const quickSheet = workbook.getWorksheet("报价");
     assert.equal(quickSheet.getCell("J10").text, "原价单价");
     assert.equal(quickSheet.getCell("K10").text, "折后单价");
     closeTo(quickSheet.getCell("J11").value.result, 3200, "quick original unit formula cached result");
@@ -574,9 +574,9 @@ test("quick workbook uses stable selected-name columns without obsolete configur
     projectQuotationAudit(workbook);
     await reversedWorkbook.xlsx.readFile(reversedOutputPath);
     projectQuotationAudit(reversedWorkbook);
-    const sheet = workbook.getWorksheet("快速报价单");
-    const reversedSheet = reversedWorkbook.getWorksheet("快速报价单");
-    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    const sheet = workbook.getWorksheet("报价");
+    const reversedSheet = reversedWorkbook.getWorksheet("报价");
+    const formulaSheet = workbook.getWorksheet("成本");
     const headers = sheet.getRow(10).values.slice(10).filter((value) => value !== null && value !== undefined && value !== "");
     const reversedHeaders = reversedSheet.getRow(10).values.slice(10).filter((value) => value !== null && value !== undefined && value !== "");
     assert.deepEqual(headers, reversedHeaders, "dynamic attachment order changed with quote row order");
@@ -643,7 +643,7 @@ test("quick workbook uses popup attachment rows and omits synthetic fee deltas",
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    const sheet = workbook.getWorksheet("快速报价单");
+    const sheet = workbook.getWorksheet("报价");
     const headers = sheet.getRow(10).values;
     const otherColumn = headers.findIndex((value) => value === "其他附件/差额");
     const discountColumn = headers.findIndex((value) => value === "折扣");
@@ -687,7 +687,7 @@ test("workbook uses final attachment quantities for every ordinary row", async (
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    const quickSheet = workbook.getWorksheet("快速报价单");
+    const quickSheet = workbook.getWorksheet("报价");
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(quickSheet.getCell("F11").value, 1150, "quick per-cabinet unit total with original-price door strip");
     closeTo(quickSheet.getCell("G11").value, 3450, "quick quote line total with original-price door strip");
@@ -707,7 +707,7 @@ test("workbook uses final attachment quantities for every ordinary row", async (
     assert.equal(recalculateQuoteFormula(quickSheet,"K11"),1150,
       "Excel recalculation preserves the rounded unit price with freight outside discount");
 
-    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    const formulaSheet = workbook.getWorksheet("成本");
     closeTo(formulaSheet.getCell("F11").value, 854.62, "formula unit scales ordinary attachment rows");
     closeTo(formulaSheet.getCell("G11").value, 2563.86, "formula line scales ordinary attachment rows");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
@@ -793,13 +793,13 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    for (const sheetName of ["公式法报价单", "快速报价单"]) {
+    for (const sheetName of ["成本", "报价"]) {
       const sheet = workbook.getWorksheet(sheetName);
       assert.equal(sheet.getCell("C11").text, item.specification);
       assert.equal(sheet.getCell("D11").value, 2);
       assert.equal(sheet.getCell("A12").value, null, `${sheetName} split into extra public rows`);
     }
-    const quickSheet = workbook.getWorksheet("快速报价单");
+    const quickSheet = workbook.getWorksheet("报价");
     const headerIndex = (label) => quickSheet.getRow(10).values.findIndex((value) => value === label);
     closeTo(quickSheet.getCell("F11").value, 2138, "ganged quick equivalent unit total with freight");
     closeTo(quickSheet.getCell("G11").value, 4276, "ganged quick line total with freight");
@@ -813,7 +813,7 @@ test("ganged cabinet stays on one quote row and applies split and order multipli
     closeTo(quickSheet.getCell(11, headerIndex("JS、JP后背板改为单开门")).value, 300, "ganged transform amount");
     closeTo(quickSheet.getCell(11, headerIndex("运费")).value, 100, "ganged freight ignores split count");
 
-    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    const formulaSheet = workbook.getWorksheet("成本");
     closeTo(formulaSheet.getCell("F11").value, 948.02, "ganged formula equivalent unit excludes door transformation");
     closeTo(formulaSheet.getCell("G11").value, 1896.04, "ganged formula line excludes door transformation");
     const formulaHeaderIndex = (label) => formulaSheet.getRow(10).values.findIndex((value) => value === label);
@@ -862,7 +862,7 @@ test("formula export falls back from null attachment fees and leaves missing wei
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    const formulaSheet = workbook.getWorksheet("公式法报价单");
+    const formulaSheet = workbook.getWorksheet("成本");
     closeTo(formulaSheet.getCell("F11").value, 763.2, "formula uses popup fee and current management");
 
     const detailSheet = workbook.getWorksheet("成本明细");
@@ -918,8 +918,8 @@ test("other attachments stay at original price in both exported quotations", asy
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
-    const formulaSheet = workbook.getWorksheet("公式法报价单");
-    const quickSheet = workbook.getWorksheet("快速报价单");
+    const formulaSheet = workbook.getWorksheet("成本");
+    const quickSheet = workbook.getWorksheet("报价");
     closeTo(formulaSheet.getCell("F11").value, 983.15, "formula keeps other attachment outside discount");
     closeTo(quickSheet.getCell("F11").value, 950, "quick keeps other attachment outside discount");
 

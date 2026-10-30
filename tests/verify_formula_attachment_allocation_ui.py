@@ -88,9 +88,9 @@ class AllocationUI(unittest.TestCase):
         schemes._apply_opened_scheme(self.w,dict(found=True,**deepcopy(self.server),quote_management_historical_export=True),ui.QUOTE_ROUTE)
         self.w._quote_scheme_save_timer.stop();self.assert_costs()
         self.export();self.assertTrue(self.path.exists(),self.messages)
-        self.assertEqual(float(fixture.workbook_cell(self.path,'快速报价单','F11')),621)
-        self.assertEqual(float(fixture.workbook_cell(self.path,'快速报价单','G11')),1863)
-        self.assertEqual(float(fixture.workbook_cell(self.path,'公式法报价单','F11')),296.07)
+        self.assertEqual(float(fixture.workbook_cell(self.path,'报价','F11')),621)
+        self.assertEqual(float(fixture.workbook_cell(self.path,'报价','G11')),1863)
+        self.assertEqual(float(fixture.workbook_cell(self.path,'成本','F11')),296.07)
         rows=workbook_rows(self.path,'成本明细')
         split=[r for r in rows if '合成公式附件－' in r.get('E','')]
         self.assertEqual(len(split),4)
@@ -154,7 +154,7 @@ class AllocationUI(unittest.TestCase):
         rows=workbook_rows(self.path,'成本明细')
         self.assertTrue(any(r.get('D')=='附件成本' and r.get('E')=='合成公式附件' for r in rows))
         self.assertFalse(any('合成公式附件－' in r.get('E','') for r in rows))
-        self.assertEqual(float(fixture.workbook_cell(self.path,'快速报价单','F11')),621)
+        self.assertEqual(float(fixture.workbook_cell(self.path,'报价','F11')),621)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

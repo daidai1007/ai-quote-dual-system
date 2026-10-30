@@ -61,7 +61,7 @@ class JPWeightWorkflow(unittest.TestCase):
         self.assertEqual(receipt['draft_items'][0]['formula']['cabinet_auxiliary_self_made_weight_kg'],32.63283936)
         self.assertEqual(receipt['quote_management']['versions'][-1]['items'][0]['formula']['cabinet_auxiliary_self_made_weight_kg'],32.63283936)
         self.assertEqual(receipt['contract_quote_snapshot']['items'][0]['freight_fee'],80.13)
-        for sheet,unit,total in [('快速报价单',prices[15],prices[16]),('公式法报价单',prices[17],prices[18])]:
+        for sheet,unit,total in [('报价',prices[15],prices[16]),('成本',prices[17],prices[18])]:
             self.assertEqual(float(fixture.workbook_cell(self.h.path,sheet,'F11')),unit)
             self.assertEqual(float(fixture.workbook_cell(self.h.path,sheet,'G11')),total)
         ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}

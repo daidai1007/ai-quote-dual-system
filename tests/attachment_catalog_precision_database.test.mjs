@@ -172,16 +172,16 @@ test('real DB: exact catalogue audit, ordinary/ganged save, refresh and popup-dr
           execFileSync(process.execPath,[path.join(root,'export_dual_quote_workbook.mjs'),source,output],
             {cwd:root,env:childEnv,windowsHide:true,timeout:30000,stdio:'pipe'});
           const workbook=new ExcelJS.Workbook();await workbook.xlsx.readFile(output);
-          for(const [sheet,amount] of [['快速报价单',sale],['公式法报价单',75.25]]){
+          for(const [sheet,amount] of [['报价',sale],['成本',75.25]]){
             const table=workbook.getWorksheet(sheet);
             const column=table.getRow(10).values.findIndex(value=>value===base.item_name);
             assert.ok(column>0,`${name}: missing ${sheet} fixed-base column`);
             assert.equal(table.getCell(11,column).value,amount,`${name}: ${sheet}`);
           }
-          assert.equal(workbook.getWorksheet('快速报价单').getCell('F11').value,item.quote_display.unit_price);
-          assert.equal(workbook.getWorksheet('快速报价单').getCell('G11').value,item.quote_display.total);
-          assert.equal(workbook.getWorksheet('公式法报价单').getCell('F11').value,hydrated.formula.total_cost);
-          assert.equal(workbook.getWorksheet('公式法报价单').getCell('G11').value,moneyProduct(hydrated.formula.total_cost,quantity));
+          assert.equal(workbook.getWorksheet('报价').getCell('F11').value,item.quote_display.unit_price);
+          assert.equal(workbook.getWorksheet('报价').getCell('G11').value,item.quote_display.total);
+          assert.equal(workbook.getWorksheet('成本').getCell('F11').value,hydrated.formula.total_cost);
+          assert.equal(workbook.getWorksheet('成本').getCell('G11').value,moneyProduct(hydrated.formula.total_cost,quantity));
           const detail=workbook.getWorksheet('附件双报价明细');
           assert.equal(detail.getCell('L2').value,sale);
           assert.equal(detail.getCell('W2').value,75.25);

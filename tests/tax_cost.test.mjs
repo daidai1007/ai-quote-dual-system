@@ -66,9 +66,9 @@ test('actual workbook records tax90 for two units, quick2000, formula1670 and no
   await fs.writeFile(input,JSON.stringify({quote_id:'LOCAL-TAX',company_name:'合成测试客户',order_nature:'EXTERNAL',quotation_detail_layout:'vertical_v1',items:[source(2)]}));
   execFileSync(process.execPath,['export_dual_quote_workbook.mjs',input,output],{cwd:root,windowsHide:true,stdio:'pipe'});
   const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
-  assert.equal(book.getWorksheet('快速报价单').getCell('G11').value,2000);
-  assert.equal(book.getWorksheet('公式法报价单').getCell('F11').value,835);
-  assert.equal(book.getWorksheet('公式法报价单').getCell('G11').value,1670);
+  assert.equal(book.getWorksheet('报价').getCell('G11').value,2000);
+  assert.equal(book.getWorksheet('成本').getCell('F11').value,835);
+  assert.equal(book.getWorksheet('成本').getCell('G11').value,1670);
   const taxes=[],adjustments=[];book.getWorksheet('成本明细').eachRow(row=>{if(row.getCell(4).value==='税费')taxes.push(row);if(row.getCell(4).value==='汇总调整')adjustments.push(row);});
   assert.equal(taxes.length,1);assert.equal(taxes[0].getCell(13).value,90);assert.equal(adjustments.length,0);
  }finally{assert(path.resolve(folder).startsWith(path.resolve(base)+path.sep));await fs.rm(folder,{recursive:true,force:true});}

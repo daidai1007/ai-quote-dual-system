@@ -91,8 +91,8 @@ BEGIN
   IF jsonb_typeof(p_payload->'source_files')<>'array' OR jsonb_array_length(p_payload->'source_files')<>2 THEN
     RAISE EXCEPTION 'Expected exactly two cabinet spray source files';
   END IF;
-  IF jsonb_typeof(p_payload->'rules')<>'array' OR jsonb_array_length(p_payload->'rules')<>202 THEN
-    RAISE EXCEPTION 'Expected exactly 202 cabinet spray area rules';
+  IF jsonb_typeof(p_payload->'rules')<>'array' OR jsonb_array_length(p_payload->'rules') NOT IN (202,207) THEN
+    RAISE EXCEPTION 'Expected 202 legacy or 207 JM-paired cabinet spray area rules';
   END IF;
   IF jsonb_typeof(p_payload->'fixed_rules')<>'array' OR jsonb_array_length(p_payload->'fixed_rules')<>46 THEN
     RAISE EXCEPTION 'Expected exactly 46 cabinet spray fixed rules';
@@ -100,7 +100,7 @@ BEGIN
   IF EXISTS(SELECT 1 FROM calc.cabinet_spray_catalog_version WHERE data_version=v_version AND status='ACTIVE') THEN
     RAISE EXCEPTION 'Cannot overwrite ACTIVE cabinet spray version %',v_version;
   END IF;
-  DELETE FROM calc.cabinet_spray_catalog_version WHERE data_version=v_version;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_spray_catalog_version WHERE data_version=v_version) THEN RAISE EXCEPTION 'Version already exists; do not replace catalog history %',v_version; END IF;
   INSERT INTO calc.cabinet_spray_catalog_version(data_version,source_file,source_sha256,source_files,status)
   VALUES(v_version,p_payload->>'source_file',p_payload->>'source_sha256',p_payload->'source_files','STAGED');
   FOR v_rule IN SELECT value FROM jsonb_array_elements(p_payload->'rules') LOOP
@@ -120,8 +120,23 @@ BEGIN
       v_rule->>'source_sheet',(v_rule->>'source_row_no')::integer);
   END LOOP;
   SELECT count(*) INTO v_count FROM calc.cabinet_spray_rule WHERE data_version=v_version;
-  IF v_count<>202 OR (SELECT count(DISTINCT family) FROM calc.cabinet_spray_rule WHERE data_version=v_version)<>6 THEN
+  IF v_count NOT IN (202,207) OR (SELECT count(DISTINCT family) FROM calc.cabinet_spray_rule WHERE data_version=v_version)<>6 THEN
     RAISE EXCEPTION 'Staged cabinet spray area catalog is incomplete';
+  END IF;
+
+  -- JM_PROFILE_PAIR_V1: retain legacy catalogs, require both complete JM profiles in new catalogs.
+  IF (SELECT count(*) FROM calc.cabinet_spray_rule WHERE data_version=v_version AND family='JM')<>(CASE WHEN v_count=202 THEN 5 ELSE 10 END)
+     OR (v_count=202 AND EXISTS(SELECT 1 FROM calc.cabinet_spray_rule WHERE data_version=v_version AND family='JM' AND body_thickness_profile_mm IS NOT NULL))
+     OR (v_count=207 AND ((SELECT count(*) FROM calc.cabinet_spray_rule WHERE data_version=v_version AND family='JM' AND body_thickness_profile_mm=1.5)<>5
+       OR (SELECT count(*) FROM calc.cabinet_spray_rule WHERE data_version=v_version AND family='JM' AND body_thickness_profile_mm=2)<>5)) THEN
+    RAISE EXCEPTION 'JM spray profile pair is incomplete';
+  END IF;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_spray_rule WHERE data_version=v_version AND family='JM'
+    AND (single_door_count<>1 OR double_door_count<>0 OR part_name NOT IN ('箱体（上下堵头）','箱体顶板','箱体底板','走线弯角件','前单门')
+      OR quantity_rule IS DISTINCT FROM jsonb_build_object('kind','CONSTANT','value',CASE WHEN part_name='走线弯角件' THEN 2 ELSE 1 END)
+      ))
+    OR EXISTS(SELECT 1 FROM calc.cabinet_spray_rule WHERE data_version=v_version AND family='JM' GROUP BY body_thickness_profile_mm HAVING count(DISTINCT part_name)<>5) THEN
+    RAISE EXCEPTION 'JM spray parts, door counts, quantity or thickness are invalid';
   END IF;
   SELECT count(*) INTO v_count FROM calc.cabinet_spray_fixed_rule WHERE data_version=v_version;
   IF v_count<>46 OR (SELECT count(DISTINCT product_code) FROM calc.cabinet_spray_fixed_rule WHERE data_version=v_version)<>5 THEN
@@ -143,8 +158,23 @@ BEGIN
   SELECT count(*),count(DISTINCT family) INTO v_area,v_families FROM calc.cabinet_spray_rule WHERE data_version=p_version;
   SELECT count(*),count(DISTINCT product_code) INTO v_fixed,v_products FROM calc.cabinet_spray_fixed_rule WHERE data_version=p_version;
   IF NOT EXISTS(SELECT 1 FROM calc.cabinet_spray_catalog_version WHERE data_version=p_version AND status='STAGED')
-     OR v_area<>202 OR v_families<>6 OR v_fixed<>46 OR v_products<>5 THEN
+     OR v_area NOT IN (202,207) OR v_families<>6 OR v_fixed<>46 OR v_products<>5 THEN
     RAISE EXCEPTION 'Version % is not a complete STAGED cabinet spray V2 catalog',p_version;
+  END IF;
+
+  -- JM_PROFILE_PAIR_V1: retain legacy catalogs, require both complete JM profiles in new catalogs.
+  IF (SELECT count(*) FROM calc.cabinet_spray_rule WHERE data_version=p_version AND family='JM')<>(CASE WHEN v_area=202 THEN 5 ELSE 10 END)
+     OR (v_area=202 AND EXISTS(SELECT 1 FROM calc.cabinet_spray_rule WHERE data_version=p_version AND family='JM' AND body_thickness_profile_mm IS NOT NULL))
+     OR (v_area=207 AND ((SELECT count(*) FROM calc.cabinet_spray_rule WHERE data_version=p_version AND family='JM' AND body_thickness_profile_mm=1.5)<>5
+       OR (SELECT count(*) FROM calc.cabinet_spray_rule WHERE data_version=p_version AND family='JM' AND body_thickness_profile_mm=2)<>5)) THEN
+    RAISE EXCEPTION 'JM spray profile pair is incomplete';
+  END IF;
+  IF EXISTS(SELECT 1 FROM calc.cabinet_spray_rule WHERE data_version=p_version AND family='JM'
+    AND (single_door_count<>1 OR double_door_count<>0 OR part_name NOT IN ('箱体（上下堵头）','箱体顶板','箱体底板','走线弯角件','前单门')
+      OR quantity_rule IS DISTINCT FROM jsonb_build_object('kind','CONSTANT','value',CASE WHEN part_name='走线弯角件' THEN 2 ELSE 1 END)
+      ))
+    OR EXISTS(SELECT 1 FROM calc.cabinet_spray_rule WHERE data_version=p_version AND family='JM' GROUP BY body_thickness_profile_mm HAVING count(DISTINCT part_name)<>5) THEN
+    RAISE EXCEPTION 'JM spray parts, door counts, quantity or thickness are invalid';
   END IF;
   UPDATE calc.cabinet_spray_catalog_version SET status='RETIRED',activated_at=NULL WHERE status='ACTIVE';
   UPDATE calc.cabinet_spray_catalog_version SET status='ACTIVE',activated_at=current_timestamp WHERE data_version=p_version;

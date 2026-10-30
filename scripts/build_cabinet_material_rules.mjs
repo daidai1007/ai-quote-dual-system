@@ -18,6 +18,16 @@ const materialCodes=(value,label)=>{
   if(material==='SUS304/SUS316')return ['SUS304','SUS316'];
   throw new Error(`${label}材质无效：${value}`);
 };
+// Preserve the existing generated catalog's legacy SECC marker; this is a
+// source-label normalization, not a new material-price or catalog-code mapping.
+// Runtime pair update preserves each ACTIVE JM fixed code instead of reclassifying it.
+const fixedMaterialCode=value=>{
+  const raw=text(value);
+  if(!raw)return null;
+  if(raw==='镀锌板')return 'SECC';
+  if(!/^[A-Z0-9_-]+$/.test(raw))throw new Error('未审阅的固定材质标识：'+raw);
+  return raw;
+};
 const normalizeFormula=value=>{
   let formula=text(value).replaceAll('（','(').replaceAll('）',')').replaceAll('高和宽的最小值','MIN(高度,宽度)');
   formula=formula.replaceAll('高度','__HEIGHT__').replaceAll('宽度','__WIDTH__').replaceAll('深度','__DEPTH__');
@@ -34,6 +44,7 @@ const quantityRule=value=>{
   if(/^\d+(?:\.\d+)?$/.test(normalized))return {kind:'CONSTANT',value:number(normalized,'数量')};
   if(normalized==='350≤深度≤1000，高度＜1000，数量取1，否则数量取2')return {kind:'JS_DEPTH_HEIGHT',when_true:1,when_false:2};
   if(normalized==='高度＞1000，数量取1，否则为0')return {kind:'HEIGHT_GT',threshold:1000,when_true:1,when_false:0};
+  if(normalized==='宽度＞1000，数量取1，否则为0')return {kind:'WIDTH_GT',threshold:1000,when_true:1,when_false:0};
   if(normalized==='宽度＞600且高度＞1000或者宽度＞800且高度＞600，数量为2，否则为0')return {kind:'JE_REINFORCEMENT',when_true:2,when_false:0};
   throw new Error(`不支持的数量规则：${value}`);
 };
@@ -42,7 +53,7 @@ const layouts={
   JP:[{startCol:1,startRow:3,endRow:55,body:null,label:'标准'}],
   JA:[{startCol:1,startRow:3,endRow:15,body:1.5,label:'标准箱体1.5'},{startCol:1,startRow:19,endRow:31,body:2,label:'箱体料厚改2'}],
   JE:[{startCol:1,startRow:3,endRow:16,body:null,label:'标准'}],
-  JM:[{startCol:1,startRow:3,endRow:8,body:null,label:'标准'}],
+  JM:[{startCol:1,startRow:3,endRow:8,body:1.5,label:'标准箱体1.5'},{startCol:1,startRow:13,endRow:18,body:2,label:'箱体料厚改2'}],
   JK:[{startCol:1,startRow:3,endRow:8,body:null,label:'标准'}],
 };
 
@@ -73,12 +84,12 @@ for(const [family,blocks] of Object.entries(layouts)){
         rules.push({family,body_thickness_profile_mm:block.body,profile_label:block.label,
           single_door_count:door[0],double_door_count:door[1],part_name:text(values[1]),area_formula:normalizeFormula(values[2]),
           sheet_thickness_mm:number(values[3],`${family}!${row}料厚`),quantity_rule:quantityRule(values[4]),
-          fixed_material_code:text(values[5])||null,source_sheet:family,source_row_no:row,source_column:block.startCol===1?'A:F':'H:M'});
+          fixed_material_code:fixedMaterialCode(values[5]),source_sheet:family,source_row_no:row,source_column:block.startCol===1?'A:F':'H:M'});
       }
     }
   }
 }
-if(rules.length!==241)throw new Error(`材料面积规则应为 241 条，实际 ${rules.length}`);
+if(rules.length!==247)throw new Error(`材料面积规则应为 247 条，实际 ${rules.length}`);
 const identity=new Set();
 for(const rule of rules){
   const key=[rule.family,rule.body_thickness_profile_mm,rule.single_door_count,rule.double_door_count,rule.part_name,rule.source_row_no,rule.source_column].join('|');
@@ -115,12 +126,14 @@ for(const rule of fixedRules){
   if(fixedIdentity.has(key))throw new Error(`经验重量冲突：${key}`);fixedIdentity.add(key);
 }
 
-const version=`cabinet-material-${sourceSha256.slice(0,16)}-v2`;
+const generatorRevision='jm-body-thickness-profiles-1p5-2-v1';
+const versionDigest=crypto.createHash('sha256').update(sourceSha256+'\nGENERATOR:'+generatorRevision+'\n').digest('hex');
+const version=`cabinet-material-${versionDigest.slice(0,16)}-v2`;
 const sourceFiles=[
   {kind:'AREA_FORMULA',name:path.basename(formulaSource),sha256:formulaSha256},
   {kind:'FIXED_WEIGHT',name:path.basename(fixedSource),sha256:fixedSha256},
 ];
-const bundle={data_version:version,source_file:sourceFiles.map(file=>file.name).join('; '),source_sha256:sourceSha256,
+const bundle={data_version:version,generator_revision:generatorRevision,source_file:sourceFiles.map(file=>file.name).join('; '),source_sha256:sourceSha256,
   source_files:sourceFiles,default_waste_factor:1.2,rules,fixed_rules:fixedRules};
 fs.mkdirSync(outDir,{recursive:true});fs.mkdirSync(webDir,{recursive:true});
 fs.copyFileSync(path.join(root,'database/migrations/cabinet_material_v2.sql'),path.join(webDir,'01-create.sql'));

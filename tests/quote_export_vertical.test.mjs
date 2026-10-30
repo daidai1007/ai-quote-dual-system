@@ -96,7 +96,7 @@ test('current unit-set matrix totals reference each numeric product quantity, ne
    remark:item.final_remark||item.notes||''};
  });
  await exported(payload,book=>{
-  const sheet=book.getWorksheet('快速报价单'),plan=quotationLayout(sheet);
+  const sheet=book.getWorksheet('报价'),plan=quotationLayout(sheet);
   assert.equal(plan.layout,'matrix');
   plan.blocks.forEach((block,index)=>{
    const unit=block.fields.find(field=>field.name==='原价单价');
@@ -136,7 +136,7 @@ test('saved left quotation retains every value/style, column width and original 
 
 test('ordinary detail rows have the same visible height as the item header',async()=>{
  await exported(fixture,book=>{
-  for(const name of ['公式法报价单','快速报价单']){
+  for(const name of ['成本','报价']){
    const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
    const pixels=(first,last)=>{
     let total=0;for(let row=first;row<=last;row++)total+=Math.round((sheet.getRow(row).height??15)*4/3);
@@ -154,7 +154,7 @@ test('ordinary detail rows have the same visible height as the item header',asyn
 
 test('each product has its own ordered, typed vertical details with live relocated formulas',async()=>{
  await exported(fixture,book=>{
-  for(const name of ['公式法报价单','快速报价单']){
+  for(const name of ['成本','报价']){
    const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
    assert.equal(plan.blocks.length,fixture.items.length);
    assert.equal(plan.layout,'matrix');
@@ -172,7 +172,7 @@ test('each product has its own ordered, typed vertical details with live relocat
      if(value?.formula)assert.equal(evaluate(sheet,f.address),value.result,`${name}/${block.name}/${f.name}`);
     }
    });
-   if(name==='快速报价单'){
+   if(name==='报价'){
     const first=plan.blocks[0].fields[0],base=plan.blocks[0].fields.find(f=>f.name==='柜体');
     const original=evaluate(sheet,first.address);
     sheet.getCell(base.address).value+=100;
@@ -192,7 +192,7 @@ test('nine products and long attachment labels retain names, signed/zero values 
   item.quick.attachment_fee=i-100;item.quick.total_cost=3150+i-100;return item;
  });
  await exported(payload,book=>{
-  for(const name of ['公式法报价单','快速报价单']){
+  for(const name of ['成本','报价']){
    const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
    assert.equal(plan.products.length,9);assert.equal(plan.blocks.length,9);
    plan.blocks.forEach((block,i)=>{
@@ -213,7 +213,7 @@ test('nine products and long attachment labels retain names, signed/zero values 
 
 test('absent attachment values remain blank instead of being replaced by zero',async()=>{
  await exported(fixture,book=>{
-  for(const name of ['公式法报价单','快速报价单']){
+  for(const name of ['成本','报价']){
    const sheet=book.getWorksheet(name),plan=quotationLayout(sheet);
    const row=plan.blocks[1].fields.find(f=>f.name==='接地线');assert(row);
    assert.equal(sheet.getCell(row.address).value,null);
@@ -227,7 +227,7 @@ test('multiline product and attachment names get enough vertical space without c
  const label='第一行附件\n第二行附件\n第三行附件';
  item.attachments=[{item_name:label,quantity:1,quick_amount:50,formula_amount:50}];
  await exported(payload,book=>{
-  for(const name of ['公式法报价单','快速报价单']){
+  for(const name of ['成本','报价']){
    const sheet=book.getWorksheet(name),plan=quotationLayout(sheet),block=plan.blocks[0];
    assert.equal(sheet.getCell(plan.products[0],2).text,item.name);
    assert(block.name.endsWith(item.name));

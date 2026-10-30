@@ -60,7 +60,7 @@ test('actual Excel quick total uses200, formula total uses100, both reconcile',a
    quotation_detail_layout:'vertical_v1',items:[source()]}));
   execFileSync(process.execPath,['export_dual_quote_workbook.mjs',input,output],{cwd:root,windowsHide:true,stdio:'pipe'});
   const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
-  const quick=book.getWorksheet('快速报价单'),formula=book.getWorksheet('公式法报价单');
+  const quick=book.getWorksheet('报价'),formula=book.getWorksheet('成本');
   assert.equal(quick.getCell('F11').value,1100);assert.equal(quick.getCell('G11').value,2200);
   assert.equal(formula.getCell('F11').value,799);assert.equal(formula.getCell('G11').value,1598);
  }finally{
@@ -82,8 +82,8 @@ test('actual current and legacy Excel layouts route quick and cost freight to th
    execFileSync(process.execPath,['export_dual_quote_workbook.mjs',input,output],{cwd:root,windowsHide:true,stdio:'pipe'});
    const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
    for(const [name,units,totals,freights] of [
-    ['快速报价单',[1100,900],[2200,2700],[200,0]],
-    ['公式法报价单',[859,811],[1718,2433],[100,100]],
+    ['报价',[1100,900],[2200,2700],[200,0]],
+    ['成本',[859,811],[1718,2433],[100,100]],
    ]){
     const sheet=book.getWorksheet(name),publicRows=[];
     sheet.eachRow((row,index)=>{const cell=row.getCell(1);if(!cell.isMerged||cell.master.address===cell.address){if([1,2].includes(cell.value)&&row.getCell(5).text==='台')publicRows.push(index);}});

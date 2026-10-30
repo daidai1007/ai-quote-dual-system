@@ -182,9 +182,11 @@ class CopiedAttachmentNames(unittest.TestCase):
         self.assertNotIn('attachment_price_sign',row)
 
     def test_new_copy_prices_and_names_survive_actual_workbook_export(self):
+        self.w.quantity_spin.setValue(1)  # A formal export requires an explicit positive order quantity.
         self.copy_and_edit(self.sample());self.submit_ordinary()
         self.w._quote_order_nature='EXTERNAL'
         saved=self.w.draft_items[1]
+        self.assertEqual(saved['quantity'],1)
         items=ui._quote_export_items_snapshot(self.w,[saved])
         self.assertEqual(items[0]['attachments'][0]['item_name'],'风机测试')
         self.assertEqual(items[0]['attachments'][0]['quantity'],1)
@@ -198,7 +200,7 @@ class CopiedAttachmentNames(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stderr)
             result=subprocess.run(['node','--input-type=module','-e',
                 "import ExcelJS from '@excel.js/exceljs';const b=new ExcelJS.Workbook();"
-                "await b.xlsx.readFile(process.argv[1]);const s=b.getWorksheet('快速报价单');"
+                "await b.xlsx.readFile(process.argv[1]);const s=b.getWorksheet('报价');"
                 "console.log(JSON.stringify([s.getCell('F11').value,s.getCell('G11').value,s.getCell('H11').value]));",
                 str(output)],cwd=root,capture_output=True,text=True,encoding='utf-8',timeout=20)
             self.assertEqual(result.returncode,0,result.stderr)

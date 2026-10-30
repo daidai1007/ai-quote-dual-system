@@ -230,8 +230,8 @@ class FrontRearDoorTests(unittest.TestCase):
         self.assertEqual(ui._row_values(self.h.item)[15:19],totals)
         self.h.export()
         from verify_quote_export_customer import workbook_cell
-        self.assertEqual(float(workbook_cell(self.h.path,'快速报价单','F11')),totals[0])
-        self.assertEqual(float(workbook_cell(self.h.path,'快速报价单','G11')),totals[1])
+        self.assertEqual(float(workbook_cell(self.h.path,'报价','F11')),totals[0])
+        self.assertEqual(float(workbook_cell(self.h.path,'报价','G11')),totals[1])
         self.assertEqual(self.h.posts()[-1]['snapshot']['draft_items'][0]['door_position'],dict(front='DOUBLE',rear='SINGLE'))
         self.assertIn(f'{totals[1]:,.2f}',ui._printable_quote_html(self.w))
         from PySide6.QtPrintSupport import QPrinter

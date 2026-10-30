@@ -140,7 +140,7 @@ class FullWorkflow(unittest.TestCase):
         saved=harness.server['snapshot']
         self.assertEqual(saved['document']['order_nature'],nature)
         self.assertEqual(saved['quote_management']['versions'][-1]['order_nature'],nature)
-        for sheet in ('快速报价单','公式法报价单'):
+        for sheet in ('报价','成本'):
             self.assertEqual(workbook_cell(harness.path,sheet,'D3'),'订单性质')
             self.assertEqual(workbook_cell(harness.path,sheet,'E3'),'内部' if nature=='INTERNAL' else '外部')
         self.assertEqual(workbook_cell(harness.path,'成本明细','B4'),'内部' if nature=='INTERNAL' else '外部')
@@ -151,7 +151,7 @@ class FullWorkflow(unittest.TestCase):
             self.assertIn('[Content_Types].xml',package.namelist())
             ns={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
             book=ET.fromstring(package.read('xl/workbook.xml'))
-            quick=next(s for s in book.findall('s:sheets/s:sheet',ns) if s.get('name')=='快速报价单')
+            quick=next(s for s in book.findall('s:sheets/s:sheet',ns) if s.get('name')=='报价')
             rel=quick.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
             relations=ET.fromstring(package.read('xl/_rels/workbook.xml.rels'))
             target=next(r.get('Target') for r in relations if r.get('Id')==rel)
