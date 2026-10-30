@@ -8,6 +8,7 @@
  * the shared six-component rule and the already-confirmed popup costs.
  */
 import ExcelJS from "@excel.js/exceljs";
+import {addPublicQuoteSheet,linkPublicQuoteSheet,verifyPublicQuoteSheet} from './public_quote_sheet.mjs';
 import {hasTaxCost,withTaxCostForItem} from "./tax_cost.mjs";
 import fs from "node:fs/promises";
 import {documentWithOrderNature,orderNatureLabel} from './quote_order_nature.mjs';
@@ -1541,6 +1542,7 @@ function buildFormulaCostDetailSheet() {
 
 fillSheet(formulaSheet, "formula");
 fillSheet(quickSheet, "quick");
+const publicQuotePlan=addPublicQuoteSheet(workbook,quickSheet,payload.items.length);
 buildFormulaCostDetailSheet();
 
 // Layout only: keep fillSheet and every pricing function above unchanged.
@@ -1737,6 +1739,8 @@ for (const [sheet, method] of [[formulaSheet, "formula"], [quickSheet, "quick"]]
   });
 }
 
+linkPublicQuoteSheet(publicQuotePlan,quickSheet,quotationLayouts.get('报价').publicRows);
+
 const assertClose = (actual, expected, label) => {
   if (!Number.isFinite(Number(actual)) || Math.abs(Number(actual) - Number(expected)) > 0.01) {
     throw new Error(`${label} mismatch: expected ${expected}, got ${actual}`);
@@ -1892,6 +1896,7 @@ const verifyWorkbookContents = (candidateWorkbook) => {
     throw new Error(`formal quotation contains formula errors: ${formulaErrors.join(", ")}`);
   }
   audit.formula_errors = [];
+  audit.public_quotation=verifyPublicQuoteSheet(candidateWorkbook,publicQuotePlan);
   return audit;
 };
 

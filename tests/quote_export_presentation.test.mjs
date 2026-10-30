@@ -506,7 +506,7 @@ test("formal workbook preserves the legacy desktop quotation format", async () =
     await workbook.xlsx.readFile(outputPath);
     projectQuotationAudit(workbook);
     assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), [
-      "成本", "报价", "成本明细",
+      "成本", "报价", "报价2", "成本明细",
     ]);
 
     const expectedSeller = [

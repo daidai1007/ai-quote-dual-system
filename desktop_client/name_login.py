@@ -16,12 +16,15 @@ from PySide6.QtCore import QThread, Signal, QTimer, QStandardPaths
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,
     QLineEdit,QPushButton,QMessageBox)
 from dialog_style import style_dialog, DIALOG_METRICS
+from name_session_recovery import NameSessionRecovery
+from contextlib import nullcontext
 
 _state=None
 _epoch=0
 _required=False
 _thread=threading.local()
 _cache_root=None
+_recovery=None
 
 class LoginCancelled(Exception): pass
 
@@ -38,16 +41,20 @@ def set_session(value):
     person=value.get('person') or {}
     if person.get('identity_mode')!='NAME_ONLY' or person.get('scope') not in ('ALL','OWN') or not re.fullmatch(r'name-user:[0-9a-f]{64}',str(person.get('user_id',''))) or not re.fullmatch(r'[A-Za-z0-9_-]{43}',str(value.get('token',''))):
         raise ValueError('服务端未返回有效的姓名身份。')
-    changed=user_id()!=person['user_id']
-    _state=deepcopy(value)
-    if changed:_epoch+=1
-    if _cache_root is None:
-        _cache_root=os.environ.get('AI_QUOTE_ORDER_CACHE_ROOT') or QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-    os.environ['AI_QUOTE_ORDER_CACHE_ROOT']=str(Path(_cache_root)/'persons'/person['user_id'].split(':',1)[1])
+    with _recovery.condition if _recovery else nullcontext():
+        changed=user_id()!=person['user_id']
+        _state=deepcopy(value)
+        if changed:_epoch+=1
+        if _cache_root is None:
+            _cache_root=os.environ.get('AI_QUOTE_ORDER_CACHE_ROOT') or QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+        os.environ['AI_QUOTE_ORDER_CACHE_ROOT']=str(Path(_cache_root)/'persons'/person['user_id'].split(':',1)[1])
+        if _recovery:_recovery.remember(value,_epoch)
 
 def clear_session():
     global _state,_epoch
-    _state=None;_epoch+=1
+    with _recovery.condition if _recovery else nullcontext():
+        _state=None;_epoch+=1
+        if _recovery:_recovery.remember(None,_epoch)
 
 class SessionWorker(QThread):
     succeeded=Signal(object)
@@ -125,6 +132,12 @@ class NameLoginDialog(QDialog):
         else:super().closeEvent(event)
 
 def install_name_transport(namespace):
+    global _recovery
+    if _recovery is None:
+        _recovery=NameSessionRecovery(urllib.request.urlopen,session,set_session)
+        _recovery.remember(_state,_epoch)
+        urllib.request.urlopen=_recovery
+    _recovery.register(namespace.get('API_URL',''))
     original=namespace['api_headers']
     def headers(*args,**kwargs):
         value=dict(original(*args,**kwargs)); frozen=getattr(_thread,'session',_state)
@@ -150,6 +163,7 @@ def install_name_login(namespace):
             set_session(dialog.value)
         window._name_user_id=user_id();window._name_identity_epoch=_epoch
         prior_init(window,*args,**kwargs)
+        if _recovery:_recovery.register(window.base_url())
         if _state is None:return
         person=_state['person'];editor=window.quote_scheme_operator_name
         editor.setText(person['display_name']);editor.setReadOnly(True)
@@ -207,6 +221,7 @@ def switch_or_renew(window,namespace):
     if critical_tasks(window) or getattr(window,'_scheme2_dirty',False) or window._quote_scheme_dirty_seq>window._quote_scheme_saved_seq:
         QMessageBox.information(window,'当前任务尚未完成','登录期间有新的后台任务或未保存内容，尚未切换姓名；请先处理当前工作。');return
     window._name_transitioning=True;window.setEnabled(False)
+    if _recovery:_recovery.suspend()
     # The next person's data is never loaded before logout is acknowledged.
     worker=SessionWorker(window.base_url()+'/api/name-logout',{**namespace['_name_connection_headers'](),'Authorization':'Bearer '+old['token']},{},window)
     window._name_switch_worker=worker;outcome={}
@@ -218,6 +233,7 @@ def switch_or_renew(window,namespace):
     def done():
         window._name_switch_worker=None;worker.deleteLater()
         if not outcome.get('ok'):
+            if _recovery:_recovery.suspend(False)
             window._name_transitioning=False;window.setEnabled(True);return
         def replace():
             window._name_session_closed=True;window._quote_scheme_save_timer.stop();window.hide()
@@ -233,6 +249,7 @@ def logout(window,namespace):
     if critical_tasks(window) or getattr(window,'_scheme2_dirty',False) or window._quote_scheme_dirty_seq>window._quote_scheme_saved_seq:
         QMessageBox.information(window,'当前任务尚未完成','请先保存本机进度，并完成后台保存、导出或登记任务后退出登录。');return
     old=session();window._name_transitioning=True;window.setEnabled(False)
+    if _recovery:_recovery.suspend()
     worker=SessionWorker(window.base_url()+'/api/name-logout',{**namespace['_name_connection_headers'](),'Authorization':'Bearer '+old['token']},{},window)
     window._name_switch_worker=worker;outcome={}
     worker.succeeded.connect(lambda _:outcome.update(ok=True))
@@ -243,6 +260,7 @@ def logout(window,namespace):
     def done():
         window._name_switch_worker=None;worker.deleteLater()
         if not outcome.get('ok'):
+            if _recovery:_recovery.suspend(False)
             window._name_transitioning=False;window.setEnabled(True);return
         def login_again():
             app=QApplication.instance();app.setQuitOnLastWindowClosed(False)

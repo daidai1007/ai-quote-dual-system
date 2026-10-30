@@ -5,7 +5,7 @@ from quick_discount_rules import (
 )
 
 
-def quick_price_components(quote, attachments, discount, freight_fee=0, material_difference=0):
+def quick_price_components(quote, attachments, discount, freight_fee=0, material_difference=0, thickness_surcharge=0):
     rows = [row for row in attachments or [] if isinstance(row, dict)]
     source = quick_discount_breakdown(quote, rows, discount)
     eligible = {'柜体': source['base_price']}
@@ -17,7 +17,7 @@ def quick_price_components(quote, attachments, discount, freight_fee=0, material
             ('category_level1', 'attachment_category', 'category', 'item_name', 'name')
             if row.get(key) and str(row[key]).strip()), '其他附件')
         groups[category] = money_sum((groups.get(category, 0), quick_attachment_line_amount(row)))
-    for category, amount in (('运费', max(0, float(freight_fee or 0))), ('材料差价', material_difference)):
+    for category, amount in (('运费', max(0, float(freight_fee or 0))), ('材料差价', money_sum((material_difference, -thickness_surcharge))), ('料厚差价', thickness_surcharge)):
         if amount:
             fixed[category] = money_sum((fixed.get(category, 0), amount))
 

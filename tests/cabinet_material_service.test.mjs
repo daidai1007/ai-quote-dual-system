@@ -37,12 +37,17 @@ test('cabinet net weight, billable weight and cost use the selected factor once'
   assert.deepEqual(result.material_details.map(x=>x.material_code).sort(),['SECC','SUS304']);
 });
 
-test('operator waste factor overrides the 1.2 default and profile 2 is exact',()=>{
-  const result=calculateCabinetMaterial(rules,{...environment,cabinet_body_thickness_mm:2,waste_factor:1.35});
-  assert.equal(result.part_details.length,1);
-  assert.equal(result.waste_factor,1.35);
-  assert.equal(result.net_material_weight_kg,1000*600*0.000001*2*7.93);
-  assert.equal(result.corrected_material_weight_kg,result.net_material_weight_kg*1.35);
+test('arbitrary body thickness modifies only baseline 1.5mm parts and applies waste once',()=>{
+  for(const thickness of [2,2.375,3.2]){
+    const result=calculateCabinetMaterial(rules,{...environment,cabinet_body_thickness_mm:thickness,waste_factor:1.35});
+    assert.equal(result.part_details.length,2);
+    assert.equal(result.waste_factor,1.35);
+    assert.equal(result.part_details.find(row=>row.part_name==='安装板').sheet_thickness_mm,2.5);
+    assert.equal(result.part_details.find(row=>row.part_name==='顶板').sheet_thickness_mm,thickness);
+    const expected=(1800-72)*(1000-26.6)*.000001*2.5*7.85+(1000+20)*(600+10)*.000001*thickness*2*7.93;
+    assert.ok(Math.abs(result.net_material_weight_kg-expected)<1e-7);
+    assert.ok(Math.abs(result.corrected_material_weight_kg-expected*1.35)<1e-7);
+  }
 });
 
 test('recognized material uses the current-material sidebar price without mutating the catalog',async()=>{

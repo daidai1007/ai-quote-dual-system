@@ -13,7 +13,7 @@ sys.path.insert(0,str(ROOT/'desktop_client'))
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox
 import layout_refresh as layout
 import scheme2_ui as ui
 import v3_launcher
@@ -36,24 +36,22 @@ class ThicknessDropdown(unittest.TestCase):
         self.combo=self.window.cabinet_body_thickness_spin
         self.addCleanup(self.window.close)
 
-    def test_exact_three_noneditable_choices_default_and_shared_style(self):
-        self.assertIsInstance(self.combo,QComboBox)
-        self.assertFalse(self.combo.isEditable())
-        self.assertEqual([self.combo.itemText(i) for i in range(self.combo.count())],['1.5 mm','2.0 mm','2.5 mm'])
-        self.assertEqual([self.combo.itemData(i) for i in range(self.combo.count())],[1.5,2.0,2.5])
+    def test_free_numeric_input_default_precision_and_range(self):
+        self.assertIsInstance(self.combo,QDoubleSpinBox)
         self.assertEqual(self.combo.value(),1.5)
-        self.assertEqual(self.combo.view().objectName(),self.window.coating_combo.view().objectName())
-        self.assertTrue(hasattr(self.combo,'_scheme2_item_delegate'))
+        self.assertEqual(self.combo.decimals(),3)
+        self.assertEqual(self.combo.suffix(),' mm')
+        self.assertEqual(self.window.thickness_surcharge_coefficient_spin.value(),10)
 
     def test_selection_emits_numeric_value_and_invalidates_old_calculation(self):
-        self.assertIsInstance(self.combo,QComboBox)
+        self.assertIsInstance(self.combo,QDoubleSpinBox)
         spy=QSignalSpy(self.combo.valueChanged)
         self.window.current_result={'formula':{},'quick':{}}
-        self.combo.setCurrentIndex(1)
-        self.assertEqual(self.combo.value(),2.0)
+        self.combo.setValue(2.35)
+        self.assertEqual(self.combo.value(),2.35)
         self.assertIsNone(self.window.current_result)
         self.assertEqual(spy.count(),1)
-        self.assertEqual(spy.at(0),[2.0])
+        self.assertEqual(spy.at(0),[2.35])
         self.assertIn('重新计算',self.window.risk_label.text())
 
     def test_order_page_state_restores_numeric_thickness_without_signals(self):
@@ -94,34 +92,23 @@ class ThicknessDropdown(unittest.TestCase):
         self.assertEqual(payload['cabinet_body_thickness_mm'],2.5)
         self.assertEqual(payload['waste_factor'],1.2)
 
-    def test_legacy_value_is_not_silently_changed_or_added_as_a_fourth_choice(self):
-        self.assertIsInstance(self.combo,QComboBox)
+    def test_legacy_value_is_preserved_without_silent_clamping(self):
         self.combo.setValue(.6)
         self.assertEqual(self.combo.value(),.6)
-        self.assertEqual(self.combo.count(),3)
-        self.assertEqual(self.combo.currentIndex(),-1)
-        self.assertIn('0.6',self.combo.placeholderText())
-        self.combo.setCurrentIndex(2)
-        self.assertEqual(self.combo.value(),2.5)
+        self.combo.setValue(2.375)
+        self.assertEqual(self.combo.value(),2.375)
 
-    def test_actual_popup_opens_and_accepts_keyboard_selection(self):
-        self.assertIsInstance(self.combo,QComboBox)
-        self.window._scheme2_dirty=False
-        self.window.resize(1150,960)
-        self.window.show_section(ui.OPTION_ROUTE)
+    def test_keyboard_input_accepts_nonpreset_thickness_and_resets_default_coefficient(self):
         self.window.show()
-        self.combo.parentWidget().show()
-        self.window.scheme2_option_scroll.ensureWidgetVisible(self.combo) if hasattr(self.window,'scheme2_option_scroll') else None
-        app.processEvents()
-        self.assertTrue(self.combo.parentWidget().grab().save(str(ROOT/'outputs/cabinet-thickness-field.png')))
-        self.combo.showPopup()
-        app.processEvents()
-        self.assertTrue(self.combo.view().isVisible())
-        self.assertTrue(self.combo.view().window().grab().save(str(ROOT/'outputs/cabinet-thickness-dropdown.png')))
-        QTest.keyClick(self.combo,Qt.Key.Key_Down)
+        self.combo.setFocus()
+        QTest.keyClick(self.combo,Qt.Key.Key_A,Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClicks(self.combo,'2.375')
         QTest.keyClick(self.combo,Qt.Key.Key_Return)
-        self.combo.hidePopup()
-        self.assertEqual(self.combo.value(),2.0)
+        self.assertEqual(self.combo.value(),2.375)
+        coefficient=self.window.thickness_surcharge_coefficient_spin
+        coefficient.setValue(15)
+        self.combo.setValue(3.25)
+        self.assertEqual(coefficient.value(),10)
         self.window._scheme2_dirty=False
 
 

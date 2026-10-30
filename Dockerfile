@@ -22,7 +22,7 @@ COPY api/contract_template_policy.mjs ./api/
 COPY api/contract_status.mjs ./api/
 COPY api/analysis_product_charts.mjs ./api/
 COPY api/standalone_attachment.mjs ./api/
-COPY api/quick_thickness_pricing.mjs ./api/
+COPY api/thickness_surcharge.mjs ./api/
 COPY api/contract_item_row_layout.mjs ./api/
 COPY api/customer_profile.mjs ./api/
 COPY api/experience_dimension_match.mjs ./api/
@@ -32,6 +32,7 @@ COPY api/jp_auxiliary_weight.mjs ./api/
 COPY quote_order_nature.mjs exceljs_range_adapter.mjs quote_export_contract.mjs quick_discount_rules.mjs export_dual_quote_workbook.mjs attachment_snapshot_export.mjs ./
 COPY attachment_cost_allocation.mjs ./
 COPY tax_cost.mjs ./
+COPY public_quote_sheet.mjs ./
 
 RUN chown -R node:node /app
 USER node

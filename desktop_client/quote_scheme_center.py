@@ -803,7 +803,7 @@ def _apply_read_only(window, read_only):
     if hasattr(window, "scheme2_company"): window.scheme2_company.setEnabled(not read_only)
     for name in (
         "scheme2_name_edit", "quote_spec_edit", "product_combo", "quantity_spin",
-        "cabinet_body_thickness_spin", "material_combo", "coating_combo",
+        "cabinet_body_thickness_spin", "thickness_surcharge_coefficient_spin", "material_combo", "coating_combo",
         "scheme2_color_combo", "single_door_combo", "double_door_combo", "notes_text",
     ):
         control = getattr(window, name, None)
@@ -816,6 +816,8 @@ def _apply_read_only(window, read_only):
     sync = getattr(window, '_sync_door_position_controls', None)
     if callable(sync):
         sync()
+    sync_thickness = getattr(window, '_sync_thickness_coefficient_state', None)
+    if callable(sync_thickness): sync_thickness()
 
 
 def _apply_opened_scheme(window, result, route=3, after_open=None):

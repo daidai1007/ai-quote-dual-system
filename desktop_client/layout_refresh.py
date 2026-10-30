@@ -7,6 +7,7 @@ database catalogue presentation and API interactions approved for V3.
 
 from __future__ import annotations
 
+from thickness_surcharge import amount as thickness_surcharge_amount
 import http.client
 import hashlib
 import json
@@ -4780,15 +4781,15 @@ def _ensure_cabinet_material_fields(window) -> None:
     quantity_block = quantity.parentWidget() if isinstance(quantity, QWidget) else None
     form_grid = _layout_containing_widget(card.layout() if card is not None else None, quantity_block)
     specs = (
-        ("cabinet_body_thickness_spin", "cabinetBodyThicknessSpin", "箱体料厚", 1.5, 0.1, 20.0, 1, 0.5, " mm",
-         "用于选择最新柜体材料明细中的箱体料厚版本；不改变零件自身料厚"),
+        ("cabinet_body_thickness_spin", "cabinetBodyThicknessSpin", "箱体料厚", 1.5, 0.1, 20.0, 3, 0.1, " mm",
+         "可手工输入料厚；以1.5mm配置为基准，只调整原1.5mm板件，原2.0mm和2.5mm板件保持不变"),
         ("waste_factor_spin", "cabinetWasteFactorSpin", "废料系数", 1.2, 0.01, 10.0, 3, 0.05, " ×",
          "计价材料重量＝净材料重量×废料系数；默认 1.2，可按本次报价修改"),
     )
     new_widgets = []
     for attr, object_name, caption, default, minimum, maximum, decimals, step, suffix, tip in specs:
         widget = getattr(window, attr, None)
-        widget_type = _CabinetThicknessCombo if attr == "cabinet_body_thickness_spin" else QDoubleSpinBox
+        widget_type = QDoubleSpinBox
         if not isinstance(widget, widget_type):
             previous = widget
             widget = widget_type(previous.parentWidget() if isinstance(previous, QWidget) else card)
@@ -5311,6 +5312,9 @@ def _refresh_quick_discount_total(window, money) -> None:
         1,
         _ganged_count(window),
         freight_fee,
+        thickness_surcharge_amount({'formula': current.get('formula') or {},
+            'thickness_surcharge_coefficient': getattr(window, 'thickness_surcharge_coefficient_spin', None).value()
+                if getattr(window, 'thickness_surcharge_coefficient_spin', None) else 10}),
     )["line_total"]
     labels["total"].setText(money(amount))
     if "freight" in labels:

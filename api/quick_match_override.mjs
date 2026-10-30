@@ -4,7 +4,6 @@ import {randomUUID} from 'node:crypto';
 import {ownerInsertSql} from './quote_access_scope.mjs';
 import {sqlValue} from './attachment_service.mjs';
 import {normalizeQuickDoorVariantInput} from './door_variant_rules.mjs';
-import {applyQuickThickness} from './quick_thickness_pricing.mjs';
 
 const jsonSql = value => `${sqlValue(JSON.stringify(value))}::jsonb`;
 const invalid = message => Object.assign(new Error(message), {statusCode: 422});
@@ -83,12 +82,8 @@ export function createQuickMatchOverrideService({runPsql}) {
           || !Number.isFinite(Number(row.base_price)) || Number(row.base_price) < 0))
       throw invalid('指定尺寸在该产品、材质和报价日期的有效目录中没有完全对应的价格，原报价未修改');
     const lineId = randomUUID();
-    const children=count>1?environment.ganged_cabinets:[environment];
-    const childQuick=matches.map((row,index)=>applyQuickThickness(
-      {...(base.ganged_cabinet_results?.[index]?.quick_quote||base.quick_quote),attachment_fee:count>1?Number(base.ganged_cabinet_results?.[index]?.quick_quote?.attachment_fee||0):Number(base.quick_quote.attachment_fee||0)},
-      {...environment,...children[index]}, {sourceBase:Number(row.base_price)}));
-    const quick = {...base.quick_quote,...(count===1?childQuick[0]:{}),
-      base_price: Math.round(childQuick.reduce((sum, row) => sum + Number(row.base_price), 0) * 1e6) / 1e6,
+    const quick = {...base.quick_quote,
+      base_price: Math.round(matches.reduce((sum, row) => sum + Number(row.base_price), 0) * 1e6) / 1e6,
       match_method: count > 1 ? 'ganged_cabinet_sum' : 'manual_dimension',
       manual_match: true, manual_matched_sizes: sizes,
       dimension_distance: matches.reduce((sum, row) => sum + Number(row.dimension_distance || 0), 0),
@@ -99,7 +94,8 @@ export function createQuickMatchOverrideService({runPsql}) {
     const result = {...base, quote_line_id: lineId, quick_quote: quick};
     if (Array.isArray(base.ganged_cabinet_results)) {
       result.ganged_cabinet_results = base.ganged_cabinet_results.map((child, index) => ({...child,
-        quick_quote: {...child.quick_quote,...childQuick[index],
+        quick_quote: {...child.quick_quote, base_price: Number(matches[index].base_price),
+          total_cost: Number(matches[index].base_price) + Number(child.quick_quote?.attachment_fee || 0),
           matched_experience: matches[index].matched_experience, match_method: 'manual_dimension'}}));
     }
     const next = {...environment, quote_id: saved.quote_id, quote_line_id: lineId, quote_result: result,

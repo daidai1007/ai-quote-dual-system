@@ -150,6 +150,7 @@ QUOTE_REMARK_MIN_ROW_HEIGHT = 72
 DRAWING_FOOTER_HEIGHT = 46
 DRAWING_VERTICAL_CHROME = 118
 DEFAULT_MATERIAL_DIFFERENCE_UNIT_PRICE = 25.0
+from thickness_surcharge import amount as thickness_surcharge_amount, coefficient as thickness_surcharge_coefficient, explanation as thickness_surcharge_explanation
 
 
 COEFFICIENT_FIELDS = (
@@ -516,11 +517,12 @@ def _cost_product(item):
 
 
 def _material_difference_amount(item):
-    """Return the undiscounted SUS316 material surcharge for one cabinet."""
+    """Undiscounted material/body-thickness weight surcharges, charged once per set."""
+    thickness = thickness_surcharge_amount(item)
 
     material_code = str(item.get("material_code") or "").strip().upper()
     if material_code != "SUS316":
-        return 0.0
+        return thickness
     state = item.get("scheme2_cost_settings")
     if not isinstance(state, dict):
         state = {}
@@ -539,7 +541,7 @@ def _material_difference_amount(item):
         if isinstance(row, dict)
         and str(row.get("material_code") or "").strip().upper() == "SGCC"
     )
-    return money_product(max(0.0, total_weight - sgcc_weight), unit_price)
+    return money_sum((thickness, money_product(max(0.0, total_weight - sgcc_weight), unit_price)))
 
 
 def _self_made_weight(item):
@@ -589,7 +591,7 @@ def _cost_price_components(item):
     attachments = [row for row in item.get('attachments', []) if isinstance(row, dict)]
     quick, _ = _quote_with_popup_attachment_fee(_quick(item), attachments, _popup_quick_amount)
     return quick_price_components(quick, attachments, _number(item.get('quick_discount', 1), 1),
-        quick_freight_fee(item), _material_difference_amount(item))
+        quick_freight_fee(item), _material_difference_amount(item), thickness_surcharge_amount(item))
 
 
 class QuickPriceBreakdownDialog(QDialog):
@@ -704,7 +706,7 @@ def _row_values(item):
     quote = quick_line["equivalent_unit_total"]
     quote_total = quick_line["line_total"]
     from cost_price_breakdown import quick_price_components
-    components = quick_price_components(quick, attachments, discount, quick_freight, material_difference)
+    components = quick_price_components(quick, attachments, discount, quick_freight, material_difference, thickness_surcharge_amount(item))
     cost_total = money_product(formula_unit, quantity)
     gross_margin = profit_rate(quote_total, _item_gross_cost_total(item))
     net_margin = profit_rate(quote_total, cost_total) if formula.get('total_cost') is not None else None
@@ -1943,7 +1945,7 @@ def _attachment_summary_columns(items):
         listed = sum(amounts.values())
         fee = _number(_quick(item).get("attachment_fee"), listed)
         # Stale aggregate fees are not a separate, chargeable attachment.
-        material_difference |= str(item.get("material_code") or "").strip().upper() == "SUS316"
+        material_difference |= str(item.get("material_code") or "").strip().upper() == "SUS316" or bool(_formula(item).get("thickness_comparison"))
     return tuple(name for name in names if name in selected_names), material_difference, attachment_difference
 
 
@@ -3105,6 +3107,7 @@ def _quote_export_items_snapshot(window, items=None):
             "total": _number(values[16]),
             "attachment_face_price": values[23],
             "material_difference": values[22],
+            "thickness_surcharge": thickness_surcharge_amount(item),
             "remark": _quote_item_remark(item, preserve_existing=_preserve_quote_remark(window)),
             # Document creation consumes these completed popup rows. It must
             # not reprice them from a later catalogue or an older quote line.
@@ -4894,7 +4897,7 @@ def _refresh_cost_table(window):
             canonical[0] = row + 1
             values = [canonical[index] for index in COST_DISPLAY_ORDER]
             for column, value in enumerate(values):
-                if column == MATERIAL_DIFFERENCE_COLUMN and str(item.get("material_code") or "").strip().upper() != "SUS316":
+                if column == MATERIAL_DIFFERENCE_COLUMN and str(item.get("material_code") or "").strip().upper() != "SUS316" and not _formula(item).get("thickness_comparison"):
                     text = "—"
                 else:
                     text = _money(value) if column in MONEY_COLUMNS else str(value)
@@ -4943,6 +4946,8 @@ def _refresh_cost_table(window):
                 if column == QUICK_FREIGHT_COLUMN:
                     mode = '人工' if item.get('quick_freight_mode') == 'MANUAL' else '跟随成本运费'
                     cell.setToolTip(f'快速报价单台运费：{mode}。已包含在报价中，报价总价＝报价×数量；修改不回写成本运费。清空可恢复跟随成本运费。')
+                if column == MATERIAL_DIFFERENCE_COLUMN and _formula(item).get('thickness_comparison'):
+                    cell.setToolTip(thickness_surcharge_explanation(item) + '\n此栏同时包含既有材质差价，料厚补价不重复计入柜体面价。')
                 if column == MANUFACTURING_COLUMN:
                     cell.setToolTip('单台／单套制造成本＝本行报价×4%；订购数量在制造成本总额中只乘一次。')
                 if column == 22:
@@ -5555,7 +5560,7 @@ def _capture_scheme2_page_state(window):
         if isinstance(combo, QComboBox):
             combos[name] = _scheme2_combo_state(combo)
     spins = {}
-    for name in ("quantity_spin", "cabinet_body_thickness_spin"):
+    for name in ("quantity_spin", "cabinet_body_thickness_spin", "thickness_surcharge_coefficient_spin"):
         spin = getattr(window, name, None)
         if isinstance(spin, (QAbstractSpinBox, QComboBox)) and hasattr(spin, "value"):
             spins[name] = spin.value()
@@ -5614,6 +5619,8 @@ def _restore_scheme2_page_state(window, state):
         refresh()
     _refresh_scheme2_attachment_summary(window)
     _set_dirty(window, bool(state.get("dirty")))
+    sync_thickness = getattr(window, '_sync_thickness_coefficient_state', None)
+    if callable(sync_thickness): sync_thickness()
 
 
 def _scheme2_page_entry(window, key):
@@ -7482,7 +7489,28 @@ def _configure_option_page(window, namespace):
         _promote_option_label(thickness_field)
         if isinstance(thickness, QComboBox):
             _style_scheme_dropdown(thickness, thickness_field)
-        form.addWidget(thickness_field)
+        coefficient = _sidebar_price_spin(10, 2)
+        coefficient.setAccessibleName("料厚补价系数")
+        coefficient.setToolTip("仅 JS、JA、JE、JP、JM 的非标料厚使用：含废料成本计价重量差 × 本系数，补价不打折。默认10元/kg。")
+        window.thickness_surcharge_coefficient_spin = coefficient
+        coefficient_field = _option_field(window, "补价系数", coefficient)
+        _promote_option_label(coefficient_field)
+        thickness_row = QFrame()
+        thickness_layout = QHBoxLayout(thickness_row)
+        thickness_layout.setContentsMargins(0, 0, 0, 0)
+        thickness_layout.setSpacing(8)
+        thickness_layout.addWidget(thickness_field, 1)
+        thickness_layout.addWidget(coefficient_field, 1)
+        form.addWidget(thickness_row)
+        window._sync_thickness_coefficient_state = lambda: coefficient.setEnabled(
+            float(thickness.value()) > 1.5 and not getattr(window, '_quote_scheme_read_only', False))
+        def thickness_changed(_value):
+            with QSignalBlocker(coefficient): coefficient.setValue(10)
+            window._sync_thickness_coefficient_state()
+        thickness.valueChanged.connect(thickness_changed)
+        thickness_changed(thickness.value())
+        coefficient.valueChanged.connect(lambda *_: window.refresh_discounted_totals() if getattr(window, 'current_result', None) else None)
+        coefficient.editingFinished.connect(lambda: _set_dirty(window, True))
 
     form.addWidget(_scheme2_group_title("门型"))
     door_host = QFrame()
@@ -7880,7 +7908,7 @@ def _reset_scheme2_workspace(window):
             for name in (
                 "model_edit", "scheme2_name_edit", "quote_spec_edit", "product_combo",
                 "material_combo", "coating_combo", "scheme2_color_combo", "company_combo", "scheme2_company",
-                "quantity_spin", "cabinet_body_thickness_spin", "width_spin", "height_spin", "depth_spin",
+                "quantity_spin", "cabinet_body_thickness_spin", "thickness_surcharge_coefficient_spin", "width_spin", "height_spin", "depth_spin",
                 "single_door_combo", "double_door_combo", "freight_spin", "waste_factor_spin",
                 "labor_multiplier", "formula_discount", "quick_discount", "notes_text", "scheme2_order_number",
             ):
@@ -8334,6 +8362,7 @@ def _finish_add(window):
     if getattr(window, "_scheme2_calculation_paused", False):
         return
     source_route = window.stack.currentIndex()
+    selected_thickness_coefficient = window.thickness_surcharge_coefficient_spin.value()
     before = len(getattr(window, "draft_items", []))
     editing = getattr(window, "_scheme2_edit_item", None)
     editing_index = next((index for index, row in enumerate(window.draft_items) if row is editing), None)
@@ -8345,6 +8374,7 @@ def _finish_add(window):
         window.show_section(OPTION_ROUTE)
     item = window.draft_items[-1]
     item["pricing_basis"] = PRICING_BASIS
+    item["thickness_surcharge_coefficient"] = selected_thickness_coefficient
     _stamp_selected_product(window, item)
     if editing_index is not None:
         for key in ('quick_freight_fee', 'quick_freight_mode', 'quick_freight_basis'):
@@ -9134,6 +9164,7 @@ def install_scheme2_ui(namespace):
                         "page_number": int(page["page_index"]) + 1,
                         "page_count": int(page["page_count"]),
                     }
+                updates["thickness_surcharge_coefficient"] = owner.thickness_surcharge_coefficient_spin.value()
                 payload.update(updates)
                 if isinstance(payload.get("attachment"), dict):
                     payload["attachment"]["pricing_basis"] = PRICING_BASIS
@@ -9373,6 +9404,12 @@ def install_scheme2_ui(namespace):
             settle_quote_request(window, "rejected")
             window.show_error(rejection)
             return
+        product = str(window.selected_product_code() or '').upper()
+        needs_comparison = bool(re.fullmatch(r'(JS|JA|JE|JP|JM)(?:_(?:SINGLE|DOUBLE))?', product)) and window.cabinet_body_thickness_spin.value() > 1.5
+        if needs_comparison and not (payload.get('formula_cost') or {}).get('thickness_comparison'):
+            settle_quote_request(window, "rejected")
+            window.show_error("API未提供输入料厚与1.5mm的成本计价重量对照，请更新API后重新计算。")
+            return
         previous = getattr(window, "current_result", None)
         try:
             result = original_show_result(window, payload, *args, **kwargs)
@@ -9529,6 +9566,10 @@ def install_scheme2_ui(namespace):
         window._door_position = None
         window._attachment_names_manual_only = item.get('attachment_selection_mode') == 'manual_names'
         result = original_load_draft_item(window, item)
+        with QSignalBlocker(window.thickness_surcharge_coefficient_spin):
+            window.thickness_surcharge_coefficient_spin.setValue(thickness_surcharge_coefficient(item))
+        window._sync_thickness_coefficient_state()
+        window.refresh_discounted_totals()
         from layout_refresh import _allowed_door_combinations, MANUAL_DOOR_SELECTION
         counts = (int(item.get('single_door_count') or 0), int(item.get('double_door_count') or 0))
         if counts in _allowed_door_combinations(window):
@@ -9544,6 +9585,14 @@ def install_scheme2_ui(namespace):
         _restore_custom_companies(getattr(window, "scheme2_company", None))
         return result
 
+    prior_thickness_reset = cls.reset_current_cabinet
+    def reset_with_thickness_coefficient(window, *args, **kwargs):
+        result = prior_thickness_reset(window, *args, **kwargs)
+        control = getattr(window, 'thickness_surcharge_coefficient_spin', None)
+        if control is not None:
+            with QSignalBlocker(control): control.setValue(10)
+        return result
+    cls.reset_current_cabinet = reset_with_thickness_coefficient
     cls.__init__ = init
     cls.resizeEvent = resize
     cls.confirm_and_export = confirm_and_export

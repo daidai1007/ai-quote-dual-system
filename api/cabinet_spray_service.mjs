@@ -23,7 +23,9 @@ export function calculateCabinetSpray(rules,environment){
   if(!candidates.length)throw new Error(`最新柜体喷塑表没有 ${family} 门型 ${single}/${double} 的规则`);
   const profiles=[...new Set(candidates.map(rule=>rule.body_thickness_profile_mm).filter(value=>value!=null).map(Number))];
   const requested=environment.cabinet_body_thickness_mm==null?1.5:finite(environment.cabinet_body_thickness_mm,'柜体料厚',{max:20});
-  const selected=profiles.length>1?candidates.filter(rule=>Math.abs(Number(rule.body_thickness_profile_mm)-requested)<1e-9):candidates;
+  const exact=candidates.filter(rule=>Math.abs(Number(rule.body_thickness_profile_mm)-requested)<1e-9);
+  const freeThickness=['JS','JA','JE','JP','JM'].includes(family);
+  const selected=profiles.length>1?(exact.length?exact:freeThickness?candidates.filter(rule=>Number(rule.body_thickness_profile_mm)===1.5):[]):candidates;
   if(!selected.length)throw new Error(`${family} 没有柜体料厚 ${requested} mm 的喷塑规则`);
   const variables={宽度:finite(environment.width_mm,'宽度'),高度:finite(environment.height_mm,'高度'),深度:finite(environment.depth_mm,'深度')};
   const details=selected.map(rule=>{

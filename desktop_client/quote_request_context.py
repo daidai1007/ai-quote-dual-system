@@ -14,7 +14,7 @@ def attachment_inputs(window):
 
 def calculation_environment(window):
     values = {}
-    for name in ("cabinet_body_thickness_spin", "waste_factor_spin", "quantity_spin", "labor_multiplier"):
+    for name in ("cabinet_body_thickness_spin", "thickness_surcharge_coefficient_spin", "waste_factor_spin", "quantity_spin", "labor_multiplier"):
         control = getattr(window, name, None)
         if control is not None:
             values[name] = control.value()

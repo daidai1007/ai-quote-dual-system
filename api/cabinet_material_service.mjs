@@ -2,6 +2,7 @@ import {evaluateFormula,round} from './attachment_formula.mjs';
 import {compareExperienceDimensions} from './experience_dimension_match.mjs';
 import {withSidebarMaterialPrices} from './material_price_override.mjs';
 import {applyManagementFee} from '../quick_discount_rules.mjs';
+import {usesThicknessSurcharge,compareThicknessWeights} from './thickness_surcharge.mjs';
 
 const valueSql=value=>value==null?'NULL':typeof value==='number'?String(value):
   `convert_from(decode('${Buffer.from(String(value)).toString('hex')}','hex'),'UTF8')`;
@@ -26,8 +27,16 @@ export function calculateCabinetMaterial(rules,environment){
   if(!candidates.length) throw new Error(`最新柜体材料表没有 ${family} 门型 ${single}/${double} 的规则`);
   const profiles=[...new Set(candidates.map(r=>r.body_thickness_profile_mm).filter(v=>v!=null).map(Number))];
   const requested=environment.cabinet_body_thickness_mm==null?1.5:positive(environment.cabinet_body_thickness_mm,'柜体料厚',{max:20});
-  const selected=profiles.length>1?candidates.filter(r=>Math.abs(Number(r.body_thickness_profile_mm)-requested)<1e-9):candidates;
-  if(!selected.length)throw new Error(`${family} 没有柜体料厚 ${requested} mm 的材料规则`);
+  const freeThickness=['JS','JA','JE','JP','JM'].includes(family);
+  if(freeThickness&&requested<1.5)throw Object.assign(new Error('箱体料厚不能小于1.5mm'),{statusCode:422});
+  // User policy: the 1.5mm catalogue is the immutable reference. Only parts
+  // originally 1.5mm follow the entered body thickness; 2/2.5mm stay fixed.
+  const explicitReference=candidates.filter(r=>r.body_thickness_profile_mm!=null&&Number(r.body_thickness_profile_mm)===1.5);
+  const reference=freeThickness?(explicitReference.length?explicitReference:candidates.filter(r=>r.body_thickness_profile_mm==null)):[];
+  const selected=freeThickness?reference.map(rule=>({...rule,baseline_sheet_thickness_mm:Number(rule.sheet_thickness_mm),
+    sheet_thickness_mm:Number(rule.sheet_thickness_mm)===1.5?requested:Number(rule.sheet_thickness_mm)})):
+    profiles.length>1?candidates.filter(r=>Math.abs(Number(r.body_thickness_profile_mm)-requested)<1e-9):candidates;
+  if(!selected.length)throw new Error(`${family} 没有柜体料厚1.5mm基准材料规则`);
   const waste=positive(environment.waste_factor??1.2,'废料系数',{max:10});
   const priceByCode=new Map((environment.materials||[]).map(m=>[m.material_code,m]));
   const variables={宽度:positive(environment.width_mm,'宽度'),高度:positive(environment.height_mm,'高度'),深度:positive(environment.depth_mm,'深度')};
@@ -41,7 +50,7 @@ export function calculateCabinetMaterial(rules,environment){
     const netWeight=area*Number(rule.sheet_thickness_mm)*internalQuantity*density;
     const billableWeight=netWeight*waste;
     return {rule_id:rule.rule_id,part_name:rule.part_name,material_code:materialCode,area_m2:round(area,10),
-      sheet_thickness_mm:Number(rule.sheet_thickness_mm),internal_quantity:internalQuantity,density_g_cm3:density,
+      sheet_thickness_mm:Number(rule.sheet_thickness_mm),baseline_sheet_thickness_mm:rule.baseline_sheet_thickness_mm??Number(rule.sheet_thickness_mm),internal_quantity:internalQuantity,density_g_cm3:density,
       fixed_material_code:rule.fixed_material_code||null,
       net_weight_kg:round(netWeight,8),waste_factor:waste,billable_weight_kg:round(billableWeight,8),
       material_unit_price:unitPrice,material_cost:round(billableWeight*unitPrice,8),area_formula:rule.area_formula,
@@ -54,7 +63,7 @@ export function calculateCabinetMaterial(rules,environment){
   }
   for(const row of grouped){row.net_weight_kg=round(row.net_weight_kg,8);row.billable_weight_kg=round(row.billable_weight_kg,8);row.material_cost=round(row.material_cost,2);}
   return {data_version:environment.data_version,method:'AREA_FORMULA',family,single_door_count:single,double_door_count:double,
-    body_thickness_profile_mm:profiles.length>1?requested:(profiles[0]??null),waste_factor:waste,
+    body_thickness_profile_mm:freeThickness?requested:profiles.length>1?requested:(profiles[0]??null),waste_factor:waste,
     waste_factor_applied:true,requested_waste_factor:waste,
     net_material_weight_kg:round(details.reduce((s,r)=>s+r.net_weight_kg,0),8),
     corrected_material_weight_kg:round(details.reduce((s,r)=>s+r.billable_weight_kg,0),8),
@@ -142,7 +151,12 @@ export function createCabinetMaterialService({runPsql}){
     const materials=withSidebarMaterialPrices(input,data.materials);
     const environment={...input,product_code:product,data_version:data.data_version,materials,
       waste_factor:input.waste_factor??data.default_waste_factor};
-    return fixedProducts.has(product)?calculateCabinetMaterialFixed(data.fixed_rules,environment):calculateCabinetMaterial(data.rules,environment);
+    const material=fixedProducts.has(product)?calculateCabinetMaterialFixed(data.fixed_rules,environment):calculateCabinetMaterial(data.rules,environment);
+    if(usesThicknessSurcharge(environment)){
+      const reference=calculateCabinetMaterial(data.rules,{...environment,cabinet_body_thickness_mm:1.5});
+      material.thickness_comparison=compareThicknessWeights(material,reference);
+    }
+    return material;
   },async persist(quoteId,result,material){
     if(!material)return;
     const formula=result.formula_cost||{},quick=result.quick_quote||{};
@@ -158,7 +172,8 @@ export function createCabinetMaterialService({runPsql}){
       source_row_no:material.source_row_no,reference_model_code:material.reference_model_code,
       reference_width_mm:material.reference_width_mm,reference_height_mm:material.reference_height_mm,
       reference_depth_mm:material.reference_depth_mm,
-      material_details:material.material_details,part_details:material.part_details};
+      material_details:material.material_details,part_details:material.part_details,
+      ...(material.thickness_comparison?{thickness_comparison:material.thickness_comparison}:{})};
     const output=await runPsql(`UPDATE calc.dual_quote_result SET
       formula_material_cost=${valueSql(formula.material_cost)},formula_total_cost=${valueSql(formula.total_cost)},
       difference_cost=${valueSql(difference)},formula_net_material_weight_kg=${valueSql(material.net_material_weight_kg)},
@@ -183,6 +198,7 @@ export function applyCabinetMaterial(result,material){
     cabinet_material_method:material.method,cabinet_material_match_method:material.match_method,
     cabinet_material_version:material.data_version,material_details:material.material_details,
     cabinet_material_part_details:material.part_details});
+  if(material.thickness_comparison)formula.thickness_comparison=material.thickness_comparison;
   const riskFlags=(result.risk_flags||[]).filter(flag=>flag?.code!=='material_price_missing');
   return {...result,formula_cost:applyManagementFee(formula),risk_flags:riskFlags};
 }

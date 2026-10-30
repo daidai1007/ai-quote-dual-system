@@ -72,6 +72,12 @@ class HorizontalCostRestore(unittest.TestCase):
             '_row_values', '_GroupedCostHeader',
             '_cost_cell_changed', '_cost_price_components',
             '_recalculate_item_management', '_item_production_total', '_detail_rows', '_show_detail', '_build_detail_page', '_quote_unit_price_changed', '_attachment_summary_product_values', '_finish_add',
+            # Approved free-thickness/coefficient inputs, saved page state and
+            # undiscounted material-difference display. Their geometry and
+            # state/price behavior are covered by verify_thickness_surcharge_ui.
+            '_capture_scheme2_page_state', '_restore_scheme2_page_state',
+            '_reset_scheme2_workspace', '_configure_option_page',
+            '_material_difference_amount', '_attachment_summary_columns',
         }
         self.assertTrue(set(old).issubset(new), 'An original layout function or popup was removed')
         for name in set(old) - evolved:

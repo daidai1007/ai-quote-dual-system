@@ -1,4 +1,5 @@
 import {applyManagementFee} from '../quick_discount_rules.mjs';
+import {aggregateThicknessComparisons} from './thickness_surcharge.mjs';
 
 // Deliberately request-scoped: new quotations always read current rules/prices.
 // Share identical reads (and in-flight reads) between children, never writes or
@@ -78,6 +79,8 @@ export async function calculateGangedBatch(input, {calculateChild, snapshotGange
   const formula = Object.fromEntries(['material_cost', 'auxiliary_cost', 'labor_cost', 'spray_cost',
     'net_material_weight_kg', 'corrected_material_weight_kg'].map(key => [key, sum(results, 'formula_cost', key)]));
   formula.attachment_fee = attachmentTotal;
+  const comparison=aggregateThicknessComparisons(results);
+  if(comparison)formula.thickness_comparison=comparison;
   formula.product_area_m2 = areaTotal ?? sum(results, 'formula_cost', 'product_area_m2');
   formula.ganged_cabinet_costs = results.map((result, index) => ({
     cabinet_index: index + 1, ...Object.fromEntries(['model_code', 'product_code', 'width_mm', 'depth_mm', 'height_mm']

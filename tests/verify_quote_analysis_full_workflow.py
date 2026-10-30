@@ -97,6 +97,8 @@ class FullWorkflow(unittest.TestCase):
         w.draft_items[0]['quick_discount']=.85
         w.draft_items[0]['freight_fee']=5
         w.draft_items[0]['freight_mode']='MANUAL'  # Explicit synthetic freight, rather than weight-following AUTO.
+        # Quick freight is an independent manual amount in the current model.
+        w.draft_items[0].update(quick_freight_basis='separate_unit_freight_v1', quick_freight_mode='MANUAL', quick_freight_fee=5)
         w.refresh_summary()
         w._quote_scheme_loading=False
         w._quote_scheme_save_timer.stop()

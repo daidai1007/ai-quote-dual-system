@@ -1,3 +1,4 @@
+import {thicknessWeightDifference,thicknessCoefficient} from './api/thickness_surcharge.mjs';
 const hasFiniteNumber = (value) => value !== null && value !== undefined && value !== ""
   && Number.isFinite(Number(value));
 const asFiniteNumber = (value, fallback = 0) =>
@@ -353,11 +354,16 @@ export function validateQuoteDisplay(item) {
 }
 
 export function materialDifferenceAmount(item = {}) {
-  if (String(item.material_code || '').trim().toUpperCase() !== 'SUS316') return 0;
+  const thickness=thicknessSurchargeAmount(item);
+  if (String(item.material_code || '').trim().toUpperCase() !== 'SUS316') return thickness;
   const formula = item.formula || {};
   const groups = formula.material_details?.length ? formula.material_details : (formula.cabinet_material_part_details || []);
   const sgcc = groups.filter(row => String(row.material_code || '').trim().toUpperCase() === 'SGCC')
     .reduce((sum, row) => sum + Math.max(0, asFiniteNumber(row.billable_weight_kg)), 0);
-  return moneyProduct(Math.max(0, asFiniteNumber(formula.corrected_material_weight_kg) - sgcc),
-    Math.max(0, asFiniteNumber(item.scheme2_cost_settings?.material_difference, 25)));
+  return moneySum([thickness,moneyProduct(Math.max(0, asFiniteNumber(formula.corrected_material_weight_kg) - sgcc),
+    Math.max(0, asFiniteNumber(item.scheme2_cost_settings?.material_difference, 25)))]);
+}
+export function thicknessSurchargeAmount(item={}){
+  const weight=thicknessWeightDifference(item);
+  return weight===0?0:moneyProduct(weight,thicknessCoefficient(item));
 }
