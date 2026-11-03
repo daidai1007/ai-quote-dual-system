@@ -25,7 +25,11 @@ never stored only in the desktop process.
 
 ## Local layout verification
 
-The verified V3 core is a build artifact and is intentionally not committed.
+The verified V3 core is versioned in `desktop_client/v3_core/`, together with
+its SHA-256 manifest. Source mode loads that directory by default. Run
+`python packaging/verify_v3_core.py` with CPython 3.12 to verify all core files
+and archived modules before use. See `v3_core/README.md` for provenance and
+the remaining native-runtime/configuration requirements.
 Run the layout contract with the same Python 3.12/PySide6 environment used by
 the client:
 

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "core_id": "verified-v3-cpython312",
+  "recorded_on": "2026-11-03",
+  "python": "CPython 3.12",
+  "architecture": "Windows x64",
+  "archive_modules": 1451,
+  "files": [
+    {
+      "path": "bundled_api.raw",
+      "bytes": 11751,
+      "sha256": "91690d48cd07421bab388599a931049c955f92e9b7e88b48e81cc9817f4b13ca"
+    },
+    {
+      "path": "drawing_assembly.raw",
+      "bytes": 31753,
+      "sha256": "4eb4326cf05aad24d7162119b2da896812e1f6d4830989183293e94ce33133ed"
+    },
+    {
+      "path": "drawing_features.raw",
+      "bytes": 32071,
+      "sha256": "f05a48d682e26304bf8284eb8e3876bfbdb08f0685c2343262f0ff71efc04a01"
+    },
+    {
+      "path": "drawing_review.raw",
+      "bytes": 46856,
+      "sha256": "81f65b3f8c9d19b8e13574b7b53c333535beb322168179ddf286205e43fcb81c"
+    },
+    {
+      "path": "drawing_specification.raw",
+      "bytes": 33124,
+      "sha256": "c0b70ae571fcb4803a3200f9ec0128febe2fd9fa0baf2488c43526de72eedb22"
+    },
+    {
+      "path": "main.raw",
+      "bytes": 486306,
+      "sha256": "4677ff41bc759c1a6af8f4cdac9efd0864e0b24e494230b9c9de82008181764b"
+    },
+    {
+      "path": "ocr_consensus.raw",
+      "bytes": 35045,
+      "sha256": "dd27814d3b0338ef2c0001415c7d79ee134afccc5e468bdcce5f441fcb0d524a"
+    },
+    {
+      "path": "original.pyz",
+      "bytes": 11606713,
+      "sha256": "defaf64cdaea6602af1c60453637346c2daab56337c1d008752b87eb742d2eae"
+    },
+    {
+      "path": "workbench_ui.raw",
+      "bytes": 59662,
+      "sha256": "f5140f0d39b76cf1f45acec307fbf26e2be3e6a66a748f847d1723751d8e7246"
+    }
+  ]
+}

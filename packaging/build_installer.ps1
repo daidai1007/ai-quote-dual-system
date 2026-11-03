@@ -36,7 +36,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "Installer builds require Python 3.12 x64: $pythonExe"
 }
 
-$currentCore = Join-Path $currentClient "_internal\v3_core"
+$currentCore = Join-Path $repoRoot "desktop_client\v3_core"
+& $pythonExe (Join-Path $packagingRoot "verify_v3_core.py") --core $currentCore
+if ($LASTEXITCODE -ne 0) { throw "Repository V3 core verification failed." }
 foreach ($requiredCoreFile in @("main.raw", "original.pyz")) {
     $requiredCorePath = Join-Path $currentCore $requiredCoreFile
     if (-not (Test-Path -LiteralPath $requiredCorePath -PathType Leaf)) {
@@ -103,6 +105,11 @@ Copy-Item -LiteralPath (Join-Path $packagingRoot "assets\installer_header.bmp") 
 New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot "output") | Out-Null
 
 $stagedCore = Join-Path $stageRoot "_internal\v3_core"
+Get-ChildItem -LiteralPath $currentCore -File | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $stagedCore -Force
+}
+& $pythonExe (Join-Path $packagingRoot "verify_v3_core.py") --core $stagedCore
+if ($LASTEXITCODE -ne 0) { throw "Staged V3 core verification failed." }
 foreach ($requiredCoreFile in @("main.raw", "original.pyz")) {
     $requiredCorePath = Join-Path $stagedCore $requiredCoreFile
     if (-not (Test-Path -LiteralPath $requiredCorePath -PathType Leaf)) {

@@ -7,6 +7,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $currentClient = Join-Path (Split-Path -Parent $repoRoot) 'AIQuoteDualSystem'
+$repositoryCore = Join-Path $repoRoot 'desktop_client\v3_core'
+& $PythonExe (Join-Path $PSScriptRoot 'verify_v3_core.py') --core $repositoryCore
+if ($LASTEXITCODE -ne 0) { throw 'Repository V3 core verification failed.' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot "outputs\review-client-$Version" }
 $reviewRoot = [IO.Path]::GetFullPath($OutputDirectory)
 $repoPath = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\') + '\'
@@ -54,8 +57,10 @@ try {
     $builtEntry = Join-Path $portable 'AIQuoteDualSystem_layout_v0.exe'
     $protectedAfter = @(Get-FileHash -LiteralPath $entry,$config -Algorithm SHA256)
     if (Compare-Object $protectedBefore.Hash $protectedAfter.Hash) { throw 'Protected files unexpectedly changed.' }
-    $coreBefore = Get-FileHash -LiteralPath (Join-Path $currentClient '_internal\v3_core\main.raw')
+    $coreBefore = Get-FileHash -LiteralPath (Join-Path $repositoryCore 'main.raw')
     $coreAfter = Get-FileHash -LiteralPath (Join-Path $portable '_internal\v3_core\main.raw')
+    & $PythonExe (Join-Path $PSScriptRoot 'verify_v3_core.py') --core (Join-Path $portable '_internal\v3_core')
+    if ($LASTEXITCODE -ne 0) { throw 'Portable V3 core verification failed.' }
     if ($coreBefore.Hash -ne $coreAfter.Hash) { throw 'Recovered quote core changed.' }
     [ordered]@{
         version=$Version; entry=$builtEntry; sha256=(Get-FileHash -LiteralPath $builtEntry).Hash;
