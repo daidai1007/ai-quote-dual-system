@@ -79,7 +79,7 @@ export function createLedgerContractService({query,q,identity,scope,own,loadTemp
     buyer_name:c.customer_name,seller_name:data.fields.seller_name||defaultSellerName,
     contract_no:document.contract_no,sign_date:document.sign_date,delivery_date:document.delivery_date,
     total_amount:document.quote.total,total_upper:document.quote.total_upper,source_scheme_no:'',source_version:'',quote_method:'台账合同'};
-   let bytes;try{bytes=renderContractTemplate(Buffer.from(t.content,'base64'),t.file_format,t.field_mapping,fields,document.quote.items);}catch(error){error.statusCode=400;throw error;}
+   let bytes;try{bytes=renderContractTemplate(Buffer.from(t.content,'base64'),t.file_format,t.field_mapping,fields,document.quote.items,{wholeYuanAsInteger:true});}catch(error){error.statusCode=400;throw error;}
    if(bytes.length>16*1024*1024)fail('生成合同超过16MB，请简化模板');
    const originalRows=data.records.filter(r=>document.source_records.some(s=>s.record_id===r.record_id));
    return {id:randomUUID(),document_key:document.key,fields,bytes,sha256:hash(bytes),snapshot:{schema:1,source_kind:'LEDGER',order_nature:'EXTERNAL',

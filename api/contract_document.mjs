@@ -147,6 +147,34 @@ function setCell(cell,value){
   for(const n of Array.from(cell.childNodes))if(n.nodeType===1&&['v','is','f'].includes(n.localName))cell.removeChild(n);
   const doc=cell.ownerDocument;if(typeof value==='number'){cell.removeAttribute('t');const v=doc.createElementNS(S,'v');v.textContent=String(value);cell.appendChild(v);}else{cell.setAttribute('t','inlineStr');const is=doc.createElementNS(S,'is'),t=doc.createElementNS(S,'t');t.setAttribute('xml:space','preserve');t.textContent=String(value??'');is.appendChild(t);cell.appendChild(is);}
 }
+function showWholeYuanAsInteger(model,cells){
+  const part='xl/styles.xml';
+  if(!cells.length||!model.files[part])return;
+  const styles=model.parts.get(part)||parse(strFromU8(model.files[part]));
+  const cellXfs=child(styles.documentElement,'cellXfs');
+  if(!cellXfs)return;
+  const xfs=children(cellXfs,'xf'),integerStyles=new Map();
+  let nextId=xfs.length;
+  for(const cell of cells){
+    if(cell.hasAttribute('t')&&cell.getAttribute('t')!=='n')continue;
+    const value=child(cell,'v')?.textContent;
+    if(!value||!Number.isInteger(Number(value)))continue;
+    const id=Number(cell.getAttribute('s')||0),style=xfs[id];
+    if(!style)continue;
+    if(!integerStyles.has(id)){
+      const integerStyle=style.cloneNode(true);
+      integerStyle.setAttribute('numFmtId','1'); // Excel built-in 0, no fractional digits.
+      integerStyle.setAttribute('applyNumberFormat','1');
+      cellXfs.appendChild(integerStyle);
+      integerStyles.set(id,nextId++);
+    }
+    cell.setAttribute('s',String(integerStyles.get(id)));
+  }
+  if(integerStyles.size){
+    cellXfs.setAttribute('count',String(nextId));
+    model.parts.set(part,styles);
+  }
+}
 const rowOf=address=>Number(address.match(/\d+$/)?.[0]);
 const moveAddress=(address,at,delta)=>address.replace(/(\$?)(\d+)/g,(m,d,r)=>d+(Number(r)>=at?Number(r)+delta:r));
 function shiftFormula(formula,sheet,changedSheet,at,delta,expandRow){
@@ -158,10 +186,10 @@ function shiftFormula(formula,sheet,changedSheet,at,delta,expandRow){
     return (prefix||'')+moveAddress(a,at,delta)+(b?':'+end:'');
   })).join('');
 }
-export function renderContractTemplate(bytes,format,mapping,values,items){
+export function renderContractTemplate(bytes,format,mapping,values,items,{wholeYuanAsInteger=false}={}){
   validateContractMapping(bytes,format,mapping);
   if(!Array.isArray(items)||!items.length||items.length>500)fail('合同产品数量应为1至500行');
-  const model=open(bytes,format),row=model.rows.find(r=>r.id===mapping.items.target),expectations=[];
+  const model=open(bytes,format),row=model.rows.find(r=>r.id===mapping.items.target),expectations=[],moneyCells=[];
   for(const field of mapping.fields){
     const loc=location(model,field.target,format),find=String(field.find||'');
     if(field.source==='delivery_date'&&(values.delivery_date==null||String(values.delivery_date).trim()==='')){
@@ -174,6 +202,7 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
     const optional=field.source==='contract_no'||['buyer_contact','buyer_phone','buyer_fax','buyer_representative','buyer_agent','buyer_bank_name','buyer_bank_account','buyer_tax_no'].includes(field.source);
     const value=values[field.source]??(optional?'':undefined);
     if(!optional&&(value===undefined||value===null||String(value).trim()===''))fail('请补齐合同字段：'+(CONTRACT_FIELDS[field.source]||field.source.replace('custom:','')));
+    if(wholeYuanAsInteger&&format==='xlsx'&&field.source==='total_amount')moneyCells.push(loc.node);
     if(format==='docx')replaceWord(loc.node,find,typeof value==='number'?value.toFixed(2):String(value));
     else if(child(loc.node,'f')){if(field.source!=='total_amount')fail('有公式的字段仅允许用于核对合同总额');expectations.push({part:loc.part,cell:loc.node,value:Number(value)});}
     else{const result=find?loc.text.replace(find,()=>String(value)):value;setCell(loc.node,find&&loc.text!==find?result:(field.source==='total_amount'?Number(value):String(value)));loc.text=String(result);}
@@ -226,6 +255,7 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
       for(const cell of children(clone,'c')){cell.setAttribute('r',cell.getAttribute('r').replace(/\d+$/,String(start+i)));const f=child(cell,'f');if(f&&i)f.textContent=f.textContent.split(/("(?:[^"]|"")*")/g).map((segment,index)=>index%2?segment:segment.replace(/(\$?)([A-Z]{1,3})(\$?)(\d+)/g,(m,dc,c,dr,r)=>dc+c+dr+(dr?r:Number(r)+i))).join('');}
       for(const [key,col] of Object.entries(mapping.items.columns)){
         let cell=children(clone,'c').find(c=>c.getAttribute('r')===col+(start+i));if(!cell){cell=doc.createElementNS(S,'c');cell.setAttribute('r',col+(start+i));clone.insertBefore(cell,children(clone,'c').find(n=>coordinates(n.getAttribute('r')).col>coordinates(col+'1').col)||null);}setCell(cell,items[i][key]??'');
+        if(wholeYuanAsInteger&&(key==='unit_price'||key==='total'))moneyCells.push(cell);
       }
       if(i)sheetData.insertBefore(clone,anchor);
       renderedProductRows.push(clone);
@@ -237,6 +267,7 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
     evaluateCells(sheetMaps);
     for(const cells of sheetMaps.values())for(const cell of cells.values())if(cell.formula){const result=cell.result;const node=cell.node;node.removeAttribute('t');for(const v of children(node,'v'))node.removeChild(v);const v=node.ownerDocument.createElementNS(S,'v');v.textContent=typeof result==='boolean'?String(Number(result)):String(result);if(typeof result==='string')node.setAttribute('t','str');node.appendChild(v);}
     for(const check of expectations){const sheet=model.sheets.find(s=>s.part===check.part);const result=sheetMaps.get(sheet.name).get(check.cell.getAttribute('r'));if(Math.abs(Number(result.result??result.value)-check.value)>.005)fail('模板合计公式与正式报价总额不一致');}
+    showWholeYuanAsInteger(model,moneyCells);
     for(const sheet of model.sheets){const dim=descendants(sheet.doc,S,'dimension')[0];if(dim&&delta){const last=descendants(sheet.doc,S,'row').at(-1);const range=dim.getAttribute('ref');if(last&&rowOf(range.split(':').at(-1))<Number(last.getAttribute('r')))dim.setAttribute('ref',range.replace(/\d+$/,last.getAttribute('r')));}}
     for(const [name] of Object.entries(model.files))if(/^xl\/calcChain\.xml$/.test(name))delete model.files[name];
     // Remove the calculation-chain relationship; all supported caches were computed above.

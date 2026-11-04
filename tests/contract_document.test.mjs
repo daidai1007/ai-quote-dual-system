@@ -1,7 +1,9 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {unzipSync,strFromU8,zipSync,strToU8} from 'fflate';
+import {DOMParser} from '@xmldom/xmldom';
 import {inspectContractTemplate,renderContractTemplate,validateContractMapping} from '../api/contract_document.mjs';
 import {contractQuote,upperRmb} from '../api/contract_quote.mjs';
 import {wordTemplate,excelTemplate,sampleQuote,sampleValues,mapped} from './helpers/contract_fixtures.mjs';
+import {ledgerExcelTemplate} from './helpers/contract_ledger_fixtures.mjs';
 for(const [format,make] of [['docx',wordTemplate],['xlsx',excelTemplate]])test(format+' replaces only configured fields, expands products and preserves formatting',()=>{
  const before=make(),inspection=inspectContractTemplate(before,format),mapping=mapped(inspection,format);
  assert.ok(mapping.items);assert.ok(mapping.fields.some(f=>f.source==='buyer_name'));
@@ -10,6 +12,38 @@ for(const [format,make] of [['docx',wordTemplate],['xlsx',excelTemplate]])test(f
  assert.match(main,/本机测试客户 A/);assert.match(main,/本机回归柜甲/);assert.match(main,/本机回归柜乙/);assert.match(main,/500/);assert.doesNotMatch(main,/\{\{/);
  if(format==='docx'){assert.match(strFromU8(files['word/header1.xml']),/人工模板页眉/);assert.match(main,/w:tblHeader/);assert.match(main,/供方签章/);}
  else{assert.match(main,/SUM\(G9:G10\)/);assert.match(main,/<v>650\.3<\/v>/);assert.match(main,/A11:F11/);assert.match(strFromU8(files['xl/workbook.xml']),/\$G\$14/);assert.match(strFromU8(files['xl/worksheets/sheet2.xml']),/'合同'!G11/);assert.deepEqual(files['xl/styles.xml'],unzipSync(before)['xl/styles.xml']);}
+});
+test('ledger Excel displays whole yuan without decimals and preserves fractional amounts and totals',()=>{
+ const items=[
+  {...sampleQuote.items[0],quantity:12,unit_price:975,total:11700},
+  {...sampleQuote.items[1],quantity:1,unit_price:0,total:0},
+  {...sampleQuote.items[1],quantity:10,unit_price:100.1,total:1001},
+ ];
+ const render=(make,rows,total,enabled)=>{
+  const bytes=make(),inspection=inspectContractTemplate(bytes,'xlsx');
+  const mapping=make===excelTemplate?mapped(inspection,'xlsx'):inspection.suggested;
+  const files=unzipSync(renderContractTemplate(bytes,'xlsx',mapping,{...sampleValues,total_amount:total,total_upper:upperRmb(total)},rows,{wholeYuanAsInteger:enabled}));
+  const read=part=>new DOMParser().parseFromString(strFromU8(files[part]),'application/xml');
+  const xfs=Array.from(read('xl/styles.xml').getElementsByTagName('cellXfs')[0].getElementsByTagName('xf'));
+  const cells=Array.from(read('xl/worksheets/sheet1.xml').getElementsByTagName('c'));
+  return address=>{
+   const cell=cells.find(node=>node.getAttribute('r')===address),style=xfs[Number(cell.getAttribute('s')||0)];
+   return {format:Number(style.getAttribute('numFmtId')),value:Number(cell.getElementsByTagName('v')[0].textContent),formula:cell.getElementsByTagName('f')[0]?.textContent};
+  };
+ };
+ for(const make of [excelTemplate,ledgerExcelTemplate]){
+  const ledger=render(make,items,12701,true),original=render(make,items,12701,false);
+  for(const [address,value] of [['F9',975],['G9',11700],['F10',0],['G10',0],['G11',1001],['G12',12701]]){
+   assert.deepEqual(ledger(address),{...original(address),format:1,value});
+  }
+  assert.deepEqual(ledger('F11'),original('F11'));
+  assert.equal(ledger('F11').value,100.1);
+  assert.deepEqual(ledger('D9'),original('D9'));
+  assert.notEqual(original('F9').format,1);
+  const fractional=render(make,sampleQuote.items,650.3,true);
+  assert.equal(fractional('G11').value,650.3);
+  assert.notEqual(fractional('G11').format,1);
+ }
 });
 test('ambiguous mappings, unknown fields, unsupported formulas and malicious packages fail explicitly',()=>{
  const bytes=wordTemplate(),i=inspectContractTemplate(bytes,'docx'),m=mapped(i,'docx');
