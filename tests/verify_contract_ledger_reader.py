@@ -3,7 +3,7 @@ from hashlib import sha256
 from pathlib import Path
 import sys,tempfile,unittest,zipfile
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'desktop_client'))
-from contract_ledger import read_ledger,contract_groups,selected_payload,reopen_import,LedgerError,decimal_text
+from contract_ledger import read_ledger,contract_groups,selected_payload,reopen_import,LedgerError,decimal_text,find_header,fangyuan_contract_number
 from contract_ledger_test_data import write_ledger
 
 class LedgerReaderTests(unittest.TestCase):
@@ -25,6 +25,18 @@ class LedgerReaderTests(unittest.TestCase):
         self.assertEqual(data['sheets'][0]['header_row'],2);self.assertEqual(data['sheets'][0]['columns']['remark'],'N')
         self.assertTrue(data['sheets'][0]['warnings']);self.assertEqual(data['records'][0]['remark'],'产品备注1')
         groups=contract_groups(data);payload=selected_payload(data,[groups[0]['key'],groups[2]['key']]);self.assertEqual([r['serial'] for r in payload['records']],['001','003'])
+        self.assertEqual(payload['fields']['contract_no'],'FY-JN-2609063、69')
+
+    def test_fangyuan_compacts_contract_numbers_and_rejects_missing_source(self):
+        rows=[dict(contract_no=n) for n in ('ZJN/S-2609063','ZJN/S2609069','ZJN/S-2609080','ZJN/S-2609084','ZJN/S-2609085','ZJN/S-2609092','ZJN/S-2609106','ZJN/S-2609108','ZJN/S-2609111','ZJN/S-2609123','FY-JN-2609063')]
+        self.assertEqual(fangyuan_contract_number(rows),'FY-JN-2609063、69、80、84、85、92、2609106、108、111、123')
+        with self.assertRaisesRegex(LedgerError,'缺少京能合同号'):
+            fangyuan_contract_number([{'contract_no':''}])
+        with self.assertRaisesRegex(LedgerError,'格式无法识别'):
+            fangyuan_contract_number([{'contract_no':'客户订单号'}])
+        header=['序号','名称','规格型号','数量','单位','含税单价','小计','备注','钉钉合同号']
+        _,mapping,warnings=find_header(lambda _:header,1,'FANGYUAN')
+        self.assertNotIn('contract_no',mapping);self.assertIn('京能合同号',warnings[0])
 
     def test_invalid_amount_blocked_and_duplicate_serials_kept(self):
         data=read_ledger(write_ledger(self.folder/'synthetic.xls',bad=True),'NUOYUE');groups=contract_groups(data)

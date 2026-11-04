@@ -5,7 +5,7 @@ import {DOMParser,XMLSerializer} from '@xmldom/xmldom';
 import path from 'node:path';
 import {evaluateCells} from './contract_formula.mjs';
 import {CUSTOMER_PROFILE_FIELDS} from './customer_profile.mjs';
-import {uniformWordProductRows,uniformExcelProductRows} from './contract_item_row_layout.mjs';
+import {fitWordProductRows,fitExcelProductRows} from './contract_item_row_layout.mjs';
 const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const S='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const R='http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -191,7 +191,7 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
       renderedProductRows.push(clone);
     }
     row.node.parentNode.removeChild(row.node);
-    uniformWordProductRows(renderedProductRows,model);
+    fitWordProductRows(renderedProductRows,model);
     for(const part of model.parts.values())for(const node of [...descendants(part,W,'t')])if(/[\r\n]/.test(node.textContent)){
       const lines=node.textContent.replace(/\r\n?/g,'\n').split('\n');
       lines.forEach((line,index)=>{if(index)node.parentNode.insertBefore(node.ownerDocument.createElementNS(W,'w:br'),node);const t=node.cloneNode(false);t.setAttribute('xml:space','preserve');t.textContent=line;node.parentNode.insertBefore(t,node);});node.parentNode.removeChild(node);
@@ -230,7 +230,7 @@ export function renderContractTemplate(bytes,format,mapping,values,items){
       if(i)sheetData.insertBefore(clone,anchor);
       renderedProductRows.push(clone);
     }
-    uniformExcelProductRows(renderedProductRows,model,row.part);
+    fitExcelProductRows(renderedProductRows,model,row.part);
     const sheetMaps=new Map();
     for(const sheet of model.sheets){const cells=new Map();for(const cell of descendants(sheet.doc,S,'c')){const type=cell.getAttribute('t');const loc=model.locations.find(l=>l.node===cell);let value=type==='inlineStr'?descendants(cell,S,'t').map(t=>t.textContent).join(''):type==='s'?loc?.text||'':child(cell,'v')?.textContent||'';if(!['s','inlineStr','str'].includes(type)&&value!=='')value=Number(value);cells.set(cell.getAttribute('r'),{value,formula:child(cell,'f')?.textContent,node:cell});}sheetMaps.set(sheet.name,cells);}
     for(const cells of sheetMaps.values())for(const cell of cells.values())if(typeof cell.value==='string'&&tokens(cell.value).length)fail('合同仍有未填字段，请完善模板配置');

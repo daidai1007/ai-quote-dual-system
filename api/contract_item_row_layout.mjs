@@ -1,4 +1,4 @@
-/** One content-dependent minimum for every generated product row.
+/** Fit each generated product row to its own content.
  * Changes layout only: quotation values, template clauses and formulas remain untouched.
  */
 import {DOMParser} from '@xmldom/xmldom';
@@ -15,25 +15,45 @@ const xmlFile=(files,name)=>files[name]?new DOMParser().parseFromString(strFromU
 
 // Conservative advances avoid depending on installed fonts in the API container.
 // Hard line breaks and tab stops count even when a neighbouring row is shorter.
+function glyphWidthFactor(ch){
+ if(ch==='\t')return 2;
+ if(ch===' ')return .5;
+ if(/[ilI.,:;'`!|]/u.test(ch))return .36;
+ if(/[0-9]/u.test(ch))return .63;
+ if(/[mwMW@%]/u.test(ch))return 1;
+ if(/[\x20-\x7e]/u.test(ch))return .72;
+ return ch.codePointAt(0)>0xffff?1.3:1.05;
+}
 export function wrappedProductLines(value,width,fontSize){
- const available=Math.max(fontSize,width*.90),text=String(value??'').replace(/\r\n?/g,'\n');
+ const available=Math.max(fontSize,width),text=String(value??'').replace(/\r\n?/g,'\n');
  let total=0;
  for(const hardLine of text.split('\n')){
   let lines=1,used=0;
-  for(const ch of hardLine){
-   const factor=ch==='\t'?2:ch===' '?.5:/[ilI.,:;'`!|]/u.test(ch)?.36:/[0-9]/u.test(ch)?.63:/[mwMW@%]/u.test(ch)?1:/[\x20-\x7e]/u.test(ch)?.72:ch.codePointAt(0)>0xffff?1.3:1.05;
-   const advance=fontSize*factor;
-   if(used>0&&used+advance>available){lines++;used=0;}
-   used+=advance;
+  for(const token of hardLine.match(/[A-Za-z0-9][A-Za-z0-9._/+×*-]*|[\s\S]/gu)||[]){
+   const advances=Array.from(token,ch=>fontSize*glyphWidthFactor(ch));
+   const tokenWidth=advances.reduce((sum,advance)=>sum+advance,0);
+   if(tokenWidth<=available){
+    if(used+tokenWidth>available){lines++;used=0;}
+    used+=tokenWidth;
+    continue;
+   }
+   for(const advance of advances){
+    if(used>0&&used+advance>available){lines++;used=0;}
+    used+=advance;
+   }
   }
   total+=lines;
  }
  return Math.max(1,total);
 }
-export function sharedProductHeight(cells){
+function productRowHeight(cells){
  let height=0;
- for(const c of cells){const lines=wrappedProductLines(c.text,c.width,c.fontSize);height=Math.max(height,lines*c.lineHeight+c.padding);}
- return Math.ceil(Math.max(18,height)*2)/2;
+ for(const c of cells){
+  if(c.text==='')continue;
+  const lines=wrappedProductLines(c.text,c.width,c.fontSize);
+  height=Math.max(height,lines*c.lineHeight+c.padding);
+ }
+ return Math.ceil(height*2)/2;
 }
 function wordDefaultFont(files){const doc=xmlFile(files,'word/styles.xml');const node=all(doc,W,'docDefaults')[0];return numeric(all(node,W,'sz')[0],'val',24)/2;}
 function wordCellLayout(cell,width,defaultFont){
@@ -45,43 +65,52 @@ function wordCellLayout(cell,width,defaultFont){
   padding+=numeric(sp,'before')/20+numeric(sp,'after')/20;
  }
  const indent=paras.reduce((m,p)=>Math.max(m,numeric(child(child(p,'pPr'),'ind'),'left')/20+numeric(child(child(p,'pPr'),'ind'),'right')/20),0);
- return {text,width:Math.max(fontSize,width-margin('left')-margin('right')-indent-3),fontSize,lineHeight,padding};
+ return {text,width:(width-margin('left')-margin('right')-indent-3)*.90,fontSize,lineHeight,padding};
 }
-export function uniformWordProductRows(rows,model){
+export function fitWordProductRows(rows,model){
  if(!rows.length)return;
  const table=rows[0].parentNode,grid=kids(child(table,'tblGrid'),'gridCol').map(n=>numeric(n,'w',1440)/20);
- const defaultFont=wordDefaultFont(model.files),layouts=[];
- for(const row of rows){let col=0;for(const cell of kids(row,'tc')){const span=numeric(child(child(cell,'tcPr'),'gridSpan'),'val',1);const explicit=numeric(child(child(cell,'tcPr'),'tcW'),'w')/20;
-  const width=grid.slice(col,col+span).reduce((a,b)=>a+b,0)||explicit||72;layouts.push(wordCellLayout(cell,width,defaultFont));col+=span;
- }}
- const height=sharedProductHeight(layouts);
+ const defaultFont=wordDefaultFont(model.files);
  const section=all(model.parts.get('word/document.xml'),W,'sectPr')[0],page=numeric(child(section,'pgSz'),'h',16838)/20,margin=child(section,'pgMar');
  const available=page-(numeric(margin,'top',1440)+numeric(margin,'bottom',1440))/20-30;
- if(height>available)throw Object.assign(Error('产品备注或规格超过单页可容纳高度，请拆分说明后重新生成；内容未被截断。'),{statusCode:400});
- for(const row of rows){const pr=ensure(row,W,'w','trPr',true);for(const n of kids(pr,'trHeight'))pr.removeChild(n);const h=ensure(pr,W,'w','trHeight');attr(h,'val',Math.ceil(height*20));attr(h,'hRule','atLeast');
+ for(const row of rows){
+  let col=0;
+  const layouts=kids(row,'tc').map(cell=>{
+   const props=child(cell,'tcPr'),span=numeric(child(props,'gridSpan'),'val',1),explicit=numeric(child(props,'tcW'),'w')/20;
+   const width=grid.slice(col,col+span).reduce((a,b)=>a+b,0)||explicit||72;
+   col+=span;
+   return wordCellLayout(cell,width,defaultFont);
+  });
+  if(productRowHeight(layouts)>available)throw Object.assign(Error('产品备注或规格超过单页可容纳高度，请拆分说明后重新生成；内容未被截断。'),{statusCode:400});
+  const pr=ensure(row,W,'w','trPr',true);for(const n of kids(pr,'trHeight'))pr.removeChild(n);
+  const h=ensure(pr,W,'w','trHeight');attr(h,'val',0);attr(h,'hRule','auto');
   attr(ensure(pr,W,'w','cantSplit'),'val','1');
-  // A minimum, recalculated for this document, keeps rows equal without exact-height clipping.
   for(const cell of kids(row,'tc')){const cp=ensure(cell,W,'w','tcPr',true);attr(ensure(cp,W,'w','vAlign'),'val','center');}
  }
 }
 const colIndex=letters=>[...letters].reduce((n,c)=>n*26+c.charCodeAt(0)-64,0);
 function excelStyles(model){return xmlFile(model.files,'xl/styles.xml');}
 function excelText(cell,files){const t=cell.getAttribute('t');if(t==='inlineStr')return all(cell,S,'t').map(n=>n.textContent).join('');if(t==='s'){const ss=xmlFile(files,'xl/sharedStrings.xml');return all(ss,S,'si')[Number(child(cell,'v')?.textContent)]?.textContent||'';}return child(cell,'v')?.textContent||'';}
-export function uniformExcelProductRows(rows,model,part){
+export function fitExcelProductRows(rows,model,part){
  if(!rows.length)return;
- const sheet=model.parts.get(part),style=excelStyles(model),xfs=kids(child(style?.documentElement,'cellXfs'),'xf'),fonts=kids(child(style?.documentElement,'fonts'),'font');const layouts=[];
+ const sheet=model.parts.get(part),style=excelStyles(model),xfs=kids(child(style?.documentElement,'cellXfs'),'xf'),fonts=kids(child(style?.documentElement,'fonts'),'font');
  const columns=all(sheet,S,'col'),merges=all(sheet,S,'mergeCell').map(n=>n.getAttribute('ref').split(':'));
  const widthOf=index=>{let width=8.43;for(const n of columns)if(Number(n.getAttribute('min'))<=index&&index<=Number(n.getAttribute('max')))width=Number(n.getAttribute('width'))||width;return (Math.floor(width*7+5))*.75;};
- for(const row of rows)for(const cell of kids(row,'c')){
+ const layoutsFor=row=>kids(row,'c').map(cell=>{
   const addr=cell.getAttribute('r'),letters=addr.match(/^[A-Z]+/)[0],index=colIndex(letters),merged=merges.find(([a,b])=>a===addr&&b?.match(/\d+$/)[0]===a.match(/\d+$/)[0]);
   const last=merged?colIndex(merged[1].match(/^[A-Z]+/)[0]):index;let width=0;for(let col=index;col<=last;col++)width+=widthOf(col);
   const xf=xfs[Number(cell.getAttribute('s')||0)],font=fonts[Number(xf?.getAttribute('fontId')||0)],fontSize=Number(child(font,'sz')?.getAttribute('val'))||11;
-  layouts.push({text:excelText(cell,model.files),width:Math.max(fontSize,width-10),fontSize,lineHeight:fontSize*1.45,padding:7});
- }
- const height=sharedProductHeight(layouts);
- if(height>409.5)throw Object.assign(Error('产品备注或规格超过 Excel 单行高度上限，请拆分说明后重新生成；内容未被截断。'),{statusCode:400});
+  return {address:addr,text:excelText(cell,model.files),width:(width-5)*.97,fontSize,lineHeight:fontSize*1.24,padding:4};
+ });
  const cache=new Map();let changed=false;
- for(const row of rows){row.setAttribute('ht',String(height));row.setAttribute('customHeight','1');
+ for(const [index,row] of rows.entries()){
+  const layouts=layoutsFor(row),height=productRowHeight(layouts);
+  if(height>409.5){
+   const cell=layouts.find(layout=>productRowHeight([layout])===height);
+   throw Object.assign(Error(`第 ${index+1} 条产品明细（${cell.address} 单元格）的文字预计需要 ${height} 磅，超过 Excel 单行高度上限 409.5 磅。请拆分说明后重新生成，内容未被截断。`),{statusCode:400});
+  }
+  if(height>0){row.setAttribute('ht',String(height));row.setAttribute('customHeight','1');}
+  else{row.removeAttribute('ht');row.removeAttribute('customHeight');}
   for(const cell of kids(row,'c')){
    if(!style||!xfs.length)continue;const id=Number(cell.getAttribute('s')||0);let next=cache.get(id);
    if(next===undefined){const current=child(xfs[id],'alignment');
@@ -92,7 +121,7 @@ export function uniformExcelProductRows(rows,model,part){
    cell.setAttribute('s',String(next));
   }
  }
- const ends=keepExcelProductRowsOnPages(rows,model,sheet,widthOf,height);
+ const ends=keepExcelProductRowsOnPages(rows,model,sheet,widthOf);
  if(style&&ends.length){
   // Templates often draw only the top edge of a row. Close the last whole row
   // before a page break so its visible height is as clear as every other row.
@@ -115,7 +144,7 @@ export function uniformExcelProductRows(rows,model,part){
  }
  if(changed)model.parts.set('xl/styles.xml',style);
 }
-function keepExcelProductRowsOnPages(rows,model,sheet,widthOf,height){
+function keepExcelProductRowsOnPages(rows,model,sheet,widthOf){
  const setup=child(sheet.documentElement,'pageSetup'),margins=child(sheet.documentElement,'pageMargins');
  const paper={1:[612,792],5:[612,1008],8:[841.9,1190.6],9:[595.3,841.9],11:[419.5,595.3]}[Number(setup?.getAttribute('paperSize'))]||[595.3,841.9];
  const [paperWidth,paperHeight]=setup?.getAttribute('orientation')==='landscape'?[paper[1],paper[0]]:paper;
@@ -132,9 +161,10 @@ function keepExcelProductRowsOnPages(rows,model,sheet,widthOf,height){
  for(let n=1;n<start;n++)used+=rowHeight(kids(data,'row').find(r=>Number(r.getAttribute('r'))===n));
  const titles=names.find(n=>n.getAttribute('name')==='_xlnm.Print_Titles'&&Number(n.getAttribute('localSheetId')||0)===sheetIndex)?.textContent||'';
  const repeat=titles.match(/\$?(\d+):\$?(\d+)/);let repeated=0;if(repeat)for(let n=Number(repeat[1]);n<=Number(repeat[2]);n++)repeated+=rowHeight(kids(data,'row').find(r=>Number(r.getAttribute('r'))===n));
- if(height+repeated>available)throw Object.assign(Error('产品备注超过当前打印页可容纳的统一行高，请拆分说明后重新生成。'),{statusCode:400});
  let breaks=child(sheet.documentElement,'rowBreaks');const ends=[];
  for(const [position,row] of rows.entries()){const index=Number(row.getAttribute('r'));
+  const height=rowHeight(row);
+  if(height+repeated>available)throw Object.assign(Error('产品备注超过当前打印页可容纳的单行高度，请拆分说明后重新生成。'),{statusCode:400});
   if(used+height>available){
    if(!breaks){breaks=sheet.createElementNS(S,'rowBreaks');const after=child(sheet.documentElement,'pageSetup')||child(sheet.documentElement,'pageMargins');sheet.documentElement.insertBefore(breaks,after?after.nextSibling:null);}
    if(!kids(breaks,'brk').some(n=>Number(n.getAttribute('id'))===index-1)){const b=sheet.createElementNS(S,'brk');b.setAttribute('id',String(index-1));b.setAttribute('min','0');b.setAttribute('max','16383');b.setAttribute('man','1');breaks.appendChild(b);}

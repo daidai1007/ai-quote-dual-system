@@ -13,6 +13,7 @@ from contract_ledger_test_data import write_ledger
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLineEdit,QPlainTextEdit
 
 class LedgerStateTests(unittest.TestCase):
     window=fixture.LoginTests.window
@@ -109,12 +110,46 @@ class LedgerStateTests(unittest.TestCase):
         data['sheets'].append(dict(name=row['sheet'],header_row=1,record_count=1,columns={},warnings=[]))
         self.l.load_import(data);self.l.selection.item(0,0).setCheckState(Qt.CheckState.Checked)
         self.l.sheet.setCurrentIndex(1);self.l.selection.item(0,0).setCheckState(Qt.CheckState.Checked);self.l.go(1)
-        self.assertEqual(self.l.items.rowCount(),2);self.l.items.item(0,7).setText('独立备注')
-        self.l.go(0);self.l.go(1);self.assertEqual(self.l.items.item(0,7).text(),'独立备注')
-        self.l.documents.item(0,0).setText('SYNTHETIC-REOPEN');payload=self.l.input_data()
+        self.assertEqual(self.l.items.rowCount(),2)
+        def double_click(table,row,col):
+            item=table.item(row,col)
+            table.scrollToItem(item)
+            fixture.APP.processEvents()
+            point=table.visualItemRect(item).intersected(table.viewport().rect()).center()
+            QTest.mouseClick(table.viewport(),Qt.MouseButton.LeftButton,pos=point)
+            QTest.mouseDClick(table.viewport(),Qt.MouseButton.LeftButton,pos=point)
+            fixture.APP.processEvents()
+
+        self.assertEqual(self.l.documents.item(0,0).text(),'FY-JN-2609063')
+        double_click(self.l.documents,0,0)
+        self.assertIs(fixture.APP.focusWidget(),self.l.documents)
+        self.assertEqual(self.l.payload['fields']['contract_no'],'FY-JN-2609063')
+
+        double_click(self.l.documents,0,1)
+        editor=fixture.APP.focusWidget()
+        self.assertIsInstance(editor,QLineEdit)
+        QTest.keyClick(editor,Qt.Key.Key_A,Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClicks(editor,'2026-10-17');QTest.keyClick(editor,Qt.Key.Key_Return)
+        fixture.wait(lambda:self.l.documents.item(0,1).text()=='2026-10-17')
+        self.assertEqual(self.l.payload['fields']['sign_date'],'2026-10-17')
+
+        double_click(self.l.items,0,7)
+        editor=self.l.items.findChild(QPlainTextEdit)
+        self.assertIsNotNone(editor,'备注格双击后应可输入')
+        editor.setPlainText('独立备注\n第二行')
+        self.l.documents.setFocus();fixture.APP.processEvents()
+        self.assertEqual(self.l.items.item(0,7).text(),'独立备注\n第二行')
+        for table,row,col in ((self.l.documents,0,2),(self.l.items,0,1),(self.l.items,0,6)):
+            double_click(table,row,col)
+            self.assertIs(fixture.APP.focusWidget(),table)
+
+        self.l.go(0);self.l.go(1);self.assertEqual(self.l.items.item(0,7).text(),'独立备注\n第二行')
+        payload=self.l.input_data()
+        payload['fields']['contract_no']='LEGACY-MANUAL'
         self.l.load_import(reopen_import(payload),payload);self.assertEqual(self.l.items.rowCount(),2)
-        self.assertEqual(len(self.l.selected_keys),2);self.assertEqual(self.l.items.item(0,7).text(),'独立备注')
-        self.assertEqual(self.l.input_data()['fields']['contract_no'],'SYNTHETIC-REOPEN')
+        self.assertEqual(len(self.l.selected_keys),2);self.assertEqual(self.l.items.item(0,7).text(),'独立备注\n第二行')
+        self.assertEqual(self.l.input_data()['fields']['contract_no'],'FY-JN-2609063')
+        self.assertEqual(self.l.input_data()['fields']['sign_date'],'2026-10-17')
 
     def test_unsaved_ledger_and_quote_guards_and_explicit_discard(self):
         self.load('NUOYUE');self.l.select_all();self.l.go(1)

@@ -96,19 +96,22 @@ class LedgerUITests(unittest.TestCase):
     def test_02_fangyuan_merge_new_number_word_and_permissions(self):
         self.upload_and_read('FANGYUAN','docx')
         for i in (0,2):self.l.selection.item(i,0).setCheckState(Qt.CheckState.Checked)
-        self.l.go(1);self.assertEqual(self.l.documents.rowCount(),1);self.assertEqual(self.l.documents.item(0,0).text(),'')
+        self.l.go(1);self.assertEqual(self.l.documents.rowCount(),1);self.assertEqual(self.l.documents.item(0,0).text(),'FY-JN-2609063、69')
         self.assertEqual(self.l.documents.item(0,1).text(),ui.contract_today())
-        self.l.generate();self.settled();self.assertIsNone(self.l.record);self.assertIn('编号',self.p.notice.text())
-        self.l.documents.item(0,0).setText('SYNTHETIC-FY-MERGED');self.l.items.item(0,7).setText('方圆人工备注')
+        self.assertFalse(self.l.documents.item(0,0).flags() & Qt.ItemFlag.ItemIsEditable)
+        self.l.items.item(0,7).setText('方圆人工备注')
         self.l.save_draft();self.settled();self.assertIsNotNone(self.l.draft,self.p.notice.text())
         draft=deepcopy(self.l.draft);self.l.new_contract()
         with patch.object(ledger_ui,'read_ledger',side_effect=AssertionError('Reopening must use the saved snapshot')):
             self.l.open_draft(self.l.drafts.findData(draft['draft_id']));self.settled()
-        self.assertEqual(self.l.documents.item(0,0).text(),'SYNTHETIC-FY-MERGED');self.assertEqual(self.l.items.item(0,7).text(),'方圆人工备注')
+        self.assertEqual(self.l.documents.item(0,0).text(),'FY-JN-2609063、69');self.assertEqual(self.l.items.item(0,7).text(),'方圆人工备注')
         self.l.generate();self.settled();self.assertEqual(len(self.l.generated_records),1,self.p.notice.text())
         snapshot=self.l.record['generation_snapshot'];self.assertEqual(len(snapshot['quote']['items']),2);self.assertEqual(snapshot['quote']['total'],449.99)
-        self.assertEqual(snapshot['fields']['contract_no'],'SYNTHETIC-FY-MERGED');self.assertTrue(self.l.preview_pages,self.p.notice.text())
-        with ZipFile(self.l.output['path']) as package:self.assertIn('方圆人工备注',package.read('word/document.xml').decode())
+        self.assertEqual(snapshot['fields']['contract_no'],'FY-JN-2609063、69');self.assertTrue(self.l.preview_pages,self.p.notice.text())
+        with ZipFile(self.l.output['path']) as package:
+            document=package.read('word/document.xml').decode()
+            self.assertIn('方圆人工备注',document)
+            self.assertIn('FY-JN-2609063、69',document)
         target=self.folder/'export.docx'
         with patch.object(ui.QFileDialog,'getSaveFileName',return_value=(str(target),'')):self.l.export_file()
         self.assertEqual(sha256(target.read_bytes()).hexdigest(),self.l.record['file_sha256']);self.screenshot('04_实际程序_方圆合并合同预览.png')

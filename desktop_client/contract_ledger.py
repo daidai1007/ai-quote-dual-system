@@ -16,12 +16,13 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 CUSTOMERS = {
-    'NUOYUE': {'name': '杭州诺玥科技有限公司', 'sheet': '诺玥科技', 'group_by': 'contract_no'},
-    'FANGYUAN': {'name': '杭州方圆塑机股份有限公司', 'sheet_prefix': '方圆接手', 'group_by': 'record'},
+    'NUOYUE': {'name': '杭州诺玥科技有限公司', 'sheet': '诺玥科技', 'group_by': 'contract_no', 'number_column': '钉钉合同号'},
+    'FANGYUAN': {'name': '杭州方圆塑机股份有限公司', 'sheet_prefix': '方圆接手', 'group_by': 'record', 'number_column': '京能合同号'},
 }
 LIMITS = dict(file_bytes=64*1024*1024, xml_bytes=256*1024*1024, sheets=80,
               rows=200000, records=50000, selected=2000, contract_rows=500)
 MONEY = Decimal('0.01')
+FANGYUAN_NUMBER = re.compile(r'(?:ZJN/S-?|FY-JN-)?([0-9]{7})', re.IGNORECASE)
 ALIASES = {
     'serial': ('序号',), 'name': ('名称', '产品名称'),
     'specification': ('规格型号（W*H*D）', '规格型号(W*H*D)', '规格型号', '尺寸', '型号'),
@@ -106,8 +107,8 @@ def find_header(get_values, row_count, customer_key):
         mapping = {}
         for field, aliases in ALIASES.items():
             choices = aliases
-            if field == 'contract_no' and customer_key == 'FANGYUAN':
-                choices = ('京能合同号', '钉钉合同号')
+            if field == 'contract_no':
+                choices = (CUSTOMERS[customer_key]['number_column'],)
             for alias in choices:
                 indices = [i for i, v in enumerate(values) if v == header_text(alias)]
                 if indices:
@@ -118,8 +119,10 @@ def find_header(get_values, row_count, customer_key):
             after_amount = [i for i in remark_indices if i > mapping['total']]
             mapping['remark'] = min(after_amount or remark_indices)
             warnings = ['存在同名备注列，读取产品明细旁的 '+column_name(mapping['remark'])+' 列备注。'] if len(remark_indices)>1 else []
+            if 'contract_no' not in mapping:
+                warnings.append('未找到京能合同号列，本表记录不能用于生成合同。')
             return row, mapping, warnings
-    raise LedgerError('未找到完整台账表头，请核对序号、名称、规格、数量、单位、含税单价、小计和备注列。')
+    raise LedgerError('未找到完整台账表头，请核对序号、名称、规格、数量、单位、含税单价、小计和备注列。诺玥台账还需有钉钉合同号列。')
 
 
 def record_key(file_hash, sheet, row):
@@ -231,10 +234,12 @@ def read_ledger(path, customer_key):
         raise LedgerError('未找到所选客户的工作表，请核对台账文件')
     if not result['records']:
         raise LedgerError('所选客户的工作表中没有可用序号记录')
-    if customer_key=='NUOYUE':
-        for row in result['records']:
-            if not row['contract_no']:
-                row['issues'].append('钉钉合同号缺失，不能合并到空合同号中')
+    number_column=CUSTOMERS[customer_key]['number_column']
+    for row in result['records']:
+        if not row['contract_no']:
+            row['issues'].append(f'{number_column}缺失，不能生成合同')
+        elif customer_key=='FANGYUAN' and not FANGYUAN_NUMBER.fullmatch(row['contract_no']):
+            row['issues'].append('京能合同号格式无法识别，请核对台账')
     serials=Counter((r['sheet'],r['serial']) for r in result['records'])
     result['duplicate_serial_records']=sum(serials[(r['sheet'],r['serial'])]>1 for r in result['records'])
     after=path.stat()
@@ -311,7 +316,7 @@ def _read_xlsx(data,digest,customer_key,result):
 def contract_groups(imported, sheet=None):
     records=[r for r in imported['records'] if sheet is None or r['sheet']==sheet]
     if imported['customer_key']=='FANGYUAN':
-        return [dict(key=r['record_id'],number=r['serial'],records=[r],issues=r['issues']) for r in records]
+        return [dict(key=r['record_id'],number=r['contract_no'],records=[r],issues=r['issues']) for r in records]
     grouped={}
     for row in records:
         key=row['contract_no'] or 'missing:'+row['record_id']
@@ -319,6 +324,29 @@ def contract_groups(imported, sheet=None):
         group['records'].append(row)
         group['issues'].extend(row['issues'])
     return list(grouped.values())
+
+
+def fangyuan_contract_number(records):
+    """Use the contract's FY-JN prefix and abbreviate numbers within each block."""
+    blocks = {}
+    for row in records:
+        number = row['contract_no']
+        if not number:
+            raise LedgerError('所选记录缺少京能合同号，请核对并重新读取台账。')
+        match = FANGYUAN_NUMBER.fullmatch(number)
+        if not match:
+            raise LedgerError('京能合同号格式无法识别，请核对并重新读取台账。')
+        digits = match[1]
+        blocks.setdefault(digits[:5], {})[digits] = None
+    parts = []
+    for block in blocks.values():
+        first, *rest = block
+        parts.append(first)
+        parts.extend(str(int(number[-3:])) for number in rest)
+    value = 'FY-JN-' + '、'.join(parts)
+    if len(value) > 200:
+        raise LedgerError('合并后的京能合同号超过 200 字，请分批选择。')
+    return value
 
 
 def selected_payload(imported, selected_keys, remarks=None, fields=None, document_fields=None, sheet=None):
@@ -334,15 +362,22 @@ def selected_payload(imported, selected_keys, remarks=None, fields=None, documen
         raise LedgerError('单份合同超过 500 行，请分批选择')
     row_ids={r['record_id'] for r in rows}
     clean_remarks={key:value for key,value in (remarks or {}).items() if key in row_ids}
+    clean_fields = dict(fields or {})
+    if imported['customer_key']=='FANGYUAN':
+        clean_fields['contract_no'] = fangyuan_contract_number(rows)
     return dict(schema=1,customer_key=imported['customer_key'],source=imported['source'],
         records=[{key:value for key,value in row.items() if key!='issues'} for row in rows],
-        remarks=clean_remarks,fields=fields or {},document_fields=document_fields or [])
+        remarks=clean_remarks,fields=clean_fields,document_fields=document_fields or [])
 
 
 def reopen_import(payload):
     if payload.get('schema')!=1 or payload.get('customer_key') not in CUSTOMERS:
         raise LedgerError('台账合同草稿格式不支持')
     records=[{**row,'issues':[]} for row in payload.get('records',[])]
+    for row in records:
+        if not row['contract_no']:
+            number_column=CUSTOMERS[payload['customer_key']]['number_column']
+            row['issues'].append(f'{number_column}缺失，不能生成合同')
     sheets=list(dict.fromkeys(r['sheet'] for r in records))
     return dict(schema=1,customer_key=payload['customer_key'],customer_name=CUSTOMERS[payload['customer_key']]['name'],
                 source=payload['source'],records=records,sheets=[dict(name=s,header_row=0,record_count=sum(r['sheet']==s for r in records),columns={},warnings=[]) for s in sheets],

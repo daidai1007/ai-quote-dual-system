@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPlainTextEdit, QDialog, QLayout, QSizePolicy)
 import contract_management as contracts
 from contract_ledger import (CUSTOMERS, LedgerError, read_ledger, contract_groups,
-    selected_payload, reopen_import)
+    selected_payload, reopen_import, fangyuan_contract_number)
 
 METRICS = dict(gap=12, selection_height=200, row_height=64, preview_height=260)
 READ_ONLY = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
@@ -38,6 +38,19 @@ class ReadWorker(QThread):
             if not self.isInterruptionRequested():
                 self.error=str(error) if isinstance(error,(LedgerError,OSError)) else '台账读取失败，请核对文件格式及表头。'
         finally:self.completed=True
+
+
+class DocumentFieldDelegate(QStyledItemDelegate):
+    def eventFilter(self, editor, event):
+        event_type = event.type()
+        if event_type in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress) and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event_type == QEvent.Type.ShortcutOverride:
+                event.accept()
+            else:
+                self.commitData.emit(editor)
+                self.closeEditor.emit(editor)
+            return True
+        return super().eventFilter(editor, event)
 
 
 class RemarkDelegate(QStyledItemDelegate):
@@ -108,7 +121,7 @@ class LedgerContractPanel(QWidget):
         row.addWidget(contracts.label('工作表'));row.addWidget(self.sheet,1);row.addWidget(self.search,3);content.addLayout(row)
         self.source_note=contracts.label('仅读取台账，不修改原文件。','contractNote');self.source_note.setWordWrap(True);content.addWidget(self.source_note)
         box.addWidget(frame)
-        self.selection=contracts.table(('选择','钉钉合同号 / 原序号','来源序号','产品 / 明细数','台账合计','核对状态'),'ledgerSelection')
+        self.selection=contracts.table(('选择','台账合同号','来源序号','产品 / 明细数','台账合计','核对状态'),'ledgerSelection')
         self.selection.setMinimumHeight(METRICS['selection_height']);self.selection.setMaximumHeight(16777215)
         self.selection.itemChanged.connect(self.selection_edited);self.selection.itemDoubleClicked.connect(self.source_detail)
         box.addWidget(self.selection,1)
@@ -127,9 +140,13 @@ class LedgerContractPanel(QWidget):
     def build_review(self):
         page=QWidget();box=QVBoxLayout(page);box.setContentsMargins(0,0,0,0)
         self.review_note=contracts.label('合同名称、规格、数量和金额读取台账；备注可修改。','contractNote');self.review_note.setWordWrap(True);box.addWidget(self.review_note)
+        edit_triggers = QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed
         self.documents=contracts.table(('本次合同编号','签约日期（YYYY-MM-DD）','明细行数','合同合计'),'ledgerDocuments')
+        self.documents.setEditTriggers(edit_triggers)
+        self.documents.setItemDelegate(DocumentFieldDelegate(self.documents))
         self.documents.setMaximumHeight(150);self.documents.cellChanged.connect(self.document_edited);box.addWidget(self.documents)
         self.items=contracts.table(('原序号 / 工作表行','产品名称','规格型号','数量','单位','含税单价','金额','备注（可人工修改）'),'ledgerItems')
+        self.items.setEditTriggers(edit_triggers)
         self.items.setMaximumHeight(16777215);self.items.setWordWrap(True)
         self.items.verticalHeader().setMinimumSectionSize(METRICS['row_height'])
         self.items.setItemDelegateForColumn(7,RemarkDelegate(self.items));self.items.cellChanged.connect(self.remark_edited)
@@ -257,15 +274,16 @@ class LedgerContractPanel(QWidget):
         self.groups=contract_groups(self.imported,self.sheet.currentData())
         entry=next((s for s in self.imported['sheets'] if s['name']==self.sheet.currentData()),{})
         self.source_note.setText('原文件只读 · '+str(entry.get('record_count',0))+' 条记录 · '+
-            ('按钉钉合同号选择会包含该合同号下的全部明细。' if self.customer.currentData()=='NUOYUE' else '勾选的原序号将合并到一份新合同。')+' '+ ' '.join(entry.get('warnings',[])))
+            ('按钉钉合同号选择会包含该合同号下的全部明细。' if self.customer.currentData()=='NUOYUE' else '勾选的原序号将合并到一份新合同，编号从京能合同号自动合成。')+' '+ ' '.join(entry.get('warnings',[])))
         self.render_groups()
 
     def render_groups(self):
+        number_column=CUSTOMERS[self.customer.currentData()]['number_column']
         with QSignalBlocker(self.selection):
             self.selection.setRowCount(len(self.groups))
             for i,g in enumerate(self.groups):
                 amount=sum((Decimal(r['total']) for r in g['records'] if r['total']),Decimal(0))
-                values=('',g['number'] or '缺少钉钉合同号','、'.join(r['serial'] for r in g['records']),
+                values=('',g['number'] or '缺少'+number_column,'、'.join(r['serial'] for r in g['records']),
                     g['records'][0]['name']+(' 等 '+str(len(g['records']))+' 条' if len(g['records'])>1 else ''),f'¥ {amount:,.2f}',
                     '；'.join(dict.fromkeys(g['issues'])) or '可生成')
                 for col,value in enumerate(values):
@@ -321,6 +339,11 @@ class LedgerContractPanel(QWidget):
         if not self.payload:return
         self.populating=True
         rows=self.payload['records'];ny=self.payload['customer_key']=='NUOYUE'
+        merged_number=''
+        number_error=''
+        if not ny:
+            try:merged_number=fangyuan_contract_number(rows)
+            except LedgerError as error:number_error=str(error)
         grouped={}
         for r in rows:grouped.setdefault(r['contract_no'] if ny else 'MERGED',[]).append(r)
         fields=self.payload.get('fields',{});overrides={d['contract_no']:d for d in self.payload.get('document_fields',[])}
@@ -331,9 +354,12 @@ class LedgerContractPanel(QWidget):
                 source_dates=set(r['source_date'] for r in records if r['source_date'])
                 source_date=next(iter(source_dates)) if len(source_dates)==1 else ('' if source_dates else contracts.contract_today())
                 sign=overrides.get(key,{}).get('sign_date',fields.get('sign_date',source_date if ny else contracts.contract_today()))
-                values=(key if ny else fields.get('contract_no',''),sign,str(len(records)),f"¥ {sum(Decimal(r['total']) for r in records):,.2f}")
+                values=(key if ny else merged_number,sign,str(len(records)),f"¥ {sum(Decimal(r['total']) for r in records):,.2f}")
                 for col,value in enumerate(values):
-                    cell=QTableWidgetItem(value);cell.setFlags(READ_ONLY | (Qt.ItemFlag.ItemIsEditable if col==1 or (col==0 and not ny) else Qt.ItemFlag.NoItemFlags));self.documents.setItem(i,col,cell)
+                    cell=QTableWidgetItem(value)
+                    cell.setFlags(READ_ONLY | (Qt.ItemFlag.ItemIsEditable if col==1 else Qt.ItemFlag.NoItemFlags))
+                    if col==0:cell.setToolTip(value or number_error)
+                    self.documents.setItem(i,col,cell)
         with QSignalBlocker(self.items):
             self.items.setRowCount(len(rows))
             for i,r in enumerate(rows):
@@ -345,7 +371,7 @@ class LedgerContractPanel(QWidget):
             self.items.horizontalHeader().setSectionResizeMode(col,QHeaderView.ResizeMode.Interactive);self.items.setColumnWidth(col,width)
         self.items.horizontalHeader().setStretchLastSection(False)
         self.amount.setText(f"{len(grouped)} 份合同 · 合计 ¥ {sum(Decimal(r['total']) for r in rows):,.2f}")
-        self.review_note.setText(('诺玥：相同钉钉合同号写入一份合同，产品名称以台账名称为准。' if ny else '方圆：选中序号合并为一份合同，请填写本次新合同编号与签约日期。')+' 双击备注可编辑；修改仅用于当前合同，不回写台账。')
+        self.review_note.setText(('诺玥：按钉钉合同号分组，自动带出合同编号。' if ny else '方圆：选中序号合并为一份合同，合同编号按京能合同号自动合成。')+' 双击签约日期或备注可编辑，修改仅用于当前合同，不回写台账。'+(' '+number_error if number_error else ''))
         self.populating=False
         # Persist the displayed default dates as explicit confirmed input.
         self.capture_documents();self.sync_actions()
@@ -386,6 +412,8 @@ class LedgerContractPanel(QWidget):
         if self.stack.currentIndex()==0:self.prepare_review()
         if not self.payload:raise LedgerError('请先选择台账记录')
         if not self.template.currentData():raise LedgerError('请选择已配置的客户合同模板')
+        if self.payload['customer_key']=='FANGYUAN' and not self.documents.item(0,0).text():
+            raise LedgerError(self.documents.item(0,0).toolTip())
         self.capture_documents();value=deepcopy(self.payload);value['template_version_id']=self.template.currentData();return value
 
     def save_draft(self):
