@@ -1332,9 +1332,12 @@ def install_attachment_v2(namespace):
             add_button = getattr(dialog, "add_attachment_catalog_button", None)
             if add_button is not None:
                 write_supported = body.get("catalog_write_supported") is True
-                add_button.setEnabled(write_supported)
+                from attachment_maintenance import authorized
+                permitted = authorized()
+                add_button.setEnabled(write_supported and permitted)
                 add_button.setToolTip(
-                    "新增到当前启用的附件目录；未配置成本规则时作为仅快速报价附件"
+                    "当前姓名没有公共附件库维护权限"
+                    if not permitted else "新增固定成本附件；面价与成本分别填写"
                     if write_supported
                     else "当前线上服务尚未启用V2附件新增接口"
                 )

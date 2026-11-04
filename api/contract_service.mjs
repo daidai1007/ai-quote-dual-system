@@ -90,11 +90,11 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
  const quote=async(p,input)=>{const s=await source(p,input.scheme_no,input.version_no);return {...s,snapshot:undefined,quote:documentCall(contractQuote,s.snapshot,input.method)};};
  const storeTemplateForCustomer=async(p,input,s)=>{
   identity(p);await requireReady();
-  if(input.customer_code!==s.customer_code)throw error('模板客户必须与所选正式报价一致');
+  if(input.customer_code!==s.customer_code)throw error('模板客户信息不一致');
   const name=text(input.template_name,'模板名称',120),filename=text(input.filename,'文件名',200),format=String(input.format||'').toLowerCase();
   if(!filename.toLowerCase().endsWith('.'+format)||typeof input.content!=='string'||input.content.length>12*1024*1024||!/^[A-Za-z0-9+/]*={0,2}$/.test(input.content))throw error('模板文件格式或内容无效');
   const bytes=Buffer.from(input.content,'base64'),inspection=documentCall(inspectContractTemplate,bytes,format),groupId=input.group_id?uuid(input.group_id):randomUUID();
-  if(!input.group_id&&await query(`SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.contract_template_group g WHERE customer_code=${q(s.customer_code)} AND template_name=${q(name)} AND ${own(p,'g')}))::text;`))throw error('该客户已有同名模板，请选择上传新版本或使用其他模板名称',409);
+  if(!input.group_id&&await query(`SELECT to_jsonb(EXISTS(SELECT 1 FROM calc.contract_template_group g WHERE (customer_code=${q(s.customer_code)} OR customer_name=${q(s.customer_name)}) AND template_name=${q(name)} AND ${own(p,'g')}))::text;`))throw error('该客户已有同名模板，请选择上传新版本或使用其他模板名称',409);
   let result;
   if(input.group_id){
    const expected=number(input.expected_version);
@@ -112,7 +112,30 @@ export function createContractService({runPsql,sqlUnicodeText:q}){
   if(!result)throw error('模板版本已变化，请刷新后重试',409);
   return {...result,inspection};
  };
- const upload=async(p,input)=>{const s=await source(p,input.scheme_no,input.version_no);return storeTemplateForCustomer(p,input,s);};
+ const upload=async(p,input)=>{
+  identity(p);await requireReady();
+  if(!input||typeof input!=='object'||Array.isArray(input))throw error('模板上传信息无效');
+  // Preserve the existing quote-based transport for older clients. New library
+  // uploads identify only the customer, without creating or changing a quote.
+  if(input.scheme_no!=null||input.version_no!=null){
+   const s=await source(p,input.scheme_no,input.version_no);
+   return storeTemplateForCustomer(p,input,s);
+  }
+  if(input.group_id){
+   const group=await query(`SELECT COALESCE((SELECT jsonb_build_object('customer_code',g.customer_code,'customer_name',g.customer_name,'template_name',g.template_name)
+    FROM calc.contract_template_group g WHERE g.group_id=${q(uuid(input.group_id))}::uuid AND ${own(p,'g')}),'null'::jsonb)::text;`);
+   if(!group)throw error('合同模板不存在或只有上传人可以维护',404);
+   if((input.customer_name!=null&&text(input.customer_name,'客户名称')!==group.customer_name)
+     ||(input.customer_code!=null&&input.customer_code!==group.customer_code))throw error('上传新版本不能更换模板所属客户');
+   return storeTemplateForCustomer(p,{...input,customer_code:group.customer_code,template_name:group.template_name},group);
+  }
+  const name=text(input.customer_name,'客户名称');
+  const found=await query(`SELECT jsonb_build_object('matches',count(*),'code',min(company_code))::text
+   FROM calc.ordering_company WHERE btrim(company_name)=${q(name)};`);
+  const customer=contractCustomer({customer_name:name,catalog_customer_code:Number(found?.matches)===1?found.code:null});
+  if(input.customer_code!=null&&input.customer_code!==customer.customer_code)throw error('模板客户信息不一致');
+  return storeTemplateForCustomer(p,{...input,customer_code:customer.customer_code},customer);
+ };
  const inspect=async(p,id)=>{await requireReady();const t=await template(p,id);return {template:{...t,content:undefined},inspection:documentCall(inspectContractTemplate,Buffer.from(t.content,'base64'),t.file_format)};};
  const versions=async(p,id)=>{await requireReady();const t=await template(p,id);return {items:await query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('version_no',version_no,'original_filename',original_filename,'configured',field_mapping IS NOT NULL,'created_at',created_at) ORDER BY version_no DESC),'[]'::jsonb)::text FROM calc.contract_template_version WHERE group_id=${q(t.group_id)}::uuid;`)};};
  const configure=async(p,id,input)=>{

@@ -34,6 +34,7 @@ from quote_analysis import install_quote_analysis
 from quote_management import install_quote_management
 from name_login import install_name_transport, install_name_login
 from contract_management import install_contract_management
+from attachment_maintenance import install_attachment_maintenance
 from client_update_ui import install_client_updates
 
 
@@ -497,6 +498,7 @@ def load_v3_namespace() -> dict:
     install_quote_analysis(namespace)
     install_quote_management(namespace)
     install_contract_management(namespace)
+    install_attachment_maintenance(namespace)
     install_client_updates(namespace)
     install_name_login(namespace)
     return namespace

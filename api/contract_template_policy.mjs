@@ -1,9 +1,13 @@
 // Named colleagues may borrow a configured template when their customer has
 // none. Customer identity and quote/ledger values never come from the template.
+import {createHash} from 'node:crypto';
 const clean=value=>String(value??'').trim().normalize('NFC');
+const nameKey=name=>'contract-name:'+createHash('sha256').update(clean(name)).digest('hex');
 export const templateMatchesCustomer=(template,customer)=>customer.customer_key
   ? clean(template.customer_name)===clean(customer.customer_name)
-  : template.customer_code===customer.customer_code;
+  : template.customer_code===customer.customer_code || (clean(customer.customer_name)!==''
+    && template.customer_code===nameKey(customer.customer_name)
+    && clean(template.customer_name)===clean(customer.customer_name));
 export const hasBuyerMapping=mapping=>(mapping?.fields||[]).some(field=>field.source==='buyer_name');
 export const buyerMappingSql=alias=>`EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${alias}.field_mapping->'fields','[]'::jsonb)) buyer_field WHERE buyer_field->>'source'='buyer_name')`;
 export const ledgerMappingSql=alias=>`COALESCE((${alias}.field_mapping#>'{items,columns}') ?& ARRAY['name','specification','quantity','unit','unit_price','total','remark'],FALSE)`;
@@ -11,7 +15,7 @@ export const ledgerMappingSql=alias=>`COALESCE((${alias}.field_mapping#>'{items,
 export function createContractTemplatePolicy({query,q}) {
   const matching=(customer,alias)=>customer.customer_key
     ? `btrim(${alias}.customer_name)=${q(clean(customer.customer_name))}`
-    : `${alias}.customer_code=${q(customer.customer_code)}`;
+    : `(${alias}.customer_code=${q(customer.customer_code)}${clean(customer.customer_name)?` OR (${alias}.customer_code=${q(nameKey(customer.customer_name))} AND btrim(${alias}.customer_name)=${q(clean(customer.customer_name))})`:''})`;
   const ownAvailable=customer=>`EXISTS(SELECT 1 FROM calc.contract_template_group own_g
     ${customer.customer_key?'JOIN calc.contract_template_version own_v ON own_v.group_id=own_g.group_id':`JOIN LATERAL(SELECT field_mapping FROM calc.contract_template_version own_version
       WHERE own_version.group_id=own_g.group_id ORDER BY version_no DESC LIMIT 1) own_v ON TRUE`}

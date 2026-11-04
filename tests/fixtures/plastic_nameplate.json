@@ -1,0 +1,23 @@
+{
+  "attachment_price_id": 1238,
+  "data_version": "synthetic-plastic-nameplate",
+  "category_level1": "其他附件",
+  "category_level2": "",
+  "category_level3": "",
+  "item_name": "塑料标牌",
+  "unit": "件",
+  "price": 2,
+  "model_code": null,
+  "width_mm": null,
+  "height_mm": null,
+  "depth_mm": null,
+  "rules": [{
+    "rule_id": 900001,
+    "data_version": "synthetic-plastic-nameplate",
+    "method": "FIXED",
+    "fixed_cost": 1.6,
+    "products": [],
+    "materials": [],
+    "issues": []
+  }]
+}

@@ -278,6 +278,11 @@ def build_configuration_remark(item):
     for row,kind in rows:
         if kind=='plate' and plate['mode'] in ('none','unknown'): continue
         quantity = number(row.get('quantity'))
+        name = re.sub(r'^柜体\s*\d+\s*[｜:：]\s*','',text(first(row,'item_name','name')))
+        if name == '丝印':
+            if (quantity is None or quantity > 0) and row.get('attachment_price_sign') != -1 and '配丝印' not in fragments[kind]:
+                fragments[kind].append('配丝印')
+            continue
         if kind=='plate' and quantity is None and plate['mode']=='positive' and sum(kind=='plate' for _,kind in rows)==1:
             quantity=plate['quantity']
         if quantity is None or quantity == 0: continue

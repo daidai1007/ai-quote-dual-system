@@ -31,6 +31,25 @@ def product():
 
 
 class ConfigurationFormat(unittest.TestCase):
+    def test_selected_silkprint_uses_only_fixed_phrase_without_quantity_or_details(self):
+        for quantity in (None,1,2,20):
+            row=dict(item_name='丝印',quantity=quantity,unit='处',model_code='MODEL',
+                     specification='300×200',brand='品牌',position='前门',ganged_cabinet_index=0,
+                     formula_amount=10,quick_amount=20)
+            item=dict(quantity=9,attachments=[row,deepcopy(row)])
+            before=deepcopy(item)
+            self.assertEqual(build(item),'配丝印。')
+            self.assertEqual(item,before)
+        self.assertEqual(build(dict(attachments=[dict(name='丝印',quantity=1)])),'配丝印。')
+        self.assertEqual(build(dict(attachments=[dict(item_name='柜体1｜丝印',quantity=1)])),'配丝印。')
+        self.assertEqual(build(dict(attachments=[dict(item_name='丝印',quantity=0)])),'')
+
+    def test_silkprint_leaves_other_attachments_and_explicit_processing_unchanged(self):
+        item=dict(quote_configuration=dict(processing_requirements='开孔、丝印'),attachments=[
+            dict(item_name='丝印',quantity=2),dict(item_name='门锁',model_code='MS821',quantity=2,unit='把'),
+            dict(item_name='接地线',quantity=3),dict(item_name='丝印支架',quantity=2,unit='件')])
+        self.assertEqual(build(item),'配MS821门锁2把，配接地线3根，配丝印，配丝印支架2件。按图开孔、丝印。')
+
     def test_full_template_exact_order_units_and_single_cabinet_counts(self):
         item=product();before=deepcopy(item)
         expected=('D-001/M-01，仿威图JP柜，侧板、后背板可拆。不锈钢304，喷塑RAL7035橘纹，柜体1.5mm，门板2mm，配2.5mm镀锌安装板1块（后部）。'

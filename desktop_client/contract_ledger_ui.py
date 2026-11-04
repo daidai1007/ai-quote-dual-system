@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QThread, QSignalBlocker, QTimer, QEvent
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QStackedWidget, QLineEdit, QFileDialog, QMessageBox, QLabel, QScrollArea,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QStyledItemDelegate,
-    QPlainTextEdit, QDialog)
+    QPlainTextEdit, QDialog, QLayout, QSizePolicy)
 import contract_management as contracts
 from contract_ledger import (CUSTOMERS, LedgerError, read_ledger, contract_groups,
     selected_payload, reopen_import)
@@ -60,7 +60,7 @@ class LedgerContractPanel(QWidget):
             self.steps.addWidget(control);self.step_buttons.append(control)
         root.addLayout(self.steps);self.stack=QStackedWidget();root.addWidget(self.stack,1)
         self.build_select();self.build_review();self.build_preview()
-        footer=QHBoxLayout();self.drafts=contracts.SchemeComboBox();self.drafts.addItem('打开台账合同草稿',None)
+        footer=QHBoxLayout();self.drafts=contracts.readable_field(contracts.SchemeComboBox());self.drafts.addItem('打开台账合同草稿',None)
         self.drafts.setMinimumWidth(0);self.drafts.activated.connect(self.open_draft);footer.addWidget(self.drafts,1)
         self.save_button=contracts.button('保存生成草稿',self.save_draft)
         self.generate_button=contracts.button('生成合同',self.generate,True)
@@ -84,11 +84,17 @@ class LedgerContractPanel(QWidget):
 
     def build_select(self):
         page=QWidget();box=QVBoxLayout(page);box.setContentsMargins(0,0,0,0)
+        # This step shares a viewport with the contract heading, tabs, source
+        # selector, steps and draft footer. Let its content scroll instead of
+        # compressing nested form rows below their minimum sizes at Windows DPI.
+        box.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         frame,content=contracts.card('从 Excel 台账生成合同','诺玥按钉钉合同号分组；方圆将选中序号合并为一份合同。')
         grid=QGridLayout();self.customer=contracts.SchemeComboBox()
         for key,entry in CUSTOMERS.items():self.customer.addItem(entry['name'],key)
         self.customer.currentIndexChanged.connect(self.customer_changed)
         self.template=contracts.SchemeComboBox();self.template.setMinimumWidth(0)
+        for control in (self.customer,self.template):
+            contracts.readable_field(control)
         self.template.currentIndexChanged.connect(self.template_changed)
         grid.addWidget(contracts.label('客户'),0,0);grid.addWidget(self.customer,1,0)
         grid.addWidget(contracts.label('客户合同模板'),0,1);grid.addWidget(self.template,1,1)
@@ -97,8 +103,9 @@ class LedgerContractPanel(QWidget):
         row=QHBoxLayout();self.filename=QLineEdit();self.filename.setReadOnly(True);self.filename.setPlaceholderText('选择已有总订单台账（.xls / .xlsx）')
         row.addWidget(self.filename,1);self.read_button=contracts.button('选择 Excel 台账',self.pick_file);row.addWidget(self.read_button);content.addLayout(row)
         row=QHBoxLayout();self.sheet=contracts.SchemeComboBox();self.sheet.currentIndexChanged.connect(self.sheet_changed)
+        contracts.readable_field(self.sheet)
         self.search=QLineEdit();self.search.setPlaceholderText('查找原序号、合同号或产品名称');self.search.textChanged.connect(self.filter_groups)
-        row.addWidget(contracts.label('工作表'));row.addWidget(self.sheet);row.addWidget(self.search,1);content.addLayout(row)
+        row.addWidget(contracts.label('工作表'));row.addWidget(self.sheet,1);row.addWidget(self.search,3);content.addLayout(row)
         self.source_note=contracts.label('仅读取台账，不修改原文件。','contractNote');self.source_note.setWordWrap(True);content.addWidget(self.source_note)
         box.addWidget(frame)
         self.selection=contracts.table(('选择','钉钉合同号 / 原序号','来源序号','产品 / 明细数','台账合计','核对状态'),'ledgerSelection')
@@ -107,8 +114,15 @@ class LedgerContractPanel(QWidget):
         box.addWidget(self.selection,1)
         row=QHBoxLayout();self.selection_note=contracts.label('请选择客户及台账。','contractNote');self.selection_note.setWordWrap(True)
         row.addWidget(self.selection_note,1);row.addWidget(contracts.button('全选可用记录',self.select_all));row.addWidget(contracts.button('清除选择',self.clear_selection))
-        row.addWidget(contracts.button('下一步：核对信息',lambda:self.go(1),True));box.addLayout(row)
-        self.stack.addWidget(page)
+        row.addWidget(contracts.button('下一步：核对信息',lambda:self.go(1),True))
+        self.select_scroll=QScrollArea();self.select_scroll.setObjectName('contractLedgerSelectionScroll')
+        self.select_scroll.setWidgetResizable(True);self.select_scroll.setWidget(page)
+        self.select_scroll.setMinimumSize(0,0)
+        self.select_scroll.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Ignored)
+        # Keep selection actions reachable while the form/table body scrolls.
+        step=QWidget();stepbox=QVBoxLayout(step);stepbox.setContentsMargins(0,0,0,0)
+        stepbox.addWidget(self.select_scroll,1);stepbox.addLayout(row)
+        self.stack.addWidget(step)
 
     def build_review(self):
         page=QWidget();box=QVBoxLayout(page);box.setContentsMargins(0,0,0,0)
@@ -117,6 +131,7 @@ class LedgerContractPanel(QWidget):
         self.documents.setMaximumHeight(150);self.documents.cellChanged.connect(self.document_edited);box.addWidget(self.documents)
         self.items=contracts.table(('原序号 / 工作表行','产品名称','规格型号','数量','单位','含税单价','金额','备注（可人工修改）'),'ledgerItems')
         self.items.setMaximumHeight(16777215);self.items.setWordWrap(True)
+        self.items.verticalHeader().setMinimumSectionSize(METRICS['row_height'])
         self.items.setItemDelegateForColumn(7,RemarkDelegate(self.items));self.items.cellChanged.connect(self.remark_edited)
         box.addWidget(self.items,1)
         row=QHBoxLayout();self.amount=contracts.label('合计：—','contractHeading');row.addWidget(self.amount,1)
@@ -125,7 +140,7 @@ class LedgerContractPanel(QWidget):
 
     def build_preview(self):
         page=QWidget();box=QVBoxLayout(page);box.setContentsMargins(0,0,0,0)
-        row=QHBoxLayout();self.output_choice=contracts.SchemeComboBox();self.output_choice.setMinimumWidth(0)
+        row=QHBoxLayout();self.output_choice=contracts.readable_field(contracts.SchemeComboBox())
         self.output_choice.activated.connect(self.choose_output);row.addWidget(self.output_choice,1)
         self.original_button=contracts.button('打开原文件',self.open_original);self.print_button=contracts.button('打印',self.print_file)
         self.export_button=contracts.button('导出合同',self.export_file,True)
@@ -164,7 +179,8 @@ class LedgerContractPanel(QWidget):
                 self.template.addItem(t['template_name']+' · V'+str(t['version_no'])+contracts.borrowed_template_label(t,name=name),t['template_version_id'])
             default=next((t for t in choices if not contracts.template_matches_customer(t,name=name)),None) if selected is None else None
             self.template.setCurrentIndex(max(0,self.template.findData(default['template_version_id'] if default else selected)))
-        self.template.setToolTip('借用其他客户模板时，需方和金额仍取当前台账，请核对模板固定条款。' if any(not contracts.template_matches_customer(t,name=name) for t in choices) else '')
+        self.template.setProperty('contractTooltipHint','借用其他客户模板时，需方和金额仍取当前台账，请核对模板固定条款。' if any(not contracts.template_matches_customer(t,name=name) for t in choices) else '')
+        self.template._contract_tooltip_update()
 
     def confirm_discard(self):
         return not self.unsaved or QMessageBox.question(self,'合同信息尚未保存','放弃当前未保存的台账合同信息？',QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Cancel)==QMessageBox.StandardButton.Discard
@@ -325,9 +341,9 @@ class LedgerContractPanel(QWidget):
                 for col,value in enumerate(values):
                     cell=QTableWidgetItem(value);cell.setFlags(READ_ONLY | (Qt.ItemFlag.ItemIsEditable if col==7 else Qt.ItemFlag.NoItemFlags));self.items.setItem(i,col,cell)
                 self.items.item(i,7).setToolTip('台账原备注：\n'+r['remark']);self.items.setRowHeight(i,METRICS['row_height'])
-        for col,width in enumerate((145,145,150,58,45,100,110,250)):
+        for col,width in enumerate(contracts.TABLE_WIDTHS['ledgerItems']):
             self.items.horizontalHeader().setSectionResizeMode(col,QHeaderView.ResizeMode.Interactive);self.items.setColumnWidth(col,width)
-        self.items.horizontalHeader().setSectionResizeMode(7,QHeaderView.ResizeMode.Stretch)
+        self.items.horizontalHeader().setStretchLastSection(False)
         self.amount.setText(f"{len(grouped)} 份合同 · 合计 ¥ {sum(Decimal(r['total']) for r in rows):,.2f}")
         self.review_note.setText(('诺玥：相同钉钉合同号写入一份合同，产品名称以台账名称为准。' if ny else '方圆：选中序号合并为一份合同，请填写本次新合同编号与签约日期。')+' 双击备注可编辑；修改仅用于当前合同，不回写台账。')
         self.populating=False

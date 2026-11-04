@@ -22,6 +22,7 @@ COPY api/contract_template_policy.mjs ./api/
 COPY api/contract_status.mjs ./api/
 COPY api/analysis_product_charts.mjs ./api/
 COPY api/standalone_attachment.mjs ./api/
+COPY api/attachment_maintenance.mjs ./api/
 COPY api/thickness_surcharge.mjs ./api/
 COPY api/contract_item_row_layout.mjs ./api/
 COPY api/customer_profile.mjs ./api/

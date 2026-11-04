@@ -107,7 +107,10 @@ class ContractTests(unittest.TestCase):
         self.p.shutdown();self.w.hide();self.w.deleteLater();APP.processEvents()
 
     def configure_template(self,format):
-        with patch.object(ui.QFileDialog,'getOpenFileName',return_value=(str(self.folder/('local-template.'+format)),'')),patch.object(ui.QInputDialog,'getText',return_value=('本机界面合同'+format,True)):
+        def details(dialog):
+            dialog.customer.setEditText('本机测试客户 A');dialog.name.setText('本机界面合同'+format)
+            dialog.accept();return QDialog.DialogCode.Accepted
+        with patch.object(ui.QFileDialog,'getOpenFileName',return_value=(str(self.folder/('local-template.'+format)),'')),patch.object(ui.TemplateUploadDialog,'exec',details):
             self.p.upload()
         self.settled();self.assertTrue(any(r['file_format']==format for r in self.p.data['templates']),(self.p.notice.text(),self.p.source.currentData(),self.p.customer.currentData()));row=next(i for i,r in enumerate(self.p.data['templates']) if r['file_format']==format)
         self.p.library.selectRow(row)
@@ -162,7 +165,9 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(caught.exception.code,401)
         with self.assertRaises(urllib.error.HTTPError) as caught:self.api('/templates',dict(scheme_no=self.config['scheme_no'],version_no=1,customer_code='LOCAL-A',template_name='bad',filename='bad.docx',format='docx',content='YmFk'))
         self.assertEqual(caught.exception.code,400)
-        self.assertEqual([b.text() for b in self.w.nav_buttons],['选型配置','成本计算','报价单管理','合同管理','报价方案','报价分析'])
+        self.assertEqual([b.text() for b in self.w.nav_buttons],['选型配置','成本计算','报价单管理','合同管理','报价方案','报价分析','基础资料'])
+        from attachment_maintenance import authorized
+        self.assertEqual(self.w.attachment_maintenance_nav.isHidden(),not authorized())
         nav_layout=self.w.scheme2_nav.layout()
         self.assertEqual(sorted(self.w.nav_buttons,key=nav_layout.indexOf),self.w.nav_buttons)
         self.p.tabs.setCurrentIndex(2);self.settled();self.assertEqual(self.p.record_total,2)
@@ -189,7 +194,7 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(snapshot['contract_quote_snapshot']['items'][0]['quote_display']['unit_price'],175)
             self.assertEqual(snapshot['contract_quote_snapshot']['items'][0]['quote_display']['total'],350)
             with ZipFile(captured[0].path) as book:
-                ns={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'};workbook=ET.fromstring(book.read('xl/workbook.xml'));sheet=next(s for s in workbook.findall('s:sheets/s:sheet',ns) if '公式' in s.get('name','') and '报价' in s.get('name',''));rel=sheet.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id');rels=ET.fromstring(book.read('xl/_rels/workbook.xml.rels'));target=next(r.get('Target') for r in rels if r.get('Id')==rel);xml=ET.fromstring(book.read(target.lstrip('/') if target.startswith('/') else 'xl/'+target));cells={c.get('r'):c.findtext('s:v',namespaces=ns) for c in xml.findall('.//s:c',ns)};formula_total=float(cells['G11'])
+                ns={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'};workbook=ET.fromstring(book.read('xl/workbook.xml'));sheet=next(s for s in workbook.findall('s:sheets/s:sheet',ns) if s.get('name')=='成本');rel=sheet.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id');rels=ET.fromstring(book.read('xl/_rels/workbook.xml.rels'));target=next(r.get('Target') for r in rels if r.get('Id')==rel);xml=ET.fromstring(book.read(target.lstrip('/') if target.startswith('/') else 'xl/'+target));cells={c.get('r'):c.findtext('s:v',namespaces=ns) for c in xml.findall('.//s:c',ns)};formula_total=float(cells['G11'])
         finally:case.doCleanups()
         def quote_api(path,payload):
             request=urllib.request.Request(self.config['base']+'/api/quote-schemes'+path,data=json.dumps(payload,ensure_ascii=False).encode('utf-8'),headers={'X-AI-Quote-Key':self.config['key'],'Content-Type':'application/json','Authorization':'Bearer '+self.config['session']['token']})

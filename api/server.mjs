@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
+import {createAttachmentMaintenance,requireAttachmentMaintainer} from './attachment_maintenance.mjs';
 import { attachmentCatalogSql, decodeAttachmentCatalog } from './attachment_catalog_query.mjs';
 import { normalizeDoorVariantInput, normalizeQuickDoorVariantInput } from './door_variant_rules.mjs';
 import { historyPriceMatchSql } from './history_price_query.mjs';
@@ -1031,6 +1032,7 @@ const getDatabaseReadiness = async () => {
 const quoteSchemeService = createQuoteSchemeService({ runPsql, sqlUnicodeText, sqlNumber });
 const quoteAnalysisService = createQuoteAnalysisService({runPsql,sqlUnicodeText});
 const nameSessions=createNameLoginService();
+const attachmentMaintenance=createAttachmentMaintenance({runPsql});
 const quoteDeliveryService=createQuoteDeliveryService({runPsql,activePeople:nameSessions.activePeople});
 const privateQuoteGuard=createPrivateQuoteGuard({runPsql});
 const contractService = createContractService({runPsql,sqlUnicodeText});
@@ -1126,6 +1128,16 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
     if(requestUrl.pathname==='/api/name-logout'&&req.method==='POST')return json(res,200,nameSessions.logout(req));
   }catch(error){return json(res,error.statusCode||401,{error:'name_session_required',message:'请先输入姓名登录；会话可能已失效，旧客户端需升级后使用。'});}
   return withQuotePrincipal(req.namePrincipal,async()=>{
+  if(requestUrl.pathname.startsWith('/api/attachments/maintenance')){
+    try {
+      const route=requestUrl.pathname,principal=req.namePrincipal;
+      if(route==='/api/attachments/maintenance/capabilities'&&req.method==='GET')return json(res,200,attachmentMaintenance.capabilities(principal));
+      if(route==='/api/attachments/maintenance'&&req.method==='GET')return json(res,200,await attachmentMaintenance.list(principal));
+      if(route==='/api/attachments/maintenance/history'&&req.method==='GET')return json(res,200,await attachmentMaintenance.audit(principal));
+      if(route==='/api/attachments/maintenance'&&req.method==='POST')return json(res,200,await attachmentMaintenance.save(principal,await readBody(req)));
+      return json(res,405,{error:'method_not_allowed'});
+    } catch(error){return json(res,error.statusCode||500,{error:'attachment_maintenance_failed',message:error.statusCode?error.message:'附件维护暂不可用，请稍后重试。'});}
+  }
   if (requestUrl.pathname.startsWith('/api/contracts/')) {
     try {
       const principal=req.namePrincipal;
@@ -1367,6 +1379,7 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
   }
   if (req.method === 'POST' && req.url === '/api/attachments/catalog') {
     try {
+      requireAttachmentMaintainer(req.namePrincipal);
       const input = await readBody(req);
       const command = addAttachmentCatalogSql(input);
       const output = await runPsql(command.sql);

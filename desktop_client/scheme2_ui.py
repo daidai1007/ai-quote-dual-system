@@ -164,7 +164,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.10.29.02"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.11.03.01"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -6332,6 +6332,31 @@ ATTACHMENT_OPTIONS = {
 }
 
 
+def _catalog_other_attachment_names(catalog, product_code="", material_code=""):
+    """Supplement the name-only picker; leave specialist matching unchanged."""
+    product = str(product_code or "").strip().upper()
+    material = str(material_code or "").strip().upper()
+    names = []
+    for row in catalog or []:
+        if not isinstance(row, dict) or row.get("is_active") is False:
+            continue
+        category = str(row.get("category_level1") or row.get("attachment_category") or "").strip()
+        name = str(row.get("item_name") or "").strip()
+        if category != "其他附件" or not name:
+            continue
+        rules = row.get("rules") or []
+        if rules and not any(
+            isinstance(rule, dict)
+            and (not rule.get("products") or product in rule["products"])
+            and (not rule.get("materials") or material in rule["materials"])
+            for rule in rules
+        ):
+            continue
+        if name not in names:
+            names.append(name)
+    return names
+
+
 def _current_product_code(window):
     combo = getattr(window, "product_combo", None)
     if not isinstance(combo, QComboBox):
@@ -6642,6 +6667,16 @@ class _SchemeAttachmentDialog(QDialog):
 
     def __init__(self, selected, product_code, parent=None, door_counts=None):
         super().__init__(parent)
+        self._catalog_owner = parent
+        self._catalog_worker = None
+        self._catalog_closed = False
+        self.finished.connect(lambda *_: setattr(self, "_catalog_closed", True))
+        product_getter = getattr(parent, "selected_product_code", None)
+        self._catalog_product = product_getter() if callable(product_getter) else product_code
+        material_combo = getattr(parent, "material_combo", None)
+        self._catalog_material = material_combo.currentData() if isinstance(material_combo, QComboBox) else ""
+        catalog_names = _catalog_other_attachment_names(
+            getattr(parent, "_attachment_catalog_cache", []), self._catalog_product, self._catalog_material)
         self.setObjectName("scheme2AttachmentOverlay")
         self.setWindowTitle("附件选择")
         self.setModal(False)
@@ -6663,6 +6698,7 @@ class _SchemeAttachmentDialog(QDialog):
                 selected_pairs.add((category, name))
             elif name:
                 legacy_selected_names.add(name)
+        retained_other_names = [name for category, name in selected_pairs if category == "其他附件"]
 
         default_door_transformations = set()
         if door_counts is not None and not attachment_names_manual_only(self):
@@ -6721,7 +6757,18 @@ QLineEdit#scheme2AttachmentSearch:focus {{ border-color:{DIALOG_COLORS['focus']}
 """)
         self.search_edit.installEventFilter(self)
         search_layout.addWidget(self.search_edit)
+        self.catalog_refresh_button = QPushButton("刷新附件目录")
+        self.catalog_refresh_button.setObjectName("scheme2SecondaryAction")
+        self.catalog_refresh_button.setFixedHeight(ATTACHMENT_SEARCH_HEIGHT)
+        self.catalog_refresh_button.setAutoDefault(False)
+        self.catalog_refresh_button.setEnabled(callable(getattr(parent, "base_url", None)))
+        self.catalog_refresh_button.clicked.connect(self.reload_catalog)
+        search_layout.addWidget(self.catalog_refresh_button)
         root.addWidget(search_bar)
+        self.catalog_status = QLabel("打开时读取附件目录；刷新不改变已选附件。")
+        self.catalog_status.setObjectName("scheme2AttachmentHint")
+        self.catalog_status.setWordWrap(True)
+        root.addWidget(self.catalog_status)
         scroll = QScrollArea()
         scroll.setObjectName("scheme2AttachmentScroll")
         scroll.setWidgetResizable(True)
@@ -6740,6 +6787,8 @@ QLineEdit#scheme2AttachmentSearch:focus {{ border-color:{DIALOG_COLORS['focus']}
             if category == "控制柜附件" and product_code not in {"JS", "JP", "standalone_attachment"}:
                 continue
             options = list(ATTACHMENT_OPTIONS.get(category, ()))
+            if category == "其他附件":
+                options = list(dict.fromkeys(options + catalog_names + retained_other_names))
             if category == "控制箱附件" and product_code not in {"JK", "standalone_attachment"}:
                 options = [name for name in options if name != "JK安装板"]
             self.category_names.append(category)
@@ -6861,6 +6910,70 @@ QLineEdit#scheme2AttachmentSearch:focus {{ border-color:{DIALOG_COLORS['focus']}
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
         self.search_edit.textChanged.connect(self._filter_attachments)
+
+    def reload_catalog(self):
+        """Read the current public catalogue without repricing any selection."""
+        owner = self._catalog_owner
+        worker_class = getattr(owner, "_scheme2_api_worker_class", None)
+        if self._catalog_worker is not None or self._catalog_closed:
+            return
+        if not callable(worker_class) or not callable(getattr(owner, "base_url", None)):
+            self.catalog_status.setText("附件目录暂不可读取；现有选择已保留。")
+            return
+        from name_login import identity_epoch, window_is_current
+        from shiboken6 import isValid
+        epoch = identity_epoch()
+        url = str(owner.base_url()).split("/api/", 1)[0].rstrip("/") + "/api/attachments/catalog?v=2"
+        worker = worker_class(url, {}, owner, method="GET")
+        self._catalog_worker = worker
+        workers = getattr(owner, "_scheme2_attachment_name_workers", set())
+        owner._scheme2_attachment_name_workers = workers
+        workers.add(worker)
+        self.catalog_refresh_button.setEnabled(False)
+        self.catalog_status.setText("正在读取附件目录；当前勾选已保留…")
+
+        def current():
+            return (isValid(self) and not self._catalog_closed and isValid(owner)
+                    and window_is_current(owner, epoch))
+
+        def failed(_message):
+            if current():
+                self.catalog_status.setText("附件目录读取失败，请检查连接或重新登录后重试；现有选择已保留。")
+
+        def loaded(body):
+            if not current():
+                return
+            if not isinstance(body, dict) or not isinstance(body.get("items"), list) or not body.get("data_version"):
+                failed("invalid catalogue")
+                return
+            catalog = [{**deepcopy(row), "catalog_version": body["data_version"]}
+                       for row in body["items"] if isinstance(row, dict)]
+            owner._attachment_catalog_cache = catalog
+            combo = self.category_combos["其他附件"]
+            selected = combo.selected_texts()
+            names = _catalog_other_attachment_names(catalog, self._catalog_product, self._catalog_material)
+            options = list(dict.fromkeys(list(ATTACHMENT_OPTIONS["其他附件"]) + names + selected))
+            blocker = QSignalBlocker(combo)
+            combo.clear()
+            combo.addItem("未选择")
+            combo.addItems(options)
+            combo.set_selected_texts(selected)
+            combo.setMaxVisibleItems(min(6, combo.count()))
+            del blocker
+            self._filter_attachments(self.search_edit.text())
+            self.catalog_status.setText("附件目录已刷新；现有选择未改动。")
+
+        def done():
+            workers.discard(worker)
+            if isValid(self):
+                self._catalog_worker = None
+                self.catalog_refresh_button.setEnabled(not self._catalog_closed)
+            worker.deleteLater()
+
+        worker.succeeded.connect(loaded)
+        worker.failed.connect(failed)
+        worker.finished.connect(done)
+        worker.start()
 
     def eventFilter(self, watched, event):
         if (watched is self.search_edit and event.type() == QEvent.Type.KeyPress
@@ -7198,6 +7311,7 @@ def _open_attachment_overlay(window, _dialog_class, anchor):
     dialog.setFixedSize(anchor.size())
     dialog.move(top_left)
     dialog.raise_()
+    dialog.reload_catalog()
 
 
 def _retain_manual_attachment_names(window):
@@ -8718,7 +8832,7 @@ def _apply_responsive(window):
     option_page = window.stack.widget(OPTION_ROUTE)
     main_scroll = window.findChild(QScrollArea, "mainScroll")
     quote_management_route = route == QUOTE_ROUTE and getattr(window, 'quote_management', None) is not None
-    viewport_route = route == COST_ROUTE or route == getattr(window, "quote_analysis_route", -1) or route == getattr(window, "contract_management_route", -1) or quote_management_route
+    viewport_route = route == COST_ROUTE or route == getattr(window, "quote_analysis_route", -1) or route == getattr(window, "contract_management_route", -1) or route == getattr(window, "attachment_maintenance_route", -1) or quote_management_route
     _set_cost_scroll_mode(window, main_scroll, viewport_route)
     # Create the fixed row before arranging cost actions so the cost grid
     # leaves its “生成报价单” button in that row.
@@ -8821,7 +8935,7 @@ def _apply_responsive(window):
             # stack. No growing minimum based on the previous (larger) host:
             # that used to produce the second scrollbar and clipped actions.
             canvas = main_scroll.widget()
-            if route == COST_ROUTE or route == getattr(window, "quote_analysis_route", -1) or route == getattr(window, "contract_management_route", -1) or quote_management_route:
+            if viewport_route:
                 # Tables and tabs own scrolling. Keep the canvas within the
                 # viewport so the fixed action dock cannot cover cost details.
                 canvas.setMaximumHeight(main_scroll.viewport().height())
@@ -9131,6 +9245,10 @@ def install_scheme2_ui(namespace):
         original_worker_run = api_worker.run
 
         def worker_run(worker):
+            # Catalogue/health GETs can run while the core window is starting;
+            # they do not use pricing controls or calculation overrides.
+            if str(getattr(worker, "method", "POST")).upper() == "GET":
+                return original_worker_run(worker)
             payload = getattr(worker, "payload", None)
             owner = worker.parent()
             if isinstance(payload, dict) and owner is not None and hasattr(owner, "scheme2_defaults"):
@@ -9186,8 +9304,20 @@ def install_scheme2_ui(namespace):
     original_load_draft_item = cls.load_draft_item
     original_confirm_and_export = cls.confirm_and_export
     original_company_catalog_loaded = getattr(cls, "company_catalog_loaded", None)
+    original_load_catalogs = cls.load_catalogs
+
+    def load_catalogs(window, *args, **kwargs):
+        if not window._scheme2_ui_ready:
+            window._scheme2_catalog_load_pending = True
+            return
+        return original_load_catalogs(window, *args, **kwargs)
 
     def init(window, *args, **kwargs):
+        # The core constructor requests catalogues before the option page and
+        # its pricing controls exist. Start them on the next event-loop turn,
+        # after the outer name/session and management wrappers have finished.
+        window._scheme2_ui_ready = False
+        window._scheme2_catalog_load_pending = False
         window._scheme2_add_after_calculate = False
         window._scheme2_edit_item = None
         window._scheme2_new_quote_required = False
@@ -9319,6 +9449,10 @@ def install_scheme2_ui(namespace):
         ), None)
         if startup_workspace:
             QTimer.singleShot(0, lambda path=startup_workspace: _open_order_workspace_file(window, path))
+        window._scheme2_ui_ready = True
+        if window._scheme2_catalog_load_pending:
+            window._scheme2_catalog_load_pending = False
+            QTimer.singleShot(0, window.load_catalogs)
 
     def resize(window, event):
         original_resize(window, event)
@@ -9594,6 +9728,7 @@ def install_scheme2_ui(namespace):
         return result
     cls.reset_current_cabinet = reset_with_thickness_coefficient
     cls.__init__ = init
+    cls.load_catalogs = load_catalogs
     cls.resizeEvent = resize
     cls.confirm_and_export = confirm_and_export
     cls.closeEvent = close
