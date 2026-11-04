@@ -262,16 +262,12 @@ def build_configuration_remark(item):
     if body: header.append('柜体'+body+'mm')
     if door: header.append('门板'+door+'mm')
     rows = [(row,_category(row)) for row in item.get('attachments',[]) if isinstance(row,dict)]
-    plate = installation_state(item,fields,rows,standard=rule['standard'])
+    plate = installation_state(item,fields,rows)
     if plate['mode']=='none':
         if rule['fixed']: header[2]=rule['fixed']+'，不含安装板。'
         else: header.insert(2,'不含安装板')
     elif plate['mode']=='unknown' or (plate['mode']=='rows' and any(number(row.get('quantity')) is None for row,kind in rows if kind=='plate')):
         header.append('安装板数量待确认')
-    if plate['mode']=='positive' and not any(kind=='plate' for _,kind in rows):
-        rows.append((dict(item_name='安装板',quantity=plate['quantity'],
-                         thickness_mm=fields.get('installation_plate_thickness_mm') or 2.5,
-                         material_name=fields.get('installation_plate_material') or '镀锌'), 'plate'))
     fragments = {key:[] for key in ('plate','base','lock','light','switch','limiter','ground','folder','fan','filter','beam','other')}
     default_units = {'plate':'块','base':'件','lock':'件','light':'套','switch':'套','limiter':'件',
                      'ground':'根','folder':'个','fan':'只','filter':'只','beam':'根','other':'件'}
@@ -330,14 +326,18 @@ def build_configuration_remark(item):
         processing=joined(('改造内容：'+text(fields['modification_requirements']),processing),'；')
     excluded = fields.get('excluded_items') or []
     if isinstance(excluded,str): excluded=[excluded]
-    if plate['mode']=='none': excluded=[entry for entry in excluded if text(entry).strip() not in ('安装板','不含安装板','不配安装板')]
+    if plate['mode'] in ('none','absent'):
+        excluded = [part for entry in excluded for part in text(entry).split('、')
+                    if text(part) not in ('安装板','不含安装板','不配安装板')]
     excluded=list(dict.fromkeys(text(entry) for entry in excluded if text(entry)))
     exclusions = ('不含'+joined(excluded,'、')) if excluded else ''
     specials=[]
     for key in ('protection_rating','packaging_requirements','installation_plate_delivery','special_requirements'):
-        if key=='installation_plate_delivery' and plate['mode']=='none': continue
+        if key=='installation_plate_delivery' and plate['mode'] in ('none','absent'): continue
         value=fields.get(key)
         for phrase in value if isinstance(value,list) else [value]:
+            if key=='special_requirements' and plate['mode']=='absent' and re.search(r'安装板(?:先发|单发)',text(phrase)):
+                continue
             if text(phrase) and text(phrase) not in specials: specials.append(text(phrase))
     tail=joined((processing,exclusions,*specials),'；')
     header_text=joined(header)
@@ -359,7 +359,7 @@ def configuration_remark_review_issues(item):
     requested_body=thickness(fields.get('body_thickness_mm'))
     if actual_body and requested_body and actual_body!=requested_body:
         issues.append('报价与来源的柜体板厚不一致，请核对')
-    state=installation_state(item,fields,rows,standard=rule['standard']);issues.extend(state['issues'])
+    state=installation_state(item,fields,rows);issues.extend(state['issues'])
     if state['mode']=='none' and fields.get('installation_plate_delivery'):
         issues.append('不含安装板与安装板交付要求冲突，请核对')
     excluded=fields.get('excluded_items') or []

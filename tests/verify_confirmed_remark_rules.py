@@ -17,8 +17,8 @@ class ConfirmedRemarkRules(unittest.TestCase):
         for dash in ('-','－','—'):
             for shape in ('field','row'):
                 item=dict(product_family='JP',quote_configuration=dict(excluded_items=['安装板','空调']))
+                item['attachments']=[dict(item_name='安装板',quantity=dash if shape=='row' else 1)]
                 if shape=='field':item['installation_plate_quantity']=dash
-                else:item['attachments']=[dict(item_name='安装板',quantity=dash)]
                 before=deepcopy(item);result=build(item)
                 self.assertEqual(result.count('不含安装板'),1);self.assertNotIn('配2.5',result);self.assertIn('不含空调',result)
                 self.assertEqual(item,before)
@@ -27,14 +27,16 @@ class ConfirmedRemarkRules(unittest.TestCase):
     def test_numeric_deduction_is_not_dash_and_conflict_is_reviewed(self):
         item=dict(attachments=[dict(item_name='安装板',quantity=2,attachment_price_sign=-1),dict(item_name='安装板',quantity=1)])
         self.assertEqual(build(item),'扣减安装板2块，配安装板1块。')
-        self.assertTrue(review(dict(product_family='JP',installation_plate_quantity=-1)))
-        self.assertNotIn('不含安装板',build(dict(product_family='JP',installation_plate_quantity='-1')))
+        negative=dict(product_family='JP',installation_plate_quantity=-1,attachments=[dict(item_name='安装板',quantity=1)])
+        self.assertTrue(review(negative))
+        self.assertNotIn('不含安装板',build(negative))
         conflict=dict(product_family='JS',installation_plate_quantity='—',attachments=[dict(item_name='安装板',quantity=2)])
         self.assertTrue(review(conflict));self.assertNotIn('配安装板',build(conflict))
 
     def test_explicit_positive_material_and_thickness_are_used_without_pricing_mutation(self):
         item=dict(product_family='JP',quantity=20,cabinet_body_thickness_mm=2,
             quote_configuration=dict(door_thickness_mm=3,installation_plate_quantity=3,installation_plate_thickness_mm=2.2,installation_plate_material='不锈钢304'),
+            attachments=[dict(item_name='安装板')],
             formula=dict(total_cost=123.45),freight_fee=50,quick_discount=.8)
         old=deepcopy(item);result=build(item)
         for phrase in ('柜体2mm','门板3mm','配2.2mm不锈钢304安装板3块'):self.assertIn(phrase,result)
@@ -47,9 +49,24 @@ class ConfirmedRemarkRules(unittest.TestCase):
     def test_blank_does_not_become_one_and_source_roundtrip_preserves_dash(self):
         for blank in ('',None):
             item=source_configuration(dict(installation_plate_quantity=blank));item['product_family']='JP'
+            item['attachments']=[dict(item_name='安装板')]
             self.assertIn('安装板数量待确认',build(item));self.assertNotIn('安装板1块',build(item));self.assertTrue(review(item))
         item=source_configuration(dict(安装板数量='－'));item['product_family']='JS'
+        item['attachments']=[dict(item_name='安装板')]
         self.assertIn('不含安装板',build(item))
+
+    def test_unselected_board_ignores_old_quantity_and_delivery_fields(self):
+        for quantity in (None, '', 0, -1, '—', 3):
+            with self.subTest(quantity=quantity):
+                item=dict(product_family='JP',attachments=[dict(item_name='门锁',quantity=1)],
+                    quote_configuration=dict(installation_plate_quantity=quantity,
+                        installation_plate_delivery='安装板先发',excluded_items=['安装板、空调']),
+                    quote_remark_source='安装板先发；木箱包装')
+                result=build(item)
+                self.assertNotIn('安装板',result)
+                for phrase in ('配门锁1件','不含空调','木箱包装'):
+                    self.assertIn(phrase,result)
+                self.assertEqual(review(item),[])
 
     def test_JM_unconfirmed_and_other_standard_structures_remain_explicit(self):
         self.assertNotIn('侧板、后背板不可拆',build(dict(product_family='JM')))

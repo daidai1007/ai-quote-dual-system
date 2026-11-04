@@ -66,7 +66,7 @@ class ConfigurationFormat(unittest.TestCase):
         self.assertEqual(build({}), '')
         self.assertEqual(build(dict(material_code='SUS316',attachments=[])),'不锈钢316。')
         actual=build(dict(product_family='JP',attachments=[dict(item_name='风机')]))
-        self.assertEqual(actual,'仿威图JP柜，侧板、后背板可拆。柜体1.5mm，门板2mm，安装板数量待确认。')
+        self.assertEqual(actual,'仿威图JP柜，侧板、后背板可拆。柜体1.5mm，门板2mm。')
         for value in ('2.5','RAL7035','IP54','不可拆','不含','【'):
             self.assertNotIn(value,actual)
 
@@ -78,9 +78,9 @@ class ConfigurationFormat(unittest.TestCase):
         item.update(product_family='JE',material_code='SECC',attachments=[dict(item_name='滤网',quantity=2,model_code='F1')])
         actual=build(item)
         for part in ('X-01','柜体1.2mm','门板1.8mm','侧板可拆','后背板不可拆','配F1滤网2只',
-                     '按图开孔300×70mm、丝印','不含风机','IP65','木箱包装','安装板先发'):
+                     '按图开孔300×70mm、丝印','不含风机','IP65','木箱包装'):
             self.assertIn(part,actual)
-        for part in ('付款','7天','后来改过','不含风机但配滤网'):
+        for part in ('付款','7天','后来改过','不含风机但配滤网','安装板先发'):
             self.assertNotIn(part,actual)
 
     def test_operator_fields_win_over_source_and_no_spray_does_not_claim_color(self):

@@ -37,15 +37,17 @@ def product_rule(value):
     fixed = '侧板不可拆，后背板可拆' if key == 'JS' else '侧板、后背板可拆' if key == 'JP' else ''
     return dict(key=key, label=label, standard=standard or key in {'JQ1','JQ2'}, fixed=fixed)
 
-def installation_state(item, fields, rows, *, standard=False):
-    """Only quantity fields can contain a dash; numeric deductions keep their meaning."""
+def installation_state(item, fields, rows):
+    """Interpret installation-board quantities only for selected attachment rows."""
+    quantities = [row.get('quantity') for row, kind in rows if kind == 'plate']
+    if not quantities:
+        return dict(mode='absent', quantity=None, issues=[])
     explicit = False; raw = None
     for source in (fields, item):
         for key in PLATE_QUANTITY_KEYS:
             if key in source:
                 explicit, raw = True, source[key]; break
         if explicit: break
-    quantities = [row.get('quantity') for row, kind in rows if kind == 'plate']
     dash = value_text(raw) in DASHES if explicit else any(value_text(q) in DASHES for q in quantities)
     positives = [finite(q) for q in quantities if finite(q) is not None and finite(q) > 0]
     issues = []
@@ -60,14 +62,10 @@ def installation_state(item, fields, rows, *, standard=False):
         if positives and sum(positives) != parsed:
             issues.append('安装板数量字段与附件明细不一致，请核对')
         return dict(mode='positive', quantity=parsed, issues=issues)
-    if quantities:
-        if any(finite(q) is None for q in quantities): issues.append('安装板数量待确认')
-        if any(finite(q) is not None and finite(q) < 0 for q in quantities):
-            issues.append('安装板含数值扣减，请核对实际供货数量')
-        return dict(mode='rows', quantity=None, issues=issues)
-    if standard:
-        return dict(mode='unknown', quantity=None, issues=['安装板数量待确认'])
-    return dict(mode='absent', quantity=None, issues=[])
+    if any(finite(q) is None for q in quantities): issues.append('安装板数量待确认')
+    if any(finite(q) is not None and finite(q) < 0 for q in quantities):
+        issues.append('安装板含数值扣减，请核对实际供货数量')
+    return dict(mode='rows', quantity=None, issues=issues)
 
 def structural_review(rule, fields, raw=''):
     issues = []
