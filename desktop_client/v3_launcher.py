@@ -501,6 +501,8 @@ def load_v3_namespace() -> dict:
     install_attachment_maintenance(namespace)
     install_client_updates(namespace)
     install_name_login(namespace)
+    from runtime_monitor import install_runtime_monitoring
+    install_runtime_monitoring(namespace)
     return namespace
 
 

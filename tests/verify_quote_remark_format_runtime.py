@@ -38,6 +38,40 @@ class RemarkFormatRuntime(unittest.TestCase):
         self.w.refresh_summary();self.w._quote_scheme_save_timer.stop()
         return item
 
+    def test_ms830_selected_through_save_reopen_print_and_excel(self):
+        item=self.configured_item()
+        item['attachments'].append(dict(item_name='平面锁改为MS830锁',quantity=1,unit='把',
+            attachment_price_id=999,status='FIXED',formula_amount=10,quick_amount=20,matched_price=20))
+        self.w.refresh_summary();self.w._quote_scheme_save_timer.stop()
+        expected=self.w.scheme2_quote_preview.item(10,7).text()
+        self.assertIn('配MS830锁1件',expected)
+        self.assertNotIn('平面锁改为',expected)
+        self.m.save();wait(lambda:self.w._quote_scheme_save_worker is None)
+        schemes._apply_opened_scheme(self.w,dict(found=True,**deepcopy(self.server),
+            quote_management_historical_export=True),ui.QUOTE_ROUTE)
+        self.w._quote_scheme_save_timer.stop()
+        self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),expected)
+        pdf=Path(self.folder.name)/'ms830.pdf'
+        printer=QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat);printer.setOutputFileName(str(pdf))
+        document=QTextDocument();document.setHtml(ui._printable_quote_html(self.w));document.print_(printer)
+        printed=''.join(''.join(page.extract_text() for page in PdfReader(pdf).pages).split())
+        self.assertIn('配MS830锁1件',printed)
+        self.assertNotIn('平面锁改为',printed)
+        self.assert_outputs(expected)
+
+    def test_ms830_removed_before_confirmation_is_absent_from_exports(self):
+        item=self.configured_item()
+        item['attachments'].append(dict(item_name='平面锁改为MS830锁',quantity=1,
+            attachment_price_id=999,status='FIXED',formula_amount=10,quick_amount=20,matched_price=20))
+        self.w.refresh_summary();self.w._quote_scheme_save_timer.stop()
+        self.assertIn('配MS830锁1件',self.w.scheme2_quote_preview.item(10,7).text())
+        item['attachments']=[row for row in item['attachments'] if row['item_name']!='平面锁改为MS830锁']
+        self.w.refresh_summary();self.w._quote_scheme_save_timer.stop()
+        removed=self.w.scheme2_quote_preview.item(10,7).text()
+        self.assertNotIn('MS830',removed)
+        self.assert_outputs(removed)
+
     def test_full_format_real_ui_save_reopen_pdf_and_xlsx(self):
         item=self.configured_item()
         expected=self.w.scheme2_quote_preview.item(10,7).text()

@@ -31,6 +31,21 @@ def product():
 
 
 class ConfigurationFormat(unittest.TestCase):
+    def test_ms830_upgrade_uses_supply_name_and_selected_piece_count(self):
+        for name in ('平面锁改为MS830锁','柜体1｜平面锁改为MS830锁'):
+            item=dict(quantity=9,attachments=[dict(item_name=name,quantity=1,unit='把',
+                model_code='MS830',specification='原平面锁更换',formula_amount=10,quick_amount=20)])
+            before=deepcopy(item)
+            self.assertEqual(build(item),'配MS830锁1件。')
+            self.assertEqual(item,before)
+        self.assertEqual(build(dict(attachments=[dict(item_name='柜体1｜平面锁改为MS830锁',
+            quantity=1,ganged_cabinet_index=0)])),'配MS830锁1件（柜体1，单台）。')
+        self.assertEqual(build(dict(attachments=[dict(name='平面锁改为MS830锁',quantity=2)])),
+                         '配MS830锁2件。')
+        for quantity in (0,None,''):
+            self.assertEqual(build(dict(attachments=[dict(item_name='平面锁改为MS830锁',quantity=quantity)])),'')
+        self.assertEqual(build(dict(quote_remark_source='平面锁改为MS830锁',attachments=[])),'')
+
     def test_selected_silkprint_uses_only_fixed_phrase_without_quantity_or_details(self):
         for quantity in (None,1,2,20):
             row=dict(item_name='丝印',quantity=quantity,unit='处',model_code='MODEL',

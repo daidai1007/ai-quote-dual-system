@@ -180,6 +180,8 @@ def _category(row):
 
 def _label(row, kind):
     name = re.sub(r'^柜体\s*\d+\s*[｜:：]\s*','',text(first(row,'item_name','name')))
+    if name == '平面锁改为MS830锁':
+        return 'MS830锁'
     model = text(row.get('model_code'))
     spec = text(first(row,'specification','matched_specification'))
     brand = text(row.get('brand'))
@@ -297,6 +299,7 @@ def build_configuration_remark(item):
         # The requested output units for these pieces describe the physical
         # pieces directly; lock/limiter units remain exactly as saved.
         if kind in ('plate','base','ground','folder','fan','filter','beam'): unit=default_units[kind]
+        if kind == 'lock' and label == 'MS830锁': unit='件'
         location = text(first(row,'position','installation_position','distribution'))
         if location: location='（'+location+'）'
         phrase = ('扣减' if signed < 0 else '配')+label+numeric(abs(signed))+unit+location+_scope(item,row)

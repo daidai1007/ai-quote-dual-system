@@ -80,7 +80,10 @@ class PriceBreakdownUI(unittest.TestCase):
         self.screenshot(self.w,'cost-table.png')
 
     def test_formal_save_reopen_actual_pdf_excel_and_frozen_components(self):
-        self.m.show_detail();self.export()
+        self.m.show_detail()
+        wait(lambda: self.w._quote_scheme_save_worker is None
+             and self.w._quote_scheme_create_worker is None)
+        self.export()
         self.assertTrue(self.path.exists(),dict(messages=self.messages,reason=self.controller.reason,state=self.controller.state,information=self.information))
         for sheet in ('报价','成本'):
             self.assertIsNotNone(fixture.workbook_cell(self.path,sheet,'F11'))
