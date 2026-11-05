@@ -32,8 +32,11 @@ a = Analysis(
     [str(repo_root / 'desktop_client' / 'v3_launcher.py')],
     pathex=[os.environ['AI_QUOTE_PREVIEW_DEPS']] if os.environ.get('AI_QUOTE_PREVIEW_DEPS') else [],
     binaries=[],
-    datas=collect_data_files('ezdxf') + collect_data_files('fontTools') + [(str(core_root), 'v3_core')],
-    hiddenimports=collect_submodules('ezdxf.addons.drawing') + collect_submodules('fontTools'),
+    datas=collect_data_files('ezdxf') + collect_data_files('fontTools') + [
+        (str(core_root), 'v3_core'),
+        (str(repo_root / 'desktop_client' / 'ui_assets'), 'ui_assets'),
+    ],
+    hiddenimports=collect_submodules('ezdxf.addons.drawing') + collect_submodules('fontTools') + ['PySide6.QtSvg'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

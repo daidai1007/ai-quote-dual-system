@@ -584,7 +584,6 @@ QWidget#quoteAnalysisPage QFrame#analysisCard {{ background:white; border:1px so
    one-pixel borders; keep the complete analytics field at field_height. */
 QWidget#quoteAnalysisPage QLineEdit, QWidget#quoteAnalysisPage QComboBox, QWidget#quoteAnalysisPage QDateEdit {{ min-height:{METRICS['field_height']-2}px; max-height:{METRICS['field_height']-2}px; background:white; border:1px solid #c5d2df; border-radius:5px; padding:0 10px; font-size:13px; color:{COLORS['text']}; }}
 QWidget#quoteAnalysisPage QComboBox::drop-down {{ border:0; width:22px; }}
-QWidget#quoteAnalysisPage QComboBox::down-arrow {{ image:none; width:0; height:0; }}
 QWidget#quoteAnalysisPage QComboBox {{ padding-right:24px; }}
 QWidget#quoteAnalysisPage QComboBox QAbstractItemView {{ background:white; color:{COLORS['text']}; selection-background-color:#eaf1f8; font-size:13px; }}
 QWidget#quoteAnalysisPage QTabBar::tab {{ padding:10px 2px; margin-right:22px; color:{COLORS['secondary']}; background:transparent; border-bottom:3px solid transparent; font-size:14px; }}

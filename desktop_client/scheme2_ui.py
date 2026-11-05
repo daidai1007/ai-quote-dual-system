@@ -53,7 +53,7 @@ SCROLLBAR_COLORS = {
 }
 
 from PySide6.QtCore import QDate, QEvent, QObject, QPoint, QRect, QSettings, QSignalBlocker, QSize, QSizeF, QStandardPaths, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPageLayout, QPainter, QPen, QPolygon, QShortcut, QTextCursor, QTextDocument, QTextFrameFormat, QTextOption
+from PySide6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QFontMetrics, QKeySequence, QPageLayout, QPainter, QPen, QShortcut, QTextCursor, QTextDocument, QTextFrameFormat, QTextOption
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -6619,22 +6619,6 @@ class _SchemeAttachmentCombo(QComboBox):
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 self.itemText(0),
             )
-        arrow_rect = self.style().subControlRect(
-            QStyle.ComplexControl.CC_ComboBox,
-            option,
-            QStyle.SubControl.SC_ComboBoxArrow,
-            self,
-        )
-        center = arrow_rect.center()
-        opened = bool(self.property("popupOpen"))
-        points = (
-            (QPoint(center.x() - 5, center.y() + 3), QPoint(center.x() + 5, center.y() + 3), QPoint(center.x(), center.y() - 3))
-            if opened else
-            (QPoint(center.x() - 5, center.y() - 3), QPoint(center.x() + 5, center.y() - 3), QPoint(center.x(), center.y() + 3))
-        )
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#1C1C1E" if self.isEnabled() else "#8A8A86"))
-        painter.drawPolygon(QPolygon(points))
 
 
 def _style_attachment_add_row(frame, button):
@@ -9055,7 +9039,6 @@ QFrame#scheme2OptionControlShell[provenanceState="ai"] { background:#F6F7F9; }
 QFrame#scheme2OptionControlShell[provenanceState="manual"] { background:#FAEEDA; border-color:#EF9F27; }
 QFrame#scheme2OptionControlShell QLineEdit, QFrame#scheme2OptionControlShell QComboBox, QFrame#scheme2OptionControlShell QSpinBox, QFrame#scheme2OptionControlShell QDoubleSpinBox { background:transparent; border:0; border-radius:0; padding:8px 14px; min-height:34px; font-size:13px; font-weight:400; color:#2A3541; }
 QFrame#scheme2OptionControlShell QComboBox::drop-down, QFrame#scheme2DoorValue QComboBox::drop-down { border:0; width:28px; }
-QFrame#scheme2OptionControlShell QComboBox::down-arrow, QFrame#scheme2DoorValue QComboBox::down-arrow { width:8px; height:6px; }
 QComboBox#scheme2ProductCombo[placeholderActive="true"] { color:#8A8A86; }
 QAbstractItemView#scheme2OptionDropdown { background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; border-radius:6px; outline:0; padding:0; selection-background-color:#F5F9FF; selection-color:#1C1C1E; }
 QAbstractItemView#scheme2OptionDropdown::item { min-height:40px; padding:0; border:0; }
@@ -9097,7 +9080,6 @@ QComboBox#scheme2AttachmentCombo { background:#FFFFFF; color:#1C1C1E; border:1px
 QComboBox#scheme2AttachmentCombo:focus, QComboBox#scheme2AttachmentCombo[popupOpen="true"] { border-color:#2563EB; }
 QComboBox#scheme2AttachmentCombo:disabled { background:#F6F7F9; color:#8A8A86; border-color:#D7DCE3; }
 QComboBox#scheme2AttachmentCombo::drop-down { border:0; width:28px; }
-QComboBox#scheme2AttachmentCombo::down-arrow { width:8px; height:6px; }
 QAbstractItemView#scheme2AttachmentDropdown { background:#FFFFFF; color:#1C1C1E; border:1px solid #B8BEC7; border-radius:6px; outline:0; padding:0; selection-background-color:#F5F9FF; selection-color:#1C1C1E; }
 QAbstractItemView#scheme2AttachmentDropdown::item { min-height:40px; padding:0; border:0; }
 QDialogButtonBox#scheme2AttachmentActions { background:#FFFFFF; border-top:1px solid rgba(0,0,0,.12); padding:9px 10px; }

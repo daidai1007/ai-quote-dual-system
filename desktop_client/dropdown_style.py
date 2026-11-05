@@ -1,7 +1,5 @@
-"""Application-wide combo popups matching the selection-page material list.
-
-Only the open list is styled. Models, data, editors and signals stay intact.
-"""
+"""Application-wide combo indicators and popup lists."""
+from pathlib import Path
 import weakref
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
@@ -24,6 +22,14 @@ POPUP_COLORS = {
     "checkbox_border": "#98A2B3", "scroll_track": "#EEF0F3", "scroll_handle": "#A8B5C5",
     "scroll_hover": "#6E91BF",
 }
+
+_ARROW_ASSETS = Path(__file__).resolve().with_name("ui_assets").as_posix()
+COMBO_INDICATOR_STYLE = f"""
+QComboBox::drop-down {{ background:transparent; border:0; width:24px; }}
+QComboBox::down-arrow {{ image:url("{_ARROW_ASSETS}/combo-chevron.svg"); width:10px; height:6px; }}
+QComboBox::down-arrow:on {{ image:url("{_ARROW_ASSETS}/combo-chevron-open.svg"); }}
+QToolButton::menu-indicator {{ image:url("{_ARROW_ASSETS}/combo-chevron.svg"); width:10px; height:6px; }}
+"""
 
 
 def popup_style_sheet():
@@ -197,6 +203,7 @@ def install_combo_popup_style():
         return None
     guard = getattr(app, '_combo_popup_style_filter', None)
     if guard is None:
+        app.setStyleSheet(app.styleSheet() + COMBO_INDICATOR_STYLE)
         guard = ComboPopupStyleFilter(app)
         app._combo_popup_style_filter = guard
         app.installEventFilter(guard)

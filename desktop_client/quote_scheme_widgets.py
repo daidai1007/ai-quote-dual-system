@@ -41,7 +41,6 @@ LIGHT_ACTION = {
     'disabled_border': '#D1DCE7', 'focus': '#2463BD',
 }
 
-
 def apply_light_action(control, equal_width_labels=()):
     """Keep the existing control, signals and name; change only its appearance."""
     c = LIGHT_ACTION
@@ -62,8 +61,6 @@ def apply_light_action(control, equal_width_labels=()):
 {kind}:disabled {{ color:{c['disabled_text']}; background:{c['disabled_background']};
     border-color:{c['disabled_border']}; }}
 QComboBox {{ padding-right:28px; }}
-QComboBox::drop-down {{ border:0; width:24px; }}
-QComboBox::down-arrow {{ image:none; width:0; height:0; }}
 """)
     return control
 
@@ -91,7 +88,6 @@ QWidget#quoteSchemeCenterPage QComboBox:focus,
 QWidget#quoteSchemeCenterPage QSpinBox:focus {{ border-color:{c['primary']}; }}
 QWidget#quoteSchemeCenterPage QComboBox {{ padding-right:24px; }}
 QWidget#quoteSchemeCenterPage QComboBox::drop-down {{ border:0; width:22px; }}
-QWidget#quoteSchemeCenterPage QComboBox::down-arrow {{ image:none; width:0; height:0; }}
 QWidget#quoteSchemeCenterPage QSpinBox::up-button,
 QWidget#quoteSchemeCenterPage QSpinBox::down-button {{ width:0; border:0; }}
 QWidget#quoteSchemeCenterPage QPushButton#scheme2PrimaryAction {{ color:#FFFFFF; background:{c['primary']}; border:1px solid {c['primary']}; border-radius:5px; padding:0 14px; min-height:38px; max-height:38px; font-size:{BODY_PX}px; font-weight:500; }}
@@ -185,16 +181,7 @@ class PageJump(QSpinBox):
         super().keyPressEvent(event)
 
 
-class SchemeComboBox(QComboBox):
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor(COLORS['muted']), 1.4))
-        x, y = self.width() - 15, self.height() / 2
-        painter.drawLine(QPointF(x - 4, y - 2), QPointF(x, y + 2))
-        painter.drawLine(QPointF(x, y + 2), QPointF(x + 4, y - 2))
-        painter.end()
+SchemeComboBox = QComboBox
 
 
 class ServerNotice(QLabel):
