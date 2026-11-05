@@ -169,6 +169,7 @@ from quote_defaults import (
 )
 from quote_remark_rules import door_phrase_for_item, replace_door_configuration_phrase
 from quick_discount_rules import (
+    PRICING_BASIS,
     apply_management_fee,
     money_sum, money_product,
     attachment_excluded_from_discount,
@@ -2834,6 +2835,7 @@ def _build_ganged_quote_payloads(window) -> tuple[list[dict], float | None, floa
         coating_type = coating_combo.currentData() if coating_combo is not None else None
         payloads.append({
             "quote_id": f"{quote_prefix}-{index + 1}",
+            "pricing_basis": PRICING_BASIS,
             "product_code": code,
             # Each existing API call must match the child cabinet rather than
             # the combined customer-facing specification.  The original
@@ -2939,6 +2941,7 @@ def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | Non
         "waste_factor": value("waste_factor_spin", 1.2),
         "attachments": attachments,
         "attachment_contract": 2,
+        "pricing_basis": PRICING_BASIS,
         "ganged_cabinet_count": len(ganged_rows),
         "ganged_cabinets": ganged_rows,
         "ganged_cabinet_inputs": payloads,
@@ -4296,7 +4299,7 @@ def _attachment_summary_edited(window, cell: QTableWidgetItem) -> None:
         item["quantity"] = value
         formula_unit_cost = _safe_float(item.get("formula_unit_cost"))
         if formula_unit_cost is not None:
-            item["formula_amount"] = round(value * formula_unit_cost * sign, 2)
+            item["formula_amount"] = money_product(value, formula_unit_cost, sign)
         if item.get("quick_amount_override") is None:
             face_price = _attachment_face_price(item)
             if face_price is not None:

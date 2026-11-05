@@ -233,7 +233,8 @@ class ManagementTests(unittest.TestCase):
         centre._open_scheme(self.w, 'BJ-20261021-000001', 2)
         wait(lambda: self.w.stack.currentIndex() == 2 and self.m.root.currentWidget() == self.m.detail_page)
         self.assertEqual(self.m.tabs.currentIndex(), 0)
-        self.assertEqual([b.text() for b in self.w.nav_buttons], ['选型配置','成本计算','报价单管理','合同管理','报价方案','报价分析'])
+        self.assertEqual([b.text() for b in self.w.nav_buttons],
+                         ['选型配置','成本计算','报价单管理','合同管理','报价方案','报价分析','基础资料'])
 
     def test_adjustment_uses_original_real_xlsx_renderer(self):
         self.make_adjustment()

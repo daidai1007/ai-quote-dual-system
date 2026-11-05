@@ -19,7 +19,8 @@ Path(os.environ['AI_QUOTE_UPDATE_CONFIG']).write_text('{}',encoding='utf-8')
 
 from PySide6.QtCore import QDate, QSettings, QRect, QSignalBlocker, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QRadioButton, QStyle, QStyleOptionButton
+from PySide6.QtWidgets import (QApplication, QLabel, QPushButton, QRadioButton, QStyle,
+                               QStyleOptionButton, QStyleOptionComboBox, QToolButton)
 import quote_scheme_center as centre
 import scheme2_ui as ui
 import v3_launcher
@@ -47,9 +48,9 @@ class QuoteFilters(unittest.TestCase):
         self.requests=[]
         def run(worker):
             self.requests.append(parse_qs(urlparse(worker.url).query))
-            worker.succeeded.emit(dict(total=21,items=[dict(scheme_no='BJ-20261022-000001',company_name='合成测试客户',
+            worker.succeeded.emit(dict(total=21,items=[dict(scheme_no=f'BJ-20261022-{i:06d}',company_name='合成测试客户',
                 product_summary='JQ',creator_name='测试创建人',last_editor_name='测试更新人',status='QUOTED',order_nature='EXTERNAL',
-                version_no=1,lock_version=1,quoted_amount=1234.56,updated_at='2026-10-21T16:30:00+00:00')]))
+                version_no=1,lock_version=1,quoted_amount=1234.56,updated_at='2026-10-21T16:30:00+00:00') for i in range(1,13)]))
         self.worker=patch.object(centre.QuoteSchemeWorker,'run',run);self.worker.start()
         self.network=patch('urllib.request.urlopen',side_effect=AssertionError('External network forbidden'));self.network.start()
         screen=Mock(wraps=APP.primaryScreen());screen.availableGeometry.return_value=QRect(0,0,4096,2160)
@@ -62,7 +63,7 @@ class QuoteFilters(unittest.TestCase):
         wait(lambda:self.m.filters['product'].count()==4)
         self.m.show_list();self.loaded()
 
-    def loaded(self):wait(lambda:not self.w._quote_scheme_workers and self.m.list_table.rowCount()==1)
+    def loaded(self):wait(lambda:not self.w._quote_scheme_workers and self.m.list_table.rowCount()==12)
 
     def tearDown(self):
         wait(lambda:not self.w._quote_scheme_workers)
@@ -115,10 +116,24 @@ class QuoteFilters(unittest.TestCase):
     def test_actual_layout_at_normal_and_small_window(self):
         OUT.mkdir(parents=True,exist_ok=True)
         labels={label.text() for label in self.m.list_page.findChildren(QLabel)}
-        self.assertTrue({'报价单编号','客户','产品','创建人','状态','更新时间'}<=labels)
+        self.assertTrue({'报价单编号','客户','产品','创建人','状态','更新时间','订单性质'}<=labels)
         self.assertNotIn('报价单编号 / 客户',labels)
-        for width,height in ((1510,960),(1280,860),(1024,768)):
-            self.w.resize(width,height);APP.processEvents();QTest.qWait(40)
+        self.w.client_updates.label.setText('发现新版本（布局测试）')
+        self.w.client_updates.banner.show()
+        for width,height,minimum_rows in ((1510,960,3),(1280,670,3),(1024,768,3),(1092,550,1)):
+            self.w.resize(width,height);APP.processEvents();QTest.qWait(120)
+            self.m.list_table.scrollToTop();APP.processEvents()
+            view=self.m.list_table.viewport()
+            visible=view.visibleRegion().boundingRect()
+            rows=sum(visible.contains(self.m.list_table.visualItemRect(self.m.list_table.item(row,0)))
+                     for row in range(self.m.list_table.rowCount()))
+            print(f'{self.w.width()}x{self.w.height()} at DPR {self.w.devicePixelRatioF()}: {rows} full rows')
+            self.assertGreaterEqual(rows,minimum_rows)
+            self.assertEqual(self.m.list_compact,width<1100)
+            for row in range(rows):
+                actions=self.m.list_table.cellWidget(row,7)
+                for button in actions.findChildren(QPushButton):
+                    self.assertTrue(actions.rect().contains(button.geometry()))
             radio=self.m.list_table.cellWidget(0,0).findChild(QRadioButton)
             option=QStyleOptionButton();radio.initStyleOption(option)
             indicator=radio.style().subElementRect(QStyle.SubElement.SE_RadioButtonIndicator,option,radio)
@@ -136,6 +151,18 @@ class QuoteFilters(unittest.TestCase):
                 self.assertTrue(field.isVisible());self.assertGreaterEqual(field.width(),55)
                 rect=field.mapTo(self.m.list_page,field.rect().topLeft())
                 self.assertLessEqual(rect.x()+field.width(),self.m.list_page.width())
+                self.assertTrue(field.visibleRegion().contains(field.rect()),field.accessibleName())
+            for key in ('updated_from','updated_to'):
+                date=self.m.filters[key]
+                calendar_button=date.findChild(QToolButton)
+                self.assertTrue(calendar_button.isVisible())
+                self.assertTrue(date.rect().contains(calendar_button.geometry()))
+            for combo in (self.m.status,self.m.filters['product'],self.m.filters['order_nature']):
+                option=QStyleOptionComboBox();combo.initStyleOption(option)
+                arrow=combo.style().subControlRect(QStyle.ComplexControl.CC_ComboBox,option,
+                                                   QStyle.SubControl.SC_ComboBoxArrow,combo)
+                self.assertTrue(arrow.isValid())
+                self.assertTrue(combo.rect().contains(arrow))
             self.w.grab().save(str(OUT/f'quote-filters-{width}.png'))
 
 

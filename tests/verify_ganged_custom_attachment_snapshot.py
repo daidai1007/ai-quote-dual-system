@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
 import layout_refresh  # noqa: E402
+from quick_discount_rules import PRICING_BASIS  # noqa: E402
 
 
 v2_attachment = {
@@ -41,6 +42,7 @@ payload = layout_refresh._build_ganged_attachment_payload(
     window, [{"quote_id": "TMP-1"}]
 )
 assert payload is not None
+assert payload["pricing_basis"] == PRICING_BASIS
 assert window._v2_custom_attachments == [custom_attachment]
 assert window._v2_custom_attachments[0] is not custom_attachment
 assert window._v2_custom_attachments[0]["manual_inputs"] is not custom_attachment["manual_inputs"]

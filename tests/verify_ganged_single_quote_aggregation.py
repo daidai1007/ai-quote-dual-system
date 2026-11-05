@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop_client"))
 
 import layout_refresh  # noqa: E402
+from quick_discount_rules import PRICING_BASIS  # noqa: E402
+from attachment_cost_allocation import allocate_attachment_costs  # noqa: E402
+from PySide6.QtWidgets import QApplication, QTableWidget, QTableWidgetItem  # noqa: E402
 
 
 class Combo:
@@ -48,6 +51,7 @@ for payload in payloads:
     assert payload["galvanized_sheet_unit_price_override"] == 4.55
     assert payload["carbon_steel_unit_price_override"] == 4.2
     assert payload["material_unit_price_override"] == 4.2
+    assert payload["pricing_basis"] == PRICING_BASIS
     assert payload["surface_treatment_unit_price_override"] == 0
 
 
@@ -133,3 +137,19 @@ assert children[1]["cabinet_index"] == 2
 assert children[1]["formula_cost"]["total_cost"] == 300
 
 print("ganged single-cabinet aggregation passed")
+
+# An older formula unit cost can have fractions of a cent. Changing the
+# selected quantity must agree with the classified attachment cost.
+app = QApplication.instance() or QApplication([])
+summary = QTableWidget(1, 5)
+quantity = QTableWidgetItem("2")
+summary.setItem(0, 3, quantity)
+summary.attachment_summary_table = summary
+summary.attachments = [dict(item_name="侧板", quantity=1, status="CALCULATED",
+    formula_unit_cost=0.5025, material_cost=0.25, spray_cost=0.2525,
+    auxiliary_cost=0, labor_cost=0, formula_amount=0.5)]
+layout_refresh._attachment_summary_edited(summary, quantity)
+assert summary.attachments[0]["formula_amount"] == 1.01
+assert allocate_attachment_costs({"attachment_fee": 1.01}, summary.attachments, strict=True)["complete"]
+summary.close()
+print("ganged attachment quantity edit matches half-cent formula allocation")

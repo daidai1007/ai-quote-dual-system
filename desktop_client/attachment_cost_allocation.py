@@ -20,10 +20,21 @@ def is_formula_cost(row):
 
 def allocate_attachment_costs(formula,rows,*,strict=False):
     rows=[r for r in rows or [] if isinstance(r,dict)]
-    if not any(r.get('status')!='QUICK_ONLY' and is_formula_cost(r) for r in rows):return None
+    if not any(row.get('status') != 'QUICK_ONLY' and (
+        is_formula_cost(row) or row.get('pending_manual_dimensions') or row.get('status') == 'ERROR'
+    ) for row in rows):
+        return None
     errors=[];lines=[];parts=dict.fromkeys(COST_PARTS,0);fixed=0
     for index,row in enumerate(rows):
         if row.get('status')=='QUICK_ONLY' and row.get('formula_cost_edited') is not True:continue
+        name = row.get('item_name') or row.get('name') or '附件'
+        missing = row.get('pending_manual_dimensions') or []
+        if missing:
+            errors.append(f"{name}：请在已选附件中补充{'、'.join(map(str, missing))}")
+            continue
+        if row.get('status') == 'ERROR':
+            errors.append(f"{name}：{row.get('error') or '成本计算失败，请重新计算'}")
+            continue
         try:amount=money(row['formula_amount'] if row.get('formula_amount') is not None else formula_attachment_line_amount(row))
         except (ValueError,TypeError):
             errors.append(f"{row.get('item_name') or '附件'}：成本尚未完成");continue

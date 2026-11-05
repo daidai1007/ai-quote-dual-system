@@ -43,5 +43,21 @@ class PriceComponents(unittest.TestCase):
         self.assertEqual(value['discounted']['rows'][0]['original'],100)
         self.assertEqual(value['total'],104)
 
+    def test_named_details_keep_signed_amounts_and_reconcile_fractional_discount(self):
+        rows = [dict(item_name='照明灯', category_level1='照明灯/行程开关', quick_amount=20),
+                dict(item_name='行程开关', category_level1='照明灯/行程开关', quick_amount=12),
+                dict(item_name='扣减线夹', category_level1='照明灯/行程开关', quick_amount=-2),
+                dict(item_name='左侧板', quick_amount=.01), dict(item_name='右侧板', quick_amount=.01)]
+        result = quick_price_components(dict(base_price=.01), rows, .5)
+        fixed = result['fixed']['rows'][0]
+        self.assertEqual([r['name'] for r in fixed['details']], ['照明灯','行程开关','扣减线夹'])
+        self.assertEqual([r['amount'] for r in fixed['details']], [20,12,-2])
+        side = result['discounted']['rows'][1]
+        self.assertEqual([r['name'] for r in side['details']], ['左侧板','右侧板'])
+        self.assertEqual([r['amount'] for r in side['details']], [0,.01])
+        for row in (fixed, side):
+            for key in ('original','amount'):
+                self.assertEqual(money_sum(r[key] for r in row['details']), row[key])
+
 
 if __name__=='__main__':unittest.main(verbosity=2)

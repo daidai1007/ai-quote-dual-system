@@ -23,16 +23,21 @@ test('received fixed/discounted categories use the frozen version and an allowli
  const data=structuredClone(snapshot);
  data.draft_items[0].quote_cost_display={schema:1,values:{面价:'325.00',固定报价:'25.00',折扣面价:'150.00'},
   price_breakdown:{schema:1,basis:'per_unit_set_v1',private:'PRIVATE_BREAKDOWN',
-   fixed:{total:25,rows:[{category:'运费',original:25,discount:1,amount:25,secret:'PRIVATE_ROW'}]},
+   fixed:{total:25,rows:[{category:'安装附件',original:25,discount:1,amount:25,secret:'PRIVATE_ROW',
+     details:[{name:'固定立柱',original:15,amount:15,secret:'PRIVATE_DETAIL'},{name:'绑线条',original:10,amount:10}]}]},
    discounted:{total:150,rows:[{category:'柜体',original:300,discount:.5,amount:150}]}}};
  const doc=deliveryDocument(data,'BJ-20261023-000001',1);
  assert.equal(doc.cost_snapshot.items[0].price_breakdown.total,175);
+ assert.deepEqual(doc.cost_snapshot.items[0].price_breakdown.fixed.rows[0].details,
+  [{name:'固定立柱',original:15,amount:15},{name:'绑线条',original:10,amount:10}]);
  assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf('固定报价')],'25.00');
  assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf('折扣面价')],'150.00');
  assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf('面价')],'325.00','Older clients retain their existing wire field');
  assert.equal(JSON.stringify(doc).includes('PRIVATE_'),false);
  data.draft_items[0].quick={base_price:99999};
  assert.equal(deliveryDocument(data,'BJ-20261023-000001',1).cost_snapshot.items[0].price_breakdown.total,175);
+ data.draft_items[0].quote_cost_display.price_breakdown.fixed.rows[0].details[0].amount=99;
+ assert.equal(deliveryDocument(data,'BJ-20261023-000001',1).cost_snapshot.items[0].price_breakdown.fixed.rows[0].details,undefined);
  data.draft_items[0].quote_cost_display.price_breakdown.fixed.rows[0].amount=99;
  assert.equal(deliveryDocument(data,'BJ-20261023-000001',1).cost_snapshot.items[0].price_breakdown,null);
  assert.equal(deliveryDocument(snapshot,'BJ-20261023-000001',1).cost_snapshot.items[0].price_breakdown,null);

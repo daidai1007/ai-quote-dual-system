@@ -607,50 +607,85 @@ class QuickPriceBreakdownDialog(QDialog):
         self.resize(self.SIZE)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(*([DIALOG_METRICS['content_inset']] * 4))
-        note = QLabel('单台／单套金额 · ' + ('已按本版本折扣系数计算' if bucket == 'discounted' else '以下类目不参与折扣'))
+        note = QLabel('单台／单套金额 · ' + ('已按本版本折扣系数计算' if bucket == 'discounted' else '以下项目不参与折扣'))
         note.setWordWrap(True)
         layout.addWidget(note)
-        grid = table(('类目', '原金额', '折扣系数', '折后金额' if bucket == 'discounted' else '金额'))
+        grid = table(('项目名称', '原金额', '折扣系数', '折后金额' if bucket == 'discounted' else '金额'))
         grid.setObjectName('scheme2QuickPriceBreakdownTable')
         grid.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for column in (1, 2, 3):
             grid.setColumnWidth(column, 115)
-        grid.setToolTip('各类目按现有报价精度分摊，汇总与报价一致。')
         group = components.get(bucket) if isinstance(components, dict) else None
         rows = group.get('rows', []) if isinstance(group, dict) else []
-        grid.setRowCount(len(rows) + 1)
-        for row, value in enumerate(rows):
-            for column, text in enumerate((value['category'], _money(value['original']),
-                    f"{_number(value['discount']):g}", _money(value['amount']))):
+        price_items = {'柜体'} if bucket == 'discounted' else {'运费', '材料差价', '料厚差价'}
+        display_rows = []
+        missing_names = False
+        for value in rows:
+            if details := value.get('details'):
+                display_rows.extend((detail['name'], detail, value['discount']) for detail in details)
+            elif value['category'] in price_items:
+                display_rows.append((value['category'], value, value['discount']))
+            else:
+                missing_names = True
+        grid.setRowCount(len(display_rows) + 1)
+        for row, (label, value, discount) in enumerate(display_rows):
+            for column, text in enumerate((label, _money(value['original']),
+                    f"{_number(discount):g}", _money(value['amount']))):
                 cell = QTableWidgetItem(text)
                 if column:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                else:
+                    cell.setToolTip(label.strip())
                 grid.setItem(row, column, cell)
         for column, text in enumerate(('汇总', '', '', _money(group['total']) if group else '未记录')):
             cell = QTableWidgetItem(text)
             font = cell.font(); font.setBold(True); cell.setFont(font)
             if column == 3:
                 cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            grid.setItem(len(rows), column, cell)
+            grid.setItem(len(display_rows), column, cell)
         if group is None:
             note.setText('该版本未保存此报价分项，请查看原报价。')
+        elif missing_names:
+            note.setText(note.text() + '。该版本部分附件未保存名称，相关金额已计入汇总。')
         layout.addWidget(grid, 1)
         close = QPushButton('关闭'); close.setObjectName('scheme2PrimaryGhost'); close.clicked.connect(self.accept)
         layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
         self.table = grid
         style_dialog(self)
+        grid.resizeRowsToContents()
 
 
 def _show_quick_price_breakdown(window, item, column, *, components=None):
     if components is None and item is not None:
         saved = (item.get('quote_cost_display') or {}).get('price_breakdown')
-        components = saved if _quote_remark_readonly(window) and saved else _cost_price_components(item)
+        if _quote_remark_readonly(window) and saved:
+            # Keep the frozen prices. An older own snapshot can show names
+            # from its saved attachments if the matching category reconciles.
+            components = deepcopy(saved)
+            if item.get('attachments'):
+                try:
+                    candidates = _cost_price_components(item)
+                except (ValueError, TypeError):
+                    candidates = {}
+                for group in ('fixed', 'discounted'):
+                    details_by_category = {row['category']: row for row in candidates.get(group, {}).get('rows', [])}
+                    for row in (components.get(group) or {}).get('rows', []):
+                        current = details_by_category.get(row.get('category'), {})
+                        if not row.get('details') and current.get('details') and all(
+                            current.get(key) == row.get(key) for key in ('original', 'discount', 'amount')
+                        ):
+                            row['details'] = current['details']
+        else:
+            components = _cost_price_components(item)
     bucket = 'fixed' if column == FIXED_QUOTE_COLUMN else 'discounted'
     QuickPriceBreakdownDialog(window, HEADERS[column], components, bucket).exec()
 
 
 def _item_production_total(item):
     formula = dict(_formula(item))
+    allocation = formula.get('cost_allocation')
+    if allocation and not allocation.get('complete'):
+        return None
     formula['attachment_fee'] = money_sum(_popup_formula_amount(row) for row in item.get('attachments', []) if isinstance(row, dict))
     return production_total(_formula_with_manufacturing(item, formula), max(1, int(_number(item.get('quantity', 1), 1))))
 
@@ -1531,6 +1566,10 @@ class AttachmentEditor(QDialog):
             unit = abs(total / quantity) if quantity else 0
             if column == self.COL_UNIT_COST and source.get("formula_unit_cost_override") is not None:
                 unit = abs(_number(source["formula_unit_cost_override"]))
+            elif column == self.COL_UNIT_COST and source.get("formula_unit_cost") is not None:
+                saved_unit = abs(_number(source["formula_unit_cost"]))
+                if money_product(saved_unit, abs(quantity)) == money(abs(total)):
+                    unit = saved_unit
             if column == self.COL_UNIT_AMOUNT and edited and source.get("unit_price_override") is not None:
                 saved_unit = abs(_number(source["unit_price_override"]))
                 # Legacy adjustments could leave an older unit override next
@@ -4294,6 +4333,11 @@ def _build_cost_page(window):
     detail_context.setObjectName("scheme2CostSelectionContext")
     detail_context.setWordWrap(True)
     detail_context.hide()
+    detail_issue = QLabel()
+    detail_issue.setObjectName("scheme2CostSelectionContext")
+    detail_issue.setTextFormat(Qt.TextFormat.PlainText)
+    detail_issue.setWordWrap(True)
+    detail_issue.hide()
     detail_header_layout.addWidget(detail_title)
     detail_header_layout.addWidget(detail_hint, 1)
     detail_layout.addWidget(detail_header)
@@ -4301,6 +4345,10 @@ def _build_cost_page(window):
     context_layout.setContentsMargins(COST_SELECTION_METRICS['inset'], 0, COST_SELECTION_METRICS['inset'], 0)
     context_layout.addWidget(detail_context)
     detail_layout.addLayout(context_layout)
+    issue_layout = QHBoxLayout()
+    issue_layout.setContentsMargins(COST_SELECTION_METRICS['inset'], 0, COST_SELECTION_METRICS['inset'], 0)
+    issue_layout.addWidget(detail_issue)
+    detail_layout.addLayout(issue_layout)
     metrics = QWidget()
     metrics.setObjectName("scheme2CostSelectionMetrics")
     groups_layout = QGridLayout(metrics)
@@ -4425,6 +4473,7 @@ def _build_cost_page(window):
     window.scheme2_cost_add_independent = add_independent
     window.scheme2_cost_selection_detail = selection_detail
     window.scheme2_cost_selection_context = detail_context
+    window.scheme2_cost_selection_issue = detail_issue
     window.scheme2_cost_selection_values = detail_values
     window.scheme2_cost_selection_tiles = detail_tiles
     window.scheme2_cost_selection_grid = groups_layout
@@ -4776,6 +4825,20 @@ def _fill_cost_selection_detail(window, row, has_item):
         else:
             context.clear()
         context.setVisible(has_item)
+    issue = getattr(window, "scheme2_cost_selection_issue", None)
+    if issue is not None:
+        message = ""
+        errors = []
+        if has_item and not _received_cost_view(window):
+            formula = _formula(window.draft_items[row])
+            allocation = formula.get('cost_allocation') or {}
+            errors = allocation.get('errors') or []
+            message = errors[0] if errors else formula.get('tax_cost_error') or ""
+            if len(errors) > 1:
+                message += f"（另有 {len(errors) - 1} 项，见成本单元格提示）"
+        issue.setText("成本待处理：" + message if message else "")
+        issue.setToolTip("；".join(errors) if errors else message)
+        issue.setVisible(bool(message))
     for column, label in values.items():
         cell = table.item(row, column) if has_item else None
         text = cell.text().strip() if cell is not None else "—"

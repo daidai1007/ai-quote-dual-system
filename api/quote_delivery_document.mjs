@@ -25,7 +25,14 @@ function priceBreakdown(saved,face){
     for(const row of group.rows){
       if(!row||typeof row.category!=='string'||!row.category.trim()||
         ['original','discount','amount'].some(k=>numeric(row[k])===null))return null;
-      rows.push({category:row.category.slice(0,200),original:numeric(row.original),discount:numeric(row.discount),amount:numeric(row.amount)});
+      const category={category:row.category.slice(0,200),original:numeric(row.original),discount:numeric(row.discount),amount:numeric(row.amount)};
+      if(Array.isArray(row.details)&&row.details.length&&row.details.length<=1000&&row.details.every(detail=>
+        typeof detail?.name==='string'&&detail.name.trim()&&numeric(detail.original)!==null&&numeric(detail.amount)!==null)){
+        const details=row.details.map(detail=>({name:detail.name.trim().slice(0,200),original:numeric(detail.original),amount:numeric(detail.amount)}));
+        if(['original','amount'].every(key=>details.reduce((total,detail)=>total+cents(detail[key]),0)===cents(category[key])))
+          category.details=details;
+      }
+      rows.push(category);
     }
     if(rows.reduce((total,row)=>total+cents(row.amount),0)!==cents(group.total))return null;
     result[key]={rows,total:numeric(group.total)};

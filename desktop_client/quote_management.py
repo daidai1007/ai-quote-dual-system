@@ -38,6 +38,7 @@ QPushButton:disabled { color:#8798ad; background:#eef2f7; }
 QLineEdit, QPlainTextEdit, QComboBox { background:white; border:1px solid #dce4ee; border-radius:5px; padding:7px; }
 QTableWidget { font-size:12px; background:white; alternate-background-color:white; border:1px solid #dce4ee; gridline-color:#dce4ee; selection-background-color:#eaf2ff; selection-color:#20344e; }
 QHeaderView::section { font-size:12px; background:#f3f6fa; color:#63748a; border:0; border-bottom:1px solid #dce4ee; padding:11px 10px; font-weight:400; }
+QTableWidget#quoteManagementList QHeaderView::section { padding-top:5px; padding-bottom:5px; }
 QPushButton#quoteManagementLink { color:#2463bd; border:0; background:transparent; padding:2px 0; text-align:left; }
 QWidget#quoteManagementAdjust QLabel { background:transparent; }
 QLabel#quoteManagementBatchTitle { font-weight:600; }
@@ -56,6 +57,8 @@ QTextBrowser { background:white; border:1px solid #dce4ee; }
 ADJUST_METRICS = dict(product_width=174, factor_width=130, field_gap=12,
                       section_gap=14, row_height=88,
                       columns=(280, 64, 130, 130, 90, 110))
+QUOTE_LIST_WIDTHS = (46,205,150,85,115,135,160,65)
+QUOTE_LIST_COMPACT_WIDTHS = (46,152,150,85,105,116,143,65)
 
 
 def button(text, callback, primary=False):
@@ -479,15 +482,15 @@ class QuoteManagement:
 
     def build_list(self):
         layout = QVBoxLayout(self.list_page)
-        layout.setContentsMargins(24,23,24,24); layout.setSpacing(18)
+        layout.setContentsMargins(24,13,24,13); layout.setSpacing(8)
         top = QHBoxLayout(); title = QLabel('报价单管理'); title.setObjectName('scheme2PageTitle')
         heading = QVBoxLayout(); heading.setSpacing(4); heading.addWidget(title)
         top.addLayout(heading); top.addStretch(1)
         self.contract_button = apply_light_action(button('生成合同', self.contract, True)); self.contract_button.setEnabled(False)
         top.addWidget(self.contract_button); layout.addLayout(top)
         filter_frame = QFrame(); filter_frame.setObjectName('quoteManagementCustomer')
-        filters = QGridLayout(filter_frame); filters.setContentsMargins(15,12,15,12)
-        filters.setHorizontalSpacing(METRICS['filter_gap']); filters.setVerticalSpacing(METRICS['filter_gap'])
+        filters = QGridLayout(filter_frame); filters.setContentsMargins(15,7,15,7)
+        filters.setHorizontalSpacing(METRICS['filter_gap']); filters.setVerticalSpacing(8)
         self.filters = {}
         for key, label in (('scheme_no','报价单编号'), ('company','客户'), ('creator','创建人')):
             editor = QueryLineEdit(); editor.setPlaceholderText('请输入' + label)
@@ -527,15 +530,20 @@ class QuoteManagement:
             apply_light_action(control); actions.addWidget(control)
         actions.addStretch(1)
         filters.addLayout(actions,1,3,Qt.AlignmentFlag.AlignBottom)
-        for editor in (*self.filters.values(), self.status):
-            editor.setMinimumWidth(0 if not isinstance(editor,DateFilter) else 96)
-            editor.setFixedHeight(METRICS['field_height'])
-            editor.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Fixed)
-            if isinstance(editor,QLineEdit):editor.returnPressed.connect(lambda: self.load_list(1))
+        for index in range(filters.count()):
+            field = filters.itemAt(index).widget()
+            if field is not None:
+                field.layout().setSpacing(3)
         layout.addWidget(filter_frame)
+        for editor in (*self.filters.values(), self.status):
+            editor.ensurePolished()
+            editor.setMinimumWidth(0 if not isinstance(editor,DateFilter) else 96)
+            editor.setMinimumHeight(max(editor.sizeHint().height(),editor.fontMetrics().height()+16))
+            editor.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Minimum)
+            if isinstance(editor,QLineEdit):editor.returnPressed.connect(lambda: self.load_list(1))
         self.list_sheet = QFrame(); self.list_sheet.setObjectName('quoteManagementSheet')
         sheet = QVBoxLayout(self.list_sheet); sheet.setContentsMargins(0,0,0,0); sheet.setSpacing(0)
-        caption = QHBoxLayout(); caption.setContentsMargins(16,13,16,13)
+        caption = QHBoxLayout(); caption.setContentsMargins(16,5,16,5)
         caption.addWidget(QLabel('报价单列表')); caption.addStretch(1)
         self.selection_caption = QLabel('请选择一条报价单，再生成合同'); caption.addWidget(self.selection_caption)
         sheet.addLayout(caption)
@@ -543,12 +551,16 @@ class QuoteManagement:
         self.list_table.setObjectName('quoteManagementList'); self.list_table.setColumnWidth(0, 46); self.list_table.setColumnWidth(1, 210)
         self.row_group = QButtonGroup(self.list_table); self.row_group.setExclusive(True)
         self.list_table.horizontalHeader().setStretchLastSection(False)
-        for index,width in enumerate((46,205,150,85,115,135,160,65)): self.list_table.setColumnWidth(index,width)
+        self.list_compact = False
+        for index,width in enumerate(QUOTE_LIST_WIDTHS): self.list_table.setColumnWidth(index,width)
         self.list_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.Stretch)
+        self.list_row_fit = QTimer(self.list_table); self.list_row_fit.setSingleShot(True)
+        self.list_row_fit.timeout.connect(self.fit_list_rows)
+        self.list_table.horizontalHeader().sectionResized.connect(lambda *_: self.list_row_fit.start())
         self.list_table.itemSelectionChanged.connect(self.selection_changed)
         self.list_table.cellDoubleClicked.connect(lambda row, _column: self.open_row(row))
         sheet.addWidget(self.list_table)
-        layout.addWidget(self.list_sheet)
+        layout.addWidget(self.list_sheet,1)
         footer = QHBoxLayout(); self.list_status = QLabel('请选择报价单'); self.list_status.setWordWrap(True)
         footer.addWidget(self.list_status, 1)
         footer.addWidget(QLabel('生成合同后进入合同管理'))
@@ -557,8 +569,7 @@ class QuoteManagement:
         self.retry_list = button('重试', lambda: self.load_list(self.page_number))
         for control in (self.previous_page,self.next_page,self.retry_list):
             control.hide(); footer.addWidget(control)
-        layout.addLayout(footer); layout.addStretch(1)
-        self.fit_list()
+        layout.addLayout(footer)
 
     def sync_filter_products(self):
         from quote_scheme_center import _configured_product_options
@@ -570,11 +581,20 @@ class QuoteManagement:
             for label,value in options:target.addItem(label,value)
             target.setCurrentIndex(max(0,target.findData(selected)))
 
-    def fit_list(self):
-        # Content-sized like the approved sheet; long lists scroll within the
-        # available page rather than reserving an empty full-height viewport.
-        self.list_table.setFixedHeight(min(430, self.list_table.horizontalHeader().height() +
-            sum(self.list_table.rowHeight(r) for r in range(self.list_table.rowCount())) + 4))
+    def fit_list_rows(self):
+        # Reserve scrollbar space so the column layout stays stable when rows wrap.
+        available = self.list_table.contentsRect().width() - self.list_table.verticalScrollBar().sizeHint().width()
+        compact = available < sum(QUOTE_LIST_WIDTHS)
+        if compact != self.list_compact:
+            self.list_compact = compact
+            widths = QUOTE_LIST_COMPACT_WIDTHS if compact else QUOTE_LIST_WIDTHS
+            for column,width in enumerate(widths):
+                if column != 2:
+                    self.list_table.setColumnWidth(column,width)
+        # Measure after Qt lays out the action buttons and wrapped cell text.
+        self.list_table.resizeRowsToContents()
+        for row in range(self.list_table.rowCount()):
+            self.list_table.setRowHeight(row,max(54,self.list_table.rowHeight(row)))
 
     def build_detail(self, old):
         layout = QVBoxLayout(self.detail_page)
@@ -750,7 +770,7 @@ class QuoteManagement:
         self.list_epoch += 1; epoch = self.list_epoch
         self.page_number = page; self.rows = []; fill(self.list_table, [])
         self.contract_button.setEnabled(False); self.list_status.setText('正在加载报价单…')
-        self.selection_caption.setText('请选择一条报价单，再生成合同'); self.retry_list.hide(); self.fit_list()
+        self.selection_caption.setText('请选择一条报价单，再生成合同'); self.retry_list.hide()
         def loaded(result):
             if epoch != self.list_epoch: return
             self.rows = list(result.get('items') or [])
@@ -761,7 +781,6 @@ class QuoteManagement:
                      str(q.get('last_editor_name') or q.get('creator_name') or '') + '\n' + self.updated_time(q.get('updated_at')), '') for q in self.rows]
             fill(self.list_table, rows)
             for r in range(len(rows)):
-                self.list_table.setRowHeight(r, 80)
                 radio = QRadioButton(); radio.setAccessibleName('选择报价单 ' + self.rows[r]['scheme_no'])
                 radio.clicked.connect(lambda _=False,r=r: self.list_table.selectRow(r))
                 self.row_group.addButton(radio)
@@ -769,18 +788,18 @@ class QuoteManagement:
                 selection_layout.setContentsMargins(0,0,0,0)
                 selection_layout.addWidget(radio,0,Qt.AlignmentFlag.AlignCenter)
                 self.list_table.setCellWidget(r, 0, selection)
-                actions = QWidget(); action_layout = QVBoxLayout(actions); action_layout.setContentsMargins(8,6,8,6); action_layout.setSpacing(2)
+                actions = QWidget(); action_layout = QVBoxLayout(actions); action_layout.setContentsMargins(8,3,8,3); action_layout.setSpacing(2)
                 for label, tab in (('查看',0),('导出',4)):
                     if label=='导出' and self.rows[r].get('can_write') is False:continue
                     action = button(label, lambda _=False,r=r,t=tab:self.open_row(r,t)); action.setObjectName('quoteManagementLink')
                     action_layout.addWidget(action)
                 self.list_table.setCellWidget(r, 7, actions)
+            self.list_row_fit.start()
             total = int(result.get('total',len(rows)))
             self.list_status.setText(f"共 {total} 份报价单 · 单选" + (f' · 第{page}页' if total>20 else ''))
             self.previous_page.setVisible(total>20 or page>1); self.previous_page.setEnabled(page>1)
             self.next_page.setVisible(total>20 or page>1); self.next_page.setEnabled(page*20<total)
             if not rows: self.list_status.setText('没有符合条件的报价单，请更换关键词或重置查询。')
-            self.fit_list()
         def failed(message):
             if epoch == self.list_epoch:
                 self.list_status.setText('报价单加载失败，请重试。'); self.list_status.setToolTip(str(message)); self.retry_list.show()

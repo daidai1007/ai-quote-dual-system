@@ -9,7 +9,7 @@ from verify_quote_document_progress import app, wait, ui
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtPrintSupport import QPrinter
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QLabel
 from pypdf import PdfReader
 import quote_scheme_center as schemes
 
@@ -27,8 +27,8 @@ class PriceBreakdownUI(unittest.TestCase):
         item=self.w.draft_items[0]
         item.update(material_code='SECC',quantity=2,quick_discount=.8,freight_fee=9,freight_mode='MANUAL')
         item['attachments']=[
-            dict(item_name='内门',category_level1='内门',quantity=1,quick_amount=100,formula_amount=40),
-            dict(item_name='风机',category_level1='风机',quantity=1,quick_amount=30,formula_amount=10),
+            dict(item_name='内门组件',category_level1='内门',quantity=1,quick_amount=100,formula_amount=40),
+            dict(item_name='220V风机',category_level1='风机',quantity=1,quick_amount=30,formula_amount=10),
             dict(item_name='安装板',category_level1='其他附件',quantity=1,quick_amount=20,formula_amount=5),
             dict(item_name='填充安装板',quantity=1,quick_amount=15,formula_amount=5),
             dict(item_name='安装板',quantity=1,attachment_price_sign=-1,quick_amount=-5,formula_amount=-2),
@@ -63,9 +63,19 @@ class PriceBreakdownUI(unittest.TestCase):
             grid.scrollToItem(grid.item(0,7));app.processEvents()
             QTest.mouseClick(grid.viewport(),Qt.MouseButton.LeftButton,pos=grid.visualItemRect(grid.item(0,7)).center())
             grid.setCurrentCell(0,24);grid.setFocus();QTest.keyClick(grid,Qt.Key.Key_Return);app.processEvents()
-        self.assertEqual(opened[0][-1],['汇总','','','74.00'])
-        self.assertEqual(opened[1][0],['柜体','1,000.00','0.8','800.00'])
-        self.assertEqual(opened[1][-1],['汇总','','','876.00'])
+        self.assertEqual(opened[0],[
+            ['220V风机','30.00','1','30.00'],
+            ['安装板','20.00','1','20.00'],
+            ['填充安装板','15.00','1','15.00'],
+            ['运费','9.00','1','9.00'],
+            ['汇总','','','74.00'],
+        ])
+        self.assertEqual(opened[1],[
+            ['柜体','1,000.00','0.8','800.00'],
+            ['内门组件','100.00','0.8','80.00'],
+            ['安装板','-5.00','0.8','-4.00'],
+            ['汇总','','','876.00'],
+        ])
         self.assertEqual(self.w.draft_items,before)
         self.screenshot(self.w,'cost-table.png')
 
@@ -81,6 +91,7 @@ class PriceBreakdownUI(unittest.TestCase):
         self.assertEqual(component['values']['固定报价'],'74.00')
         self.assertEqual(component['values']['折扣面价'],'876.00')
         self.assertEqual(component['price_breakdown']['total'],950)
+        self.assertEqual(component['price_breakdown']['fixed']['rows'][0]['details'][0]['name'],'220V风机')
         schemes._apply_opened_scheme(self.w,dict(found=True,**deepcopy(self.server),quote_management_historical_export=True),ui.QUOTE_ROUTE)
         self.w._quote_scheme_save_timer.stop()
         self.assertIn('950.00',ui._printable_quote_html(self.w))
@@ -120,6 +131,18 @@ class PriceBreakdownUI(unittest.TestCase):
         dialog=ui.QuickPriceBreakdownDialog(self.w,'固定报价',empty,'fixed')
         self.assertEqual(dialog.table.rowCount(),1)
         self.assertEqual(dialog.table.item(0,3).text(),'0.00');dialog.close()
+
+    def test_legacy_unnamed_attachment_keeps_amount_in_total_only(self):
+        saved = {'fixed': {'rows': [
+            dict(category='安装附件', original=20, discount=1, amount=20),
+            dict(category='运费', original=9, discount=1, amount=9),
+        ], 'total':29}}
+        dialog = ui.QuickPriceBreakdownDialog(self.w, '固定报价', saved, 'fixed')
+        self.assertEqual(dialog.table.rowCount(),2)
+        self.assertEqual(dialog.table.item(0,0).text(),'运费')
+        self.assertEqual(dialog.table.item(1,3).text(),'29.00')
+        self.assertTrue(any('部分附件未保存名称' in label.text() for label in dialog.findChildren(QLabel)))
+        dialog.close()
 
 
 if __name__=='__main__':unittest.main(verbosity=2)
