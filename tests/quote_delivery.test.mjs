@@ -61,3 +61,16 @@ test('real recipient Excel uses fixed version, nature and amount and has no cost
  for(const [cell,value] of [['B2',d.scheme_no],['E2','V3'],['B3','内部'],['E3',350],['B4',snapshot.company],['F10',175],['G10',350],['G11',350]])assert.equal(sheet.getCell(cell).value,value,cell);
  assert.equal(sheet.getCell('H10').value,'示例备注');
 });
+
+test('recipient Excel gives wrapped remarks enough height without changing nearby rows',async()=>{
+ const document=deliveryDocument(snapshot,'BJ-20261023-000001',2);
+ const remark=Array.from({length:8},(_,index)=>`第${index+1}行：按图供货`).join('\n');
+ document.items[0].remark=remark;
+ const book=new ExcelJS.Workbook();await book.xlsx.load(await deliveryWorkbook(document));
+ const sheet=book.worksheets[0];
+ assert.equal(sheet.getCell('H10').value,remark);
+ assert.equal(sheet.getCell('H10').alignment.wrapText,true);
+ assert(sheet.getRow(10).height>=8*13);
+ assert.equal(sheet.getRow(11).height,30);
+ assert.equal(sheet.getCell('G10').value,350);
+});

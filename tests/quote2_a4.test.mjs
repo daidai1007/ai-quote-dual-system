@@ -49,9 +49,55 @@ for(const vertical of [false,true])for(const count of [1,3,12])test(`报价2 con
  q.eachRow(row=>row.eachCell(cell=>assert(!cell.value?.formula?.includes('报价2'),'no circular reference from source')));
 }));
 
-for(const [name,count,long]of [['short',3,false],['long',3,true],['many',12,false]])test(`native A4 output and source-to-报价2 edits survive save/reopen (${name})`,()=>inDirectory(async dir=>{
- const p=payload(count,long),{book,output}=await exported(dir,p,true),source=book.getWorksheet('报价'),layout=quotationLayout(source),last=11+count;
- const edits={};layout.products.forEach((row,i)=>{if(i<3){edits[`F${row}`]=[123.45,0,10.01][i];edits[`D${row}`]=[3,7,2][i];}});edits.B4='联动测试客户';
+const multiLineSpec=Array.from({length:9},(_,index)=>`尺寸${index+1} 800×600×1800`).concat('规格末行').join('\n');
+for(const vertical of [false,true])test(`long remarks and specifications independently grow quotation rows (${vertical?'vertical':'standard'})`,()=>inDirectory(async dir=>{
+ const p=payload(9);
+ const lines=Array.from({length:12},(_,index)=>`第${index+1}行：说明`).join('\n');
+ p.items[6].quote_display.specification=multiLineSpec;
+ p.items[6].quote_display.remark='短备注';
+ p.items[7].quote_display.remark=lines;
+ const {book}=await exported(dir,p,vertical);
+ const baselineDir=path.join(dir,'baseline');await fs.mkdir(baselineDir);
+ const {book:baseline}=await exported(baselineDir,payload(9),vertical);
+ const rowHeight=(sheet,row)=>{
+  const merge=sheet.model.merges.find(range=>range.startsWith(`H${row}:`));
+  const last=merge?Number(/\d+$/.exec(merge)[0]):row;
+  return Array.from({length:last-row+1},(_,i)=>sheet.getRow(row+i).height??15).reduce((sum,value)=>sum+value,0);
+ };
+ for(const name of ['成本','报价','报价2']){
+  const sheet=book.getWorksheet(name),products=quotationLayout(sheet)?.products;
+  const control=baseline.getWorksheet(name),controlProducts=quotationLayout(control)?.products;
+  const specRow=products?.[6]??17,remarkRow=products?.[7]??18,shortRow=products?.[8]??19;
+  assert.equal(result(sheet.getCell(`C${specRow}`).value),multiLineSpec);
+  assert.equal(result(sheet.getCell(`H${specRow}`).value),'短备注');
+  assert(sheet.getCell(`C${specRow}`).alignment.wrapText);
+  assert.equal(result(sheet.getCell(`H${remarkRow}`).value),lines);
+  assert(sheet.getCell(`H${remarkRow}`).alignment.wrapText);
+  const heights=[specRow,remarkRow,shortRow].map(row=>rowHeight(sheet,row));
+  assert(heights[0]>=10*12, `${name} must leave room for the specification alone`);
+  assert(heights[1]>=12*12, `${name} must leave room for all remark lines`);
+  assert(Math.abs(heights[2]-rowHeight(control,controlProducts?.[8]??19))<0.001, `${name} short row height changed`);
+  assert.deepEqual(['C','H'].map(column=>sheet.getColumn(column).width),['C','H'].map(column=>control.getColumn(column).width));
+  for(const [index,row] of [specRow,remarkRow,shortRow].entries()){
+   const controlRow=controlProducts?.[index+6]??index+17;
+   for(const column of ['D','F','G']){
+    assert.equal(result(sheet.getCell(`${column}${row}`).value),result(control.getCell(`${column}${controlRow}`).value));
+   }
+   if(name==='报价')assert.equal(sheet.getCell(`G${row}`).value.formula,`ROUND(F${row}*D${row},2)`);
+   if(name==='报价2'){
+    const sourceRow=quotationLayout(book.getWorksheet('报价'))?.products[index+6]??index+17;
+    for(const column of ['D','F','G'])assert.equal(sheet.getCell(`${column}${row}`).value.formula,`'报价'!${column}${sourceRow}`);
+   }
+  }
+  console.log(JSON.stringify({layout:vertical?'vertical':'standard',sheet:name,specHeight:heights[0],remarkHeight:heights[1],shortHeight:heights[2]}));
+ }
+}));
+
+for(const [name,count,long,vertical]of [['short',3,false,true],['long',3,true,true],['many',12,false,true],['long-standard',3,true,false]])test(`native A4 output and source-to-报价2 edits survive save/reopen (${name})`,()=>inDirectory(async dir=>{
+ const p=payload(count,long);
+ if(long)p.items[2].quote_display.specification=multiLineSpec;
+ const {book,output}=await exported(dir,p,vertical),source=book.getWorksheet('报价'),layout=quotationLayout(source),last=11+count;
+ const edits={};(layout?.products??[11,12,13]).forEach((row,i)=>{if(i<3){edits[`F${row}`]=[123.45,0,10.01][i];edits[`D${row}`]=[3,7,2][i];}});edits.B4='联动测试客户';
  const request=path.join(dir,'native-request.json'),report=path.join(dir,'native-report.json'),saved=path.join(dir,'edited.xlsx'),pdf=path.join(dir,'报价2.pdf');
  await fs.writeFile(request,JSON.stringify({edits,numbers:['D11','F11','G11','G12','G13',`G${last}`],strings:['B4','E1','H12']}));
  const office=process.env.QUOTE_TEST_SOFFICE||'C:/Program Files/LibreOffice/program/soffice.exe';
@@ -65,6 +111,7 @@ for(const [name,count,long]of [['short',3,false],['long',3,true],['many',12,fals
  if(name==='short')assert.equal(inspected.pages,1,'three normal rows fit one A4 page');else if(name==='many')assert(inspected.pages>=2);
  const text=inspected.text.replace(/\s/g,'');assert(text.includes(p.quote_id));assert(text.includes('联动测试客户'));assert(text.includes('370.35'));assert(text.includes('订单性质'));assert(text.includes('外部'));
  for(let i=0;i<count;i++){assert(text.includes(p.items[i].quote_display.name));assert(text.includes(`备注结束${String(i+1).padStart(3,'0')}`));}
+ if(long)assert(text.includes('规格末行'));
  assert(!text.includes('材料成本'));assert(!text.includes('原价单价'));
  if(process.env.QUOTE2_QA_DIR){const target=path.join(process.env.QUOTE2_QA_DIR,name);await fs.mkdir(target,{recursive:true});for(const f of [output,saved,pdf,report])await fs.copyFile(f,path.join(target,path.basename(f)));await fs.writeFile(path.join(target,'pdf-inspection.json'),JSON.stringify(inspected,null,2));}
 }));

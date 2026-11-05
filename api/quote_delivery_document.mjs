@@ -2,6 +2,7 @@ import ExcelJS from '@excel.js/exceljs';
 import {contractQuote} from './contract_quote.mjs';
 import {snapshotOrderNature,validateOrderNature} from '../quote_order_nature.mjs';
 import {quickFreightFee} from '../quick_discount_rules.mjs';
+import {fitWrappedTextRows} from '../exceljs_range_adapter.mjs';
 
 export const SELLER=Object.freeze({name:'浙江京能电力设备有限公司',address:'杭州临安横畈工业功能区桑园路18号',phone:'0571-88520091',fax:'0571-88520077'});
 export const displayVersion=(snapshot,fallback)=>{
@@ -87,6 +88,7 @@ export async function deliveryWorkbook(document){
     cell.border={top:{style:'thin',color:{argb:'FFD5E0EF'}},bottom:{style:'thin',color:{argb:'FFD5E0EF'}},left:{style:'thin',color:{argb:'FFD5E0EF'}},right:{style:'thin',color:{argb:'FFD5E0EF'}}};
   });});
   for(let row=10;row<=10+document.items.length;row++)for(const column of [6,7])sheet.getCell(row,column).numFmt='#,##0.00';
+  fitWrappedTextRows(sheet,10,9+document.items.length);
   sheet.pageSetup={paperSize:9,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:9'};
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }

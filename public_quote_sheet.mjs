@@ -1,41 +1,28 @@
 // Customer-facing A4 sheet. All prices remain owned by the existing quote.
+import {columnWidthPoints, fitWrappedTextRows, wrappedCellHeight} from './exceljs_range_adapter.mjs';
+
 const clone=value=>value===undefined?undefined:structuredClone(value);
 const plain=value=>value&&typeof value==='object'&&'formula'in value?(value.result??0):value;
 const columnLetter=i=>String.fromCharCode(64+i);
-const widthPoints=column=>(Math.floor((column.width??8.43)*7+5))*.75;
-function linesFor(text,width,size){
- let lines=0;
- for(const line of String(text??'').replace(/\r\n?/g,'\n').split('\n')){
-  let used=0,count=1;
-  for(const character of line){
-   const factor=/[\u2e80-\u9fff\uff00-\uffef]/u.test(character)?1.05:/[ilI.,:;!| ]/.test(character)?.4:/[0-9]/.test(character)?.63:.74;
-   const advance=size*factor;
-   if(used&&used+advance>width){count++;used=0;}used+=advance;
-  }lines+=count;
- }return Math.max(1,lines);
-}
 function fitPublicRows(sheet,count){
  for(let row=11;row<11+count;row++){
-  const target=sheet.getRow(row);let needed=target.height??18;
   for(let column=1;column<=8;column++){
-   const cell=target.getCell(column),size=cell.font?.size??10;
-   needed=Math.max(needed,linesFor(plain(cell.value),Math.max(12,widthPoints(sheet.getColumn(column))-9)*.92,size)*size*1.4+8);
+   const cell=sheet.getCell(row,column);
    cell.alignment={...cell.alignment,wrapText:true,vertical:'middle'};
   }
-  if(needed>409.5)throw new Error(`报价2第${row-10}项备注或规格过长，超过Excel单行可打印高度，请分段整理说明后导出。`);
-  target.height=Math.ceil(needed*2)/2;
  }
+ fitWrappedTextRows(sheet,11,10+count);
  for(let row=4;row<=8;row++){
   let needed=sheet.getRow(row).height??16.5;
   for(const [first,last]of [[2,4],[6,8]]){
-   const cell=sheet.getCell(row,first),width=Array.from({length:last-first+1},(_,i)=>widthPoints(sheet.getColumn(first+i))).reduce((a,b)=>a+b,0);
+   const cell=sheet.getCell(row,first),width=Array.from({length:last-first+1},(_,i)=>columnWidthPoints(sheet.getColumn(first+i))).reduce((a,b)=>a+b,0);
    cell.alignment={...cell.alignment,wrapText:true,vertical:'middle'};
-   needed=Math.max(needed,linesFor(plain(cell.value),(width-9)*.92,cell.font?.size??10)*(cell.font?.size??10)*1.4+2);
+   needed=Math.max(needed,wrappedCellHeight(String(plain(cell.value)??''),width,cell.font?.size??10,2));
   }sheet.getRow(row).height=Math.ceil(needed*2)/2;
  }
  // Fit one page horizontally; preserve readable type and continue vertically.
  const printableWidth=595.28-36,printableHeight=841.89-36;
- const totalWidth=Array.from({length:8},(_,i)=>widthPoints(sheet.getColumn(i+1))).reduce((a,b)=>a+b,0);
+ const totalWidth=Array.from({length:8},(_,i)=>columnWidthPoints(sheet.getColumn(i+1))).reduce((a,b)=>a+b,0);
  const scale=Math.min(1,printableWidth/totalWidth),available=printableHeight/scale-6;
  let used=Array.from({length:10},(_,i)=>sheet.getRow(i+1).height??15).reduce((a,b)=>a+b,0);
  for(let row=11;row<=11+count;row++){

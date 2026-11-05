@@ -7,6 +7,63 @@
  * explicit and testable without depending on a private spreadsheet runtime.
  */
 
+export const columnWidthPoints = column => Math.floor((column.width ?? 8.43) * 7 + 5) * 0.75;
+
+function characterWidth(character, fontSize) {
+  if (character === "\t") return fontSize * 2;
+  if (/[ilI.,:;!| ]/u.test(character)) return fontSize * 0.45;
+  if (/[0-9]/u.test(character)) return fontSize * 0.63;
+  if (/[mMwW@%]/u.test(character)) return fontSize;
+  if (/[\x20-\x7e]/u.test(character)) return fontSize * 0.74;
+  return fontSize * 1.1;
+}
+
+export function wrappedCellHeight(text, width, fontSize, padding = 8) {
+  // Leave space for cell insets and differences between Excel/WPS fonts.
+  const available = Math.max(fontSize, (width - 9) * 0.92);
+  let lines = 0;
+  for (const paragraph of text.replace(/\r\n?/g, "\n").split("\n")) {
+    lines += 1;
+    let used = 0;
+    for (const token of paragraph.match(/[A-Za-z0-9][A-Za-z0-9._/+×*-]*|[\s\S]/gu) ?? []) {
+      const widths = Array.from(token, character => characterWidth(character, fontSize));
+      const total = widths.reduce((sum, advance) => sum + advance, 0);
+      if (used && used + total > available) {
+        lines += 1;
+        used = 0;
+      }
+      for (const advance of widths) {
+        if (used && used + advance > available) {
+          lines += 1;
+          used = 0;
+        }
+        used += advance;
+      }
+    }
+  }
+  return Math.ceil((lines * fontSize * 1.4 + padding) * 2) / 2;
+}
+
+/** Grow populated rows before any vertical merges. Keep the template minimum. */
+export function fitWrappedTextRows(sheet, first, last) {
+  for (let index = first; index <= last; index += 1) {
+    const row = sheet.getRow(index);
+    let height = row.height ?? sheet.properties.defaultRowHeight ?? 15;
+    row.eachCell(cell => {
+      if (!cell.alignment?.wrapText) return;
+      const value = cell.value;
+      const text = typeof value === "string" ? value : value?.result;
+      if (typeof text !== "string" || !text) return;
+      const needed = wrappedCellHeight(text, columnWidthPoints(sheet.getColumn(cell.col)), cell.font?.size ?? 11);
+      if (needed > 409.5) {
+        throw Object.assign(new Error(`工作表“${sheet.name}”的 ${cell.address} 内容超过 Excel 单行可显示高度，请拆分说明后重新导出。`), {statusCode: 400});
+      }
+      height = Math.max(height, needed);
+    });
+    if (height > (row.height ?? sheet.properties.defaultRowHeight ?? 15)) row.height = height;
+  }
+}
+
 const clone = (value) => {
   if (value === null || value === undefined || typeof value !== "object") return value;
   if (value instanceof Date) return new Date(value.getTime());

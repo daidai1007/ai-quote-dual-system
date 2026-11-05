@@ -18,6 +18,7 @@ import {withAttachmentCostAllocation} from './attachment_cost_allocation.mjs';
 import {
   attachRangeApi,
   attachWorkbookRangeApi,
+  fitWrappedTextRows,
   rangePlainValues,
   scanWorkbookFormulaErrors,
 } from "./exceljs_range_adapter.mjs";
@@ -1537,18 +1538,21 @@ function buildFormulaCostDetailSheet() {
   for (const [column, width] of Object.entries(widths)) {
     sheet.getRange(`${column}1:${column}${tableEndRow}`).format.columnWidth = width;
   }
+  fitWrappedTextRows(sheet, firstDataRow, subtotalRow - 1);
   return sheet;
 }
 
 fillSheet(formulaSheet, "formula");
 fillSheet(quickSheet, "quick");
 const publicQuotePlan=addPublicQuoteSheet(workbook,quickSheet,payload.items.length);
+for (const sheet of [formulaSheet, quickSheet]) {
+  fitWrappedTextRows(sheet, 11, 10 + payload.items.length);
+}
 buildFormulaCostDetailSheet();
 
-// Layout only: keep fillSheet and every pricing function above unchanged.
 // Excel shares row heights across a sheet. Split its physical rows and merge
-// each A:H cell over the split so the original quotation retains exactly the
-// same visual heights, widths, values and styles beside the compact detail.
+// each A:H cell over the split so fitted rows retain their heights, widths,
+// values and styles beside the compact detail.
 const quotationLayouts = new Map();
 function arrangeVerticalQuotationDetails(sheet, method) {
   const clone = value => value === undefined ? undefined : structuredClone(value);

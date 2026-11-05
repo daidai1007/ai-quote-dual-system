@@ -1,4 +1,6 @@
 // Layout only: no formula evaluation, price lookup or name-based joins.
+import {fitWrappedTextRows} from './exceljs_range_adapter.mjs';
+
 export function addAttachmentSnapshotSheet(workbook, payload) {
   const items=payload.items||[];
   if(!items.some(item=>item.attachment_contract===2)) return;
@@ -46,10 +48,11 @@ export function addAttachmentSnapshotSheet(workbook, payload) {
   sheet.getRow(1).height=42;
   sheet.eachRow((row,index)=>{
     row.alignment={vertical:'top',wrapText:true};
-    if(index>1) row.height=Math.min(240,Math.max(48,String(row.getCell(20).value||'').split('\n').length*15));
     if(index>1) {
+      row.height=48;
       for(const column of [11,13,14,15,16,17,18,19,21,22,28]) row.getCell(column).numFmt='0.######';
       for(const column of [12,23]) row.getCell(column).numFmt='0.00';
     }
   });
+  fitWrappedTextRows(sheet,2,sheet.rowCount);
 }
