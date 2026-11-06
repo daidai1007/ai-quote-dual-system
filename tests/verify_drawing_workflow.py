@@ -374,7 +374,7 @@ class DrawingWorkflowTests(unittest.TestCase):
         product_cases = (
             ('JP', 'JP_SINGLE', {'侧板', '控制柜附件', '安装板'}),
             ('JP WIDE', 'JP_WIDE_EXP', {'侧板', '控制柜附件', '安装板'}),
-            ('JM', 'JM', {'控制箱附件', '安装板'}),
+            ('JM', 'JM', {'控制箱附件', '控制柜附件', '安装板'}),
             ('JA', 'JA_SINGLE', {'控制箱附件', '安装板'}),
             ('JE', 'JE_SINGLE', {'控制箱附件', '安装板'}),
             ('JK', 'JK', {'控制箱附件', '安装板'}),

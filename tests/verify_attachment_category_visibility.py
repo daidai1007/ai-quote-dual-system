@@ -15,7 +15,8 @@ import scheme2_ui  # noqa: E402
 app = QApplication.instance() or QApplication([])
 allowed = {"JA", "JE", "JK", "JM"}
 for product in ("JA", "JE", "JK", "JM", "JS", "JP"):
-    selected = [{"category_level1": "控制箱附件", "item_name": "内门"}]
+    selected = [{"category_level1": "控制箱附件", "item_name": "内门"},
+                {"category_level1": "控制柜附件", "item_name": "电脑托盘"}]
     dialog = scheme2_ui._SchemeAttachmentDialog(selected, product)
     visible = "控制箱附件" in dialog.category_names
     assert visible == (product in allowed), (product, dialog.category_names)
@@ -25,6 +26,14 @@ for product in ("JA", "JE", "JK", "JM", "JS", "JP"):
         assert "控制箱附件" not in dialog.category_checks
         assert "控制箱附件" not in dialog.category_combos
         assert not any(row["category_level1"] == "控制箱附件" for row in dialog.collect_attachments())
+    cabinet_visible = product in {"JS", "JP", "JM"}
+    assert ("控制柜附件" in dialog.category_names) == cabinet_visible, (product, dialog.category_names)
+    if cabinet_visible:
+        assert dialog.category_combos["控制柜附件"].currentText() == "电脑托盘"
+        assert any(row["category_level1"] == "控制柜附件" and row["item_name"] == "电脑托盘"
+                   for row in dialog.collect_attachments())
+    else:
+        assert "控制柜附件" not in dialog.category_combos
     dialog.close()
 
 product_combo = QComboBox()

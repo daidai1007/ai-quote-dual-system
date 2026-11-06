@@ -6831,7 +6831,7 @@ QLineEdit#scheme2AttachmentSearch:focus {{ border-color:{DIALOG_COLORS['focus']}
                 continue
             if category == "控制箱附件" and product_code not in CONTROL_BOX_ATTACHMENT_PRODUCTS and product_code != 'standalone_attachment':
                 continue
-            if category == "控制柜附件" and product_code not in {"JS", "JP", "standalone_attachment"}:
+            if category == "控制柜附件" and product_code not in {"JS", "JP", "JM", "standalone_attachment"}:
                 continue
             options = list(ATTACHMENT_OPTIONS.get(category, ()))
             if category == "其他附件":

@@ -302,7 +302,7 @@ CONFIRM_REQUEST_RETRY_DELAYS_MS = (500, 1200)
 ATTACHMENT_CATEGORY_PRODUCT_FAMILIES = {
     "侧板": frozenset({"JP"}),
     "控制箱附件": frozenset({"JM", "JA", "JE", "JK"}),
-    "控制柜附件": frozenset({"JS", "JP"}),
+    "控制柜附件": frozenset({"JS", "JP", "JM"}),
 }
 
 
