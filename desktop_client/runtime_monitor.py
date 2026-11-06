@@ -8,21 +8,26 @@ import json
 import os
 from pathlib import Path
 import threading
+import sys
 from datetime import datetime, timezone
 
-from monitor_settings import atomic_json, configuration, default_path
+from monitor_settings import atomic_json, configuration, default_path, collection_preference
 from quote_monitor import LocalMonitor
 
 _controller = None
 
 
 class RuntimeController:
-    def __init__(self, path, version, identity):
+    def __init__(self, path, version, identity, bootstrap=None):
         self.path = Path(path).resolve()
         self.version, self.identity = version, identity
         self.stop = threading.Event()
         self.runtime = None
         self.state = 'awaiting_identity'
+        self.enrollment = None
+        if bootstrap:
+            from auto_enrollment import AutoEnrollment
+            self.enrollment = AutoEnrollment(self.path, version, bootstrap)
         self.thread = threading.Thread(target=self.run, daemon=True, name='quote-runtime-controller')
         self.thread.start()
 
@@ -44,12 +49,15 @@ class RuntimeController:
                     if not user:
                         state = 'awaiting_identity'
                     elif not self.path.is_file():
-                        state = 'awaiting_configuration'
+                        state = self.enrollment.step(person) if self.enrollment else 'awaiting_configuration'
+                        if state == 'configured':
+                            settings = configuration(self.path)
+                            state = 'active' if settings['enabled'] and settings['user_id']==user else 'disabled'
                     else:
                         settings = configuration(self.path)
                         if settings['user_id'] != user:
                             state = 'identity_mismatch'
-                        elif not settings['enabled']:
+                        elif not settings['enabled'] or collection_preference(self.path) is False:
                             state = 'disabled'
                         else:
                             state = 'active'
@@ -96,7 +104,9 @@ def install_runtime_monitoring(namespace):
             from quote_scheme_center import CLIENT_VERSION
             from PySide6.QtWidgets import QApplication
             def identity(): return (name_login.session() or {}).get('person')
-            _controller = RuntimeController(os.getenv('AI_QUOTE_MONITOR_CONFIG') or default_path(), CLIENT_VERSION, identity)
+            folder = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+            bootstrap = folder/('_internal/monitor-enrollment.json' if getattr(sys, 'frozen', False) else 'monitor-enrollment.json')
+            _controller = RuntimeController(os.getenv('AI_QUOTE_MONITOR_CONFIG') or default_path(), CLIENT_VERSION, identity, bootstrap=bootstrap)
             app = QApplication.instance()
             if app: app.aboutToQuit.connect(_controller.close)
         except Exception:

@@ -39,6 +39,7 @@ SUITES = (
     'verify_contract_template_sharing.py',
     'verify_quote_management_filters.py',
     'verify_name_login.py', 'verify_name_login_workflow.py',
+    'verify_runtime_monitor.py', 'verify_quote_monitor.py', 'verify_auto_enrollment.py',
     'verify_quote_management.py', 'verify_quote_unit_rounding.py',
     'verify_scheme2_formal_quote.py', 'verify_quote_document_progress.py',
     'verify_quote_document_feedback.py', 'verify_quote_scheme_export_registration.py',
@@ -55,6 +56,7 @@ if len(sys.argv)>1 and sys.argv[1]=='--child':
         os.environ['QT_QPA_PLATFORM']='offscreen'
         os.environ['AI_QUOTE_ORDER_CACHE_ROOT']=temporary
         os.environ['AI_QUOTE_UPDATE_CONFIG']=str(Path(temporary)/'updates.json')
+        os.environ['AI_QUOTE_MONITOR_CONFIG']=str(Path(temporary)/'monitoring/config.json')
         Path(os.environ['AI_QUOTE_UPDATE_CONFIG']).write_text('{}',encoding='utf-8')
         from PySide6.QtCore import QSettings
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
@@ -62,7 +64,13 @@ if len(sys.argv)>1 and sys.argv[1]=='--child':
         suite=sys.argv[2]; sys.argv=[suite]
         # Suites replace this guard with explicit mocks or loopback fixtures.
         with patch('urllib.request.urlopen',side_effect=AssertionError('External network forbidden in offline regressions')):
-            runpy.run_path(str(ROOT/'tests'/suite),run_name='__main__')
+            try:
+                runpy.run_path(str(ROOT/'tests'/suite),run_name='__main__')
+            finally:
+                monitor = sys.modules.get('runtime_monitor')
+                controller = getattr(monitor, '_controller', None)
+                if controller is not None:
+                    controller.close()
 else:
     failures=[]
     for suite in sys.argv[1:] or SUITES:

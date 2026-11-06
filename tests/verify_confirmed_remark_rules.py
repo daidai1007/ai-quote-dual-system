@@ -91,7 +91,7 @@ class ConfirmedRemarkRules(unittest.TestCase):
         item=dict(product_family='JS',quote_remark_source='不含税，不含运费，付款月结；不配风机',
             attachments=[dict(item_name='固定底座',quantity=2,height_mm=150),dict(item_name='滤网',model_code='F-1',quantity=4)])
         result=build(item)
-        self.assertIn('150mm高固定底座2件',result);self.assertIn('配F-1滤网4只',result);self.assertIn('不含风机',result)
+        self.assertIn('150mm高固定底座2件',result);self.assertIn('配滤网4只',result);self.assertIn('不含风机',result)
         for wrong in ('税','运费','月结','配风机','配。、','，。'):self.assertNotIn(wrong,result)
 
 if __name__=='__main__':unittest.main(verbosity=2)

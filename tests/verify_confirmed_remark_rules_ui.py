@@ -58,7 +58,7 @@ class ConfirmedRemarkUI(unittest.TestCase):
         text=self.w.scheme2_quote_preview.item(10,7).text()
         self.assertNotIn('安装板',text)
         self.assertIn('不含空调',text)
-        self.assertIn('配MS821门锁2把',text)
+        self.assertIn('配门锁2把',text)
         self.screenshot('07-removed-installation-board.png')
 
         pdf=Path(self.folder.name)/'removed-installation-board.pdf'
@@ -72,7 +72,7 @@ class ConfirmedRemarkUI(unittest.TestCase):
             self.w.scheme2_quote_print.click()
         wait(lambda:not self.w._quote_scheme_workers)
         printed=''.join(''.join(page.extract_text() for page in PdfReader(pdf).pages).split())
-        self.assertIn('配MS821门锁2把',printed)
+        self.assertIn('配门锁2把',printed)
         self.assertIn('不含空调',printed)
         self.assertNotIn('安装板',printed)
         self.assert_outputs(text)

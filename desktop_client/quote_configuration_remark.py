@@ -210,7 +210,7 @@ def _label(row, kind):
         name = detail+noun
     if kind not in ('plate','base','folder'):
         prefix = []
-        for detail in (brand,voltage,model):
+        for detail in (brand,voltage):
             if detail and detail not in name and not any(detail in other for other in prefix):
                 prefix.append(detail)
         name = ''.join(prefix)+name
@@ -220,6 +220,16 @@ def _label(row, kind):
         name += f'（{spec}）'
     if not name: name = model or spec
     return name
+
+
+def _supply_description(name):
+    name = re.sub(r'\s+', '', name).replace('（', '(').replace('）', ')')
+    name = name.removeprefix('所有型号')
+    return {
+        'JA、JE箱小方锁改为搭扣锁(1把)': ('搭扣锁', 1, '件'),
+        '外部眉头(柜体顶板上方)': ('外部眉头', 1, '件'),
+        'JA、JE顶部加吊环(2个)': ('吊环', 2, '个'),
+    }.get(name)
 
 
 def build_configuration_remark(item):
@@ -288,7 +298,8 @@ def build_configuration_remark(item):
         effective_row = row
         if kind == 'base' and fields.get('base_color') and not row.get('color'):
             effective_row = {**row,'color':fields['base_color']}
-        label = _label(effective_row,kind)
+        supply = _supply_description(name)
+        label = supply[0] if supply else _label(effective_row,kind)
         if not label: continue
         if kind == 'plate' and not first(row,'sheet_thickness_mm','thickness_mm'):
             plate_thickness = thickness(fields.get('installation_plate_thickness_mm') or _part_value(item,r'^安装板$', 'sheet_thickness_mm')) or ('2.5' if rule['standard'] else '')
@@ -300,6 +311,9 @@ def build_configuration_remark(item):
         # pieces directly; lock/limiter units remain exactly as saved.
         if kind in ('plate','base','ground','folder','fan','filter','beam'): unit=default_units[kind]
         if kind == 'lock' and label == 'MS830锁': unit='件'
+        if supply:
+            signed *= supply[1]
+            unit = supply[2]
         location = text(first(row,'position','installation_position','distribution'))
         if location: location='（'+location+'）'
         phrase = ('扣减' if signed < 0 else '配')+label+numeric(abs(signed))+unit+location+_scope(item,row)

@@ -73,6 +73,9 @@ $testFiles = @(
     "tests/verify_cabinet_thickness_dropdown.py",
     "tests/verify_thickness_surcharge_ui.py",
     "tests/verify_name_login_workflow.py",
+    "tests/verify_runtime_monitor.py",
+    "tests/verify_quote_monitor.py",
+    "tests/verify_auto_enrollment.py",
     "tests/verify_contract_identity.py",
     "tests/verify_contract_customer_flow.py",
     "tests/verify_contract_defaults.py",
@@ -164,10 +167,12 @@ $testFiles = @(
 $savedUpdateConfig = $env:AI_QUOTE_UPDATE_CONFIG
 $savedApiUrl = $env:AI_QUOTE_API_URL
 $savedApiKey = $env:AI_QUOTE_API_KEY
+$savedMonitorConfig = $env:AI_QUOTE_MONITOR_CONFIG
 try {
     # Never let a UI fixture fall through to the installed online connection.
     $env:AI_QUOTE_API_URL = 'http://127.0.0.1:9/api/quotes/calculate-dual'
     $env:AI_QUOTE_API_KEY = 'local-test-only'
+    $env:AI_QUOTE_MONITOR_CONFIG = Join-Path $repoRoot ('.codex-tmp\client-monitor-test-' + [Guid]::NewGuid().ToString('N') + '\config.json')
     # Business tests must not use an enabled updater from the installed client.
     # Update-specific tests explicitly supply their own local signed fixtures.
     $env:AI_QUOTE_UPDATE_CONFIG = Join-Path $repoRoot 'packaging\update_config.example.json'
@@ -180,6 +185,7 @@ try {
 } finally {
     if ($null -eq $savedApiUrl) { Remove-Item Env:AI_QUOTE_API_URL -ErrorAction SilentlyContinue } else { $env:AI_QUOTE_API_URL = $savedApiUrl }
     if ($null -eq $savedApiKey) { Remove-Item Env:AI_QUOTE_API_KEY -ErrorAction SilentlyContinue } else { $env:AI_QUOTE_API_KEY = $savedApiKey }
+    if ($null -eq $savedMonitorConfig) { Remove-Item Env:AI_QUOTE_MONITOR_CONFIG -ErrorAction SilentlyContinue } else { $env:AI_QUOTE_MONITOR_CONFIG = $savedMonitorConfig }
     if ($null -eq $savedUpdateConfig) {
         Remove-Item Env:AI_QUOTE_UPDATE_CONFIG -ErrorAction SilentlyContinue
     } else {

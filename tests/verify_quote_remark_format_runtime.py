@@ -38,14 +38,25 @@ class RemarkFormatRuntime(unittest.TestCase):
         self.w.refresh_summary();self.w._quote_scheme_save_timer.stop()
         return item
 
-    def test_ms830_selected_through_save_reopen_print_and_excel(self):
+    def test_supply_names_through_save_reopen_print_and_excel(self):
         item=self.configured_item()
         item['attachments'].append(dict(item_name='平面锁改为MS830锁',quantity=1,unit='把',
             attachment_price_id=999,status='FIXED',formula_amount=10,quick_amount=20,matched_price=20))
+        for index, name in enumerate(('JA、JE箱小方锁改为搭扣锁(1把)',
+                '外部眉头（柜体顶板上方）', 'JA、JE顶部加吊环（2个）',
+                '三排安装梁', '电脑托盘'), 1000):
+            item['attachments'].append(dict(item_name=name, quantity=1, unit='件',
+                model_code='所有型号' if index < 1003 else 'JP760240' if index == 1003 else 'JP930040',
+                attachment_price_id=index, status='FIXED', formula_amount=10, quick_amount=20, matched_price=20))
         self.w.refresh_summary();self.w._quote_scheme_save_timer.stop()
         expected=self.w.scheme2_quote_preview.item(10,7).text()
         self.assertIn('配MS830锁1件',expected)
         self.assertNotIn('平面锁改为',expected)
+        phrases = ('配搭扣锁1件', '配外部眉头1件', '配吊环2个', '配三排纵梁1根', '配电脑托盘1件')
+        for phrase in phrases:
+            self.assertIn(phrase, expected)
+        for model in ('所有型号', 'JP760240', 'JP930040', '顶部加吊环', '小方锁改为'):
+            self.assertNotIn(model, expected)
         self.m.save();wait(lambda:self.w._quote_scheme_save_worker is None)
         schemes._apply_opened_scheme(self.w,dict(found=True,**deepcopy(self.server),
             quote_management_historical_export=True),ui.QUOTE_ROUTE)
@@ -57,6 +68,8 @@ class RemarkFormatRuntime(unittest.TestCase):
         document=QTextDocument();document.setHtml(ui._printable_quote_html(self.w));document.print_(printer)
         printed=''.join(''.join(page.extract_text() for page in PdfReader(pdf).pages).split())
         self.assertIn('配MS830锁1件',printed)
+        for phrase in phrases:
+            self.assertIn(phrase, printed)
         self.assertNotIn('平面锁改为',printed)
         self.assert_outputs(expected)
 
@@ -76,7 +89,7 @@ class RemarkFormatRuntime(unittest.TestCase):
         item=self.configured_item()
         expected=self.w.scheme2_quote_preview.item(10,7).text()
         self.assertIn('D-001/M-01',expected)
-        self.assertIn('配国产220VSG220风机2只',expected)
+        self.assertIn('配国产220V风机2只',expected)
         self.assertTrue(expected.endswith('IP54；木箱包装；安装板先发。'))
         self.w.summary_table.item(0,4).setText('12');app.processEvents()
         self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),expected)
@@ -90,7 +103,7 @@ class RemarkFormatRuntime(unittest.TestCase):
         printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat);printer.setOutputFileName(str(pdf))
         document=QTextDocument();document.setHtml(ui._printable_quote_html(self.w));document.print_(printer)
         printed=''.join(''.join(page.extract_text() for page in PdfReader(pdf).pages).split())
-        for phrase in ('D-001/M-01','门板2mm','配MS821门锁2把','配接地线3根','不含空调','安装板先发'):
+        for phrase in ('D-001/M-01','门板2mm','配门锁2把','配接地线3根','不含空调','安装板先发'):
             self.assertIn(phrase,printed)
         self.assert_outputs(expected)
         for width,height in ((1560,960),(1024,768)):

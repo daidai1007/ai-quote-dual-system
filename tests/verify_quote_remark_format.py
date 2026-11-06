@@ -31,6 +31,38 @@ def product():
 
 
 class ConfigurationFormat(unittest.TestCase):
+    def test_catalogue_supply_names_and_piece_counts(self):
+        cases = (
+            ('JA、JE箱小方锁改为搭扣锁(1把)', '配搭扣锁1件。', '配搭扣锁2件。'),
+            ('外部眉头(柜体顶板上方)', '配外部眉头1件。', '配外部眉头2件。'),
+            ('JA、JE顶部加吊环(2个)', '配吊环2个。', '配吊环4个。'),
+        )
+        for name, single, double in cases:
+            for variant in (name, name.replace('(', '（').replace(')', '）'), '所有型号'+name, '柜体1｜'+name):
+                item = dict(quantity=9, attachments=[dict(item_name=variant, model_code='所有型号',
+                    quantity=1, unit='件')])
+                before = deepcopy(item)
+                self.assertEqual(build(item), single)
+                self.assertEqual(item, before)
+                item['attachments'][0]['quantity'] = 2
+                self.assertEqual(build(item), double)
+        row = dict(item_name=cases[2][0], quantity=2, attachment_price_sign=-1, ganged_cabinet_index=0)
+        self.assertEqual(build(dict(attachments=[row])), '扣减吊环4个（柜体1，单台）。')
+        for quantity in (0, None, ''):
+            row['quantity'] = quantity
+            self.assertEqual(build(dict(attachments=[row])), '')
+
+    def test_attachment_models_are_omitted_but_entered_specs_remain(self):
+        item = dict(attachments=[
+            dict(item_name='三排安装梁', model_code='JP760240', quantity=2),
+            dict(item_name='电脑托盘', model_code='JP930040', specification='800×400mm', quantity=1),
+        ])
+        before = deepcopy(item)
+        self.assertEqual(build(item), '配三排纵梁2根，配电脑托盘（800×400mm）1件。')
+        self.assertEqual(item, before)
+        item['attachments'][1]['specification'] = 'JP930040'
+        self.assertNotIn('JP930040', build(item))
+
     def test_ms830_upgrade_uses_supply_name_and_selected_piece_count(self):
         for name in ('平面锁改为MS830锁','柜体1｜平面锁改为MS830锁'):
             item=dict(quantity=9,attachments=[dict(item_name=name,quantity=1,unit='把',
@@ -63,14 +95,14 @@ class ConfigurationFormat(unittest.TestCase):
         item=dict(quote_configuration=dict(processing_requirements='开孔、丝印'),attachments=[
             dict(item_name='丝印',quantity=2),dict(item_name='门锁',model_code='MS821',quantity=2,unit='把'),
             dict(item_name='接地线',quantity=3),dict(item_name='丝印支架',quantity=2,unit='件')])
-        self.assertEqual(build(item),'配MS821门锁2把，配接地线3根，配丝印，配丝印支架2件。按图开孔、丝印。')
+        self.assertEqual(build(item),'配门锁2把，配接地线3根，配丝印，配丝印支架2件。按图开孔、丝印。')
 
     def test_full_template_exact_order_units_and_single_cabinet_counts(self):
         item=product();before=deepcopy(item)
         expected=('D-001/M-01，仿威图JP柜，侧板、后背板可拆。不锈钢304，喷塑RAL7035橘纹，柜体1.5mm，门板2mm，配2.5mm镀锌安装板1块（后部）。'
             '前单开门，后背板；配100mm高黑色固定底座1件。'
-            '配MS821门锁2把，配220V照明灯及行程开关1套，配门限位器2套，配接地线3根，配A4文件夹1个，'
-            '配国产220VSG220风机2只，配国产FU9804滤网4只，配三排纵梁4根（左右各2根），配木托（按图）1件。'
+            '配门锁2把，配220V照明灯及行程开关1套，配门限位器2套，配接地线3根，配A4文件夹1个，'
+            '配国产220V风机2只，配国产滤网4只，配三排纵梁4根（左右各2根），配木托（按图）1件。'
             '按图开孔、丝印；不含空调；IP54；木箱包装；安装板先发。')
         self.assertEqual(build(item),expected)
         self.assertEqual(item,before)
@@ -92,7 +124,7 @@ class ConfigurationFormat(unittest.TestCase):
         source['reviewed_remark']='后来改过的图纸'
         item.update(product_family='JE',material_code='SECC',attachments=[dict(item_name='滤网',quantity=2,model_code='F1')])
         actual=build(item)
-        for part in ('X-01','柜体1.2mm','门板1.8mm','侧板可拆','后背板不可拆','配F1滤网2只',
+        for part in ('X-01','柜体1.2mm','门板1.8mm','侧板可拆','后背板不可拆','配滤网2只',
                      '按图开孔300×70mm、丝印','不含风机','IP65','木箱包装'):
             self.assertIn(part,actual)
         for part in ('付款','7天','后来改过','不含风机但配滤网','安装板先发'):

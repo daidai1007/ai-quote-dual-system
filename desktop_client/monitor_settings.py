@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import time
 import urllib.parse
+from contextlib import contextmanager
 
 
 def default_path():
@@ -62,6 +63,44 @@ def save_secret(path, value):
 def load_secret(path):
     wrapped = json.loads(Path(path).read_text(encoding='utf-8-sig'))
     return json.loads(_dpapi(base64.b64decode(wrapped['dpapi_user']), False))
+
+
+@contextmanager
+def collection_lock(path):
+    """Serialize first activation and stop so a late approval never overrides stop."""
+    import msvcrt
+    home = Path(path).parent
+    home.mkdir(parents=True, exist_ok=True)
+    with (home/'collection.lock').open('a+b') as stream:
+        if not stream.tell(): stream.write(b'0'); stream.flush()
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+        try: yield
+        finally:
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def collection_preference(path):
+    file = Path(path).parent/'collection-preference.json'
+    if not file.exists(): return None
+    value = json.loads(file.read_text(encoding='utf-8-sig'))
+    if value.get('schema') != 1 or type(value.get('enabled')) is not bool:
+        raise ValueError('Collection preference is invalid; automatic activation refused')
+    return value['enabled']
+
+
+def set_collection_enabled(path, enabled):
+    path = Path(path)
+    with collection_lock(path):
+        if enabled and path.exists(): configuration(path)
+        # Written first; pending automatic enrollment will observe the stop decision too.
+        atomic_json(path.parent/'collection-preference.json', {'schema':1,'enabled':bool(enabled)})
+        if path.exists():
+            value = json.loads(path.read_text(encoding='utf-8-sig'))
+            value['enabled'] = bool(enabled)
+            atomic_json(path, value)
+    return {'configured':path.exists(),'enabled':bool(enabled)}
 
 
 def https_url(value):
@@ -124,6 +163,9 @@ def main(argv=None):
     parser.add_argument('--ca-file', type=Path)
     parser.add_argument('--isolated-test', action='store_true')
     args = parser.parse_args(argv)
+    if args.action in ('stop','resume'):
+        print(json.dumps(set_collection_enabled(args.config, args.action == 'resume')))
+        return
     if args.action == 'init':
         if args.config.exists(): raise ValueError('Existing mapping is preserved; revoke and archive it before enrolling another identity')
         if not args.enrollment or not args.client_config or not args.url: raise ValueError('URL, existing client config and private enrollment response required')

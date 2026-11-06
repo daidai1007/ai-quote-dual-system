@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -133,10 +134,16 @@ class QuoteMonitorTests(unittest.TestCase):
         module._thread.span=span;module._thread.request_groups={}
         self.addCleanup(setattr,module._thread,'span',None)
         self.addCleanup(setattr,module._thread,'request_groups',None)
-        for _ in range(2):
-            request=module.urllib.request.Request(self.config['api_url'],data=b'{"events":[]}',
-              headers={'Authorization':'Bearer '+'a'*43,'Content-Type':'application/json'})
-            with module.monitored_urlopen(request,timeout=2) as response:response.read()
+        opener=module.urllib.request.build_opener(module.urllib.request.ProxyHandler({}))
+        def fixture_open(request, *args, **kwargs):
+            self.assertEqual(request.full_url,self.config['api_url'])
+            return opener.open(request,*args,**kwargs)
+        # The offline runner blocks urlopen; admit only this loopback fixture.
+        with patch.object(module.urllib.request,'urlopen',side_effect=fixture_open):
+            for _ in range(2):
+                request=module.urllib.request.Request(self.config['api_url'],data=b'{"events":[]}',
+                  headers={'Authorization':'Bearer '+'a'*43,'Content-Type':'application/json'})
+                with module.monitored_urlopen(request,timeout=2) as response:response.read()
         monitor.finish(span)
         self.assertTrue(monitor.flush())
         requests=[e for e in self.received if e['event_type']=='request_finished']

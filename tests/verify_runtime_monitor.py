@@ -73,6 +73,8 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(path, config)
                 self.assertEqual(version, CLIENT_VERSION)
                 self.assertEqual(identity(), person)
+                self.assertEqual(factory.call_args.kwargs['bootstrap'],
+                                 Path(runtime_monitor.__file__).resolve().parent / 'monitor-enrollment.json')
                 application.aboutToQuit.connect.assert_called_once_with(factory.return_value.close)
 
     def test_controller_start_failure_preserves_initialized_business_window(self):
