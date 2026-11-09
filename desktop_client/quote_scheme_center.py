@@ -26,7 +26,7 @@ from quote_scheme_widgets import (
 
 
 SCHEME_ROUTE = 6
-CLIENT_VERSION = "2026.11.06.02"
+CLIENT_VERSION = "2026.11.06.03"
 STATUS_TEXT = {
     "DRAFT": "草稿", "QUOTED": "已报价", "CONTRACT": "合同", "REVISING": "修订中",
     "ARCHIVED": "已归档", "VOID": "已作废",
@@ -955,28 +955,50 @@ def _schedule_save(window):
     _set_state(window, f"{window._quote_scheme_id} · 等待自动保存", "busy")
 
 
-def _save(window):
+def _save(window, completed=None):
     from name_login import window_is_current
-    if not window_is_current(window):return
-    if not window._quote_scheme_id: return
-    if getattr(window, "_quote_scheme_export_context", None) or window._quote_scheme_read_only: return
+    def rejected(message):
+        if completed is not None:
+            completed(False, message)
+    if not window_is_current(window):
+        rejected('操作人已切换，请重新打开方案。'); return
+    if not window._quote_scheme_id:
+        rejected('方案尚未创建，请重试。'); return
+    if getattr(window, "_quote_scheme_export_context", None) or window._quote_scheme_read_only:
+        rejected('当前方案不可编辑，请重新打开修订版。'); return
     if window._quote_scheme_save_worker is not None:
         window._quote_scheme_save_pending = True
+        rejected('方案仍在保存，请重试。')
         return
     operator_name = _require_operator(window, False)
     if not operator_name:
         window._quote_scheme_last_save_failed = True
+        rejected('请确认当前操作人的报价权限后重试。')
         return
     scheme_no = window._quote_scheme_id
     sequence = window._quote_scheme_dirty_seq
     _set_state(window, f"{window._quote_scheme_id} · 保存中…", "busy")
     payload = {"expected_version": window._quote_scheme_version, "snapshot": _snapshot(window),
                "operator_name": operator_name}
-    worker = _run(window, "PUT", "/api/quote-schemes/" + urllib.parse.quote(window._quote_scheme_id), payload,
-                  lambda result: _saved(window, result, scheme_no, sequence),
-                  lambda message: _save_failed(window, message, scheme_no))
+    outcome = dict(ok=False, message='未收到方案保存确认，请重试。')
+    def saved(result):
+        if completed is not None and (result.get('saved') is not True
+                or not isinstance(result.get('lock_version'), int)
+                or result['lock_version'] <= payload['expected_version']):
+            failed('服务端未确认保存当前修订版，请重新打开方案核对后重试。')
+            return
+        _saved(window, result, scheme_no, sequence)
+        outcome.update(ok=True, message='')
+    def failed(message):
+        outcome.update(ok=False, message=str(message))
+        _save_failed(window, message, scheme_no)
+    worker = _run(window, "PUT", "/api/quote-schemes/" + urllib.parse.quote(window._quote_scheme_id), payload, saved, failed)
     window._quote_scheme_save_worker = worker
-    worker.finished.connect(lambda: _save_finished(window, worker, scheme_no, sequence))
+    def finished():
+        _save_finished(window, worker, scheme_no, sequence)
+        if completed is not None:
+            completed(outcome['ok'], outcome['message'])
+    worker.finished.connect(finished)
 
 
 def _saved(window, result, scheme_no=None, sequence=None):

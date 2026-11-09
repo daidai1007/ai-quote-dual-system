@@ -44,6 +44,7 @@ $testFiles = @(
     "tests/verify_copied_attachment_names.py",
     "tests/verify_cost_selection_detail.py",
     "tests/verify_quote_version_history.py",
+    "tests/verify_quote_revision_generation.py",
     "tests/verify_attachment_cost_allocation.py",
     "tests/verify_formula_attachment_allocation_ui.py",
     "tests/verify_quote_version_comparison.py",

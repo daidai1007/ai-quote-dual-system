@@ -288,11 +288,11 @@ class AllocationUI(unittest.TestCase):
         item=self.w.draft_items[0]
         prior=versions.make_version([item],self.w.scheme2_company.currentText(),1,'已确认','合成人员','2026-10-26','EXTERNAL')
         prior['confirmed']=True;prior['items'][0]['formula'].pop('cost_allocation')
-        metadata={key:prior[key] for key in ('updated_at','operator','reason','amount')}
+        frozen=deepcopy(prior)
         self.w._qm_state=dict(schema=1,current=1,versions=[prior]);self.m.refresh()
         self.assertEqual(len(self.m.state['versions']),1)
-        self.assertEqual({key:prior[key] for key in metadata},metadata)
-        self.assertTrue(prior['items'][0]['formula']['cost_allocation']['complete'])
+        self.assertEqual(prior,frozen)
+        self.assertTrue(item['formula']['cost_allocation']['complete'])
         self.export();self.assertTrue(self.path.exists(),self.messages)
 
     def test_old_formal_snapshot_keeps_legacy_cost_categories_and_output(self):

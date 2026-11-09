@@ -569,12 +569,25 @@ class QuoteDocumentProgress:
         if current != self.snapshot:
             self.fail("预检期间报价清单已变化，请重新生成报价单。")
             return
-        self.set_stage(4, "显示报价单")
         manager = getattr(self.window, 'quote_management', None)
-        if manager is not None:
-            manager.generated()
-        self.window.show_section(self.ui.QUOTE_ROUTE)
-        self.end()
+        trace = self.trace
+        def active():
+            return self.busy and self.trace == trace
+        def show():
+            if not active(): return
+            current = json.dumps(self.window.draft_items, sort_keys=True, ensure_ascii=False, default=str)
+            if current != self.snapshot:
+                self.fail('保存期间报价清单已变化，请重新生成报价单。'); return
+            self.set_stage(4, '显示报价单')
+            if manager is not None:
+                manager.generated()
+            self.window.show_section(self.ui.QUOTE_ROUTE)
+            self.end()
+        self.set_stage(4, '确认并保存修订版')
+        if manager is None:
+            show()
+        else:
+            manager.confirm_generation(show, lambda message: self.fail(message) if active() else None, active)
 
     def export(self):
         if self.busy:

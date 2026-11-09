@@ -730,6 +730,63 @@ class QuoteManagement:
         self.window._qm_entry_pending = True
         self.root.setCurrentWidget(self.detail_page); self.tabs.setCurrentIndex(0); self.refresh()
 
+    def confirm_generation(self, succeeded, failed, active):
+        """Persist an explicitly generated revision before reporting success."""
+        import quote_scheme_center as centre
+        w = self.window
+        versions = self.state.get('versions') or []
+        required = w._quote_scheme_status == 'REVISING' or any(v.get('confirmed') for v in versions)
+        if not required:
+            succeeded(); return
+        if self.history_version is not None or w._quote_scheme_read_only or getattr(w, '_name_scope_foreign', False):
+            failed('当前报价只读，请先打开可编辑的修订版。'); return
+        scheme_no = w._quote_scheme_id
+        epoch = getattr(w, '_scheme2_workspace_epoch', 0)
+        source = dict(items=deepcopy(w.draft_items), company=w.scheme2_company.currentText(), order_nature=nature.current(w))
+        def current():
+            return (active() and w._quote_scheme_id == scheme_no
+                    and getattr(w, '_scheme2_workspace_epoch', 0) == epoch)
+        def same_workspace():
+            return (w._quote_scheme_id == scheme_no
+                    and getattr(w, '_scheme2_workspace_epoch', 0) == epoch)
+        def ready():
+            if not current(): return
+            w._quote_scheme_save_timer.stop()
+            # An earlier autosave owns the next optimistic lock. Drain it before
+            # constructing the confirmation snapshot or issuing another PUT.
+            worker = w._quote_scheme_save_worker or w._quote_scheme_create_worker
+            if worker is not None:
+                worker.finished.connect(lambda: QTimer.singleShot(0, ready))
+                return
+            content = dict(items=w.draft_items, company=w.scheme2_company.currentText(), order_nature=nature.current(w))
+            if not model.same_document(source, content):
+                failed('等待保存期间报价已变化，请重新生成报价单。'); return
+            before = deepcopy(self.state)
+            def completed(ok, message):
+                if not same_workspace(): return
+                if not ok:
+                    # Keep all edited items, but never expose an unacknowledged
+                    # confirmation as a saved version or enable formal export.
+                    w._qm_state = before
+                    if active(): failed('修订版保存失败：' + str(message))
+                    return
+                if not active(): return
+                content = dict(items=w.draft_items, company=w.scheme2_company.currentText(), order_nature=nature.current(w))
+                if not model.same_document(source, content):
+                    failed('保存期间报价已变化，请重新生成报价单。'); return
+                succeeded()
+            try:
+                self.sync()
+                before = deepcopy(self.state)
+                model.confirm_generated_revision(self.state, w.draft_items, source['company'], self.operator(),
+                    w._quote_scheme_quote_date, source['order_nature'])
+                centre._schedule_save(w)
+                w._quote_scheme_save_timer.stop()
+                centre._save(w, completed)
+            except Exception as error:
+                completed(False, str(error))
+        ready()
+
     def show_detail(self):
         self.window._qm_document_started = True
         self.root.setCurrentWidget(self.detail_page); self.tabs.setCurrentIndex(getattr(self,'entry_tab',0)); self.entry_tab = 0; self.refresh()
@@ -1029,8 +1086,15 @@ class QuoteManagement:
             dialog.deleteLater(); return
         candidate = dict(items=dialog.items, company=w.scheme2_company.currentText(), order_nature=nature.current(w))
         reference = self.state['versions'][-2] if revision_draft and len(self.state['versions']) > 1 else self.state['versions'][-1]
-        if dialog.items == w.draft_items and model.same_document(candidate, reference):
+        reserved = revision_draft and self.state['versions'][-1].get('pending_confirmation')
+        if not reserved and dialog.items == w.draft_items and model.same_document(candidate, reference):
             self.feedback.setText('报价未发生变化，无需生成新版本。'); dialog.deleteLater(); return
+        # Normalize the confirmed rows before the normal table refresh.
+        # Refreshing the workspace first can replace the preceding draft version.
+        from scheme2_ui import _refresh_item_cost, _quote_item_remark
+        for item in dialog.items:
+            _refresh_item_cost(item, getattr(w, 'scheme2_defaults', None), read_only=False)
+            _quote_item_remark(item, preserve_existing=True)
         if revision_draft:
             self.state['versions'][-1] = model.make_version(dialog.items, w.scheme2_company.currentText(), number,
                 dialog.reason.toPlainText().strip(), self.operator(), w._quote_scheme_quote_date, nature.current(w))

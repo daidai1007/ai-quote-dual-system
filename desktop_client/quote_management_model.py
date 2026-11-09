@@ -157,13 +157,8 @@ def sync_latest(state, items, company, operator='', quote_date='', order_nature=
     number = len(versions) or 1
     prior = versions[-1] if versions else {}
     if prior.get('sealed') or prior.get('confirmed'):
-        if prior.get('confirmed') and not prior.get('sealed') and same_document(prior,dict(items=items,company=company,order_nature=order_nature)):
-            # Enrich the current unsealed record before formal output, leaving
-            # sealed versions, prices, authors and timestamps untouched.
-            for saved,current in zip(prior.get('items') or [],items):
-                allocation=(current.get('formula') or {}).get('cost_allocation')
-                if allocation and allocation.get('complete'):
-                    saved.setdefault('formula',{})['cost_allocation']=deepcopy(allocation)
+        # Rebuilt cost details belong to the workspace and output snapshots.
+        # The server checks the contents of every confirmed history entry.
         return state
     entry = make_version(items, company, number, prior.get('reason', '首次报价'), operator, quote_date, order_nature)
     if (prior.get('revision_draft') and len(versions) > 1
@@ -193,3 +188,27 @@ def append_version(state, items, company, reason, operator='', quote_date='', or
     state['versions'].append(entry)
     state['current'] = entry['version']
     return entry
+
+
+def confirm_generated_revision(state, items, company, operator='', quote_date='', order_nature='UNCLASSIFIED'):
+    """Confirm a reserved revision, or append changed content after a confirmation.
+
+    Called only by explicit generation after preview validation, never by autosave.
+    Price calculation and existing confirmed/sealed snapshots stay untouched.
+    """
+    versions = state.get('versions') or []
+    current = dict(items=items, company=company, order_nature=order_nature)
+    latest = versions[-1] if versions else {}
+    if latest.get('confirmed') or latest.get('sealed'):
+        if same_document(current, latest):
+            return False
+        entry = append_version(state, items, company, '修订后生成报价单', operator, quote_date, order_nature)
+    else:
+        entry = make_version(items, company, len(versions) or 1, '修订后生成报价单', operator, quote_date, order_nature)
+        if versions:
+            versions[-1] = entry
+        else:
+            state['versions'] = [entry]
+    entry['confirmed'] = True
+    state['current'] = entry['version']
+    return True

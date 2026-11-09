@@ -164,7 +164,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
-WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.11.06.02"
+WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.11.06.03"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
 HEADERS = (
@@ -4916,6 +4916,17 @@ def _received_cost_view(window):
     return bool(getattr(getattr(getattr(window,'quote_management',None),'delivery',None),'cost_active',False))
 
 
+def _refresh_item_cost(item, defaults, *, read_only):
+    if not read_only:
+        item['manufacturing_cost_basis'] = MANUFACTURING_BASIS
+        item['tax_cost_basis'] = TAX_COST_BASIS
+        item['gross_margin_basis'] = GROSS_MARGIN_BASIS
+    _repair_missing_material_prices(item, defaults)
+    if not read_only:
+        sync_item_freight(item)
+        _recalculate_item_management(item)
+
+
 def _refresh_cost_table(window):
     add_independent = getattr(window, 'scheme2_cost_add_independent', None)
     if add_independent is not None:
@@ -4946,14 +4957,10 @@ def _refresh_cost_table(window):
             not any(str(item.get("material_code") or "").strip().upper() == "SUS316" for item in items),
         )
         table.setRowCount(len(items) + 1)
+        read_only = _quote_remark_readonly(window)
+        defaults = getattr(window, "scheme2_defaults", None)
         for row, item in enumerate(items):
-            if not _quote_remark_readonly(window):
-                item['manufacturing_cost_basis'] = MANUFACTURING_BASIS
-                item['tax_cost_basis'] = TAX_COST_BASIS
-                item['gross_margin_basis'] = GROSS_MARGIN_BASIS
-            _repair_missing_material_prices(item, getattr(window, "scheme2_defaults", None))
-            if not _quote_remark_readonly(window): sync_item_freight(item)
-            if not _quote_remark_readonly(window):_recalculate_item_management(item)
+            _refresh_item_cost(item, defaults, read_only=read_only)
             canonical = list(_row_values(item))
             if is_standalone(item):
                 canonical[12] = ((item.get('attachments') or [{}])[0].get('item_name') or '附件') + ' · 编辑'

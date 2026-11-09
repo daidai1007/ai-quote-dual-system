@@ -112,6 +112,32 @@ class VersionHistoryTests(unittest.TestCase):
             self.assertEqual(self.m.state['versions'][:-1],previous)
             previous=deepcopy(self.m.state['versions'])
 
+    def test_reserved_revision_can_confirm_unchanged_price_and_export(self):
+        self.m.save(); wait(lambda:not self.w._quote_scheme_workers)
+        self.h.export(); self.reopen()
+        previous=deepcopy(self.m.state['versions'][0])
+        price=ui._row_values(self.w.draft_items[0])[15]
+
+        def confirm_without_price_edit(dialog):
+            dialog.reason.setPlainText('本轮确认沿用原报价')
+            dialog.accept()
+            dialog.accept()
+            return dialog._result
+
+        with patch.object(qm.AdjustQuoteDialog,'exec',confirm_without_price_edit):
+            self.m.adjust()
+            wait(lambda:not self.w._quote_scheme_workers and not self.m.pending_adjust)
+        self.w._quote_scheme_save_timer.stop()
+        saved=self.h.server['snapshot']['quote_management']['versions']
+        self.assertEqual(len(saved),2)
+        self.assertEqual(saved[0],previous)
+        self.assertTrue(saved[1]['confirmed'])
+        self.assertNotIn('pending_confirmation',saved[1])
+        self.assertEqual(saved[1]['reason'],'本轮确认沿用原报价')
+        self.h.export()
+        self.assertEqual(self.h.server['status'],'QUOTED')
+        self.assertEqual(float(fixture.workbook_cell(self.h.path,'报价','F11')),price)
+
     def test_repeated_unexported_adjustments_survive_reopen_and_compare(self):
         previous=deepcopy(self.m.state['versions'])
         for number in range(2,9):

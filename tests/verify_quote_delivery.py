@@ -454,6 +454,48 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(w._quote_order_nature,'UNCLASSIFIED');self.assertEqual(w.draft_items,before)
         self.assertFalse(d.send_loading);self.assertTrue(d.send_button.isEnabled())
 
+    def test_20_confirm_reserved_adjustment_export_and_send_the_same_version(self):
+        import quote_management as qm
+        source=self.api('/api/quote-schemes/'+self.config['scheme_no'])['snapshot']
+        created=self.api('/api/quote-schemes',dict(snapshot=source))
+        no=created['scheme_no'];path='/api/quote-schemes/'+no
+        self.api(path+'/export-result',dict(expected_version=created['lock_version'],
+            kind='XLSX',succeeded=True,snapshot=source))
+        w=self.new_window(self.owner);m=w.quote_management;d=m.delivery
+        schemes._open_scheme(w,no,route=2);self.settled(w)
+        def confirm(dialog):
+            dialog.reason.setPlainText('确认沿用原报价')
+            dialog.accept();dialog.accept()
+            return dialog._result
+        with patch.object(qm.AdjustQuoteDialog,'exec',confirm):
+            m.adjust()
+            wait(lambda: not w._quote_scheme_workers and not m.pending_adjust,timeout=45)
+        self.settled(w)
+        saved=self.api(path)
+        versions=saved['snapshot']['quote_management']['versions']
+        self.assertEqual([v['version'] for v in versions],[1,2])
+        self.assertTrue(versions[1]['confirmed'])
+        self.assertEqual(saved['status'],'REVISING')
+        with patch.object(schemes.QMessageBox,'information') as information:
+            self.assertTrue(schemes._prepare_export(w),information.call_args)
+        snapshot=w._quote_scheme_export_context['payload']['snapshot']
+        payload=self.folder/'adjusted-export.json';xlsx=self.folder/'adjusted-v2.xlsx'
+        payload.write_text(json.dumps(dict(items=snapshot['contract_quote_snapshot']['items'],
+            company_name=snapshot['company'],quote_date=snapshot['document']['quote_date']),ensure_ascii=False),encoding='utf-8')
+        rendered=subprocess.run(['node',str(ROOT/'export_dual_quote_workbook.mjs'),str(payload),str(xlsx)],
+            cwd=ROOT,capture_output=True,text=True,encoding='utf-8',timeout=40)
+        self.assertEqual(rendered.returncode,0,rendered.stderr)
+        self.assertTrue(xlsx.is_file())
+        schemes._file_exported(w,xlsx);self.settled(w)
+        self.assertEqual(w._quote_scheme_status,'QUOTED')
+        d.send_button.click();self.settled(w)
+        dialog=d.send_dialog
+        self.assertIsNotNone(dialog,d.send_status.text())
+        self.assertEqual(dialog.version['quote_version'],2)
+        dialog.choices['本机接收乙'].setChecked(True);dialog.confirm.click();self.settled(w)
+        sent=self.api('/api/quote-deliveries?mode=sent&scheme_no='+no)['items']
+        self.assertEqual([row['quote_version'] for row in sent],[2])
+
 
 
 if __name__=='__main__': unittest.main(verbosity=2)

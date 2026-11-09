@@ -27,6 +27,7 @@ SUITES = (
     'verify_quote_version_comparison.py','verify_quote_version_comparison_ui.py',
     'verify_cost_price_breakdown.py', 'verify_cost_price_breakdown_ui.py',
     'verify_quote_version_history.py',
+    'verify_quote_revision_generation.py',
     'verify_weight_freight.py',
     'verify_jp_auxiliary_weight.py', 'verify_jp_auxiliary_weight_workflow.py',
     'verify_quote_remarks.py',
