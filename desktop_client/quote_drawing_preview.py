@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QFile, QIODevice, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QImageReader, QPainter, QPainterPath, QPen, QPixmap, QTransform
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton, QSizePolicy, QSpinBox, QVBoxLayout,
 )
 from pypdf import PdfReader
+from drawing_orientation import pdf_view_rotation
 
 # Load the complete renderer before the recovered core installs its partial
 # archive importer. Recognition continues to use the same ezdxf parser.
@@ -62,14 +63,16 @@ def resolve_document(candidate, documents):
 
 
 class RenderWorker(QThread):
-    rendered = Signal(int, object, int, str, int)
+    rendered = Signal(int, object, int, str, int, int)
     failed = Signal(int, str)
 
-    def __init__(self, serial, path, page, render_edge, pdftoppm, convert_dwg, parent):
+    def __init__(self, serial, path, page, render_edge, pdftoppm, convert_dwg, parent,
+                 orientation_probe=None, known_rotation=None):
         super().__init__(parent)
         self.serial, self.path, self.page = serial, path, page
         self.render_edge = render_edge
         self.pdftoppm, self.convert_dwg = pdftoppm, convert_dwg
+        self.orientation_probe, self.known_rotation = orientation_probe, known_rotation
 
     def run(self):
         try:
@@ -77,6 +80,7 @@ class RenderWorker(QThread):
             if not path.is_file():
                 raise ValueError('源图纸不可用，请返回图纸识别检查文件。')
             count, kind = 1, '图片'
+            rotation = self.known_rotation
             with tempfile.TemporaryDirectory(prefix='quote-view-') as folder:
                 if path.suffix.lower() == '.pdf':
                     # Pass an explicitly scoped stream so Windows releases the
@@ -85,6 +89,11 @@ class RenderWorker(QThread):
                         reader = PdfReader(stream)
                         try:
                             count = len(reader.pages)
+                            if rotation is None and 0 <= self.page < count:
+                                try:
+                                    rotation = pdf_view_rotation(reader.pages[self.page])
+                                except Exception:
+                                    pass  # Preview can still use the rendered page.
                         finally:
                             reader.close()
                     if not count or self.page >= count:
@@ -135,19 +144,31 @@ class RenderWorker(QThread):
                     painter.end()
                     kind = 'CAD 模型空间'
                 elif path.suffix.lower() in IMAGE_SUFFIXES:
-                    reader = QImageReader(str(path))
-                    reader.setAutoTransform(True)
-                    size = reader.size()
-                    if max(size.width(), size.height()) > self.render_edge:
-                        size.scale(QSize(self.render_edge, self.render_edge), Qt.AspectRatioMode.KeepAspectRatio)
-                        reader.setScaledSize(size)
-                    image = reader.read()
+                    device = QFile(str(path))
+                    if not device.open(QIODevice.OpenModeFlag.ReadOnly):
+                        raise ValueError('图纸读取失败，请检查源文件。')
+                    try:
+                        reader = QImageReader(device)
+                        reader.setAutoTransform(True)
+                        size = reader.size()
+                        if max(size.width(), size.height()) > self.render_edge:
+                            size.scale(QSize(self.render_edge, self.render_edge), Qt.AspectRatioMode.KeepAspectRatio)
+                            reader.setScaledSize(size)
+                        image = reader.read()
+                    finally:
+                        device.close()
                 else:
                     raise ValueError('当前格式没有可用的图纸预览。')
                 if image.isNull():
                     raise ValueError('图纸读取失败，请检查源文件。')
+                if (rotation is None and kind in {'PDF', '图片'} and self.orientation_probe
+                        and not self.isInterruptionRequested()):
+                    try:
+                        rotation = self.orientation_probe(image, self.isInterruptionRequested)
+                    except Exception:
+                        pass  # Missing OCR or uncertain orientation still permits preview.
                 if not self.isInterruptionRequested():
-                    self.rendered.emit(self.serial, image, count, kind, self.render_edge)
+                    self.rendered.emit(self.serial, image, count, kind, self.render_edge, rotation or 0)
         except Exception as error:
             if not self.isInterruptionRequested():
                 self.failed.emit(self.serial, str(error))
@@ -636,12 +657,14 @@ class QuoteDrawingPreview(QFrame):
     return_to_recognition = Signal()
     return_to_quote_result = Signal()
 
-    def __init__(self, pdftoppm, convert_dwg, parent=None):
+    def __init__(self, pdftoppm, convert_dwg, parent=None, *, orientation_probe=None):
         super().__init__(parent)
         self.setObjectName('quoteResultsPanel')
         self.setMinimumWidth(0)
         self.pdftoppm, self.convert_dwg = pdftoppm, convert_dwg
+        self.orientation_probe = orientation_probe
         self.annotations, self.pages, self.rotations = {}, {}, {}
+        self.automatic_rotations = {}
         self.render_edges, self.logical_sizes = {}, {}
         self.cache = OrderedDict()
         self._workers, self._render_context, self.serial = set(), {}, 0
@@ -784,7 +807,7 @@ class QuoteDrawingPreview(QFrame):
             return
         self.canvas.finish_stroke()
         key = (self.document_key, self.page)
-        rotation = (self.rotations.get(key, 0) + degrees) % 360
+        rotation = (self.canvas.rotation_degrees + degrees) % 360
         self.rotations[key] = rotation
         self.canvas.set_rotation(rotation)
 
@@ -805,11 +828,13 @@ class QuoteDrawingPreview(QFrame):
         """Forget this workspace's drawings/ink without killing render threads."""
         self._detail_timer.stop()
         self.serial += 1  # A renderer from the previous scheme may still finish.
+        for worker in tuple(self._workers):
+            worker.requestInterruption()
         self.canvas.finish_stroke()
         self.canvas.clear_selection(remove_items=False)
         self.document_key, self.source, self.path = None, '', ''
         self.page, self.page_count = 0, 0
-        for mapping in (self.annotations, self.pages, self.rotations, self.render_edges,
+        for mapping in (self.annotations, self.pages, self.rotations, self.automatic_rotations, self.render_edges,
                         self.logical_sizes, self.cache, self._render_context):
             mapping.clear()
         self.current_render_edge, self.current_kind = RENDER_EDGE, ''
@@ -831,14 +856,15 @@ class QuoteDrawingPreview(QFrame):
         self.message.setText('请导入并确认图纸')
         self.update_tools()
 
-    def set_document(self, key, source, path):
+    def set_document(self, key, source, path, *, page_index=None):
         identity = (key, normalized_path(source), normalized_path(path))
-        if identity == self.document_key:
+        page = self.pages.get(identity, 0) if page_index is None else page_index
+        if identity == self.document_key and page == self.page:
             return
         self.canvas.finish_stroke()
         self.canvas.fit_zoom = DEFAULT_READABLE_ZOOM
         self.document_key, self.source, self.path = identity, source, path
-        self.page = self.pages.get(identity, 0)
+        self.page = self.pages[identity] = page
         self.page_count = 0
         self.current_render_edge, self.current_kind = RENDER_EDGE, ''
         self.filename.setText(Path(source).name if source else '尚未关联图纸')
@@ -872,6 +898,8 @@ class QuoteDrawingPreview(QFrame):
 
     def load_page(self, render_edge=None, preserve_view=False):
         self.serial += 1
+        for worker in tuple(self._workers):
+            worker.requestInterruption()
         self.canvas.finish_stroke()
         page_key = (self.document_key, self.page)
         viewport = self.canvas.viewport()
@@ -899,8 +927,10 @@ class QuoteDrawingPreview(QFrame):
         if key in self.cache:
             self.ready(self.serial, *self.cache[key])
             return
-        worker = RenderWorker(self.serial, self.path, self.page, target_edge,
-                              self.pdftoppm, self.convert_dwg, self)
+        worker = RenderWorker(
+            self.serial, self.path, self.page, target_edge, self.pdftoppm, self.convert_dwg, self,
+            orientation_probe=self.orientation_probe, known_rotation=self.automatic_rotations.get(key[:2]),
+        )
         self._workers.add(worker)
         worker.rendered.connect(self.ready)
         worker.failed.connect(self.failed)
@@ -911,7 +941,7 @@ class QuoteDrawingPreview(QFrame):
         ))
         worker.start()
 
-    def ready(self, serial, image, count, kind, render_edge):
+    def ready(self, serial, image, count, kind, render_edge, automatic_rotation=0):
         if serial != self.serial:
             return
         _, preserve_view = self._render_context.pop(serial, (render_edge, False))
@@ -920,7 +950,8 @@ class QuoteDrawingPreview(QFrame):
             if old_key[:2] == (normalized, self.page) and old_key[2] != render_edge:
                 self.cache.pop(old_key)
         key = (normalized, self.page, render_edge)
-        self.cache[key] = (image, count, kind, render_edge)
+        self.cache[key] = (image, count, kind, render_edge, automatic_rotation)
+        self.automatic_rotations[key[:2]] = automatic_rotation
         self.cache.move_to_end(key)
         while (len(self.cache) > 8
                or sum(value[0].width() * value[0].height()
@@ -934,7 +965,7 @@ class QuoteDrawingPreview(QFrame):
         self.render_edges[page_key] = render_edge
         self.current_render_edge, self.current_kind = render_edge, kind
         strokes = self.annotations.setdefault(page_key, [])
-        self.canvas.set_image(image, strokes, self.rotations.get(page_key, 0),
+        self.canvas.set_image(image, strokes, self.rotations.get(page_key, automatic_rotation),
                               logical_size, preserve_view=preserve_view)
         self.canvas.setEnabled(True)
         detail = '，放大后自动提高清晰度' if Path(self.path).suffix.lower() in VECTOR_DETAIL_SUFFIXES else ''

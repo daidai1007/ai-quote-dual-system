@@ -49,7 +49,7 @@ def wait_until(predicate, attempts=500):
     raise AssertionError("timed out waiting for focused UI state")
 
 
-assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单管理", "合同管理", "报价方案", "报价分析"]
+assert [button.text() for button in window.nav_buttons] == ["选型配置", "成本计算", "报价单管理", "合同管理", "报价方案", "报价分析", "基础资料"]
 assert window.stack.widget(scheme2_ui.QUOTE_ROUTE).objectName() == "scheme2QuotePage"
 assert [button.text() for button in window.scheme2_cost_page.findChildren(QPushButton)].count("打印") == 0
 assert [button.text() for button in window.scheme2_cost_page.findChildren(QPushButton)].count("导出报价单") == 0
@@ -92,6 +92,8 @@ with tempfile.TemporaryDirectory(prefix="scheme2-background-") as folder:
     with source.open("wb") as stream:
         writer.write(stream)
     writer.close()
+    # These blank pages exercise navigation, not OCR orientation.
+    window.quote_drawing_preview.orientation_probe = None
     window._scheme2_recognition_tools = FakeRecognition
     scheme2_ui._import_scheme2_drawings(window, [str(source)])
     assert window._scheme2_page_worker is not None

@@ -160,6 +160,7 @@ $testFiles = @(
     "tests/verify_native_dimension_lines.py",
     "tests/verify_recognition_dimensions_ui.py",
     "tests/verify_drawing_workflow.py",
+    "tests/verify_drawing_orientation.py",
     "tests/verify_weight_freight.py",
     "tests/verify_jp_auxiliary_weight.py",
     "tests/verify_jp_auxiliary_weight_workflow.py",

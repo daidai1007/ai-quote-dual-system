@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from freight_state import FreightState, money, self_made_weight, AUTO_FREIGHT_BASIS, sync_item_freight
 from quote_drawing_preview import QuoteDrawingPreview, normalized_path, resolve_document
+from drawing_orientation import install_raster_orientation_probe
 
 # The recovered core still reserves these numeric slots.  They are controller
 # compatibility routes only; the old recognition and cabinet-summary screens
@@ -128,6 +129,7 @@ def sync_current_cabinet_quantity(window, value):
 
 
 def install_drawing_workflow(namespace):
+    orientation_probe = install_raster_orientation_probe(namespace)
     cls = namespace['MainWindow']
     if getattr(cls, '_drawing_workflow_installed', False):
         return
@@ -156,7 +158,8 @@ def install_drawing_workflow(namespace):
         workspace.replaceWidget(1, window.quote_right_stack)
         install_result_drawing_button(window, result_panel)
         preview = QuoteDrawingPreview(window.drawing_preview._pdftoppm_path,
-                                      namespace['DrawingRecognitionTools']._convert_dwg_to_dxf)
+                                      namespace['DrawingRecognitionTools']._convert_dwg_to_dxf,
+                                      orientation_probe=orientation_probe)
         preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         preview.return_to_recognition.connect(lambda: window.show_section(0))
         preview.return_to_quote_result.connect(lambda: show_quote_result(window))

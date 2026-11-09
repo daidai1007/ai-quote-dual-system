@@ -5779,12 +5779,7 @@ def _show_scheme2_source_page(window, entry):
     if preview is None:
         return
     source = str(entry["source_path"])
-    preview.set_document(entry["key"], source, source)
-    page_index = int(entry["page_index"])
-    if page_index:
-        preview.page = page_index
-        preview.pages[preview.document_key] = page_index
-        preview.load_page()
+    preview.set_document(entry["key"], source, source, page_index=int(entry["page_index"]))
     _sync_scheme2_page_navigation(window)
 
 
@@ -5798,6 +5793,7 @@ def _restore_scheme2_drawing_on_option_page(window):
     preview = getattr(window, "quote_drawing_preview", None)
     canvas = getattr(preview, "canvas", None)
     if (preview is not None and canvas is not None
+            and not any(worker.serial == preview.serial for worker in preview._workers)
             and (not canvas.isEnabled() or canvas.scene().sceneRect().isEmpty())):
         preview.load_page()
     if drawing is not None:
