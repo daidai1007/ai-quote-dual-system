@@ -3,11 +3,66 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { parseFormula, evaluateFormula, formulaVariables } from '../api/attachment_formula.mjs';
 import { calculateAttachment, attachmentTotals, selectRule, requiredParameters, PRODUCT_CODES, MATERIAL_CODES } from '../api/attachment_cost.mjs';
+import {attachmentCatalogFixture} from './helpers/attachment_catalog_fixture.mjs';
 const bundle = JSON.parse(fs.readFileSync(new URL('../database/attachment-v2/generated/attachment-bundle.json', import.meta.url)));
 const env = { quote_line_id: 'line-a', product_code: 'JP', width_mm: 800, height_mm: 2000, depth_mm: 600, material_code: 'SECC', density_g_cm3: 7.85, material_unit_price: 5, spray_unit_price: 10, coating_type: '橘纹', quote_date: '2026-09-10' };
 const catalog = { attachment_price_id: 1, data_version: 'v', item_name: '安装板', category_level1: '安装板', category_level2: '', price: 483.46155, unit: '件' };
 const dynamic = bundle.rules.find(r => r.source_row_no === 3);
 const fixed = { rule_id: 2, method: 'FIXED', fixed_cost: 27.56, products: [], data_version: 'v', auxiliary_list: '说明\n保留换行' };
+
+test('JM防雨顶按目录类别采用对应公式，保留原产品、数量和输入', () => {
+  const {items}=attachmentCatalogFixture();
+  const environment={...env,product_code:'JM',width_mm:600,depth_mm:600,
+    material_unit_price:4.2,spray_unit_price:26};
+  const cabinetArea=((600+353.5)*(600+195.7)+(600+97)*118*2)*1e-6;
+  const boxArea=(600+247.5)*(600+182.5)*1e-6;
+  for (const [category,area,auxiliary,labor,ruleId] of [
+    ['控制柜附件',cabinetArea,60,4.5714+20.7143*.6+9.6429*.6,'R53'],
+    ['控制箱附件',boxArea,0,8.5158+16.8345*1200*2*.001,'R44'],
+  ]) {
+    const item=items.find(row=>row.category_level1===category&&row.item_name==='防雨顶');
+    const before=structuredClone({item,environment});
+    for (const quantity of [1,3]) {
+      const result=calculateAttachment({quantity,category_level1:category==='控制柜附件'?'控制箱附件':'控制柜附件'},
+        item,item.rules,environment);
+      const cost=area*1.5*7.85*4.2+area*26+auxiliary+labor;
+      assert.equal(result.status,'CALCULATED',result.error);
+      assert.equal(result.rule_id,ruleId);
+      assert.ok(Math.abs(result.formula_unit_cost-cost)<1e-7);
+      assert.equal(result.formula_amount,Math.round(cost*quantity*100)/100);
+      assert.equal(result.environment.product_code,'JM');
+      assert.equal(result.category_level1,category,'Use authoritative category, not client text');
+    }
+    assert.deepEqual({item,environment},before);
+  }
+});
+
+test('控制箱和控制柜附件跨产品复用所属类别规则，保留超宽、材质及冲突校验', () => {
+  const {items}=attachmentCatalogFixture();
+  const products=[...new Set(Object.values(PRODUCT_CODES).flat()),'JC_EXP','OP_TABLE_EXP'];
+  for (const item of items.filter(row=>['控制柜附件','控制箱附件'].includes(row.category_level1))) {
+    for (const product_code of products) {
+      const referenceProduct=item.category_level1==='控制柜附件'
+        ? (product_code.includes('WIDE')?'JP_WIDE_EXP':'JP')
+        : item.item_name==='JK安装板'?'JK':'JA_SINGLE';
+      const environment={...env,product_code};
+      const selection={quantity:2,manual_inputs:{玻璃门宽度:500,玻璃门高度:1400,通风顶罩高度:100}};
+      const expected=calculateAttachment(selection,item,item.rules,{...environment,product_code:referenceProduct});
+      const result=calculateAttachment(selection,item,item.rules,environment);
+      assert.equal(result.status,expected.status,item.item_name+' / '+product_code+': '+result.error);
+      assert.notEqual(result.status,'QUICK_ONLY',item.item_name+' / '+product_code);
+      assert.equal(result.rule_id,expected.rule_id);
+      assert.equal(result.formula_amount,expected.formula_amount);
+      assert.equal(result.quick_amount,expected.quick_amount);
+    }
+  }
+  const rule={...fixed,products:['JP'],materials:['SECC']};
+  assert.equal(selectRule([rule],'JM','SECC','控制柜附件'),rule);
+  assert.throws(()=>selectRule([rule],'JM','SUS304','控制柜附件'),/缺少附件成本规则/);
+  assert.throws(()=>selectRule([rule,{...rule,rule_id:99}],'JM','SECC','控制柜附件'),/冲突/);
+  assert.equal(selectRule([rule],'JM','SECC','安装附件'),null);
+  assert.equal(selectRule([rule],'JM','SECC'),null);
+});
 
 test('新增卡固 KA22060 全产品材质按目录面价270及固定成本209计算，不改写目录输入', () => {
   // Reduced public catalogue snapshot from task C; never connects to the API/DB.

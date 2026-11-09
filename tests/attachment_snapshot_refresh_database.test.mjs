@@ -83,6 +83,38 @@ test('merged refresh SQL executes with real rules, guards, deductions and immuta
     assert.deepEqual(empty.attachments,[]);
     assert.equal(empty.formula_cost.management_fee,8.7);
     assert.equal(empty.formula_cost.total_cost,153.7);
+
+    // The old resolver rejects category-based costs. Update only this new,
+    // disposable cluster with the manual deployment script to test real guards.
+    const roof=catalog.items.find(row=>row.item_name==='防雨顶'&&row.category_level1==='控制柜附件');
+    const jm={...input,quote_id:'LOCAL_JM_ROOF',product_code:'JM',width_mm:600,depth_mm:600,
+      attachments:[{attachment_price_id:roof.attachment_price_id,quantity:1,manual_inputs:{}}]};
+    await assert.rejects(service.calculate(jm),/所选成本规则不是当前产品适用规则/);
+    sql(fs.readFileSync(path.join(root,'database/migrations/attachment_category_cost_rules.sql'),'utf8'));
+    for(const category of ['控制柜附件','控制箱附件']) {
+      const item=catalog.items.find(row=>row.item_name==='防雨顶'&&row.category_level1===category);
+      for(const product_code of ['JM',category==='控制柜附件'?'JA_SINGLE':'JS_SINGLE']) {
+        const selected={attachment_price_id:item.attachment_price_id,quantity:1,manual_inputs:{}};
+        const calculated=await service.calculate({...jm,quote_id:'LOCAL_CATEGORY_'+product_code+'_'+item.attachment_price_id,
+          product_code,attachments:[selected]});
+        const reference=await service.preview({...jm,product_code:category==='控制柜附件'?'JP_SINGLE':'JA_SINGLE',
+          attachments:[selected]});
+        assert.ok(calculated.attachments[0].formula_amount>0);
+        assert.equal(calculated.attachments[0].formula_amount,reference.attachments[0].formula_amount);
+        const snapshot=()=>sql(`SELECT environment_snapshot::text FROM calc.attachment_quote_line
+          WHERE quote_line_id=${sqlValue(calculated.quote_line_id)}::uuid;`);
+        const original=snapshot();
+        const repriced=await service.recalculateLine({quote_line_id:calculated.quote_line_id,
+          attachments:[{...selected,quantity:3}]});
+        assert.equal(repriced.attachments[0].formula_unit_cost,calculated.attachments[0].formula_unit_cost);
+        assert.equal(repriced.attachments[0].formula_amount,
+          Math.round(calculated.attachments[0].formula_unit_cost*3*100)/100);
+        assert.equal(repriced.attachments[0].environment.product_code,product_code);
+        assert.notEqual(repriced.quote_line_id,calculated.quote_line_id);
+        assert.equal(snapshot(),original);
+      }
+    }
+    assert.equal(frozen(),before);
   } finally {
     if(fs.existsSync(path.join(data,'postmaster.pid')))run('pg_ctl.exe',['-D',data,'-w','stop','-m','fast']);
     // Never remove an unverified directory or a possibly running cluster.

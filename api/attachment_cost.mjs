@@ -9,8 +9,14 @@ export const PRODUCT_CODES = Object.freeze({
 export const COMPONENTS = Object.freeze({ weight_kg: '材料重量', material_cost: '材料成本', spray_area_m2: '喷塑面积', spray_cost: '喷塑成本', auxiliary_cost: '辅材', labor_cost: '人工' });
 const AUTO = { 宽度: 'width_mm', 高度: 'height_mm', 深度: 'depth_mm', 材质密度: 'density_g_cm3', 材质单价: 'material_unit_price', 喷塑单价: 'spray_unit_price' };
 export const MATERIAL_CODES = Object.freeze(['SECC', 'SUS304', 'SUS316']);
-export function selectRule(rules, productCode, materialCode) {
-  const productRules = rules.filter(r => !r.products?.length || r.products.includes(productCode));
+export function selectRule(rules, productCode, materialCode, category = '') {
+  let productRules = rules.filter(r => !r.products?.length || r.products.includes(productCode));
+  const categoryFallback = !productRules.length && ['控制柜附件', '控制箱附件'].includes(category);
+  if (categoryFallback) {
+    // Bound catalogue rules identify the attachment's structure. A different
+    // cabinet family may use them, while explicit wide-cabinet rules stay wide.
+    productRules = rules.filter(r => !r.products?.some(code => code.includes('WIDE')));
+  }
   if (!productRules.length) return null;
   if (productRules.some(r => r.materials?.length) && !MATERIAL_CODES.includes(materialCode)) {
     throw new Error('材质适用规则需要有效材质：SECC、SUS304或SUS316');
@@ -18,7 +24,8 @@ export function selectRule(rules, productCode, materialCode) {
   const materialRules = productRules.filter(r => !r.materials?.length || r.materials.includes(materialCode));
   if (!materialRules.length) throw new Error(`当前材质 ${materialCode} 缺少附件成本规则`);
   const specific = materialRules.filter(r => r.products?.includes(productCode));
-  const applicable = specific.length ? specific : materialRules.filter(r => !r.products?.length);
+  const applicable = specific.length ? specific : categoryFallback ? materialRules
+    : materialRules.filter(r => !r.products?.length);
   if (applicable.length > 1) throw new Error(`同级成本规则冲突：${applicable.map(r => r.rule_id).join(', ')}`);
   return applicable[0] || null;
 }
@@ -128,7 +135,7 @@ export function calculateAttachment(selection, catalog, rules, environment) {
       if(result.unit_price_override!=null) result.unit_price_override=money(result.unit_price_override);
       result.quick_amount=moneyProduct(quantity,result.unit_price_override??result.face_price,sign);
     }
-    const rule = selectRule(rules, environment.product_code, environment.material_code);
+    const rule = selectRule(rules, environment.product_code, environment.material_code, catalog.category_level1);
     if (!rule) { result.status = 'QUICK_ONLY'; result.status_text = '仅快速报价'; return result; }
     Object.assign(result, { rule_id: rule.rule_id, rule_version: rule.data_version, rule_materials: rule.materials || [], auxiliary_list: rule.auxiliary_list ?? '', rule_source_row: rule.source_row_no, calculation_notes: rule.notes || '', formulas: rule.formulas });
     result.required_parameters = requiredParameters(rule);

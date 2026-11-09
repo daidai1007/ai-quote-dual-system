@@ -61,6 +61,34 @@ function harness(children=[],catalogItem=glass){
 const selection=(manual,index)=>({attachment_price_id:glass.attachment_price_id,quantity:1,manual_inputs:manual,
   ...(index===undefined?{}:{ganged_cabinet_index:index})});
 
+test('跨产品防雨顶补齐成本并修改数量时创建新快照，保留原始仅面价版本',async()=>{
+  for(const category of ['控制柜附件','控制箱附件']) {
+    const roof=fixture.catalog.items.find(row=>row.item_name==='防雨顶'&&row.category_level1===category);
+    for(const product of ['JM',category==='控制柜附件'?'JA_SINGLE':'JS_SINGLE']) {
+      const h=harness([],roof);
+      h.environment.product_code=product;
+      h.environment.width_mm=600;
+      h.environment.depth_mm=600;
+      h.old.attachments[0].status='QUICK_ONLY';
+      delete h.old.attachments[0].error;
+      const before=structuredClone(h.old);
+      const result=await h.service.recalculateLine({quote_line_id:oldId,attachments:[
+        {attachment_price_id:roof.attachment_price_id,quantity:3,manual_inputs:{}},
+      ]});
+      const row=result.attachments[0];
+      assert.equal(row.status,'CALCULATED');
+      assert.equal(row.rule_id,category==='控制柜附件'?'R53':'R44');
+      assert.ok(row.formula_amount>0);
+      assert.equal(row.quantity,3);
+      assert.equal(row.environment.product_code,product);
+      assert.equal(result.formula_cost.cost_allocation.complete,true);
+      assert.deepEqual(h.old,before);
+      assert.equal(h.queries.length,2);
+      assert.equal(h.stored.attachments[0].formula_amount,row.formula_amount);
+    }
+  }
+});
+
 test('existing line endpoint needs only one selected-input read and one snapshot transaction',async()=>{
   const h=harness();
   await h.service.recalculateLine({quote_line_id:oldId,attachments:[selection({玻璃门宽度:400,玻璃门高度:400})]});
