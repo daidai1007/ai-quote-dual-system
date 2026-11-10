@@ -35,6 +35,7 @@ a = Analysis(
     datas=collect_data_files('ezdxf') + collect_data_files('fontTools') + [
         (str(core_root), 'v3_core'),
         (str(repo_root / 'desktop_client' / 'ui_assets'), 'ui_assets'),
+        (str(repo_root / 'desktop_client' / 'edocr2_runner.py'), '.'),
     ],
     hiddenimports=collect_submodules('ezdxf.addons.drawing') + collect_submodules('fontTools') + ['PySide6.QtSvg'],
     hookspath=[],

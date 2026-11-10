@@ -105,28 +105,30 @@ def install_raster_orientation_probe(namespace):
 
     namespace["rapidocr_angle_readings"] = read_recognition_angles
 
-    def probe(image, cancelled):
+    def read_text(data, cancelled):
         import rapidocr
 
         model_dir = Path(rapidocr.__file__).with_name("models")
         if not all((model_dir / name).is_file() for name in _LOCAL_MODELS):
             return None
 
-        def read_text(data):
-            with inference_lock:
-                if cancelled():
-                    return None
-                engine, _ = load_engine()
-                if not isinstance(engine, rapidocr.RapidOCR):
-                    return None
-                previous = engine.use_cls
-                try:
-                    # Keep the direction signal. The line classifier otherwise
-                    # turns upside-down crops before text recognition.
-                    return engine(data, use_cls=False)
-                finally:
-                    engine.use_cls = previous
+        with inference_lock:
+            if cancelled():
+                return None
+            engine, _ = load_engine()
+            if not isinstance(engine, rapidocr.RapidOCR):
+                return None
+            previous = engine.use_cls
+            try:
+                # Keep the direction signal before the text-line classifier
+                # can turn individual upside-down crops.
+                return engine(data, use_cls=False)
+            finally:
+                engine.use_cls = previous
 
-        return raster_view_rotation(image, read_text, cancelled)
+    def probe(image, cancelled):
+        return raster_view_rotation(image, lambda data: read_text(data, cancelled), cancelled)
 
+    namespace["_read_local_ocr_for_orientation"] = read_text
+    namespace["_rapidocr_reading_contract"] = read_angles.__globals__
     return probe

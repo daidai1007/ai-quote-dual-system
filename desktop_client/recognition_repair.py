@@ -7,6 +7,7 @@ import math
 
 from recognition_dimensions import reconcile_recognition_dimensions
 from native_dimension_lines import attach_dimension_line_suggestions, inspect_single_page_pdf
+from recognition_first_pass import current_page_scan, refine_pending_size_evidence
 
 
 _NUMBER = re.compile(r"^\d{2,4}(?:\.\d+)?$")
@@ -150,10 +151,35 @@ def install_recognition_repair(namespace: dict) -> None:
     parser = namespace.get("parse_review_specification")
 
     def recognize_document_with_repair(cls, path: str) -> dict:
+        scan = current_page_scan()
+        native = inspect_single_page_pdf(path) if scan is not None else None
+        if scan is not None:
+            scan.native_text = native["text"]
         result = original_recognize_document(path)
-        native = inspect_single_page_pdf(path)
-        return repair_recognition_result(result, parser, native_text=native["text"],
-                                         native_dimension_lines=native["dimension_lines"])
+        if native is None:
+            native = inspect_single_page_pdf(path)
+        if scan is not None and isinstance(result, dict):
+            result["page_scan_mode"] = scan.mode
+            result["page_auto_rotation"] = scan.rotation
+            result["page_scan_reads"] = scan.primary_reads
+            result["page_detail_reads"] = scan.detail_reads
+            if scan.edocr2 is not None:
+                result["edocr2_outline_evidence"] = scan.edocr2
+        result = repair_recognition_result(result, parser, native_text=native["text"],
+                                           native_dimension_lines=native["dimension_lines"])
+        if scan is not None and isinstance(result, dict) and not result.get("error"):
+            cabinets = result.get("cabinet_candidates") or []
+            for record in (result, *cabinets):
+                if not isinstance(record, dict):
+                    continue
+                region = record.get("source_region") or {}
+                located = isinstance(region, dict) and any(
+                    region.get(key) is not None for key in ("x", "y", "left", "top", "bbox"))
+                scoped = len(cabinets) <= 1 and not located
+                refine_pending_size_evidence(record, native["text"] if scoped else "",
+                                             scan.printed_sizes if scoped else (),
+                                             scan.edocr2 if scoped else None)
+        return result
 
     tools.recognize_document = classmethod(recognize_document_with_repair)
     tools._recognition_repair_installed = True

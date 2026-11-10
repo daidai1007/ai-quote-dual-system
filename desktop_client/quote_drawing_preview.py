@@ -67,12 +67,13 @@ class RenderWorker(QThread):
     failed = Signal(int, str)
 
     def __init__(self, serial, path, page, render_edge, pdftoppm, convert_dwg, parent,
-                 orientation_probe=None, known_rotation=None):
+                 orientation_probe=None, known_rotation=None, page_scan=None):
         super().__init__(parent)
         self.serial, self.path, self.page = serial, path, page
         self.render_edge = render_edge
         self.pdftoppm, self.convert_dwg = pdftoppm, convert_dwg
         self.orientation_probe, self.known_rotation = orientation_probe, known_rotation
+        self.page_scan = page_scan
 
     def run(self):
         try:
@@ -89,7 +90,7 @@ class RenderWorker(QThread):
                         reader = PdfReader(stream)
                         try:
                             count = len(reader.pages)
-                            if rotation is None and 0 <= self.page < count:
+                            if rotation is None and self.page_scan is None and 0 <= self.page < count:
                                 try:
                                     rotation = pdf_view_rotation(reader.pages[self.page])
                                 except Exception:
@@ -161,7 +162,9 @@ class RenderWorker(QThread):
                     raise ValueError('当前格式没有可用的图纸预览。')
                 if image.isNull():
                     raise ValueError('图纸读取失败，请检查源文件。')
-                if (rotation is None and kind in {'PDF', '图片'} and self.orientation_probe
+                if self.page_scan is not None:
+                    rotation = self.page_scan.wait_rotation(self.isInterruptionRequested)
+                elif (rotation is None and kind in {'PDF', '图片'} and self.orientation_probe
                         and not self.isInterruptionRequested()):
                     try:
                         rotation = self.orientation_probe(image, self.isInterruptionRequested)
@@ -663,6 +666,7 @@ class QuoteDrawingPreview(QFrame):
         self.setMinimumWidth(0)
         self.pdftoppm, self.convert_dwg = pdftoppm, convert_dwg
         self.orientation_probe = orientation_probe
+        self.page_scan = None
         self.annotations, self.pages, self.rotations = {}, {}, {}
         self.automatic_rotations = {}
         self.render_edges, self.logical_sizes = {}, {}
@@ -833,6 +837,7 @@ class QuoteDrawingPreview(QFrame):
         self.canvas.finish_stroke()
         self.canvas.clear_selection(remove_items=False)
         self.document_key, self.source, self.path = None, '', ''
+        self.page_scan = None
         self.page, self.page_count = 0, 0
         for mapping in (self.annotations, self.pages, self.rotations, self.automatic_rotations, self.render_edges,
                         self.logical_sizes, self.cache, self._render_context):
@@ -856,15 +861,24 @@ class QuoteDrawingPreview(QFrame):
         self.message.setText('请导入并确认图纸')
         self.update_tools()
 
-    def set_document(self, key, source, path, *, page_index=None):
+    def set_document(self, key, source, path, *, page_index=None, page_scan=None):
         identity = (key, normalized_path(source), normalized_path(path))
         page = self.pages.get(identity, 0) if page_index is None else page_index
         if identity == self.document_key and page == self.page:
-            return
+            if page_scan is None or page_scan is self.page_scan:
+                return
+            source_page = (identity[2], page)
+            self.automatic_rotations.pop(source_page, None)
+            for cache_key in tuple(self.cache):
+                if cache_key[:2] == source_page:
+                    self.cache.pop(cache_key)
         self.canvas.finish_stroke()
         self.canvas.fit_zoom = DEFAULT_READABLE_ZOOM
         self.document_key, self.source, self.path = identity, source, path
-        self.page = self.pages[identity] = page
+        self.page_scan = page_scan
+        self.page = page
+        if path:
+            self.pages[identity] = page
         self.page_count = 0
         self.current_render_edge, self.current_kind = RENDER_EDGE, ''
         self.filename.setText(Path(source).name if source else '尚未关联图纸')
@@ -930,6 +944,7 @@ class QuoteDrawingPreview(QFrame):
         worker = RenderWorker(
             self.serial, self.path, self.page, target_edge, self.pdftoppm, self.convert_dwg, self,
             orientation_probe=self.orientation_probe, known_rotation=self.automatic_rotations.get(key[:2]),
+            page_scan=self.page_scan,
         )
         self._workers.add(worker)
         worker.rendered.connect(self.ready)

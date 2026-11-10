@@ -36,6 +36,8 @@ from standalone_attachment import is_standalone, ready as standalone_ready, upda
 from attachment_cost_allocation import with_cost_allocation,merge_attachment_details
 from cost_detail_export import write_cost_detail_xlsx
 from quote_request_context import check_quote_response, quote_request_is_current, retire_quote_request, settle_quote_request
+from drawing_orientation import pdf_view_rotation
+from recognition_first_pass import PageScan, page_scan_scope
 from recognition_dimensions import (dimension_review_hint, parse_dimension_specification,
                                     reconcile_recognition_dimensions)
 
@@ -386,6 +388,7 @@ class _Scheme2PageRecognitionWorker(QThread):
         super().__init__(parent)
         self.recognition_tools = recognition_tools
         self.page_entry = page_entry
+        self.scan = page_entry.setdefault("_page_scan", PageScan())
 
     def run(self):
         entry = self.page_entry
@@ -393,14 +396,22 @@ class _Scheme2PageRecognitionWorker(QThread):
         page_index = int(entry["page_index"])
         try:
             recognition_path = source
-            with tempfile.TemporaryDirectory(prefix="scheme2-recognition-") as folder:
+            with page_scan_scope(self.scan), tempfile.TemporaryDirectory(prefix="scheme2-recognition-") as folder:
                 if Path(source).suffix.lower() == ".pdf":
                     reader = PdfReader(source)
                     try:
                         if not 0 <= page_index < len(reader.pages):
                             raise ValueError("图纸页码无效")
+                        page = reader.pages[page_index]
+                        try:
+                            angle = pdf_view_rotation(page)
+                        except Exception:  # Direction hints are optional for damaged PDF streams.
+                            angle = None
+                        if angle is not None:
+                            self.scan.native_rotation = angle
+                            self.scan.publish(angle)
                         writer = PdfWriter()
-                        writer.add_page(reader.pages[page_index])
+                        writer.add_page(page)
                         recognition_path = str(Path(folder) / f"page-{page_index + 1}.pdf")
                         with open(recognition_path, "wb") as stream:
                             writer.write(stream)
@@ -5293,7 +5304,8 @@ def _order_workspace_payload(window):
     pages = []
     for page in getattr(window, "_scheme2_drawing_pages", []):
         if isinstance(page, dict):
-            pages.append({key: deepcopy(value) for key, value in page.items() if key not in {"item", "pixmap"}})
+            pages.append({key: deepcopy(value) for key, value in page.items()
+                          if key not in {"item", "pixmap", "_page_scan"}})
     return _json_order_value({
         "pricing_basis": PRICING_BASIS,
         "option_state": _capture_scheme2_page_state(window),
@@ -5779,7 +5791,14 @@ def _show_scheme2_source_page(window, entry):
     if preview is None:
         return
     source = str(entry["source_path"])
-    preview.set_document(entry["key"], source, source, page_index=int(entry["page_index"]))
+    scan = entry.get("_page_scan")
+    if scan is None:
+        angle = (entry.get("document") or {}).get("page_auto_rotation")
+        if angle in (0, 90, 180, 270):
+            scan = entry["_page_scan"] = PageScan()
+            scan.publish(angle)
+    preview.set_document(entry["key"], source, source, page_index=int(entry["page_index"]),
+                         page_scan=scan)
     _sync_scheme2_page_navigation(window)
 
 
@@ -5984,8 +6003,10 @@ def _recognize_scheme2_page(window, entry):
     epoch = getattr(window, "_scheme2_workspace_epoch", 0)
     def current():
         return epoch == getattr(window, "_scheme2_workspace_epoch", 0)
-    worker.succeeded.connect(lambda key, item: _finish_scheme2_page_recognition(window, key, item) if current() else None)
-    worker.failed.connect(lambda key, message: _fail_scheme2_page_recognition(window, key, message) if current() else None)
+    def same_page(key):
+        return current() and _scheme2_page_entry(window, key) is entry
+    worker.succeeded.connect(lambda key, item: _finish_scheme2_page_recognition(window, key, item) if same_page(key) else None)
+    worker.failed.connect(lambda key, message: _fail_scheme2_page_recognition(window, key, message) if same_page(key) else None)
 
     def finished():
         if getattr(window, "_scheme2_page_worker", None) is worker:
@@ -6005,9 +6026,12 @@ def _recognize_scheme2_page(window, entry):
 def _start_next_scheme2_recognition(window):
     if getattr(window, "_scheme2_page_worker", None) is not None:
         return
+    pages = getattr(window, "_scheme2_drawing_pages", [])
+    selected = getattr(window, "_scheme2_drawing_page_index", -1)
+    ordered = [pages[selected], *pages[:selected], *pages[selected + 1:]] if 0 <= selected < len(pages) else pages
     entry = next(
         (
-            candidate for candidate in getattr(window, "_scheme2_drawing_pages", [])
+            candidate for candidate in ordered
             if candidate.get("item") is None and not candidate.get("error")
         ),
         None,
@@ -6108,6 +6132,7 @@ def _import_scheme2_drawings(window, paths=None):
                 "page_count": max(1, page_count),
                 "item": None,
                 "state": None,
+                "_page_scan": PageScan(),
             })
             known.add(key)
     window._scheme2_drawing_pages = pages
@@ -6131,7 +6156,7 @@ def _replace_current_scheme2_drawing(window):
     source = str(Path(accepted[0]).resolve())
     pages[index] = {
         "key": f"{source.casefold()}#page=1", "source_path": source,
-        "page_index": 0, "page_count": 1, "item": None, "state": None,
+        "page_index": 0, "page_count": 1, "item": None, "state": None, "_page_scan": PageScan(),
     }
     window._scheme2_recognition_started_at = time.monotonic()
     timer = getattr(window, "_scheme2_recognition_elapsed_timer", None)
@@ -9686,9 +9711,11 @@ def install_scheme2_ui(namespace):
                 # The core returns early for missing dimensions. Its prior
                 # visible size and cached quote must not survive that return.
                 window.quote_spec_edit.clear()
-                partial = (item.get("dimension_recognition") or {}).get("partial") or {}
-                window.quote_spec_edit.setPlaceholderText("*".join(
-                    f"{partial[axis]:g}" if axis in partial else "?" for axis in ("W", "D", "H")))
+                evidence = item.get("dimension_recognition") or {}
+                partial = evidence.get("partial") or {}
+                placeholder = evidence.get("review_display_specification") or "*".join(
+                    f"{partial[axis]:g}" if axis in partial else "?" for axis in ("W", "D", "H"))
+                window.quote_spec_edit.setPlaceholderText(placeholder)
                 window.quote_spec_edit.setToolTip(dimension_review_hint(item))
                 window.clear_quote_result()
             else:
