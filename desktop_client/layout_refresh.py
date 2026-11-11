@@ -1636,6 +1636,10 @@ def _ganged_rows(window) -> list[dict]:
     return [dict(row) for row in rows if isinstance(row, dict)]
 
 
+def _is_ganged_fixed_base(item: dict) -> bool:
+    return default_rule_for_item(item) == DEFAULT_FIXED_BASE and size_match_attachment_name(item) != "活动底座"
+
+
 def _replace_ganged_fixed_base_selections(
     items: list[dict], candidates: list[dict], enabled: bool
 ) -> tuple[list[dict], int]:
@@ -1649,13 +1653,13 @@ def _replace_ganged_fixed_base_selections(
     existing_by_index = {
         int(item.get(GANGED_FIXED_BASE_INDEX_KEY)): item
         for item in items
-        if default_rule_for_item(item) == DEFAULT_FIXED_BASE
+        if _is_ganged_fixed_base(item)
         and bool(item.get(GANGED_FIXED_BASE_MATCH_KEY))
         and str(item.get(GANGED_FIXED_BASE_INDEX_KEY, "")).isdigit()
     }
     retained = [
         item for item in items
-        if default_rule_for_item(item) != DEFAULT_FIXED_BASE
+        if not _is_ganged_fixed_base(item)
     ]
     added = 0
     if not enabled:
@@ -1701,12 +1705,12 @@ def _match_ganged_fixed_bases(
         (
             item for item in selected
             if isinstance(item, dict)
-            and default_rule_for_item(item) == DEFAULT_FIXED_BASE
+            and _is_ganged_fixed_base(item)
         ),
         next(
             (
                 item for item in catalog
-                if default_rule_for_item(item) == DEFAULT_FIXED_BASE
+                if _is_ganged_fixed_base(item)
             ),
             None,
         ),
@@ -1762,9 +1766,7 @@ def _ensure_window_ganged_fixed_bases(window) -> bool:
         item for item in getattr(window, "attachments", [])
         if isinstance(item, dict)
     ]
-    if len(rows) <= 1 or not any(
-        default_rule_for_item(item) == DEFAULT_FIXED_BASE for item in selected
-    ):
+    if len(rows) <= 1 or not any(_is_ganged_fixed_base(item) for item in selected):
         return False
     catalog = [
         item for item in getattr(window, "_attachment_catalog_cache", [])
@@ -1798,9 +1800,7 @@ def _expand_collected_ganged_fixed_bases(dialog, selected: list[dict]) -> list[d
     """Fan one manually checked fixed base out to all split cabinets."""
 
     parent = dialog.parentWidget()
-    if len(_ganged_rows(parent)) <= 1 or not any(
-        default_rule_for_item(item) == DEFAULT_FIXED_BASE for item in selected
-    ):
+    if len(_ganged_rows(parent)) <= 1 or not any(_is_ganged_fixed_base(item) for item in selected):
         return selected
     candidates = _live_ganged_fixed_base_matches(dialog, selected) or [
         item for item in getattr(dialog, "default_ganged_fixed_base_matches", ())
@@ -6298,7 +6298,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         base = None
         if len(ganged_rows) > 1 and all(row.get("base_height_mm") not in (None, "") for row in ganged_rows):
             base_source = next(
-                (item for item in catalog if default_rule_for_item(item) == DEFAULT_FIXED_BASE),
+                (item for item in catalog if _is_ganged_fixed_base(item)),
                 None,
             )
             for index, row in enumerate(ganged_rows):

@@ -398,6 +398,8 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         [item for item in all_category_matches if size_match_attachment_name(item) == "侧板"]
         if category == "侧板" else category_matches or candidates
     )
+    if category == "安装板" and installation_board(selection) and target_dimensions is not None:
+        return match_installation_board_for_product(catalog, selection, target_dimensions, product_code)
     if sized_candidates and target_dimensions is not None:
         target = tuple(target_dimensions)
         if is_base_attachment(selection) and len(target) >= 3:
@@ -405,10 +407,6 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         matched = None
         if category == "侧板":
             matched = match_attachment_size(sized_candidates, sized_candidates[0], target)
-        elif category == "安装板" and name in {"安装板", "JK安装板"}:
-            matched = match_installation_board_for_product(
-                catalog, sized_candidates[0], target, product_code
-            )
         elif category == "安装附件" and name == "固定立柱":
             matched = match_named_quick_attachment_size(
                 catalog, category, "固定立柱", name, target
@@ -441,17 +439,32 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
     return None
 
 
+def _attachment_child(window, selection):
+    children = getattr(window, "ganged_cabinets", [])
+    index = selection.get("ganged_cabinet_index", selection.get("ganged_fixed_base_index"))
+    if isinstance(index, int) and len(children) > 1 and 0 <= index < len(children):
+        return children[index]
+    return None
+
+
+def _quote_attachment_dimensions(window, selection):
+    child = _attachment_child(window, selection)
+    if child is not None:
+        return tuple(child.get(f"{axis}_mm") for axis in ("width", "height", "depth"))
+    return _visible_quote_dimensions(window)
+
+
 def match_quote_attachment(window, selection, catalog):
     """Apply the retained quick-size rules immediately before quote pricing."""
-    dimensions = _visible_quote_dimensions(window)
+    child = _attachment_child(window, selection)
     product_getter = getattr(window, "selected_product_code", None)
     product_code = product_getter() if callable(product_getter) else ""
     return match_catalog_attachment(
         selection,
         catalog,
-        target_dimensions=dimensions,
+        target_dimensions=_quote_attachment_dimensions(window, selection),
         product_code=product_code,
-        base_height_mm=base_height(window),
+        base_height_mm=child.get("base_height_mm") if child is not None else base_height(window),
     )
 
 def manual_attachment_amount_edited(row):
@@ -607,13 +620,9 @@ def resolve_computer_tray(source, matched, version):
 
 
 def needs_installation_board_resolution(window):
-    dimensions = _visible_quote_dimensions(window)
-    if not dimensions:
-        return False
     return any(
         not row.get("custom") and installation_board(row)
-        and any(row.get("size_match_target_" + key + "_mm") != dimensions[index]
-                for index, key in enumerate(("width", "height")))
+        and _size_match_target_changed(row, _quote_attachment_dimensions(window, row))
         for row in getattr(window, "attachments", []) if isinstance(row, dict)
     )
 
@@ -621,14 +630,11 @@ def needs_installation_board_resolution(window):
 def _size_match_target_changed(source, dimensions):
     """Return whether a saved size-match result belongs to another target."""
 
-    # Bases and installation boards have dedicated target builders (base
-    # height and face W/H respectively); do not compare them with the
-    # cabinet's ordinary height/depth tuple here.
+    # Bases compare against base height in their own matching flow.
     if (
         source.get("custom")
         or (size_match_attachment_name(source) == "三排安装梁" and source.get("beam_model_manually_selected"))
         or size_match_attachment_name(source) is None
-        or installation_board(source)
         or is_base_attachment(source)
     ):
         return False
@@ -649,10 +655,8 @@ def _size_match_target_changed(source, dimensions):
 
 def needs_size_match_resolution(window):
     """Whether a draft contains a size-aware attachment for an old target."""
-
-    dimensions = _visible_quote_dimensions(window)
-    return bool(dimensions) and any(
-        _size_match_target_changed(row, dimensions)
+    return any(
+        _size_match_target_changed(row, _quote_attachment_dimensions(window, row))
         for row in getattr(window, "attachments", [])
         if isinstance(row, dict)
     )
@@ -770,8 +774,8 @@ def expand_ganged_fixed_bases_for_quote(window, rows, catalog, version=None):
                 height = float(cabinet["height_mm"])
                 depth = float(cabinet["depth_mm"])
                 previous = next((row for row in fixed_sources if row.get("ganged_cabinet_index",
-                                     row.get("ganged_fixed_base_index")) == index), source)
-                base = attachment_base_height(previous, cabinet.get("base_height_mm"))
+                                     row.get("ganged_fixed_base_index")) == index), None)
+                base = attachment_base_height(previous or source, cabinet.get("base_height_mm"))
                 if base is None:
                     missing.append(f"柜体{index + 1}固定底座高度未填写")
                     continue
@@ -788,17 +792,18 @@ def expand_ganged_fixed_bases_for_quote(window, rows, catalog, version=None):
             if matched is None:
                 missing.append(f"柜体{index + 1}固定底座")
                 continue
-            resolved = {**source, **copy.deepcopy(matched)}
+            selection = previous if previous is not None else new_quote_attachment_selection(source)
+            resolved = resolve_installation_board(selection, matched, version)
             resolved.update({
                 "attachment_price_id": matched.get("attachment_price_id"),
                 "catalog_version": version,
-                "quantity": 1,
+                "quantity": previous.get("quantity", 1) if previous is not None else 1,
                 "ganged_fixed_base_match": True,
                 "ganged_fixed_base_index": index,
                 "ganged_cabinet_index": index,
                 "ganged_fixed_base_split_count": len(cabinets),
                 "ganged_fixed_base_specification": subcabinet_specification(cabinet),
-                "manual_inputs": {**(source.get("manual_inputs") or {}), "底座高度": base},
+                "manual_inputs": {**(selection.get("manual_inputs") or {}), "底座高度": base},
             })
             expanded.append(resolved)
     return expanded, missing
@@ -910,9 +915,12 @@ def _expand_ganged_doors_for_quote(window, rows, catalog, version, door_name):
             if unchanged:
                 resolved.update(previous)
             else:
-                for key in ("unit_price_override", "custom_amount_edited", "quick_amount",
-                            "formula_amount", "formula_unit_cost", *COST_KEYS):
+                for key in ("unit_price_override", "custom_amount_edited", "quick_amount", "quick_amount_override",
+                            "formula_amount", "formula_unit_cost", "formula_cost_edited",
+                            "formula_unit_cost_override", "cost_quantity_manual", *COST_KEYS):
                     resolved.pop(key, None)
+                if previous and previous.get("cost_quantity_manual"):
+                    resolved["cost_quantity_manual"] = True
                 if "unit_price_override" in matched:
                     resolved["unit_price_override"] = matched["unit_price_override"]
             resolved.update({
@@ -931,6 +939,112 @@ def expand_ganged_inner_doors_for_quote(window, rows, catalog, version=None):
 
 def expand_ganged_glass_doors_for_quote(window, rows, catalog, version=None):
     return _expand_ganged_doors_for_quote(window, rows, catalog, version, "玻璃门")
+
+
+def _ganged_sized_attachment_key(source):
+    if source.get("custom"):
+        return None
+    category = str(source.get("category_level1") or source.get("attachment_category") or "").strip()
+    name = size_match_attachment_name(source)
+    if name in {"安装板", "JK安装板"}:
+        if category == "安装板":
+            return category, "安装板"
+        if name != "JK安装板" or category not in {"控制箱附件", "控制柜附件"}:
+            return None
+    elif name not in {"活动底座", "防雨顶", "分段板", "通风顶罩"}:
+        return None
+    return category, name
+
+
+def _ganged_sized_attachment_groups(rows):
+    groups = {}
+    for row in rows:
+        key = _ganged_sized_attachment_key(row)
+        if key is not None:
+            groups.setdefault(key, []).append(row)
+    return groups
+
+
+def needs_ganged_sized_attachment_resolution(window):
+    children = getattr(window, "ganged_cabinets", [])
+    rows = [row for row in getattr(window, "attachments", []) if isinstance(row, dict)]
+    if len(children) <= 1:
+        return any(row.get("ganged_cabinet_index", row.get("ganged_fixed_base_index")) is not None
+                   for row in rows)
+    indexes = set(range(len(children)))
+    for group in _ganged_sized_attachment_groups(rows).values():
+        if len(group) != len(children) or {row.get("ganged_cabinet_index") for row in group} != indexes:
+            return True
+        for row in group:
+            if row.get("ganged_sized_attachment_match") is not True:
+                return True
+            if is_base_attachment(row):
+                child = children[row["ganged_cabinet_index"]]
+                if any(row.get(f"size_match_target_{axis}_mm") != child.get(f"{axis}_mm")
+                       for axis in ("width", "depth")):
+                    return True
+    return False
+
+
+def _single_cabinet_attachment_selections(rows):
+    selections, seen = [], set()
+    for row in rows:
+        if row.get("ganged_cabinet_index", row.get("ganged_fixed_base_index")) is None:
+            selections.append(row)
+            continue
+        key = _ganged_sized_attachment_key(row) or (
+            row.get("category_level1"), size_match_attachment_name(row) or row.get("item_name")
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        selection = {field: value for field, value in row.items() if not field.startswith("ganged_")}
+        selection["quote_catalog_refresh_required"] = True
+        selections.append(selection)
+    return selections
+
+
+def expand_ganged_sized_attachments_for_quote(window, rows, catalog, version):
+    children = getattr(window, "ganged_cabinets", [])
+    if len(children) <= 1:
+        return _single_cabinet_attachment_selections(rows), []
+    groups = _ganged_sized_attachment_groups(rows)
+    expanded, missing = [], []
+    for row in rows:
+        key = _ganged_sized_attachment_key(row)
+        if key is None:
+            expanded.append(row)
+            continue
+        group = groups.pop(key, None)
+        if group is None:
+            continue
+        previous = {source.get("ganged_cabinet_index"): source for source in group}
+        for index, child in enumerate(children):
+            source = previous.get(index) or (previous.get(None) if index == 0 else None)
+            if source is None:
+                source = new_quote_attachment_selection(row)
+                source["quantity"] = 1
+                source.pop("cost_quantity_manual", None)
+            source = {**source, "ganged_cabinet_index": index}
+            if size_match_target_dimensions(source, _quote_attachment_dimensions(window, source)) is None:
+                missing.append(f"柜体{index + 1}{key[1]}尺寸")
+                continue
+            if is_base_attachment(source):
+                if attachment_base_height(source, child.get("base_height_mm")) is None:
+                    missing.append(f"柜体{index + 1}{key[1]}高度")
+                    continue
+                source = default_base_attachment(source, child.get("base_height_mm"))
+            match = match_quote_attachment(window, source, catalog)
+            if match is None or _catalogue_id(match.get("attachment_price_id")) is None:
+                missing.append(f"柜体{index + 1}{key[1]}")
+                continue
+            resolve = (resolve_installation_board
+                       if installation_board(source) or is_base_attachment(source)
+                       else resolve_size_matched_attachment)
+            resolved = resolve(source, match, version)
+            resolved["ganged_sized_attachment_match"] = True
+            expanded.append(resolved)
+    return expanded, missing
 
 
 def base_height(window):
@@ -1519,7 +1633,8 @@ def install_attachment_v2(namespace):
             if not is_base_attachment(row):
                 continue
             try:
-                rows[index] = default_base_attachment(row, automatic)
+                child = _attachment_child(window, row)
+                rows[index] = default_base_attachment(row, child.get("base_height_mm") if child is not None else automatic)
             except ValueError as error:
                 failed(str(error))
                 return
@@ -1528,7 +1643,10 @@ def install_attachment_v2(namespace):
             item.get("attachment_price_id") is None or item.get("quote_catalog_refresh_required"))]
         needs_ganged_base_catalog = any(is_base_attachment(item) for item in rows)
         needs_size_match = needs_size_match_resolution(window)
-        if not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window) and not needs_installation_board_resolution(window) and not needs_computer_tray_resolution(window) and not needs_size_match:
+        if (not pending and not needs_ganged_base_catalog and not needs_ganged_door_resolution(window)
+                and not needs_ganged_sized_attachment_resolution(window)
+                and not needs_installation_board_resolution(window)
+                and not needs_computer_tray_resolution(window) and not needs_size_match):
             succeeded()
             return
         active = getattr(window, "_scheme2_attachment_catalog_worker", None)
@@ -1556,15 +1674,17 @@ def install_attachment_v2(namespace):
             source_rows, glass_door_missing = expand_ganged_glass_doors_for_quote(
                 window, source_rows, catalog, version
             )
+            source_rows, sized_attachment_missing = expand_ganged_sized_attachments_for_quote(
+                window, source_rows, catalog, version
+            )
             resolved = []
-            missing = list(fixed_base_missing) + inner_door_missing + glass_door_missing
-            target_dimensions = _visible_quote_dimensions(window)
+            missing = fixed_base_missing + inner_door_missing + glass_door_missing + sized_attachment_missing
             for source in source_rows:
-                if source.get("custom"):
+                if source.get("custom") or source.get("ganged_sized_attachment_match"):
                     resolved.append(source)
                     continue
                 refresh_catalog = bool(source.get("quote_catalog_refresh_required"))
-                rematch_size = _size_match_target_changed(source, target_dimensions)
+                rematch_size = _size_match_target_changed(source, _quote_attachment_dimensions(window, source))
                 if not refresh_catalog and source.get("attachment_price_id") is not None and not installation_board(source) and not is_base_attachment(source) and not (
                         _is_computer_tray(source) and source.get("computer_tray_auto_match")) and not rematch_size:
                     resolved.append(source)

@@ -481,10 +481,11 @@ def final_attachment_quantity(
     split_count = _number(ganged_cabinet_count)
     split_count = 1.0 if split_count is None else split_count
     # A quantity entered manually on the cost page is a per-child-cabinet
-    # quantity. Per-child bases/doors are already expanded to separate rows,
+    # quantity. Per-child attachments are already expanded to separate rows,
     # and automatic rows already contain the whole ganged-set requirement.
     if manually_quantified_attachment(item) and not (
-        item.get(GANGED_FIXED_BASE_MATCH_KEY) or item.get("ganged_inner_door_match")
+        item.get("ganged_cabinet_index") is not None
+        or item.get(GANGED_FIXED_BASE_MATCH_KEY) or item.get("ganged_inner_door_match")
         or item.get("ganged_glass_door_match")
     ):
         return quantity * cabinets * max(1.0, split_count)
@@ -676,8 +677,8 @@ def size_match_target_dimensions(source: dict, cabinet_dimensions) -> tuple[floa
         height = _number(manual.get("玻璃门高度"))
         if width is not None and width > 0 and height is not None and height > 0:
             values[0], values[1] = width, height
-    elif name == "分段板":
-        height = _number(manual.get("分段板高度"))
+    elif name in {"分段板", "通风顶罩"}:
+        height = _number(manual.get(f"{name}高度"))
         if height is not None and height > 0:
             values[1] = height
     return tuple(values)

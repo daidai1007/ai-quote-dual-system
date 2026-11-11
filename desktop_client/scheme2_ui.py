@@ -109,7 +109,8 @@ except ModuleNotFoundError:
 from pypdf import PdfReader, PdfWriter
 
 from attachment_category_browser import (COMPUTER_TRAY_MODEL_DEPTHS, SUPPORT_PLATE_MODELS,
-    door_transformation_default_names, size_match_display_text, attachment_names_manual_only)
+    door_transformation_default_names, size_match_attachment_name, size_match_display_text,
+    attachment_names_manual_only)
 from material_prices import MATERIAL_PRICE_KEYS, STAINLESS_DEFAULT_PRICES, material_unit_price, migrate_material_prices
 from ganged_cabinet_rules import DOOR_POSITION_COUNTS, door_counts_for_positions, door_positions_for_counts
 from quote_configuration_remark import build_configuration_remark, source_configuration, configuration_remark_review_issues
@@ -1180,19 +1181,21 @@ def _attachment_dimension_or_model(source):
 
 
 def _ganged_attachment_number(source):
-    category = str(source.get("category_level1") or source.get("attachment_category") or "").strip()
-    subcategory = str(source.get("category_level2") or source.get("item_name") or "").strip()
-    is_child_attachment = bool(source.get("ganged_fixed_base_match") or source.get("ganged_inner_door_match")
-                               or source.get("ganged_glass_door_match")) or (
-        category == "底座" and "固定底座" in subcategory
-    )
-    if not is_child_attachment:
-        return None
     raw = source.get("ganged_cabinet_index", source.get("ganged_fixed_base_index"))
     try:
         return int(raw) + 1 if raw is not None and int(raw) >= 0 else None
     except (TypeError, ValueError):
         return None
+
+
+def _attachment_popup_cost_editable(source):
+    return source.get("custom") is True or (
+        _ganged_attachment_number(source) is not None
+        and size_match_attachment_name(source) in {
+            "固定底座", "活动底座", "安装板", "JK安装板", "防雨顶",
+            "分段板", "内门", "玻璃门", "通风顶罩",
+        }
+    )
 
 
 def _attachment_popup_text(source):
@@ -1311,7 +1314,7 @@ class AttachmentEditor(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(False)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.setToolTip("数量和面价单价可修改；目录附件成本单价只读，人工新增附件成本单价可双击修改；成本与面价按数量自动计算；三排安装梁、电脑托盘、有孔承板、无孔承板型号双击后选择；右键可添加或删除临时附件")
+        self.table.setToolTip("数量和面价单价可修改；逐柜尺寸附件和人工新增附件的成本单价可双击修改；成本与面价按数量自动计算；三排安装梁、电脑托盘、有孔承板、无孔承板型号双击后选择；右键可添加或删除临时附件")
         self.table.customContextMenuRequested.connect(self._show_table_menu)
         table_header = self.table.horizontalHeader()
         table_header.setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeMode.Stretch)
@@ -1588,7 +1591,7 @@ class AttachmentEditor(QDialog):
                 # saved amount; retain precise units only when consistent.
                 if money_product(saved_unit, quantity) == money(total):
                     unit = saved_unit
-            readonly_cost = column == self.COL_UNIT_COST and source.get("custom") is not True
+            readonly_cost = column == self.COL_UNIT_COST and not _attachment_popup_cost_editable(source)
             editor.setProperty("schemeReadOnly", readonly_cost)
             editor.setReadOnly(readonly_cost)
             if readonly_cost:
@@ -1651,7 +1654,7 @@ class AttachmentEditor(QDialog):
         face = self.table.cellWidget(row, self.COL_UNIT_AMOUNT)
         data["formula_amount"] = money_product(cost.value(), quantity)
         data["quick_amount"] = money_product(face.value(), quantity)
-        if data.get("custom") is True and cost.property("schemeEdited"):
+        if _attachment_popup_cost_editable(data) and cost.property("schemeEdited"):
             data["formula_cost_edited"] = True
             data["formula_unit_cost_override"] = cost.value()
         data["custom_amount_edited"] = bool(face.property("schemeEdited"))
@@ -1682,7 +1685,7 @@ class AttachmentEditor(QDialog):
             return
         source = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
         cost = self.table.cellWidget(row, self.COL_UNIT_COST)
-        if source.get("custom") is not True:
+        if not _attachment_popup_cost_editable(source):
             with QSignalBlocker(cost):
                 cost.setValue(cost.property("schemeUnitCost") or 0)
             return
@@ -1847,7 +1850,7 @@ class AttachmentEditor(QDialog):
             data = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
             data = dict(data)
             data["item_name"] = self.table.item(row, self.COL_NAME).text().strip() or "自定义附件"
-            if data.get("ganged_inner_door_match") or data.get("ganged_glass_door_match"):
+            if _ganged_attachment_number(data) is not None:
                 data["item_name"] = re.sub(r"^柜体\s*\d+\s*[｜:：]\s*", "", data["item_name"])
             if data.get('copied_attachment_name'):
                 data['copied_attachment_name'] = data['item_name']
@@ -8225,16 +8228,19 @@ def _calculate_and_add(window):
         needs_base_height_resolution,
         needs_computer_tray_resolution,
         needs_ganged_door_resolution,
+        needs_ganged_sized_attachment_resolution,
         needs_installation_board_resolution,
         needs_size_match_resolution,
     )
-    pending_doors = (needs_ganged_door_resolution(window) or needs_installation_board_resolution(window)
-                     or needs_computer_tray_resolution(window) or needs_base_height_resolution(window)
-                     or needs_size_match_resolution(window))
+    pending_size_matches = (
+        needs_ganged_door_resolution(window) or needs_ganged_sized_attachment_resolution(window)
+        or needs_installation_board_resolution(window) or needs_computer_tray_resolution(window)
+        or needs_base_height_resolution(window) or needs_size_match_resolution(window)
+    )
     current = getattr(window, "current_result", None)
     valid = (
         not getattr(window, "_scheme2_new_quote_required", False)
-        and not pending_attachments and not pending_doors
+        and not pending_attachments and not pending_size_matches
         and isinstance(current, dict)
         and current.get("input_signature") == window.quote_input_signature()
     )
@@ -8255,7 +8261,7 @@ def _calculate_and_add(window):
         window.calculate()
         _monitor_formula_calculation(window)
 
-    if pending_attachments or pending_doors:
+    if pending_attachments or pending_size_matches:
         resolver = getattr(window, "resolve_attachments_for_quote", None)
         if not callable(resolver):
             window.show_error("附件价格库解析功能不可用")
