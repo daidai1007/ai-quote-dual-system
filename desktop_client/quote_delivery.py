@@ -156,7 +156,7 @@ class QuoteDelivery:
         manager.tabs.currentChanged.connect(lambda index: self.load_records() if index == self.records_index else None)
         navigation = QHBoxLayout(); navigation.addWidget(button('报价列表', manager.show_list))
         navigation.addWidget(button('收到的报价', self.show_inbox)); navigation.addStretch(1)
-        manager.list_page.layout().insertLayout(1, navigation)
+        manager.list_layout.insertLayout(1, navigation)
         self.build_inbox(); self.build_received(); self.build_cost_context()
 
     def request(self, method, suffix, payload, success, failure=None):

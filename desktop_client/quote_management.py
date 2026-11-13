@@ -23,7 +23,7 @@ from quick_discount_rules import money, money_sum, quick_discount_category
 # Approved quote-management surfaces; scoped to this module, not the cost page.
 PAGE_STYLE = """
 QWidget { color:#20344e; font-family:'Microsoft YaHei UI'; font-size:14px; }
-QWidget#quoteManagementListPage, QWidget#quoteManagementDetail { background:#f3f6fa; }
+QWidget#quoteManagementListPage, QWidget#quoteManagementListContent, QWidget#quoteManagementDetail { background:#f3f6fa; }
 QWidget#quoteManagementDocument { background:white; }
 QWidget#quoteManagementAdjust { background:#f3f6fa; }
 QFrame#quoteManagementSheet { background:white; border:1px solid #dce4ee; border-radius:5px; }
@@ -69,8 +69,24 @@ def button(text, callback, primary=False):
     return control
 
 
-def table(headers):
-    control = QTableWidget(0, len(headers))
+class QuoteListTable(QTableWidget):
+    def __init__(self, scroll_area):
+        super().__init__()
+        self.scroll_area = scroll_area
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+    def wheelEvent(self, event):
+        delta = event.pixelDelta() if not event.pixelDelta().isNull() else event.angleDelta()
+        if abs(delta.y()) > abs(delta.x()) and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.scroll_area.wheelEvent(event)
+        else:
+            super().wheelEvent(event)
+
+
+def table(headers, *, control=None):
+    if control is None:
+        control = QTableWidget()
+    control.setColumnCount(len(headers))
     control.setHorizontalHeaderLabels(headers)
     control.setWordWrap(True)
     control.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -481,7 +497,18 @@ class QuoteManagement:
         self.delivery = QuoteDelivery(self)
 
     def build_list(self):
-        layout = QVBoxLayout(self.list_page)
+        page_layout = QVBoxLayout(self.list_page)
+        page_layout.setContentsMargins(0,0,0,0)
+        self.list_scroll = QScrollArea()
+        self.list_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.list_scroll.setWidgetResizable(True)
+        self.list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        page_layout.addWidget(self.list_scroll)
+        content = QWidget()
+        content.setObjectName('quoteManagementListContent')
+        layout = QVBoxLayout(content)
+        self.list_layout = layout
+        self.list_scroll.setWidget(content)
         layout.setContentsMargins(24,13,24,13); layout.setSpacing(8)
         top = QHBoxLayout(); title = QLabel('报价单管理'); title.setObjectName('scheme2PageTitle')
         heading = QVBoxLayout(); heading.setSpacing(4); heading.addWidget(title)
@@ -541,13 +568,18 @@ class QuoteManagement:
             editor.setMinimumHeight(max(editor.sizeHint().height(),editor.fontMetrics().height()+16))
             editor.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Minimum)
             if isinstance(editor,QLineEdit):editor.returnPressed.connect(lambda: self.load_list(1))
+        self.list_filter_error = QLabel()
+        self.list_filter_error.setWordWrap(True)
+        self.list_filter_error.hide()
+        layout.addWidget(self.list_filter_error)
         self.list_sheet = QFrame(); self.list_sheet.setObjectName('quoteManagementSheet')
         sheet = QVBoxLayout(self.list_sheet); sheet.setContentsMargins(0,0,0,0); sheet.setSpacing(0)
         caption = QHBoxLayout(); caption.setContentsMargins(16,5,16,5)
         caption.addWidget(QLabel('报价单列表')); caption.addStretch(1)
         self.selection_caption = QLabel('请选择一条报价单，再生成合同'); caption.addWidget(self.selection_caption)
         sheet.addLayout(caption)
-        self.list_table = table(('选择', '报价单编号', '客户', '订单性质', '状态 / 版本', '含税金额（元）', '更新人 / 时间', '操作'))
+        self.list_table = table(('选择', '报价单编号', '客户', '订单性质', '状态 / 版本', '含税金额（元）', '更新人 / 时间', '操作'),
+                                control=QuoteListTable(self.list_scroll))
         self.list_table.setObjectName('quoteManagementList'); self.list_table.setColumnWidth(0, 46); self.list_table.setColumnWidth(1, 210)
         self.row_group = QButtonGroup(self.list_table); self.row_group.setExclusive(True)
         self.list_table.horizontalHeader().setStretchLastSection(False)
@@ -560,7 +592,7 @@ class QuoteManagement:
         self.list_table.itemSelectionChanged.connect(self.selection_changed)
         self.list_table.cellDoubleClicked.connect(lambda row, _column: self.open_row(row))
         sheet.addWidget(self.list_table)
-        layout.addWidget(self.list_sheet,1)
+        layout.addWidget(self.list_sheet)
         footer = QHBoxLayout(); self.list_status = QLabel('请选择报价单'); self.list_status.setWordWrap(True)
         footer.addWidget(self.list_status, 1)
         footer.addWidget(QLabel('生成合同后进入合同管理'))
@@ -570,6 +602,8 @@ class QuoteManagement:
         for control in (self.previous_page,self.next_page,self.retry_list):
             control.hide(); footer.addWidget(control)
         layout.addLayout(footer)
+        layout.addStretch(1)
+        self.fit_list_rows()
 
     def sync_filter_products(self):
         from quote_scheme_center import _configured_product_options
@@ -582,19 +616,22 @@ class QuoteManagement:
             target.setCurrentIndex(max(0,target.findData(selected)))
 
     def fit_list_rows(self):
-        # Reserve scrollbar space so the column layout stays stable when rows wrap.
-        available = self.list_table.contentsRect().width() - self.list_table.verticalScrollBar().sizeHint().width()
+        table = self.list_table
+        available = table.maximumViewportSize().width()
         compact = available < sum(QUOTE_LIST_WIDTHS)
         if compact != self.list_compact:
             self.list_compact = compact
             widths = QUOTE_LIST_COMPACT_WIDTHS if compact else QUOTE_LIST_WIDTHS
             for column,width in enumerate(widths):
                 if column != 2:
-                    self.list_table.setColumnWidth(column,width)
+                    table.setColumnWidth(column,width)
         # Measure after Qt lays out the action buttons and wrapped cell text.
-        self.list_table.resizeRowsToContents()
-        for row in range(self.list_table.rowCount()):
-            self.list_table.setRowHeight(row,max(54,self.list_table.rowHeight(row)))
+        table.resizeRowsToContents()
+        for row in range(table.rowCount()):
+            table.setRowHeight(row,max(54,table.rowHeight(row)))
+        header = table.horizontalHeader()
+        horizontal_bar = table.horizontalScrollBar().sizeHint().height() if header.length() > available else 0
+        table.setFixedHeight(header.height() + table.verticalHeader().length() + 2 * table.frameWidth() + horizontal_bar)
 
     def build_detail(self, old):
         layout = QVBoxLayout(self.detail_page)
@@ -823,9 +860,13 @@ class QuoteManagement:
         import quote_scheme_center as centre
         try: query = self.list_filters(page)
         except ValueError as error:
+            self.list_filter_error.setText(str(error)); self.list_filter_error.show()
             self.list_status.setText(str(error)); return
+        self.list_filter_error.hide()
+        self.list_scroll.verticalScrollBar().setValue(0)
         self.list_epoch += 1; epoch = self.list_epoch
         self.page_number = page; self.rows = []; fill(self.list_table, [])
+        self.list_row_fit.start()
         self.contract_button.setEnabled(False); self.list_status.setText('正在加载报价单…')
         self.selection_caption.setText('请选择一条报价单，再生成合同'); self.retry_list.hide()
         def loaded(result):

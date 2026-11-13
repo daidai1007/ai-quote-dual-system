@@ -65,7 +65,8 @@ export function createQuoteDeliveryService({runPsql,activePeople=()=>[]}){
   const list=async(p,filters={})=>{
     p=principal(p);await ready();const page=Math.max(1,Math.min(100000,Number(filters.page)||1));
     const records=filters.mode==='sent';
-    const where=records?(filters.scheme_no?`s.scheme_no=${q(scheme(filters.scheme_no))} AND ${quoteScopeSql(p,'s',true)}`:`b.sender_user_id=${q(p.userId)}`):`r.recipient_user_id=${q(p.userId)}`;
+    const where=records?(filters.scheme_no?`s.scheme_no=${q(scheme(filters.scheme_no))} AND ${quoteScopeSql(p,'s',true)}`:`b.sender_user_id=${q(p.userId)}`)
+      :`r.recipient_user_id=${q(p.userId)} AND (r.read_at IS NULL OR r.read_at > now() - interval '72 hours')`;
     return query(`WITH entries AS(SELECT r.delivery_id,r.recipient_name,r.read_at,b.batch_id,b.sender_name,b.created_at,b.note,b.source_version_no,b.quote_version,
       b.document_payload->>'scheme_no' AS scheme_no,b.document_payload->>'customer' AS customer,b.document_payload->>'order_nature' AS order_nature,
       b.document_payload->'total' AS total,count(*) OVER() AS total_count

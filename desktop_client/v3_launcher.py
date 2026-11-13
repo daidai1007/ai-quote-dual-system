@@ -27,6 +27,7 @@ from PyInstaller.loader.pyimod01_archive import (
 from layout_refresh import install_layout_refresh
 from recognition_repair import install_recognition_repair
 from drawing_workflow import install_drawing_workflow
+from dwg_conversion import install_dwg_conversion
 from freight_export import install_freight_export
 from scheme2_ui import install_scheme2_ui
 from quote_scheme_center import install_quote_scheme_center
@@ -491,6 +492,7 @@ def load_v3_namespace() -> dict:
     _install_cloud_export_validation(namespace)
     install_recognition_repair(namespace)
     install_layout_refresh(namespace)
+    install_dwg_conversion(namespace)
     install_drawing_workflow(namespace)
     install_freight_export(namespace)
     install_scheme2_ui(namespace)

@@ -17,7 +17,8 @@ os.environ['AI_QUOTE_ORDER_CACHE_ROOT']=TEMP.name
 os.environ['AI_QUOTE_UPDATE_CONFIG']=str(Path(TEMP.name)/'updates.json')
 Path(os.environ['AI_QUOTE_UPDATE_CONFIG']).write_text('{}',encoding='utf-8')
 
-from PySide6.QtCore import QDate, QSettings, QRect, QSignalBlocker, Qt
+from PySide6.QtCore import QDate, QPoint, QPointF, QSettings, QRect, QSignalBlocker, Qt
+from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (QApplication, QLabel, QPushButton, QRadioButton, QStyle,
                                QStyleOptionButton, QStyleOptionComboBox, QToolButton)
@@ -112,6 +113,36 @@ class QuoteFilters(unittest.TestCase):
         before=len(self.requests);self.w.product_combo.addItem('JK','JK_TEST')
         wait(lambda:product.findData('JK')>=0)
         self.assertEqual(product.currentData(),'JE');self.assertEqual(len(self.requests),before)
+
+    def test_wheel_over_list_scrolls_the_page_and_reaches_pagination(self):
+        self.w.resize(1024, 670)
+        QTest.qWait(120)
+        table = self.m.list_table
+        scroll = self.m.list_scroll
+        bar = scroll.verticalScrollBar()
+        viewport = scroll.viewport()
+        self.assertGreater(bar.maximum(), 0)
+        self.assertEqual(table.verticalScrollBar().maximum(), 0)
+        field = self.m.filters['company']
+        start_y = field.mapTo(viewport, QPoint()).y()
+        pos = QPoint(35, 45)
+        wheel = QWheelEvent(QPointF(pos), QPointF(table.viewport().mapToGlobal(pos)),
+                            QPoint(), QPoint(0, -120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        APP.sendEvent(table.viewport(), wheel)
+        self.assertGreater(bar.value(), 0)
+        self.assertLess(field.mapTo(viewport, QPoint()).y(), start_y)
+
+        bar.setValue(bar.maximum())
+        APP.processEvents()
+        last_row = table.visualItemRect(table.item(table.rowCount() - 1, 0))
+        self.assertTrue(viewport.rect().contains(table.viewport().mapTo(viewport, last_row.center())))
+        next_page = self.m.next_page
+        self.assertTrue(viewport.rect().contains(next_page.mapTo(viewport, next_page.rect().center())))
+        QTest.mouseClick(next_page, Qt.MouseButton.LeftButton)
+        self.loaded()
+        self.assertEqual(self.requests[-1]['page'], ['2'])
+        self.assertEqual(bar.value(), 0)
 
     def test_actual_layout_at_normal_and_small_window(self):
         OUT.mkdir(parents=True,exist_ok=True)

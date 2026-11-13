@@ -95,11 +95,31 @@ test('colleague delivery persists exact versions without widening quote or contr
    }
    assert.deepEqual((await request('/api/quote-schemes/'+source)).data,original);
   });
+  const connection=cfg.connection;assert.equal(connection.host,'127.0.0.1');assert.equal(connection.user,'quote_regression_test');
+  const env={...process.env,PGSSLMODE:'disable',PGCLIENTENCODING:'UTF8'};
+  for(const key of ['DATABASE_URL','PGHOST','PGPORT','PGHOSTADDR','PGUSER','PGDATABASE','PGPASSWORD','PGPASSFILE','PGSERVICE','PGSERVICEFILE','PGOPTIONS'])delete env[key];
+  const sql=text=>execFileSync(connection.psql,['-X','-w','-h',connection.host,'-p',String(connection.port),'-U',connection.user,'-d',connection.database,'-A','-t','-q','-v','ON_ERROR_STOP=1'],{env,input:text,encoding:'utf8',windowsHide:true,stdio:['pipe','pipe','pipe']}).trim();
+  await t.test('inbox hides receipts read at least 72 hours ago and retains unread receipts and sender records',async()=>{
+   const unreadId=randomUUID(),expiredId=randomUUID();
+   sql(`WITH fixtures(batch_id,delivery_id,read_at) AS (VALUES
+     ('${randomUUID()}'::uuid,'${unreadId}'::uuid,NULL::timestamptz),
+     ('${randomUUID()}'::uuid,'${expiredId}'::uuid,now()-interval '73 hours')),
+     batches AS (INSERT INTO calc.quote_delivery_batch(batch_id,sender_user_id,sender_name,scheme_id,source_version_no,quote_version,note,request_sha256,document_sha256,document_payload,created_at)
+       SELECT f.batch_id,b.sender_user_id,b.sender_name,b.scheme_id,b.source_version_no,b.quote_version,b.note,b.request_sha256,b.document_sha256,b.document_payload,now()-interval '10 days'
+       FROM calc.quote_delivery_batch b CROSS JOIN fixtures f WHERE b.batch_id='${firstBatch.request_id}' RETURNING batch_id)
+     INSERT INTO calc.quote_delivery_recipient(delivery_id,batch_id,recipient_user_id,recipient_name,read_at)
+       SELECT f.delivery_id,b.batch_id,r.recipient_user_id,r.recipient_name,f.read_at FROM batches b JOIN fixtures f USING(batch_id)
+       CROSS JOIN calc.quote_delivery_recipient r WHERE r.delivery_id='${externalId}';`);
+   const inbox=await request(base,undefined,'GET','本机接收乙');
+   assert.equal(inbox.status,200);assert.equal(inbox.data.total,3);
+   assert.ok(inbox.data.items.some(r=>r.delivery_id===unreadId&&!r.read_at));
+   assert.ok(inbox.data.items.some(r=>r.delivery_id===externalId&&r.read_at));
+   assert.ok(!inbox.data.items.some(r=>r.delivery_id===expiredId));
+   const sent=await request(base+'?mode=sent&scheme_no='+source);
+   assert.ok(sent.data.items.some(r=>r.delivery_id===expiredId&&r.read_at));
+   assert.equal((await request(base+'/'+expiredId,undefined,'GET','本机接收乙')).status,200);
+  });
   await t.test('manual migration is idempotent; immutable rows resist SQL changes and missing schema fails closed',async()=>{
-   const connection=cfg.connection;assert.equal(connection.host,'127.0.0.1');assert.equal(connection.user,'quote_regression_test');
-   const env={...process.env,PGSSLMODE:'disable',PGCLIENTENCODING:'UTF8'};
-   for(const key of ['DATABASE_URL','PGHOST','PGPORT','PGHOSTADDR','PGUSER','PGDATABASE','PGPASSWORD','PGPASSFILE','PGSERVICE','PGSERVICEFILE','PGOPTIONS'])delete env[key];
-   const sql=text=>execFileSync(connection.psql,['-X','-w','-h',connection.host,'-p',String(connection.port),'-U',connection.user,'-d',connection.database,'-A','-t','-q','-v','ON_ERROR_STOP=1'],{env,input:text,encoding:'utf8',windowsHide:true,stdio:['pipe','pipe','pipe']}).trim();
    sql(await fs.readFile(new URL('../database/migrations/quote_delivery_v1.sql',import.meta.url),'utf8'));
    for(const command of ["UPDATE calc.quote_delivery_batch SET note='forged';","DELETE FROM calc.quote_delivery_batch;","UPDATE calc.quote_delivery_recipient SET recipient_name='forged';","UPDATE calc.quote_delivery_output SET output_kind='XLSX';"]){assert.throws(()=>sql(command),/immutable/);}
    sql('ALTER TABLE calc.quote_delivery_output RENAME TO quote_delivery_output_test_hidden;');
