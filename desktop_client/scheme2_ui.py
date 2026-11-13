@@ -4343,6 +4343,18 @@ def _build_cost_page(window):
     detail_hint = QLabel("随选中行联动 · 缺失数据显示 —")
     detail_hint.setObjectName("scheme2CostSelectionContext")
     detail_hint.setWordWrap(True)
+    detail_toggle = QPushButton("收起明细")
+    detail_toggle.setObjectName("scheme2PrimaryGhost")
+    detail_header_layout.addWidget(detail_title)
+    detail_header_layout.addWidget(detail_hint)
+    detail_header_layout.addStretch(1)
+    detail_header_layout.addWidget(detail_toggle)
+    detail_layout.addWidget(detail_header)
+    detail_content = QWidget()
+    detail_content_layout = QVBoxLayout(detail_content)
+    detail_content_layout.setContentsMargins(0, 0, 0, 0)
+    detail_content_layout.setSpacing(0)
+    detail_layout.addWidget(detail_content)
     detail_context = QLabel()
     detail_context.setObjectName("scheme2CostSelectionContext")
     detail_context.setWordWrap(True)
@@ -4352,17 +4364,14 @@ def _build_cost_page(window):
     detail_issue.setTextFormat(Qt.TextFormat.PlainText)
     detail_issue.setWordWrap(True)
     detail_issue.hide()
-    detail_header_layout.addWidget(detail_title)
-    detail_header_layout.addWidget(detail_hint, 1)
-    detail_layout.addWidget(detail_header)
     context_layout = QHBoxLayout()
     context_layout.setContentsMargins(COST_SELECTION_METRICS['inset'], 0, COST_SELECTION_METRICS['inset'], 0)
     context_layout.addWidget(detail_context)
-    detail_layout.addLayout(context_layout)
+    detail_content_layout.addLayout(context_layout)
     issue_layout = QHBoxLayout()
     issue_layout.setContentsMargins(COST_SELECTION_METRICS['inset'], 0, COST_SELECTION_METRICS['inset'], 0)
     issue_layout.addWidget(detail_issue)
-    detail_layout.addLayout(issue_layout)
+    detail_content_layout.addLayout(issue_layout)
     metrics = QWidget()
     metrics.setObjectName("scheme2CostSelectionMetrics")
     groups_layout = QGridLayout(metrics)
@@ -4426,12 +4435,23 @@ def _build_cost_page(window):
     groups_layout.addWidget(detail_groups[1][0], 0, 2)
     groups_layout.setColumnStretch(0, 1)
     groups_layout.setColumnStretch(2, 1)
-    detail_layout.addWidget(metrics)
+    detail_content_layout.addWidget(metrics)
     body_layout.addWidget(selection_detail)
     empty = QLabel("在选型配置页点击加入报价清单后，柜型会出现在这里", table.viewport())
     empty.setObjectName("scheme2EmptyState")
     empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    empty_layout = QVBoxLayout(table.viewport())
+    empty_layout.setContentsMargins(0, 0, 0, 0)
+    empty_layout.addWidget(empty)
     empty.hide()
+
+    def toggle_selection_detail():
+        expanded = detail_content.isHidden()
+        detail_content.setVisible(expanded)
+        detail_hint.setVisible(expanded)
+        detail_toggle.setText("收起明细" if expanded else "展开明细")
+
+    detail_toggle.clicked.connect(toggle_selection_detail)
     undo_bar = QFrame()
     undo_bar.setObjectName("scheme2UndoBar")
     undo_layout = QHBoxLayout(undo_bar)
@@ -6402,6 +6422,7 @@ ATTACHMENT_OPTIONS = {
     "风机": (
         "KA1238HA2/B(卡固)", "KA1238DC/24V(卡固)", "KA1725HA2/B(卡固)",
         "KA1725DC/24V(卡固)", "KA2072HA2/B(卡固)", "KA1238HA2/B（国产）",
+        "KA1238DC/24V（国产）",
         "KA1725HA2/B（国产）", "KA1725DC/24V（国产）", "KA2072HA2/B（国产）",
         "SG22060HA2/220V（国产）",
         "KA22060HA2B/220V（卡固）",

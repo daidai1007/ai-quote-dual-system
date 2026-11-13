@@ -39,14 +39,13 @@ const unusedLoopbackPort = async () => {
 };
 
 /** Own a disposable loopback cluster; never use application database settings. */
-export const startLocalPostgres = async () => {
+export const startLocalPostgres = async ({outputRoot = path.join(root, 'test-output')} = {}) => {
   const bin = postgresBin();
   for (const name of ['initdb','pg_ctl','pg_controldata','psql']) {
     if (!existsSync(path.join(bin, executable(name)))) {
       throw new Error(`Missing local PostgreSQL test binary: ${name}`);
     }
   }
-  const outputRoot = path.join(root, 'test-output');
   await fs.mkdir(outputRoot, {recursive:true});
   const directory = await fs.mkdtemp(path.join(outputRoot, 'local-postgres-'));
   const data = path.join(directory, 'data');
@@ -95,7 +94,7 @@ export const startLocalPostgres = async () => {
     if (!identifier || query('SELECT system_identifier FROM pg_control_system();') !== identifier) {
       throw new Error('Local test PostgreSQL cluster identity did not match');
     }
-    return {query,close,connection:{host:'127.0.0.1',port,user,database:'postgres',psql:path.join(bin,executable('psql'))}};
+    return {query,close,logFile:log,connection:{host:'127.0.0.1',port,user,database:'postgres',psql:path.join(bin,executable('psql'))}};
   } catch (error) {
     await close();
     throw error;

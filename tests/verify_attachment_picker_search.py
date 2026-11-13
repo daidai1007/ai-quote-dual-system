@@ -103,6 +103,7 @@ class PickerSearch(unittest.TestCase):
         name='KA22060HA2B/220V（卡固）'
         old_fans=('KA1238HA2/B(卡固)','KA1238DC/24V(卡固)','KA1725HA2/B(卡固)',
                   'KA1725DC/24V(卡固)','KA2072HA2/B(卡固)','KA1238HA2/B（国产）',
+                  'KA1238DC/24V（国产）',
                   'KA1725HA2/B（国产）','KA1725DC/24V（国产）','KA2072HA2/B（国产）',
                   'SG22060HA2/220V（国产）')
         self.assertEqual(ui.ATTACHMENT_OPTIONS['风机'],(*old_fans,name))
@@ -142,6 +143,43 @@ class PickerSearch(unittest.TestCase):
         out=ROOT/'outputs'/('attachment-picker-search-'+os.environ.get('QT_SCALE_FACTOR','1'))
         out.mkdir(parents=True,exist_ok=True)
         self.assertTrue(self.dialog.grab().save(str(out/'new-ka22060-fan.png')))
+
+    def test_ka1238dc_fan_variants_can_be_selected_and_match_distinct_catalogue_rows(self):
+        variants = [
+            ('KA1238DC/24V(卡固)', 1077, 55),
+            ('KA1238DC/24V（国产）', 1239, 40),
+        ]
+        catalog = [
+            dict(attachment_price_id=price_id, category_level1='风机',
+                 category_level2='风机KA1238DC/24V',
+                 item_name='风机' + name.replace('（', '(').replace('）', ')'),
+                 price=price)
+            for name, price_id, price in variants
+        ]
+        self.search('KA1238DC/24V')
+        self.assertEqual(self.visible_categories(), ['风机'])
+        combo = self.dialog.category_combos['风机']
+        visible = [combo.itemText(row) for row in range(1, combo.count())
+                   if not combo.view().isRowHidden(row)]
+        self.assertCountEqual(visible, [name for name, _, _ in variants])
+        for name, _, _ in variants:
+            combo.showPopup()
+            app.processEvents()
+            index = combo.model().index(combo.findText(name), 0)
+            combo.view().scrollTo(index)
+            QTest.mouseClick(combo.view().viewport(), Qt.LeftButton,
+                             pos=combo.view().visualRect(index).center())
+            app.processEvents()
+            combo.hidePopup()
+
+        selected = {row['item_name']: row for row in self.dialog.collect_attachments()
+                    if row.get('category_level1') == '风机'}
+        self.assertCountEqual(selected, visible)
+        for name, price_id, price in variants:
+            with self.subTest(name=name):
+                matched = match_catalog_attachment(selected[name], catalog, product_code='JA')
+                self.assertIsNotNone(matched)
+                self.assertEqual((matched['attachment_price_id'], matched['price']), (price_id, price))
 
     def test_specific_option_search_can_add_beside_a_hidden_selected_option(self):
         self.search('行程')

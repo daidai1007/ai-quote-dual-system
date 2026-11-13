@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QLabel
+from PySide6.QtWidgets import QDialog, QFrame, QLabel, QPushButton
 import verify_formula_attachment_allocation_ui as allocation_fixture
 from verify_formula_attachment_allocation_ui import fixture, app, ui
 
@@ -25,6 +25,54 @@ class SelectedDetail(unittest.TestCase):
     def select(self, row):
         self.w.summary_table.selectRow(row)
         app.processEvents()
+
+    def test_collapse_releases_table_space_and_expand_shows_current_row(self):
+        self.w.show_section(ui.COST_ROUTE)
+        self.w.resize(1024, 700)
+        second = deepcopy(self.w.draft_items[0])
+        second.update(name='收起时选择的条目', quantity=2)
+        self.w.draft_items.append(second)
+        self.w.refresh_summary()
+        self.select(0)
+        table = self.w.summary_table
+        header = self.panel().findChild(QFrame, 'scheme2CostSelectionHeader')
+        toggle = header.findChild(QPushButton)
+        QTest.qWait(50)
+        expanded_height = table.viewport().height()
+        self.assertEqual(toggle.text(), '收起明细')
+
+        QTest.mouseClick(toggle, Qt.MouseButton.LeftButton)
+        QTest.qWait(50)
+        self.assertEqual(toggle.text(), '展开明细')
+        self.assertTrue(toggle.isVisible())
+        self.assertTrue(self.w.scheme2_cost_action_buttons[0].isVisible())
+        self.assertGreater(table.viewport().height(), expanded_height)
+        self.assertEqual(self.panel().height(), header.height() + 2 * self.panel().frameWidth())
+        self.assertEqual(table.currentRow(), 0)
+
+        self.select(1)
+        self.assertFalse(self.w.scheme2_cost_selection_context.isVisible())
+        self.assertFalse(self.w.scheme2_cost_selection_values[11].isVisible())
+        self.w.show_section(ui.OPTION_ROUTE)
+        self.w.show_section(ui.COST_ROUTE)
+        app.processEvents()
+        self.assertEqual(toggle.text(), '展开明细')
+
+        self.select(1)
+        QTest.mouseClick(toggle, Qt.MouseButton.LeftButton)
+        QTest.qWait(50)
+        self.assertEqual(toggle.text(), '收起明细')
+        self.assertTrue(self.w.scheme2_cost_selection_context.isVisible())
+        self.assertIn('收起时选择的条目', self.w.scheme2_cost_selection_context.text())
+        self.assertEqual(self.w.scheme2_cost_selection_values[11].text(), table.item(1, 11).text())
+
+        self.w.draft_items = []
+        self.w.refresh_summary()
+        QTest.mouseClick(toggle, Qt.MouseButton.LeftButton)
+        QTest.qWait(50)
+        empty = self.w.scheme2_cost_empty
+        self.assertTrue(empty.isVisible())
+        self.assertEqual(empty.geometry(), table.viewport().rect())
 
     def test_groups_follow_row_and_updated_discount_quantity_without_changing_ledger(self):
         self.w.show_section(ui.COST_ROUTE)

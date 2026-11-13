@@ -81,10 +81,10 @@ class AttachmentMaintenance(SchemePage):
         self.kind=SchemeComboBox();self.kind.addItem('全部成本类型','ALL');self.kind.addItem('固定成本','FIXED');self.kind.addItem('公式成本 / 其他','OTHER');self.kind.currentIndexChanged.connect(self.render)
         self.status=SchemeComboBox();self.status.addItem('全部状态',None);self.status.addItem('已启用',True);self.status.addItem('已停用',False);self.status.currentIndexChanged.connect(self.render)
         filters.addWidget(self.search,2);filters.addWidget(self.kind,1);filters.addWidget(self.status,1);layout.addLayout(filters)
-        self.table=grid(('附件 / 规格','适用产品 / 材质','快速报价面价','成本类型','固定成本','状态','操作'))
+        self.table=grid(('附件 / 规格','适用产品 / 材质','基础面价','SUS304 面价','成本类型','固定成本','状态','操作'))
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(6,QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(7,QHeaderView.ResizeMode.Fixed)
         layout.addWidget(self.table,1);self.count=QLabel();layout.addWidget(self.count)
         foot=QLabel('附件库调整用于后续报价。历史正式报价保留原价格和成本；草稿需明确选择后重新计算。');foot.setWordWrap(True);layout.addWidget(foot)
         self.list_pages.addWidget(catalog)
@@ -179,14 +179,15 @@ class AttachmentMaintenance(SchemePage):
         data=[r for r in self.rows if term in ' '.join(str(r.get(k) or '') for k in ('item_name','model_code','category_level1','category_level2','category_level3')).lower()
               and (kind=='ALL' or bool(r.get('editable'))==(kind=='FIXED')) and (status is None or r['is_active']==status)]
         fill(self.table,[(r['item_name']+'\n'+str(r.get('model_code') or ''),'\n'.join(scope(x) for x in r['rules']) or '—',number(r['quick_face_price']),
+            number((r.get('quick_face_prices_by_material') or {}).get('SUS304')),
             '固定成本' if r['editable'] else '公式成本 / 其他',' / '.join(number(x['fixed_cost']) for x in r['rules']) if r['editable'] else '—','已启用' if r['is_active'] else '已停用','') for r in data])
         for index,row in enumerate(data):
             actions=QWidget();layout=QHBoxLayout(actions);layout.setContentsMargins(0,0,0,0)
             layout.addWidget(button('编辑' if row['editable'] else '查看',lambda _=False,r=row:self.edit(r) if r['editable'] else self.inspect(r)))
             toggle=button('停用' if row['is_active'] else '启用',lambda _=False,r=row:self.toggle(r));toggle.setEnabled(row['editable']);layout.addWidget(toggle)
             layout.addStretch()
-            self.table.setCellWidget(index,6,actions)
-        self.table.setColumnWidth(6,UI['action_width']);self.table.resizeRowsToContents();self.count.setText(f'显示 {len(data)} 项 / 共 {len(self.rows)} 项附件')
+            self.table.setCellWidget(index,7,actions)
+        self.table.setColumnWidth(7,UI['action_width']);self.table.resizeRowsToContents();self.count.setText(f'显示 {len(data)} 项 / 共 {len(self.rows)} 项附件')
         self.add_button.setEnabled(self.ready and authorized())
 
     def edit(self,row):

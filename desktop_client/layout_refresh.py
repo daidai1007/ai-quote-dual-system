@@ -238,6 +238,7 @@ from attachment_category_browser import (
     match_door_transformation_defaults,
     match_fixed_base,
     match_jp_side_panel,
+    ATTACHMENT_MATERIAL_PRICE_CONTRACT,
     parse_base_specification,
     SIZE_MATCH_METADATA_KEYS,
     size_match_axes,
@@ -2941,6 +2942,7 @@ def _build_ganged_attachment_payload(window, payloads: list[dict]) -> dict | Non
         "waste_factor": value("waste_factor_spin", 1.2),
         "attachments": attachments,
         "attachment_contract": 2,
+        "attachment_material_price_contract": ATTACHMENT_MATERIAL_PRICE_CONTRACT,
         "pricing_basis": PRICING_BASIS,
         "ganged_cabinet_count": len(ganged_rows),
         "ganged_cabinets": ganged_rows,
@@ -6283,7 +6285,11 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 target,
                 selected_product_code(self),
             )
-        return match_attachment_size(getattr(self, "catalog", []), source, target)
+        return match_attachment_size(getattr(self, "catalog", []), source, target, selected_material_code(self))
+
+    def selected_material_code(self):
+        combo = getattr(self.parentWidget(), "material_combo", None)
+        return getattr(combo, "currentData", lambda: None)()
 
     def build_default_matches(self) -> dict[str, dict | None]:
         catalog = applicable_catalog(
@@ -6362,7 +6368,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 None,
             )
             if side_source is not None:
-                side = match_attachment_size(catalog, side_source, dimensions)
+                side = match_attachment_size(catalog, side_source, dimensions, selected_material_code(self))
         matches = {
             DEFAULT_FIXED_BASE: base,
             DEFAULT_INSTALLATION_BOARD: installation_board,
@@ -6470,7 +6476,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                     selections.append(source)
                     continue
                 matched=match_catalog_attachment(source,getattr(self,'catalog',[]),
-                    target_dimensions=target_dimensions(self),product_code=selected_product_code(self))
+                    target_dimensions=target_dimensions(self),product_code=selected_product_code(self),
+                    material_code=selected_material_code(self))
                 if matched is not None:
                     selected={**matched,**source,'attachment_price_id':matched.get('attachment_price_id'),
                         'catalog_version':matched.get('catalog_version')}

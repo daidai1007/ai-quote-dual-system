@@ -101,6 +101,35 @@ function sizeMatchedQuickPrice(catalog, selection, environment, facePrice) {
     ...(exact?{}:{unit_price_override:round(facePrice*ratio,6)})};
 }
 
+export const MATERIAL_FACE_PRICE_CONTRACT = 1;
+export const MATERIAL_FACE_PRICE_UPGRADE = '此附件使用材质面价，请更新报价客户端后重新计算';
+
+export function materialFacePrice(catalog, materialCode) {
+  return catalog.quick_face_prices_by_material?.[materialCode] ?? null;
+}
+
+export function attachmentQuickPrice(selection, catalog, environment, quantity, sign) {
+  const cataloguePrice = number(catalog.price, '面价');
+  const materialCode = environment.material_code;
+  const materialPrice = materialFacePrice(catalog, materialCode);
+  const facePrice = materialPrice === null ? cataloguePrice : number(materialPrice, '材质面价', true);
+  const sizedPrice = sizeMatchedQuickPrice(catalog, selection, environment, facePrice);
+  const result = {
+    catalogue_face_price: cataloguePrice, catalogue_quick_amount: moneyProduct(quantity,cataloguePrice,sign),
+    face_price: facePrice, matched_price: facePrice,
+    ...sizedPrice,
+    ...(materialPrice === null ? {} : {material_quick_face_price:facePrice,quick_price_material_code:materialCode}),
+  };
+  if (environment.pricing_basis === PRICING_BASIS) {
+    result.face_price = result.matched_price = money(facePrice);
+    if (result.unit_price_override != null) result.unit_price_override = money(result.unit_price_override);
+    result.quick_amount = moneyProduct(quantity,result.unit_price_override??result.face_price,sign);
+  } else {
+    result.quick_amount = round(quantity*(result.unit_price_override??facePrice)*sign);
+  }
+  return result;
+}
+
 export function calculateAttachment(selection, catalog, rules, environment) {
   const result = {
     attachment_price_id: catalog.attachment_price_id, catalog_version: catalog.data_version,
@@ -119,22 +148,8 @@ export function calculateAttachment(selection, catalog, rules, environment) {
     // The same existing installation-board scope, checked against authoritative catalog data.
     const identity = [catalog.category_level1, catalog.category_level2, catalog.item_name, catalog.model_code].join(' ');
     if (sign === -1 && (!identity.includes('安装板') || identity.includes('安装板单发'))) throw new Error('只有安装板允许扣减');
-    const facePrice = number(catalog.price, '面价');
-    Object.assign(result, { quantity, attachment_price_sign: sign,
-      // Immutable catalogue provenance is distinct from popup/display money.
-      // Never round the price used by the DB's exact catalogue-price guard.
-      catalogue_face_price: facePrice, catalogue_quick_amount: moneyProduct(quantity,facePrice,sign),
-      face_price: facePrice, matched_price: facePrice, quick_amount: round(quantity * facePrice * sign) });
-    const sizedPrice = sizeMatchedQuickPrice(catalog,selection,environment,facePrice);
-    if (sizedPrice) {
-      Object.assign(result,sizedPrice);
-      result.quick_amount = round(quantity*(result.unit_price_override??facePrice)*sign);
-    }
-    if(environment.pricing_basis===PRICING_BASIS){
-      result.face_price=result.matched_price=money(facePrice);
-      if(result.unit_price_override!=null) result.unit_price_override=money(result.unit_price_override);
-      result.quick_amount=moneyProduct(quantity,result.unit_price_override??result.face_price,sign);
-    }
+    Object.assign(result, {quantity,attachment_price_sign:sign},
+      attachmentQuickPrice(selection,catalog,environment,quantity,sign));
     const rule = selectRule(rules, environment.product_code, environment.material_code, catalog.category_level1);
     if (!rule) { result.status = 'QUICK_ONLY'; result.status_text = '仅快速报价'; return result; }
     Object.assign(result, { rule_id: rule.rule_id, rule_version: rule.data_version, rule_materials: rule.materials || [], auxiliary_list: rule.auxiliary_list ?? '', rule_source_row: rule.source_row_no, calculation_notes: rule.notes || '', formulas: rule.formulas });

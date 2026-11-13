@@ -5,6 +5,7 @@ import math
 
 from quick_discount_rules import PRICING_BASIS, apply_management_fee
 from attachment_cost_allocation import with_cost_allocation
+from attachment_category_browser import ATTACHMENT_MATERIAL_PRICE_CONTRACT
 
 ITEM_TYPE = 'standalone_attachment'
 
@@ -74,7 +75,8 @@ def update_item(item, row):
 def request(window, sources, succeeded, failed):
     """Read-only API call; contains attachment-owned fields and no cabinet values."""
     worker_class = window._standalone_worker_class
-    payload = {'attachments': deepcopy(sources)}
+    payload = {'attachments': deepcopy(sources),
+               'attachment_material_price_contract': ATTACHMENT_MATERIAL_PRICE_CONTRACT}
     url = window.base_url().split('/api/', 1)[0].rstrip('/') + '/api/attachments/preview-standalone'
     worker = worker_class(url, payload, window)
     active = getattr(window, '_scheme2_attachment_reprice_workers', set())

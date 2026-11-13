@@ -1,5 +1,6 @@
 import {isNamePrincipal,q} from './quote_access_scope.mjs';
 import {PRODUCT_CODES} from './attachment_cost.mjs';
+import {materialFacePricesSql,materialFacePriceQuery} from './attachment_service.mjs';
 
 // Separate capability from quote administration; no inheritance of roles.
 export const ATTACHMENT_MAINTAINERS=Object.freeze(['戴晨丽','姜艳娟','翟晓峰','吕芝森']);
@@ -51,15 +52,17 @@ export function normalizeMaintenance(input){
 
 export function createAttachmentMaintenance({runPsql}){
  const query=async sql=>JSON.parse(String(await runPsql(sql)).trim().split(/\r?\n/).filter(Boolean).at(-1)||'null');
+ const queryWithMaterialPrices=materialFacePriceQuery(query);
  async function ready(){if(!await query("SELECT to_jsonb(to_regprocedure('calc.maintain_fixed_attachment(jsonb,text,text)') IS NOT NULL AND to_regclass('calc.attachment_maintenance_audit') IS NOT NULL);"))throw fail('附件维护尚未接入，请先完成配套数据库迁移和API更新。',503);}
  async function list(p){
   requireAttachmentMaintainer(p);await ready();
   const versions=await query("SELECT coalesce(jsonb_agg(data_version),'[]') FROM calc.attachment_catalog_version WHERE status='ACTIVE';");
   if(versions.length!==1)throw fail('当前没有唯一的已启用附件目录，暂不能维护。',409);
-  const items=await query(`SELECT coalesce(jsonb_agg(to_jsonb(x) ORDER BY x.item_name,x.attachment_price_id),'[]') FROM (
+  const items=await queryWithMaterialPrices(enabled=>`SELECT coalesce(jsonb_agg(to_jsonb(x) ORDER BY x.item_name,x.attachment_price_id),'[]') FROM (
    SELECT p.attachment_price_id,p.item_name,p.model_code,p.variant,p.color,p.unit,p.notes,p.width_mm,p.height_mm,p.depth_mm,
     p.quick_face_price::text AS quick_face_price,p.is_active,p.data_version,c.category_level1,c.category_level2,c.category_level3,
     coalesce(m.revision_no,1) AS revision_no,
+    ${enabled?materialFacePricesSql('p.attachment_price_id'):"'{}'::jsonb"} AS quick_face_prices_by_material,
     (SELECT coalesce(jsonb_agg(to_jsonb(r)||jsonb_build_object('fixed_cost',r.fixed_cost::text,
       'products',(SELECT coalesce(jsonb_agg(product_code ORDER BY product_code),'[]') FROM calc.attachment_cost_rule_product WHERE rule_id=r.rule_id),
       'materials',(SELECT coalesce(jsonb_agg(material_code ORDER BY material_code),'[]') FROM calc.attachment_cost_rule_material WHERE rule_id=r.rule_id)) ORDER BY r.rule_id),'[]')

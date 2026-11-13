@@ -52,6 +52,8 @@ export function calculateStandaloneAttachment(source, data) {
   const base={...source,quantity:1,attachment_price_sign:1,manual_inputs:structuredClone(manual),
     standalone_attachment:true,catalog_version:data.data_version,quick_amount:null,formula_amount:null,
     status:'PENDING_MANUAL',pending_manual_dimensions:[],standalone_parameter_choices:{}};
+  delete base.quick_price_material_code;
+  delete base.material_quick_face_price;
   const pending=(names,extra={})=>({...base,...extra,pending_manual_dimensions:names,
     required_parameters:names.map(name=>({name,source:'MANUAL',unit:environmentKeys[name]&&name==='材质密度'?'g/cm³':name.includes('单价')?'元': 'mm'}))});
   if(candidates.length!==1)return pending(['目录规格'],{

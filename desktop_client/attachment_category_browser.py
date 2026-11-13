@@ -10,6 +10,7 @@ from ganged_cabinet_rules import parse_ganged_specification
 
 
 CATEGORY_KEYS = ("category_level1", "category_level2", "category_level3")
+ATTACHMENT_MATERIAL_PRICE_CONTRACT = 1
 
 
 def attachment_names_manual_only(owner):
@@ -884,6 +885,7 @@ def match_attachment_size(
     items: Iterable[dict],
     source: dict,
     target_dimensions,
+    material_code=None,
 ) -> dict | None:
     """Select and price one exact/nearest approved attachment size.
 
@@ -961,7 +963,8 @@ def match_attachment_size(
     exact = all(abs(completed[index] - target[index]) <= 0.0001 for index in axes)
     ratio = 1.0 if exact else target_perimeter / matched_perimeter
     selected = dict(matched)
-    original_price = _number(matched.get("price"))
+    material_prices = matched.get("quick_face_prices_by_material") or {}
+    original_price = _number(material_prices.get(material_code, matched.get("price")))
     selected.update({
         "size_match_target_width_mm": target[0],
         "size_match_target_height_mm": target[1],

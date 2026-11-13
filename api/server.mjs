@@ -1293,7 +1293,8 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
   }
   if (req.method === 'POST' && req.url === '/api/quotes/confirm') {
     try {
-      const input = await attachmentService.hydrateDocument(documentWithOrderNature(await readBody(req), true));
+      const input = await attachmentService.hydrateDocument(documentWithOrderNature(await readBody(req), true),
+        {checkCurrentMaterialPrices:true});
       const output = await runPsql(confirmQuoteSql(input));
       return json(res, 200, output ? JSON.parse(output) : { confirmed: false });
     } catch (error) {
@@ -1302,7 +1303,8 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
   }
   if (req.method === 'POST' && req.url === '/api/quotes/confirm-check') {
     try {
-      const input = await attachmentService.hydrateDocument(documentWithOrderNature(await readBody(req), true));
+      const input = await attachmentService.hydrateDocument(documentWithOrderNature(await readBody(req), true),
+        {checkCurrentMaterialPrices:true});
       // Exercise the real inserts, constraints and UTF-8/jsonb conversion,
       // then roll everything back. This endpoint is used by the desktop
       // client's export preflight and by regression tests.
@@ -1317,7 +1319,7 @@ const server = http.createServer((req, res) => withQuoteRequest(req, res, async 
     try {
       const input=await readBody(req);
       if(!Array.isArray(input?.items)||!input.items.length) return json(res,400,{error:'quote_preview_check_failed',message:'报价清单不能为空'});
-      const checked=await attachmentService.hydrateDocument(input);
+      const checked=await attachmentService.hydrateDocument(input,{checkCurrentMaterialPrices:true});
       return json(res,200,{valid:true,checked_items:checked.items.length,persisted:false});
     } catch(error) {
       return json(res,clientErrorStatus(error),{error:'quote_preview_check_failed',message:error.message,issues:error.issues||[]});

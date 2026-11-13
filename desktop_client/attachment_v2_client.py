@@ -24,6 +24,7 @@ from ganged_cabinet_rules import parse_ganged_specification
 from quote_request_context import attachment_inputs, bind_quote_request, check_quote_response, retire_quote_request, settle_quote_request
 
 from attachment_category_browser import (
+    ATTACHMENT_MATERIAL_PRICE_CONTRACT,
     SUPPORT_PLATE_DEFAULT_MODELS,
     match_computer_tray_depth,
     match_attachment_size,
@@ -41,7 +42,7 @@ EXTRA_HEADERS = ("快速金额", "公式状态", "公式单位成本", "公式�
 COST_KEYS = ("error", "rule_id", "rule_version", "rule_materials", "rule_source_row", "formulas", "calculation_notes", "weight_kg", "material_cost", "spray_area_m2", "spray_cost", "auxiliary_cost", "auxiliary_list", "labor_cost", "attachment_selection_id", "quote_line_id", "environment", "pending_manual_dimensions", "pending_manual_error")
 
 
-COST_KEYS = (*COST_KEYS, 'cost_method')
+COST_KEYS = (*COST_KEYS, 'cost_method', 'material_quick_face_price', 'quick_price_material_code')
 
 
 def new_quote_attachment_selection(source):
@@ -54,7 +55,7 @@ def new_quote_attachment_selection(source):
         "quick_amount_override", "unit_price_override", "formula_amount", "formula_unit_cost",
         "custom_amount_edited", "formula_cost_edited", "formula_unit_cost_override",
         "custom_cost_edited", "catalog_version", "data_version", "status", "status_text",
-        "catalogue_face_price", "catalogue_quick_amount", "quick_face_price",
+        "catalogue_face_price", "catalogue_quick_amount", "quick_face_price", "quick_face_prices_by_material",
     }
     for key in list(row):
         if key in inherited or key in (COST_SNAPSHOT, MODEL_ONLY) or key.startswith("size_match_"):
@@ -280,7 +281,7 @@ def provisionalize_manual_dimension_result(result):
     return rendered
 
 
-def match_catalog_attachment(selection, catalog, target_dimensions=None, product_code="", base_height_mm=None):
+def match_catalog_attachment(selection, catalog, target_dimensions=None, product_code="", base_height_mm=None, material_code=None):
     """Resolve a price-free scheme selection against the live V2 catalogue."""
     if is_base_attachment(selection):
         base_height_mm = attachment_base_height(selection, base_height_mm)
@@ -406,7 +407,7 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
             target = (target[0], float(base_height_mm), target[2])
         matched = None
         if category == "侧板":
-            matched = match_attachment_size(sized_candidates, sized_candidates[0], target)
+            matched = match_attachment_size(sized_candidates, sized_candidates[0], target, material_code)
         elif category == "安装附件" and name == "固定立柱":
             matched = match_named_quick_attachment_size(
                 catalog, category, "固定立柱", name, target
@@ -465,6 +466,7 @@ def match_quote_attachment(window, selection, catalog):
         target_dimensions=_quote_attachment_dimensions(window, selection),
         product_code=product_code,
         base_height_mm=child.get("base_height_mm") if child is not None else base_height(window),
+        material_code=getattr(getattr(window, "material_combo", None), "currentData", lambda: None)(),
     )
 
 def manual_attachment_amount_edited(row):
@@ -506,10 +508,15 @@ def merge_cost(source, cost, automatic_base_height=None):
         automatic_base_height = None
     source = normalize_installation_board_quantity(discard_automatic_amount_override(source))
     merged = {**{key: value for key, value in source.items() if key not in COST_KEYS}, **cost}
+    material_priced = bool(source.get("quick_price_material_code") or cost.get("quick_price_material_code"))
+    if material_priced and not manual_attachment_amount_edited(source):
+        merged.pop("quick_amount_override", None)
+        if "unit_price_override" not in cost:
+            merged.pop("unit_price_override", None)
     # Older V2 APIs return the catalogue amount for sized attachments. Apply
     # the selected size price to all approved families; newer APIs derive it.
     sized = not source.get("custom") and (size_match_attachment_name(source) or size_match_attachment_name(cost))
-    if sized and cost.get("status") != "PENDING_MANUAL" and (source.get("size_match_ratio") is not None or cost.get("size_match_ratio") is not None):
+    if sized and not material_priced and cost.get("status") != "PENDING_MANUAL" and (source.get("size_match_ratio") is not None or cost.get("size_match_ratio") is not None):
         source_price = source.get("unit_price_override")
         automatic_price = None
         if source.get("size_match_original_price") is not None and source.get("size_match_ratio") is not None:
@@ -1800,6 +1807,7 @@ def install_attachment_v2(namespace):
                     catalog,
                     target_dimensions=target,
                     product_code=str(quote_item.get("product_code") or ""),
+                    material_code=quote_item.get("material_code"),
                 )
                 if match is None:
                     label = attachment.get("model_code") or attachment.get("item_name") or attachment.get("name") or "未命名附件"
@@ -1984,6 +1992,10 @@ def install_attachment_v2(namespace):
     worker_init = worker_class.__init__
     def init_worker(worker, url, payload, parent=None, *args, **kwargs):
         endpoint = str(url)
+        if endpoint.endswith(("/api/quotes/calculate-dual", "/api/attachments/preview",
+                              "/api/attachments/recalculate-line", "/api/quotes/preview-check",
+                              "/api/quotes/confirm-check", "/api/quotes/confirm")):
+            payload = {**payload, "attachment_material_price_contract": ATTACHMENT_MATERIAL_PRICE_CONTRACT}
         if endpoint.endswith(("/api/quotes/confirm", "/api/quotes/confirm-check")):
             payload = confirmation_payload(payload)
         all_attachments = list(payload.get("attachments", []))

@@ -69,7 +69,7 @@ test('attachment dialog drills through responsive category cards before showing 
   assert.match(overlay, /"资料盒": \(DEFAULT_A3_FOLDER, DEFAULT_A4_FOLDER\)/);
   assert.match(overlay, /quick_button\.setProperty\("attachmentQuickRule", quick_rule\)/);
   assert.match(overlay, /for quick_button in quick_buttons:\s*selection_layout\.addWidget\(quick_button\)/);
-  assert.match(overlay, /match_attachment_size\(getattr\(self, "catalog", \[\]\), source, target\)/);
+  assert.match(overlay, /match_attachment_size\(getattr\(self, "catalog", \[\]\), source, target, selected_material_code\(self\)\)/);
   assert.match(overlay, /rule in \(DEFAULT_DOOR_LIMITER, DEFAULT_DOOR_REINFORCEMENT\)/);
   assert.match(overlay, /dialog_class\.apply_filter = apply_classification_filter/);
   assert.match(overlay, /_default_selection_filters_installed = True/);

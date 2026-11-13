@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {ownerInsertSql} from './quote_access_scope.mjs';
 import { performance } from 'node:perf_hooks';
-import { calculateAttachment, attachmentTotals } from './attachment_cost.mjs';
+import { calculateAttachment, attachmentTotals, attachmentQuickPrice, materialFacePrice,
+  MATERIAL_FACE_PRICE_CONTRACT, MATERIAL_FACE_PRICE_UPGRADE } from './attachment_cost.mjs';
 import { round } from './attachment_formula.mjs';
 import {withAttachmentCostAllocation} from '../attachment_cost_allocation.mjs';
 import { materialUnitPriceFromSidebar } from './material_price_override.mjs';
@@ -15,6 +16,21 @@ export const sqlValue = value => value == null ? 'NULL' : typeof value === 'numb
   ? (Number.isFinite(value) ? String(value) : (()=>{throw new Error('非有限数值');})())
   : `convert_from(decode('${Buffer.from(String(value)).toString('hex')}','hex'),'UTF8')`;
 const sqlJson=value=>`${sqlValue(JSON.stringify(value))}::jsonb`;
+export const materialFacePricesSql=priceId=>`coalesce((SELECT jsonb_object_agg(mp.material_code,mp.quick_face_price)
+  FROM calc.attachment_material_face_price mp WHERE mp.attachment_price_id=${priceId}),'{}'::jsonb)`;
+export function materialFacePriceQuery(query) {
+  let retryAt=0;
+  return async sql=>{
+    if (Date.now()<retryAt) return query(sql(false));
+    try { return await query(sql(true)); }
+    catch (error) {
+      // Support databases that are still on the base catalogue schema.
+      if (!/(?:^|ERROR:\s+)relation "calc\.attachment_material_face_price" does not exist$/m.test(error.message)) throw error;
+      retryAt=Date.now()+30_000;
+      return query(sql(false));
+    }
+  };
+}
 const canonical=value=>JSON.stringify(value, function(key,current) {
   return current && typeof current==='object' && !Array.isArray(current)
     ? Object.fromEntries(Object.entries(current).sort(([a],[b])=>a.localeCompare(b))) : current;
@@ -115,6 +131,25 @@ function validatePopupUnitCost(source, quantity, sign, reject) {
   if(money(source.formula_amount)!==money(Number(unit)*quantity*sign))
     reject('附件成本与成本单价乘数量不一致');
 }
+function verifiedPopupMaterialPrice(source, selected, environment, quick, reject) {
+  const reference=environment.material_face_price_items?.[selected.attachment_price_id];
+  if (!reference) {
+    if (source.quick_price_material_code!=null || source.material_quick_face_price!=null)
+      reject('附件材质面价与柜体快照不一致，请重新计算整柜');
+    return {};
+  }
+  if (source.quick_price_material_code==null) reject(MATERIAL_FACE_PRICE_UPGRADE);
+  const child=environment.ganged_cabinets?.[selected.ganged_cabinet_index];
+  const expected=attachmentQuickPrice(selected,reference,{...environment,...child,
+    material_code:environment.material_code,pricing_basis:PRICING_BASIS},selected.quantity,selected.attachment_price_sign);
+  if (source.quick_price_material_code!==expected.quick_price_material_code
+      || source.material_quick_face_price!==expected.material_quick_face_price)
+    reject('附件材质面价已变化，请重新计算整柜和附件');
+  const {quick_amount,unit_price_override,...provenance}=expected;
+  if (source.custom_amount_edited===true) return provenance;
+  if (quick!==quick_amount) reject('附件自动金额与材质面价不一致，请重新计算');
+  return {...provenance,unit_price_override:unit_price_override??null,quick_amount};
+}
 function popupDocumentSnapshot(item, saved) {
   const visible=item.quote_display?.attachments;
   if(!Array.isArray(visible)||visible.length>100) throw new Error('附件显示快照必须为不超过100项的数组');
@@ -158,7 +193,8 @@ function popupDocumentSnapshot(item, saved) {
       reject('附件成本无效');
     if(quick*selected.attachment_price_sign<0||Number(cost)*selected.attachment_price_sign<0)
       reject('附件金额或成本与加减符号不一致');
-    return {...popupRow,...selected,quick_amount:quick,formula_amount:money(cost)};
+    const materialPricing=verifiedPopupMaterialPrice(source,selected,saved.environment,quick,reject);
+    return {...popupRow,...selected,quick_amount:quick,formula_amount:money(cost),...materialPricing};
   });
   const result=saved.environment.quote_result;
   if(!result?.formula_cost||!result?.quick_quote) throw new Error('柜体成本快照不完整，请重新计算整柜');
@@ -178,6 +214,7 @@ function popupDocumentSnapshot(item, saved) {
 
 export function createAttachmentService({runPsql,calculateBase,env=process.env,onProgress=()=>{},onTiming=()=>{}}) {
   const query=async sql=>{const text=await runPsql(sql);return JSON.parse(text.trim().split(/\r?\n/).filter(Boolean).at(-1)||'null');};
+  const queryWithMaterialPrices=materialFacePriceQuery(query);
   function catalogCondition() {
     const version=env.AI_QUOTE_ATTACHMENT_V2_VERSION||'';
     return version?`data_version=${sqlValue(version)}`:"status='ACTIVE'";
@@ -188,7 +225,11 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     if(v.status!=='ACTIVE'&&!(v.status==='STAGED'&&env.AI_QUOTE_ATTACHMENT_V2_ALLOW_STAGED==='1')) throw new Error('附件目录尚未启用；待启用数据仅供明确配置的兼容测试');
     return v;
   }
-  function catalogItemsSql(version, activeFilter, selectedIds=null) {
+  function catalogItemsSql(version, activeFilter, selectedIds=null, materialPrices=false, includePriceReferences=false) {
+    const prices=materialPrices?`,${materialFacePricesSql('p.attachment_price_id')} AS quick_face_prices_by_material`:'';
+    const extra=materialPrices&&includePriceReferences?` OR EXISTS(SELECT 1 FROM calc.attachment_material_face_price mp
+      WHERE mp.attachment_price_id=p.attachment_price_id)`:'';
+    const selected=selectedIds===null?'':` AND (${selectedIds.length?`p.attachment_price_id IN (${selectedIds.join(',')})`:'FALSE'}${extra})`;
     return `SELECT coalesce(jsonb_agg(to_jsonb(a)||jsonb_build_object('rules',coalesce((
       SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object(
         'products',(SELECT coalesce(jsonb_agg(product_code),'[]') FROM calc.attachment_cost_rule_product WHERE rule_id=r.rule_id),
@@ -197,25 +238,30 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       WHERE b.attachment_price_id=a.attachment_price_id),'[]')) ORDER BY a.source_row_no),'[]')
       FROM (SELECT p.attachment_price_id,c.category_level1,coalesce(c.category_level2,'') AS category_level2,
         coalesce(c.category_level3,'') AS category_level3,p.item_name,p.model_code,p.unit,p.color,p.width_mm,p.height_mm,p.depth_mm,
-        p.quick_face_price AS price,p.data_version,p.source_file,p.source_sheet,p.source_row_no
+        p.quick_face_price AS price,p.data_version,p.source_file,p.source_sheet,p.source_row_no${prices}
         FROM calc.attachment_price p JOIN calc.attachment_classification c USING(attachment_price_id)
         WHERE p.data_version=${version}${activeFilter}
-          ${selectedIds===null?'':selectedIds.length?`AND p.attachment_price_id IN (${selectedIds.join(',')})`:'AND FALSE'}) a`;
+          ${selected}) a`;
   }
   async function catalog() {
     const versions=await query(`SELECT coalesce(jsonb_agg(to_jsonb(v)),'[]') FROM calc.attachment_catalog_version v WHERE ${catalogCondition()};`);
     const v=checkedCatalogVersion(versions);
-    const items=await query(catalogItemsSql(sqlValue(v.data_version),v.status==='ACTIVE'?' AND p.is_active':'')+';');
-    return {items,data_version:v.data_version,status:v.status,attachment_contract:2,catalog_write_supported:true};
+    const items=await queryWithMaterialPrices(enabled=>
+      catalogItemsSql(sqlValue(v.data_version),v.status==='ACTIVE'?' AND p.is_active':'',null,enabled)+';');
+    return {items,data_version:v.data_version,status:v.status,attachment_contract:2,catalog_write_supported:true,
+      attachment_material_price_contract:MATERIAL_FACE_PRICE_CONTRACT};
   }
   async function previewStandalone(input, prepared=null) {
     if(!Array.isArray(input?.attachments)||input.attachments.length<1||input.attachments.length>100)
       throw new Error('请选择1至100项独立附件');
     const data=prepared||await catalog();
     const densities=data.material_densities||await query("SELECT coalesce(jsonb_object_agg(material_code,density_g_cm3),'{}'::jsonb) FROM calc.material;");
-    return {item_type:STANDALONE_TYPE,attachments:input.attachments.map(row=>calculateStandaloneAttachment(row,{...data,material_densities:densities}))};
+    const attachments=input.attachments.map(row=>calculateStandaloneAttachment(row,{...data,material_densities:densities}));
+    if (input.attachment_material_price_contract!==MATERIAL_FACE_PRICE_CONTRACT
+        &&attachments.some(row=>row.quick_price_material_code)) throw new Error(MATERIAL_FACE_PRICE_UPGRADE);
+    return {item_type:STANDALONE_TYPE,attachments};
   }
-  async function hydrateStandalone(item) {
+  async function hydrateStandalone(item, quoteId) {
     if(String(item.product_code).toLowerCase()!==STANDALONE_TYPE||item.attachment_contract!=='standalone_v1'
         ||!Array.isArray(item.attachments)||item.attachments.length!==1)
       throw new Error('独立附件报价行无效，请重新添加');
@@ -227,11 +273,27 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     if(!version)throw new Error('独立附件缺少目录版本，请重新计算');
     // Retired catalogue versions remain valid for existing immutable documents.
     // This is a read, with no synthetic cabinet or attachment_quote_line insert.
-    const entries=source.custom===true?[]:await query(catalogItemsSql(sqlValue(version),'',[id(source.attachment_price_id)])+';');
+    const entries=source.custom===true?[]:await queryWithMaterialPrices(enabled=>
+      catalogItemsSql(sqlValue(version),'',[id(source.attachment_price_id)],enabled)+';');
     const densities=source.custom===true?{}:await query("SELECT coalesce(jsonb_object_agg(material_code,density_g_cm3),'{}'::jsonb) FROM calc.material;");
-    const row=calculateStandaloneAttachment(source,{items:entries,data_version:version,material_densities:densities});
+    let row=calculateStandaloneAttachment(source,{items:entries,data_version:version,material_densities:densities});
     assertStandaloneReady(row);
-    if(money(row.quick_amount)!==money(source.quick_amount)||money(row.formula_amount)!==money(source.formula_amount))
+    const materialPriceChanged=row.quick_price_material_code!==source.quick_price_material_code
+      ||row.material_quick_face_price!==source.material_quick_face_price;
+    if (materialPriceChanged && typeof quoteId==='string' && quoteId) {
+      const archived=await query(`SELECT coalesce((SELECT document_payload->'items'
+        FROM calc.quote_document WHERE quote_id=${sqlValue(quoteId)} AND status='CONFIRMED'),'[]'::jsonb);`);
+      const match=archived.filter(entry=>entry.item_type===STANDALONE_TYPE).map(entry=>entry.attachments?.[0])
+        .find(entry=>entry&&['attachment_price_id','catalog_version','standalone_material_code','standalone_rule_id',
+          'standalone_quote_date','manual_inputs','standalone_cost_settings','quick_amount','formula_amount',
+          'custom_amount_edited','unit_price_override','quick_price_material_code','material_quick_face_price']
+          .every(key=>canonical(source[key])===canonical(entry[key])));
+      if (match) row=match;
+    }
+    if (row.quick_price_material_code && !source.quick_price_material_code) throw new Error(MATERIAL_FACE_PRICE_UPGRADE);
+    if(row.quick_price_material_code!==source.quick_price_material_code
+        ||row.material_quick_face_price!==source.material_quick_face_price
+        ||money(row.quick_amount)!==money(source.quick_amount)||money(row.formula_amount)!==money(source.formula_amount))
       throw new Error('独立附件金额与当前参数不一致，请重新计算');
     const unit=String(row.unit||'件');
     if(item.unit!==unit||item.quote_display?.unit!==unit)throw new Error('独立附件计量单位不一致');
@@ -268,6 +330,9 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     const attachments=selections.map(selection=>{
       const item=data.items.find(a=>Number(a.attachment_price_id)===selection.attachment_price_id);
       if(!item) throw new Error(`附件ID ${selection.attachment_price_id} 不属于当前目录，请重新选择`);
+      if (materialFacePrice(item,input.material_code)!==null
+          &&input.attachment_material_price_contract!==MATERIAL_FACE_PRICE_CONTRACT)
+        throw new Error(MATERIAL_FACE_PRICE_UPGRADE);
       const child=selection.ganged_cabinet_index===undefined?null:gangedInputs[selection.ganged_cabinet_index];
       if(selection.ganged_cabinet_index!==undefined&&!child) throw new Error(`第 ${selection.ganged_cabinet_index+1} 个子柜不存在`);
       const attachmentEnvironment=child?{...environment,...child,quote_line_id:environment.quote_line_id,
@@ -277,6 +342,11 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       return {...calculateAttachment(selection,item,item.rules,attachmentEnvironment),
         ...(selection.ganged_cabinet_index===undefined?{}:{ganged_cabinet_index:selection.ganged_cabinet_index})};
     });
+    const materialReferences=data.items.filter(item=>materialFacePrice(item,input.material_code)!==null);
+    if (materialReferences.length) environment.material_face_price_items=Object.fromEntries(materialReferences.map(item=>[
+      item.attachment_price_id,Object.fromEntries(['price','item_name','model_code','category_level1','category_level2',
+        'category_level3','width_mm','height_mm','depth_mm','quick_face_prices_by_material'].map(key=>[key,item[key]])),
+    ]));
     return {attachments,environment,attachment_contract:2,catalog_version:data.data_version,...attachmentTotals(attachments)};
   }
   async function persistCalculated(input,previewed,base) {
@@ -331,7 +401,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       finally {onTiming({phase,elapsed_ms:Math.round(performance.now()-started),success});}
     };
     // One MVCC-consistent read, only selected IDs and their bound rules. No cross-request cache.
-    const context=await timed('read',()=>query(`WITH refresh_line AS (
+    const context=await timed('read',()=>queryWithMaterialPrices(enabled=>`WITH refresh_line AS (
       SELECT l.quote_line_id,l.environment_snapshot FROM calc.attachment_quote_line l
       WHERE l.quote_line_id=${sqlValue(lineId)}::uuid
     ), refresh_versions AS (
@@ -344,7 +414,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
           WHERE s.quote_line_id=l.quote_line_id),'[]'::jsonb)) FROM refresh_line l),
       'versions',(SELECT coalesce(jsonb_agg(version),'[]'::jsonb) FROM refresh_versions),
       'items',(${catalogItemsSql("(SELECT version->>'data_version' FROM refresh_versions LIMIT 1)",
-        " AND ((SELECT version->>'status' FROM refresh_versions LIMIT 1)<>'ACTIVE' OR p.is_active)",selectedIds)}),
+        " AND ((SELECT version->>'status' FROM refresh_versions LIMIT 1)<>'ACTIVE' OR p.is_active)",selectedIds,enabled,true)}),
       'prices',(SELECT jsonb_build_object(
         'density_g_cm3',(SELECT density_g_cm3 FROM calc.material
           WHERE material_code=l.environment_snapshot->>'material_code'),
@@ -368,6 +438,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     requireCabinetCosts(base.formula_cost);
     const children=environment.ganged_cabinets||[];
     const replay={...environment,...(input.pricing_basis?{pricing_basis:input.pricing_basis}:{}),quote_id:base.quote_id,
+      attachment_material_price_contract:input.attachment_material_price_contract,
       material_unit_price_override:environment.material_unit_price,
       attachments:input.attachments,
       ganged_cabinet_inputs:children.map((child,index)=>{
@@ -414,7 +485,7 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
     SELECT coalesce(jsonb_object_agg(l.quote_line_id::text,jsonb_build_object(
       'environment',l.environment_snapshot,'attachments',coalesce(s.attachments,'[]'::jsonb))),'{}'::jsonb)
     FROM selected_lines l LEFT JOIN selection_snapshots s USING(quote_line_id);`;}
-  async function hydrateDocument(input) {
+  async function hydrateDocument(input, {checkCurrentMaterialPrices=false}={}) {
     if(!input || typeof input!=='object' || !Array.isArray(input.items)) throw new Error('items are required');
     // Request-local batching only: copied rows share the read, not their
     // validation or mutable results. Every later request reads fresh data.
@@ -424,11 +495,20 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       &&!(item.pricing_basis===PRICING_BASIS&&item.quote_display?.attachment_source==='popup_v1'))
       .map(item=>uuid(item.quote_line_id).toLowerCase()))];
     const snapshots=lineIds.length?await query(snapshotsSql(lineIds,attachmentLineIds)):{};
+    const selectedIds=checkCurrentMaterialPrices?[...new Set(input.items
+      .filter(item=>item?.attachment_contract===2 && Array.isArray(item.attachments))
+      .flatMap(item=>item.attachments.filter(row=>row?.custom!==true && row?.attachment_price_id!=null)
+        .map(row=>id(row.attachment_price_id))))]:[];
+    const currentMaterialPrices=selectedIds.length?await queryWithMaterialPrices(enabled=>enabled?
+      `SELECT coalesce(jsonb_object_agg(attachment_price_id,prices),'{}'::jsonb)
+      FROM (SELECT attachment_price_id,jsonb_object_agg(material_code,quick_face_price) AS prices
+        FROM calc.attachment_material_face_price WHERE attachment_price_id IN (${selectedIds.join(',')})
+        GROUP BY attachment_price_id) current_prices;`:"SELECT '{}'::jsonb;"):null;
     const items=[];
     for(const [itemIndex,item] of (input.items||[]).entries()){
       try {
       if(item.item_type===STANDALONE_TYPE||item.attachment_contract==='standalone_v1'){
-        items.push(await hydrateStandalone(item));continue;
+        items.push(await hydrateStandalone(item,input.quote_id));continue;
       }
       if(item.attachment_contract!==2){
         if((item.attachments||[]).some(a=>a.catalog_version||a.rule_id||a.status)) throw new Error('附件V2报价缺少服务端报价行ID');
@@ -447,6 +527,19 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
       if(changedKey) throw new Error(`报价环境已变化（${changedKey}），请重新计算附件`);
       if(Number(item.ganged_cabinet_count||1)!==Number(saved.environment.ganged_cabinet_count||1)
         ||canonical(item.ganged_cabinets||[])!==canonical(saved.environment.ganged_cabinets||[])) throw new Error('并柜明细已变化，请重新计算附件');
+      if(currentMaterialPrices){
+        const material=saved.environment.material_code;
+        const references=saved.environment.material_face_price_items;
+        for(const row of catalogAttachments){
+          const priceId=row.attachment_price_id;
+          const current=currentMaterialPrices[priceId]?.[material]??null;
+          const original=references?.[priceId]?.quick_face_prices_by_material?.[material]??null;
+          if(current!==null&&input.attachment_material_price_contract!==MATERIAL_FACE_PRICE_CONTRACT
+              &&item.attachment_material_price_contract!==MATERIAL_FACE_PRICE_CONTRACT)
+            throw new Error(MATERIAL_FACE_PRICE_UPGRADE);
+          if(current!==original) throw new Error('附件材质面价已变更，请重新计算整柜和附件');
+        }
+      }
       if(item.pricing_basis===PRICING_BASIS&&item.quote_display?.attachment_source==='popup_v1'){
         // Keep the cabinet calculation anchored to its original snapshot.
         // Completed popup rows are the quote-local attachment source; document
