@@ -49,7 +49,16 @@ const number = (v, label, positive = false) => {
 // authoritative catalogue dimensions and the actual quotation inputs.
 const SIZE_MATCH_NAMES = ['固定底座','活动底座','通风顶罩','玻璃门','防雨顶',
   '三排安装梁','固定立柱','分段板','JK安装板','内门','侧板','安装板'];
-function sizeMatchedQuickPrice(catalog, selection, environment, facePrice) {
+
+function linkedVentilationHood(catalog) {
+  if (catalog.item_name !== '通风顶罩' || catalog.category_level1 !== '控制柜附件') return null;
+  const depth = Number(catalog.height_mm);
+  const height = {600:80,800:100}[depth];
+  const width = Number(catalog.width_mm);
+  return height && Number.isFinite(width) && width>0 ? {width,height,depth} : null;
+}
+
+function sizeMatchedQuickPrice(catalog, selection, environment, facePrice, hood) {
   const identity = [catalog.category_level1,catalog.category_level2,catalog.category_level3,
     catalog.item_name,catalog.model_code].join(' ').replace(/\s+/g,'');
   if (identity.includes('安装板单发')) return null;
@@ -67,11 +76,13 @@ function sizeMatchedQuickPrice(catalog, selection, environment, facePrice) {
   }
   if (name==='固定底座'||name==='活动底座') {
     target[1] = Number(selection.manual_inputs?.底座高度);
-  } else if (name==='通风顶罩'&&selection.manual_inputs?.通风顶罩高度!=null) {
-    target[1] = Number(selection.manual_inputs.通风顶罩高度);
+  } else if (name==='通风顶罩') {
+    if (hood) target[1] = hood.height;
+    else if (selection.manual_inputs?.通风顶罩高度!=null) target[1] = Number(selection.manual_inputs.通风顶罩高度);
   }
   const keys = ['width_mm','height_mm','depth_mm'];
   const stored = keys.map(key=>catalog[key]);
+  if (hood) [stored[0],stored[1],stored[2]] = [hood.width,hood.height,hood.depth];
   if (name==='三排安装梁') {
     const model = String(catalog.model_code||'').trim().toUpperCase().match(/^JP7602(40|50|60|80|10)$/);
     if (model) stored[2] = {40:400,50:500,60:600,80:800,10:1000}[model[1]];
@@ -94,6 +105,7 @@ function sizeMatchedQuickPrice(catalog, selection, environment, facePrice) {
   const exact = axes.every(index=>Math.abs(matched[index]-target[index])<=0.0001);
   const ratio = exact ? 1 : targetPerimeter/perimeter;
   return {width_mm:catalog.width_mm,height_mm:catalog.height_mm,depth_mm:catalog.depth_mm,
+    ...(hood?{size_match_hood_linked:true}:{}),
     size_match_target_width_mm:target[0],size_match_target_height_mm:target[1],size_match_target_depth_mm:target[2],
     size_match_width_mm:matched[0],size_match_height_mm:matched[1],size_match_depth_mm:matched[2],
     size_match_target_perimeter:targetPerimeter,size_match_perimeter:perimeter,
@@ -108,12 +120,12 @@ export function materialFacePrice(catalog, materialCode) {
   return catalog.quick_face_prices_by_material?.[materialCode] ?? null;
 }
 
-export function attachmentQuickPrice(selection, catalog, environment, quantity, sign) {
+export function attachmentQuickPrice(selection, catalog, environment, quantity, sign, hood=linkedVentilationHood(catalog)) {
   const cataloguePrice = number(catalog.price, '面价');
   const materialCode = environment.material_code;
   const materialPrice = materialFacePrice(catalog, materialCode);
   const facePrice = materialPrice === null ? cataloguePrice : number(materialPrice, '材质面价', true);
-  const sizedPrice = sizeMatchedQuickPrice(catalog, selection, environment, facePrice);
+  const sizedPrice = sizeMatchedQuickPrice(catalog, selection, environment, facePrice, hood);
   const result = {
     catalogue_face_price: cataloguePrice, catalogue_quick_amount: moneyProduct(quantity,cataloguePrice,sign),
     face_price: facePrice, matched_price: facePrice,
@@ -130,14 +142,17 @@ export function attachmentQuickPrice(selection, catalog, environment, quantity, 
   return result;
 }
 
-export function calculateAttachment(selection, catalog, rules, environment) {
+export function calculateAttachment(selection, catalog, rules, environment, {standalone=false}={}) {
+  const hood = standalone ? null : linkedVentilationHood(catalog);
+  const manualInputs = structuredClone(selection.manual_inputs || {});
+  if (hood) manualInputs.通风顶罩高度 = hood.height;
   const result = {
     attachment_price_id: catalog.attachment_price_id, catalog_version: catalog.data_version,
     quote_line_id: environment.quote_line_id, product_code: environment.product_code,
     category_level1: catalog.category_level1, category_level2: catalog.category_level2,
     item_name: catalog.item_name, model_code: catalog.model_code, color: catalog.color,
     unit: catalog.unit, quantity: selection.quantity, attachment_price_sign: selection.attachment_price_sign ?? 1,
-    manual_inputs: structuredClone(selection.manual_inputs || {}), environment: structuredClone(environment),
+    manual_inputs: manualInputs, environment: structuredClone(environment),
     status: 'ERROR', formula_amount: null, formula_unit_cost: null, required_parameters: [],
     source_sheet: catalog.source_sheet, source_row_no: catalog.source_row_no,
   };
@@ -149,7 +164,7 @@ export function calculateAttachment(selection, catalog, rules, environment) {
     const identity = [catalog.category_level1, catalog.category_level2, catalog.item_name, catalog.model_code].join(' ');
     if (sign === -1 && (!identity.includes('安装板') || identity.includes('安装板单发'))) throw new Error('只有安装板允许扣减');
     Object.assign(result, {quantity,attachment_price_sign:sign},
-      attachmentQuickPrice(selection,catalog,environment,quantity,sign));
+      attachmentQuickPrice(selection,catalog,environment,quantity,sign,hood));
     const rule = selectRule(rules, environment.product_code, environment.material_code, catalog.category_level1);
     if (!rule) { result.status = 'QUICK_ONLY'; result.status_text = '仅快速报价'; return result; }
     Object.assign(result, { rule_id: rule.rule_id, rule_version: rule.data_version, rule_materials: rule.materials || [], auxiliary_list: rule.auxiliary_list ?? '', rule_source_row: rule.source_row_no, calculation_notes: rule.notes || '', formulas: rule.formulas });

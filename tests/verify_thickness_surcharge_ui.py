@@ -1,14 +1,10 @@
 """Arbitrary thickness and per-row coefficient through actual Qt, snapshots and prices."""
 from copy import deepcopy
-import os
-from pathlib import Path
 import unittest
 from unittest.mock import patch
 import verify_scheme2_cost_combined_layout as fixture
 from verify_scheme2_cost_combined_layout import ui,app
-from PySide6.QtCore import Qt
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDoubleSpinBox
+from PySide6.QtWidgets import QDialog, QDoubleSpinBox
 from thickness_surcharge import BASIS,amount
 
 
@@ -25,7 +21,7 @@ def item(rate=10):
 class ThicknessSurchargeUI(unittest.TestCase):
     setUp=fixture.CostCombinedLayout.setUp
 
-    def test_coefficient_beside_free_thickness_and_page_state_keeps_manual_value(self):
+    def test_hidden_coefficient_keeps_the_existing_page_state_and_defaults(self):
         w=self.window;w.show_section(ui.OPTION_ROUTE);app.processEvents()
         thickness=w.cabinet_body_thickness_spin;coefficient=w.thickness_surcharge_coefficient_spin
         self.assertIsInstance(thickness,QDoubleSpinBox)
@@ -37,12 +33,39 @@ class ThicknessSurchargeUI(unittest.TestCase):
         ui._restore_scheme2_page_state(w,state)
         self.assertEqual(thickness.value(),2.375);self.assertEqual(coefficient.value(),12)
         self.assertTrue(coefficient.isEnabled())
-        left=thickness.mapTo(w,thickness.rect().topLeft());right=coefficient.mapTo(w,coefficient.rect().topLeft())
-        self.assertLess(left.x(),right.x());self.assertLessEqual(abs(left.y()-right.y()),2)
-        output=Path(os.environ.get('THICKNESS_QA_DIR',fixture.ROOT.parent/'task-A-thickness-weight-surcharge-handoff-20261030/qa'))
-        output.mkdir(parents=True,exist_ok=True)
-        self.assertTrue(w.grab().save(str(output/'free-thickness-coefficient.png')))
+        self.assertTrue(thickness.isVisible())
+        self.assertFalse(coefficient.isVisible())
         w._scheme2_dirty=False
+
+    def test_cost_dialog_cancel_and_confirm_use_the_selected_quote_coefficient(self):
+        w = self.window
+        first, second = item(12), item()
+        w.draft_items = [first, second]
+        w.show_section(ui.COST_ROUTE)
+        w.refresh_summary()
+        w.summary_table.selectRow(0)
+        key = 'thickness_surcharge_coefficient'
+        before = deepcopy(first['formula']['thickness_comparison'])
+
+        def change(dialog, result):
+            control = dialog.controls[key]
+            self.assertTrue(control.isEnabled())
+            self.assertEqual(control.value(), 12)
+            control.setValue(15)
+            return result
+
+        with patch.object(ui._CostCoefficientDialog, 'exec', lambda dialog: change(dialog, QDialog.DialogCode.Rejected)):
+            w.scheme2_cost_edit_coefficients.click()
+        self.assertEqual(first[key], 12)
+
+        with patch.object(ui._CostCoefficientDialog, 'exec', lambda dialog: change(dialog, QDialog.DialogCode.Accepted)):
+            w.scheme2_cost_edit_coefficients.click()
+        self.assertEqual(first[key], 15)
+        self.assertEqual(second[key], 10)
+        self.assertEqual(first['formula']['thickness_comparison'], before)
+        self.assertEqual(amount(first), 123.64)
+        self.assertEqual(w.summary_table.item(0, ui.MATERIAL_DIFFERENCE_COLUMN).text(), '123.64')
+        self.assertEqual(ui._quote_export_items_snapshot(w)[0][key], 15)
 
     def test_summary_quote_preview_and_fixed_breakdown_do_not_discount_surcharge(self):
         w=self.window;row=item();w.draft_items=[row];fixture.Window.refresh_summary(w)

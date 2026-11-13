@@ -61,6 +61,21 @@ function harness(children=[],catalogItem=glass){
 const selection=(manual,index)=>({attachment_price_id:glass.attachment_price_id,quantity:1,manual_inputs:manual,
   ...(index===undefined?{}:{ganged_cabinet_index:index})});
 
+test('hood refresh saves its linked height and keeps the previous snapshot',async()=>{
+  const hood=fixture.catalog.items.find(row=>row.item_name==='通风顶罩'&&row.width_mm===800&&row.height_mm===600);
+  const h=harness([],hood);
+  h.environment.depth_mm=600;
+  const before=structuredClone(h.old);
+  const result=await h.service.recalculateLine({quote_line_id:oldId,attachments:[
+    {attachment_price_id:hood.attachment_price_id,quantity:2,manual_inputs:{通风顶罩高度:1850}},
+  ]});
+  const [priced]=result.attachments;
+  assert.equal(priced.manual_inputs.通风顶罩高度,80);
+  assert.equal(priced.size_match_exact,true);
+  assert.deepEqual(priced,h.stored.attachments[0]);
+  assert.deepEqual(h.old,before);
+});
+
 test('跨产品防雨顶补齐成本并修改数量时创建新快照，保留原始仅面价版本',async()=>{
   for(const category of ['控制柜附件','控制箱附件']) {
     const roof=fixture.catalog.items.find(row=>row.item_name==='防雨顶'&&row.category_level1===category);

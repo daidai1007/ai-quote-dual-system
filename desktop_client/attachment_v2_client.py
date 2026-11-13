@@ -26,6 +26,7 @@ from quote_request_context import attachment_inputs, bind_quote_request, check_q
 from attachment_category_browser import (
     ATTACHMENT_MATERIAL_PRICE_CONTRACT,
     SUPPORT_PLATE_DEFAULT_MODELS,
+    is_ventilation_hood,
     match_computer_tray_depth,
     match_attachment_size,
     match_installation_board_for_product,
@@ -34,6 +35,7 @@ from attachment_category_browser import (
     size_match_axes,
     size_match_attachment_name,
     size_match_target_dimensions,
+    ventilation_hood_dimensions,
 )
 
 PREVIEW_DELAY_MS = 350
@@ -312,6 +314,8 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
         model = "" if selection.get("computer_tray_auto_match") else (
             selection.get("model_code") or selection.get("specification") or "")
         return match_computer_tray_depth(catalog, target_dimensions, model)
+    if category == "控制柜附件" and name == "通风顶罩" and target_dimensions is not None:
+        return match_named_quick_attachment_size(catalog, category, name, name, target_dimensions)
     if category in {"配置变形", "其他附件"}:
         name_matches = [
             item for item in catalog if isinstance(item, dict)
@@ -417,7 +421,7 @@ def match_catalog_attachment(selection, catalog, target_dimensions=None, product
                 catalog, category, "三排纵梁", name, target
             )
         elif category in {"控制箱附件", "控制柜附件"} and name in {
-            "JK安装板", "内门", "防雨顶", "通风顶罩",
+            "JK安装板", "内门", "防雨顶",
         }:
             matched = match_named_quick_attachment_size(
                 catalog, category, name, name, target
@@ -648,6 +652,8 @@ def _size_match_target_changed(source, dimensions):
     dimensions = size_match_target_dimensions(source, dimensions)
     if dimensions is None:
         return False
+    if is_ventilation_hood(source) and not source.get("size_match_hood_linked"):
+        return True
     keys = ("width", "height", "depth")
     for index in size_match_axes(source):
         key = keys[index]
@@ -704,6 +710,8 @@ def resolve_size_matched_attachment(source, matched, version):
     for key in ("quantity", "attachment_price_sign", "manual_inputs"):
         if key in source:
             resolved[key] = copy.deepcopy(source[key])
+    if matched.get("size_match_hood_linked"):
+        resolved["manual_inputs"] = {**(resolved.get("manual_inputs") or {}), **matched["manual_inputs"]}
     for key in ("quick_amount", "quick_amount_override", "unit_price_override"):
         resolved.pop(key, None)
     if manual_amount:
@@ -985,6 +993,9 @@ def needs_ganged_sized_attachment_resolution(window):
         for row in group:
             if row.get("ganged_sized_attachment_match") is not True:
                 return True
+            if (is_ventilation_hood(row)
+                    and _size_match_target_changed(row, _quote_attachment_dimensions(window, row))):
+                return True
             if is_base_attachment(row):
                 child = children[row["ganged_cabinet_index"]]
                 if any(row.get(f"size_match_target_{axis}_mm") != child.get(f"{axis}_mm")
@@ -1105,6 +1116,10 @@ def selected_input(item, automatic_base_height=None):
     if is_base_attachment(item) and item.get("ganged_cabinet_index", item.get("ganged_fixed_base_index")) is not None:
         automatic_base_height = None
     manual_inputs = copy.deepcopy(item.get("manual_inputs") or {})
+    if item.get("size_match_hood_linked") and is_ventilation_hood(item):
+        dimensions = ventilation_hood_dimensions(item)
+        if dimensions is not None:
+            manual_inputs["通风顶罩高度"] = dimensions[1]
     if is_base_attachment(item):
         manual_inputs["底座高度"] = attachment_base_height(item, automatic_base_height)
     # Compatibility for the currently deployed V2 API, where 底座高度 was
@@ -1508,7 +1523,10 @@ def install_attachment_v2(namespace):
                 for (row, cell, source), cost in zip(checked(dialog), body.get("attachments", [])):
                     source = merge_cost(source, cost, automatic_base)
                     cell.setData(Qt.ItemDataRole.UserRole, source)
-                    manual = [p["name"] for p in cost.get("required_parameters", []) if p["source"] == "MANUAL" and not (p["name"] == "底座高度" and automatic_base is not None)]
+                    linked_hood = source.get("size_match_hood_linked")
+                    manual = [p["name"] for p in cost.get("required_parameters", []) if p["source"] == "MANUAL"
+                              and not (p["name"] == "底座高度" and automatic_base is not None)
+                              and not (p["name"] == "通风顶罩高度" and linked_hood)]
                     values = [source.get("quick_amount"), cost.get("status_text"), cost.get("formula_unit_cost"), cost.get("formula_amount"), "、".join(manual) or "无需填写"]
                     for i, value in enumerate(values):
                         item = dialog.table.item(row, dialog.COL_QUANTITY + 1 + i)
@@ -1537,7 +1555,9 @@ def install_attachment_v2(namespace):
         if column != dialog.COL_QUANTITY + len(EXTRA_HEADERS):
             return
         automatic_base = base_height(dialog.parentWidget())
-        parameters = [p for p in source.get("required_parameters", []) if p["source"] == "MANUAL" and not (p["name"] == "底座高度" and automatic_base is not None)]
+        parameters = [p for p in source.get("required_parameters", []) if p["source"] == "MANUAL"
+                      and not (p["name"] == "底座高度" and automatic_base is not None)
+                      and not (p["name"] == "通风顶罩高度" and source.get("size_match_hood_linked"))]
         if not parameters:
             return
         editor = QDialog(dialog)
@@ -1767,9 +1787,8 @@ def install_attachment_v2(namespace):
             attachment.get(f"size_match_target_{axis}_mm") is not None
             for axis in ("width", "height", "depth")
         )
-        if has_match_snapshot and _size_match_target_changed(attachment, cabinet_dimensions):
-            # An edited glass/segment dimension can change the nearest
-            # catalogue row, not only the proportional price of the old row.
+        if (has_match_snapshot or is_ventilation_hood(attachment)) and _size_match_target_changed(attachment, cabinet_dimensions):
+            # Refresh the catalogue identity when the size or matching rule has changed.
             attachment = {**attachment}
             attachment.pop("attachment_price_id", None)
         if is_base_attachment(attachment):

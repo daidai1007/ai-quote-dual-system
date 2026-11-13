@@ -52,7 +52,7 @@ try:
     ui._sync_sidebar(window)
     assert window.scheme2_cost_sidebar.isHidden()
     dialog = ui._CostCoefficientDialog(window)
-    assert len(dialog.controls) == 8
+    assert list(dialog.controls) == [*window.scheme2_cost_controls, ui.THICKNESS_COEFFICIENT_KEY]
     dialog.show()
     QTest.qWait(30)
     assert all(control.isVisible() for control in dialog.controls.values())

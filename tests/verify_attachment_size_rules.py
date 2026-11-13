@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import sys
 from pathlib import Path
@@ -22,8 +23,9 @@ from attachment_category_browser import (  # noqa: E402
     match_installation_board_size,
     match_named_quick_attachment_size,
     size_match_attachment_name,
+    size_match_display_text,
 )
-from attachment_v2_client import match_catalog_attachment  # noqa: E402
+from attachment_v2_client import match_catalog_attachment, resolve_size_matched_attachment, selected_input  # noqa: E402
 
 
 def row(identifier, name, width, height, depth, price, model=""):
@@ -64,9 +66,8 @@ second = match_attachment_size([tie_a, tie_b], tie_a, (950, 1950, 600))
 assert first is not None and second is not None
 assert first["attachment_price_id"] == second["attachment_price_id"] == 10
 
-# Missing catalogue values are completed only for matching metadata. The raw
-# database H/D fields remain missing on the selected record.
-missing = row(20, "通风顶罩", 1000, None, None, 80)
+# Missing catalogue values are completed only for generic matching metadata.
+missing = row(20, "内门", 1000, None, None, 80)
 completed = completed_size_dimensions(missing, (1000, 2000, 600))
 assert completed == (1000.0, 2000.0, 600.0)
 filled_match = match_attachment_size([missing], missing, (1000, 2000, 600))
@@ -74,6 +75,36 @@ assert filled_match is not None
 assert filled_match["height_mm"] is None and filled_match["depth_mm"] is None
 assert filled_match["size_match_height_mm"] == 2000
 assert filled_match["size_match_depth_mm"] == 600
+
+# The current catalogue stores the hood's cabinet-depth tier in height_mm.
+bundle = json.loads((ROOT / "database/attachment-v2/generated/attachment-bundle.json").read_text(encoding="utf-8"))
+hoods = [dict(item, attachment_price_id=item["source_row_no"])
+         for item in bundle["catalog"] if item["item_name"] == "通风顶罩"]
+hood = next(item for item in hoods if item["category_level2"] == "通风顶罩")
+hoods = [dict(item, category_level2="通风顶罩") for item in hoods]
+hood = dict(hood, manual_inputs={"通风顶罩高度": 1850})
+for depth, expected_id, height in ((600, 189, 80), (800, 193, 100)):
+    for cabinet_height in (1850, 2200):
+        match = match_attachment_size(hoods, hood, (800, cabinet_height, depth))
+        assert match["attachment_price_id"] == expected_id
+        assert match["manual_inputs"]["通风顶罩高度"] == height
+        assert match["size_match_exact"] and "unit_price_override" not in match
+        assert (match["height_mm"], match["depth_mm"]) == (depth, height)
+        assert size_match_display_text(match) == f"宽 800 × 深 {depth} × 罩高 {height} mm"
+# Width has priority even when the exact-depth record is another width.
+width_first = [item for item in hoods if item["source_row_no"] in (189, 194)]
+match = match_attachment_size(width_first, hood, (800, 1850, 800))
+assert match["attachment_price_id"] == 189 and match["size_match_height_mm"] == 80
+assert math.isclose(match["size_match_ratio"], 1680 / 1480)
+# A midpoint tie deterministically picks the smaller tier.
+assert match_attachment_size(hoods, hood, (800, 1850, 700))["attachment_price_id"] == 189
+saved = dict(hood, model_code="OLD", quantity=2, attachment_price_id=195)
+match = match_catalog_attachment(saved, hoods, (800, 1850, 600))
+resolved = resolve_size_matched_attachment(saved, match, "offline")
+assert selected_input(resolved) == {
+    "attachment_price_id": 189, "quantity": 2, "attachment_price_sign": 1,
+    "manual_inputs": {"通风顶罩高度": 80},
+}
 
 unsafe = row(21, "防雨顶", 1000, 2000, 600, "100-120")
 unsafe_match = match_attachment_size([unsafe], unsafe, (1050, 2000, 600))

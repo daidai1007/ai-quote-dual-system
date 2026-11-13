@@ -107,7 +107,7 @@ export function calculateStandaloneAttachment(source, data) {
   }
   if(!rule&&!valid(manual.成本单价,true))missing.push('成本单价');
   if(missing.length)return pending(missing,{standalone_environment:environment});
-  const result=calculateAttachment({quantity:1,attachment_price_sign:1,manual_inputs:manual},catalog,rule?[rule]:[],environment);
+  const result=calculateAttachment({quantity:1,attachment_price_sign:1,manual_inputs:manual},catalog,rule?[rule]:[],environment,{standalone:true});
   if(result.status==='ERROR')return {...base,...result,standalone_attachment:true};
   if(!rule){result.formula_unit_cost=money(manual.成本单价);result.formula_amount=result.formula_unit_cost;
     result.formula_cost_edited=true;result.formula_unit_cost_override=result.formula_unit_cost;

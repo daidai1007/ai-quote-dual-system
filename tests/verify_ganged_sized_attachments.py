@@ -31,7 +31,7 @@ FAMILIES = (
     ("安装附件", "分段板", "分段板高度", 150),
     ("控制柜附件", "内门", None, 1800),
     ("控制柜附件", "玻璃门", None, 1800),
-    ("控制柜附件", "通风顶罩", "通风顶罩高度", 250),
+    ("控制柜附件", "通风顶罩", "通风顶罩高度", 80),
 )
 
 
@@ -41,7 +41,8 @@ def fixture():
         pair = [
             dict(attachment_price_id=10 * index + child, item_name=name,
                  category_level1=category, category_level2=name,
-                 width_mm=width, depth_mm=600, height_mm=height,
+                 width_mm=width, depth_mm=height if name == "通风顶罩" else 600,
+                 height_mm=600 if name == "通风顶罩" else height,
                  price=100 * index + child, catalog_version="offline")
             for child, width in enumerate((800, 1000))
         ]

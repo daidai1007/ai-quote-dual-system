@@ -167,6 +167,7 @@ COEFFICIENT_FIELDS = (
     ("surface_price", "表面处理价格", 26.00, 2),
 )
 SURFACE_DEFAULT_PRICES = {"橘纹": 26.0, "平光": 30.0, "无": 0.0}
+THICKNESS_COEFFICIENT_KEY = "thickness_surcharge_coefficient"
 WORKBENCH_WINDOW_TITLE = "AI 双报价系统 · 2026.11.06.03"
 ORDER_WORKSPACE_SUFFIX = ".aiquote"
 ORDER_WORKSPACE_ROOT = Path(r"G:\gongsi\banjinxitong\板件后续二次修改")
@@ -4170,14 +4171,25 @@ class _CostCoefficientDialog(QDialog):
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(12)
         columns = 4 if shell.width() >= 560 else 2
-        for index, (key, label, _default, decimals) in enumerate(COEFFICIENT_FIELDS):
-            source = window.scheme2_cost_controls[key]
-            control = _sidebar_price_spin(source.value(), decimals)
+        item = _selected_item(window)
+        fields_to_edit = (*COEFFICIENT_FIELDS, (THICKNESS_COEFFICIENT_KEY, "料厚补价系数", 10.0, 2))
+        for index, (key, label, _default, decimals) in enumerate(fields_to_edit):
+            if key == THICKNESS_COEFFICIENT_KEY:
+                source = window.thickness_surcharge_coefficient_spin
+                value = thickness_surcharge_coefficient(item) if item is not None else source.value()
+            else:
+                source = window.scheme2_cost_controls[key]
+                value = source.value()
+            control = _sidebar_price_spin(value, decimals)
             control.setObjectName("scheme2CoefficientInput")
             control.setRange(source.minimum(), source.maximum())
             control.setDecimals(source.decimals())
-            control.setValue(source.value())
+            control.setValue(value)
             control.setAccessibleName(label)
+            if key == THICKNESS_COEFFICIENT_KEY:
+                control.setToolTip(source.toolTip())
+                control.setEnabled(source.isEnabled() if item is None else
+                                   not is_standalone(item) and _number(item.get("cabinet_body_thickness_mm"), 1.5) > 1.5)
             self.controls[key] = control
             field = _field(label, control)
             field.findChild(QLabel, "scheme2FieldLabel").setWordWrap(True)
@@ -4202,19 +4214,31 @@ class _CostCoefficientDialog(QDialog):
 
 
 def _show_cost_coefficients(window):
-    if getattr(window, "_quote_scheme_read_only", False):
+    if getattr(window, "_quote_scheme_read_only", False) or _received_cost_view(window):
         return
     _sync_sidebar(window)
+    item = _selected_item(window)
+    source = window.thickness_surcharge_coefficient_spin
+    old_coefficient = thickness_surcharge_coefficient(item) if item is not None else source.value()
     dialog = _CostCoefficientDialog(window)
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return
     changes = [
         (key, control.value()) for key, control in dialog.controls.items()
-        if not math.isclose(control.value(), window.scheme2_cost_controls[key].value(), abs_tol=1e-6)
+        if key != THICKNESS_COEFFICIENT_KEY
+        and not math.isclose(control.value(), window.scheme2_cost_controls[key].value(), abs_tol=1e-6)
     ]
     for key, value in changes:
         window.scheme2_cost_controls[key].setValue(value)
         _apply_cost_control(window, key, value)
+    coefficient = dialog.controls[THICKNESS_COEFFICIENT_KEY]
+    if coefficient.isEnabled() and not math.isclose(coefficient.value(), old_coefficient, abs_tol=1e-6):
+        if item is None:
+            source.setValue(coefficient.value())
+            _set_dirty(window, True)
+        else:
+            item[THICKNESS_COEFFICIENT_KEY] = coefficient.value()
+            window.refresh_summary()
 
 
 def _apply_cost_control(window, key, value):
@@ -7705,16 +7729,10 @@ def _configure_option_page(window, namespace):
         coefficient = _sidebar_price_spin(10, 2)
         coefficient.setAccessibleName("料厚补价系数")
         coefficient.setToolTip("仅 JS、JA、JE、JP、JM 的非标料厚使用：含废料成本计价重量差 × 本系数，补价不打折。默认10元/kg。")
+        coefficient.setParent(window)
+        coefficient.hide()
         window.thickness_surcharge_coefficient_spin = coefficient
-        coefficient_field = _option_field(window, "补价系数", coefficient)
-        _promote_option_label(coefficient_field)
-        thickness_row = QFrame()
-        thickness_layout = QHBoxLayout(thickness_row)
-        thickness_layout.setContentsMargins(0, 0, 0, 0)
-        thickness_layout.setSpacing(8)
-        thickness_layout.addWidget(thickness_field, 1)
-        thickness_layout.addWidget(coefficient_field, 1)
-        form.addWidget(thickness_row)
+        form.addWidget(thickness_field)
         window._sync_thickness_coefficient_state = lambda: coefficient.setEnabled(
             float(thickness.value()) > 1.5 and not getattr(window, '_quote_scheme_read_only', False))
         def thickness_changed(_value):

@@ -83,6 +83,31 @@ test('inner/glass/segment use W+H, while both rain-cover catalogue layouts use W
   }
 });
 
+test('catalogue hood links the selected cabinet depth tier to coating height',()=>{
+  for (const [sourceRow,depth,hoodHeight,area] of [[189,600,80,1.1965],[193,800,100,1.5225]]) {
+    const item=bundle.catalog.find(row=>row.source_row_no===sourceRow);
+    const rule=bundle.rules.find(row=>row.source_row_no===49);
+    assert.equal(item.item_name,'通风顶罩');
+    const target={...env,depth_mm:depth,height_mm:1850};
+    const input={quantity:2,manual_inputs:{通风顶罩高度:1850}};
+    const result=calculateAttachment(input,item,[rule],target);
+    assert.equal(result.status,'CALCULATED',result.error);
+    assert.equal(result.manual_inputs.通风顶罩高度,hoodHeight);
+    assert.equal(input.manual_inputs.通风顶罩高度,1850);
+    assert.equal(result.size_match_depth_mm,depth);
+    assert.equal(result.size_match_height_mm,hoodHeight);
+    assert.equal(result.size_match_exact,true);
+    assert.equal(result.quick_amount,round(item.price*2));
+    assert.ok(Math.abs(result.spray_area_m2-area)<1e-10);
+    const taller=calculateAttachment(input,item,[rule],{...target,height_mm:2250});
+    assert.equal(taller.quick_amount,result.quick_amount);
+    assert.equal(taller.spray_area_m2,result.spray_area_m2);
+    assert.equal(round(taller.labor_cost-result.labor_cost),4);
+    const nonstandard=calculateAttachment(input,item,[rule],{...target,width_mm:850});
+    assert.equal(nonstandard.unit_price_override,round(item.price*(850+depth+hoodHeight)/(800+depth+hoodHeight),6));
+  }
+});
+
 test('fixed column chooses and prices by height only',()=>{
   const column={...items[6],width_mm:9999,height_mm:1600,depth_mm:9999,price:100};
   const first=calculateAttachment({quantity:2},column,column.rules,env);

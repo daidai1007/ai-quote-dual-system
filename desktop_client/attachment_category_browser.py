@@ -137,6 +137,7 @@ SIZE_MATCH_METADATA_KEYS = (
     "size_match_exact",
     "size_match_original_price",
     "size_match_warning",
+    "size_match_hood_linked",
 )
 
 
@@ -602,7 +603,7 @@ def size_match_axes(item: dict) -> tuple[int, ...]:
         return (1,)
     if name in {"安装板", "JK安装板", "内门", "玻璃门", "分段板"}:
         return (0, 1)
-    if name == "防雨顶":
+    if name == "防雨顶" or is_ventilation_hood(item):
         return (0, 2)
     return (0, 1, 2)
 
@@ -611,6 +612,11 @@ def size_match_display_text(item: dict) -> str | None:
     """Show the catalogue dimensions that actually determine matching."""
 
     name = size_match_attachment_name(item)
+    if is_ventilation_hood(item):
+        dimensions = ventilation_hood_dimensions(item)
+        if dimensions is not None:
+            width, hood_height, depth = dimensions
+            return f"宽 {width:g} × 深 {depth:g} × 罩高 {hood_height:g} mm"
     if name not in {"侧板", "固定立柱", "安装板", "JK安装板",
                     "内门", "玻璃门", "分段板", "防雨顶"}:
         return None
@@ -678,11 +684,31 @@ def size_match_target_dimensions(source: dict, cabinet_dimensions) -> tuple[floa
         height = _number(manual.get("玻璃门高度"))
         if width is not None and width > 0 and height is not None and height > 0:
             values[0], values[1] = width, height
-    elif name in {"分段板", "通风顶罩"}:
-        height = _number(manual.get(f"{name}高度"))
+    elif name == "分段板":
+        height = _number(manual.get("分段板高度"))
+        if height is not None and height > 0:
+            values[1] = height
+    elif name == "通风顶罩" and not is_ventilation_hood(source):
+        height = _number(manual.get("通风顶罩高度"))
         if height is not None and height > 0:
             values[1] = height
     return tuple(values)
+
+
+def is_ventilation_hood(item: dict) -> bool:
+    return (not item.get("custom")
+            and (item.get("category_level1") or item.get("attachment_category")) == "控制柜附件"
+            and size_match_attachment_name(item) == "通风顶罩")
+
+
+def ventilation_hood_dimensions(item: dict) -> tuple[float, float, float] | None:
+    """Return physical W/hood-H/cabinet-D from the catalogue W/H slots."""
+    width = _number(item.get("width_mm"))
+    depth = _number(item.get("height_mm"))
+    hood_height = {600: 80, 800: 100}.get(depth)
+    if width is None or not math.isfinite(width) or width <= 0 or hood_height is None:
+        return None
+    return width, hood_height, depth
 
 
 def completed_size_dimensions(
@@ -905,10 +931,16 @@ def match_attachment_size(
     # Each attachment family uses only its physical catalogue dimensions for
     # both nearest-row selection and sale-price scaling.
     match_name = size_match_attachment_name(source)
+    linked_hood = is_ventilation_hood(source)
     axes = size_match_axes(source)
-    target_perimeter = sum(target[index] for index in axes)
+    def price_size(dimensions):
+        # Preserve the three-dimension ratio for hoods, with the same linked
+        # hood height in the target and reference once a depth tier is chosen.
+        return sum(dimensions) if linked_hood else sum(dimensions[index] for index in axes)
 
     def matched_dimensions(item: dict) -> tuple[float, float, float] | None:
+        if linked_hood:
+            return ventilation_hood_dimensions(item)
         completed = completed_size_dimensions(item, target)
         if completed is None or match_name != "防雨顶":
             return completed
@@ -921,11 +953,9 @@ def match_attachment_size(
             return None
         return completed[0], completed[1], roof_depth
 
-    def choice_key(item: dict):
-        completed = matched_dimensions(item)
-        if completed is None:
-            return (float("inf"), float("inf"), float("inf"), (), (), (), (), float("inf"))
-        perimeter = sum(completed[index] for index in axes)
+    def choice_key(candidate):
+        item, completed = candidate
+        perimeter = price_size(completed)
         squared_distance = sum((completed[index] - target[index]) ** 2 for index in axes)
         price_id = _number(item.get("attachment_price_id"))
         # A fixed base's explicitly entered/recognized height is the primary
@@ -942,10 +972,13 @@ def match_attachment_size(
             # a known depth; it remains a fallback when no depth is recorded.
             depth = _number(item.get("depth_mm"))
             height_rank = abs(depth - target[2]) if depth is not None and depth > 0 else float("inf")
+        rank = (
+            (abs(completed[0] - target[0]), abs(completed[2] - target[2]))
+            if linked_hood else
+            (height_rank, abs(perimeter - price_size(target)), squared_distance)
+        )
         return (
-            height_rank,
-            abs(perimeter - target_perimeter),
-            squared_distance,
+            *rank,
             tuple(completed[index] for index in axes),
             _natural_text_key(item.get("model_code")),
             _natural_text_key(item.get("variant")),
@@ -953,16 +986,23 @@ def match_attachment_size(
             float("inf") if price_id is None else price_id,
         )
 
-    matched = min(candidates, key=choice_key)
-    completed = matched_dimensions(matched)
-    if completed is None:
+    eligible = [(item, dimensions) for item in candidates
+                if (dimensions := matched_dimensions(item)) is not None]
+    if not eligible:
         return None
-    matched_perimeter = sum(completed[index] for index in axes)
+    matched, completed = min(eligible, key=choice_key)
+    if linked_hood:
+        target = target[0], completed[1], target[2]
+    target_perimeter = price_size(target)
+    matched_perimeter = price_size(completed)
     if matched_perimeter <= 0:
         return None
     exact = all(abs(completed[index] - target[index]) <= 0.0001 for index in axes)
     ratio = 1.0 if exact else target_perimeter / matched_perimeter
     selected = dict(matched)
+    if linked_hood:
+        selected["size_match_hood_linked"] = True
+        selected["manual_inputs"] = {**(source.get("manual_inputs") or {}), "通风顶罩高度": completed[1]}
     material_prices = matched.get("quick_face_prices_by_material") or {}
     original_price = _number(material_prices.get(material_code, matched.get("price")))
     selected.update({

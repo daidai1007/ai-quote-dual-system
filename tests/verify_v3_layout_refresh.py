@@ -396,8 +396,8 @@ attachment_dialog.catalog = [
         "category_level1": "控制柜附件",
         "category_level2": "通风顶罩",
         "width_mm": 760,
-        "height_mm": 120,
-        "depth_mm": 500,
+        "height_mm": 600,
+        "depth_mm": 80,
     },
     {
         "attachment_price_id": 19,
@@ -601,7 +601,6 @@ explicit_rules = {
     "rain_cover": "防雨顶",
     "ventilation_hood": "通风顶罩",
 }
-attachment_dialog.request_ventilation_hood_height = lambda _initial: (120.0, True)
 quick_selection_change_count = [0]
 attachment_dialog.attachment_selection_changed = lambda: quick_selection_change_count.__setitem__(
     0, quick_selection_change_count[0] + 1
@@ -645,7 +644,8 @@ for rule, expected_name in explicit_rules.items():
             item for item in attachment_dialog.attachments
             if item.get("item_name") == "通风顶罩"
         )
-        assert selected["size_match_target_height_mm"] == 120
+        assert selected["size_match_target_height_mm"] == 80
+        assert selected["manual_inputs"]["通风顶罩高度"] == 80
         assert selected["attachment_price_id"] == 18
 assert {
     item.get("item_name") for item in attachment_dialog.attachments

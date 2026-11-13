@@ -10,7 +10,7 @@ from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'desktop_client'))
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton, QWidget
 from attachment_category_browser import match_attachment_size, match_named_quick_attachment_size
 from attachment_v2_client import merge_cost
 import scheme2_ui as ui
@@ -22,6 +22,8 @@ NAMES=('固定底座','活动底座','内门','玻璃门','JP控制柜侧板','�
 def selected(name):
     source=dict(attachment_price_id=1,category_level1='底座' if '底座' in name else '控制柜附件',
                 item_name=name,width_mm=600,height_mm=80 if '底座' in name else 1600,depth_mm=500,price=100)
+    if name=='通风顶罩':
+        source.update(height_mm=600,depth_mm=80)
     target=(800,100 if '底座' in name else 1800,700)
     return match_attachment_size([source],source,target)
 
@@ -29,6 +31,42 @@ def money(price,quantity):
     return float((Decimal(str(price))*Decimal(str(quantity))).quantize(Decimal('.01'),rounding=ROUND_HALF_UP))
 
 class SizedPrices(unittest.TestCase):
+    def test_hood_button_uses_cabinet_depth_and_carries_linked_height_to_popup(self):
+        ns=v3_launcher.load_v3_namespace()
+        parent=QWidget()
+        self.addCleanup(parent.close)
+        parent.quote_spec_edit=QLineEdit(parent)
+        parent.selected_product_code=lambda:'JP_SINGLE'
+        parent.door_counts=lambda:(1,0)
+        parent.refresh_summary=lambda:None
+        catalog=[
+            dict(attachment_price_id=i, category_level1='控制柜附件', category_level2='通风顶罩',
+                 item_name='通风顶罩', width_mm=width, height_mm=depth, depth_mm=height, price=price)
+            for i,width,depth,height,price in ((1,800,600,80,225.30),(2,800,800,100,287.20),(3,1200,800,100,392.08))
+        ]
+        for depth,height,identifier in ((600,80,1),(800,100,2)):
+            parent.quote_spec_edit.setText(f'800*{depth}*1850')
+            dialog=ns['AttachmentDialog']([],api_url='http://127.0.0.1:1',parent=parent,
+                                           target_dimensions=(800,1850,depth))
+            self.addCleanup(dialog.close)
+            dialog.catalog=copy.deepcopy(catalog)
+            dialog.rebuild_table()
+            dialog.show()
+            app.processEvents()
+            button=next(button for button in dialog.findChildren(QPushButton)
+                        if button.isVisible() and button.property('attachmentQuickRule')=='ventilation_hood')
+            button.click()
+            row,=dialog.collect_attachments()
+            self.assertEqual(row['attachment_price_id'],identifier)
+            self.assertEqual(row['manual_inputs'],{'通风顶罩高度':height})
+            item={'attachments':[dict(row,status='CALCULATED',formula_amount=10,quick_amount=100)]}
+            popup=ui.AttachmentEditor(parent,item)
+            self.addCleanup(popup.close)
+            self.assertEqual(popup.table.item(0,popup.COL_SPECIFICATION).text(),f'宽 800 × 深 {depth} × 罩高 {height} mm')
+            button.click()
+            self.assertEqual(dialog.collect_attachments(),[])
+            dialog.close()
+
     def test_old_and_new_api_prices_exact_sizes_and_manual_overrides(self):
         for name in NAMES:
             with self.subTest(name=name):

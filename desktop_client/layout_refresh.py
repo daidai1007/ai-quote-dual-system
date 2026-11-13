@@ -221,6 +221,7 @@ from attachment_category_browser import (
     is_automatic_attachment_selection,
     is_manual_attachment_selection,
     is_jp_product,
+    is_ventilation_hood,
     installation_board_catalogue_name,
     installation_board_match_name_for_product,
     match_attachment_size,
@@ -6413,14 +6414,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 "控制柜附件",
                 "通风顶罩",
                 "通风顶罩",
-                (
-                    dimensions[0],
-                    float(
-                        getattr(self, "ventilation_hood_manual_height_mm", None)
-                        or dimensions[1]
-                    ),
-                    dimensions[2],
-                ) if dimensions is not None else None,
+                dimensions,
             ),
             DEFAULT_JP_SIDE_PANEL: side,
         }
@@ -6469,7 +6463,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
         if attachment_names_manual_only(self):
             # A copied logical name has no old catalogue ID/model to precheck.
             # Resolve that same choice, without adding any default choices.
-            from attachment_v2_client import match_catalog_attachment, preserve_copied_attachment_name
+            from attachment_v2_client import (
+                match_catalog_attachment, preserve_copied_attachment_name, resolve_size_matched_attachment,
+            )
             selections=[]
             for source in getattr(self,'attachments',[]):
                 if source.get('custom'):
@@ -6481,6 +6477,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 if matched is not None:
                     selected={**matched,**source,'attachment_price_id':matched.get('attachment_price_id'),
                         'catalog_version':matched.get('catalog_version')}
+                    if matched.get("size_match_hood_linked"):
+                        selected = resolve_size_matched_attachment(source, matched, matched.get("catalog_version"))
                     if matched.get('model_code') is not None:
                         selected['model_code']=matched['model_code']
                     selections.append(preserve_copied_attachment_name(source,selected))
@@ -6552,10 +6550,12 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     def rematch_selected_for_dimensions(self) -> int:
         """Re-match only when this attachment's relevant physical axes changed."""
 
+        from attachment_v2_client import resolve_size_matched_attachment
+
         changed = 0
         rematched = []
         for selected in getattr(self, "attachments", []):
-            if not isinstance(selected, dict) or size_match_group_key(selected) is None:
+            if not isinstance(selected, dict) or selected.get("custom") or size_match_group_key(selected) is None:
                 rematched.append(selected)
                 continue
             target = size_target_for_source(self, selected)
@@ -6571,10 +6571,13 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 )
             )
             try:
-                target_unchanged = all(
-                    stored_target[index] is not None
-                    and abs(float(stored_target[index]) - target[index]) <= 0.0001
-                    for index in size_match_axes(selected)
+                target_unchanged = (
+                    (not is_ventilation_hood(selected) or selected.get("size_match_hood_linked"))
+                    and all(
+                        stored_target[index] is not None
+                        and abs(float(stored_target[index]) - target[index]) <= 0.0001
+                        for index in size_match_axes(selected)
+                    )
                 )
             except (TypeError, ValueError):
                 target_unchanged = False
@@ -6585,6 +6588,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             if matched is None:
                 rematched.append(selected)
                 continue
+            if matched.get("size_match_hood_linked"):
+                matched = resolve_size_matched_attachment(
+                    selected, matched, matched.get("catalog_version") or selected.get("catalog_version")
+                )
             matched["quantity"] = selected.get("quantity", 1)
             if selected.get('copied_attachment_name'):
                 matched['item_name'] = selected['copied_attachment_name']
@@ -6808,10 +6815,9 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 detail += f" · 宽 {dimensions[0]:g}×深 {dimensions[2]:g} mm"
             missing_tip = "当前产品对应的附件目录中没有可用于尺寸匹配的防雨顶"
         elif rule == QUICK_VENTILATION_HOOD:
-            manual_height = getattr(self, "ventilation_hood_manual_height_mm", None)
-            detail = "通风顶罩 · 高度人工填写"
-            if manual_height is not None:
-                detail = f"通风顶罩 · 人工高度 {float(manual_height):g} mm"
+            detail = "通风顶罩"
+            if candidate is not None:
+                detail += " · " + format_attachment_size(candidate)
             missing_tip = "控制柜附件目录中没有可用于当前尺寸匹配的通风顶罩"
         elif rule == QUICK_GANGED_FILL_INSTALLATION_BOARD:
             detail = "填充安装板 · 并柜"
@@ -7014,31 +7020,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             button.style().polish(button)
             button.update()
 
-    def request_ventilation_hood_height(self, initial_height: float) -> tuple[float, bool]:
-        dialog = QDialog(self)
-        dialog.setWindowTitle("通风顶罩高度")
-        layout = QVBoxLayout(dialog)
-        label = QLabel("请输入通风顶罩高度（mm）：", dialog)
-        height_spin = QDoubleSpinBox(dialog)
-        height_spin.setRange(1.0, 10000.0)
-        height_spin.setDecimals(1)
-        height_spin.setSuffix(" mm")
-        height_spin.setValue(float(initial_height))
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel,
-            dialog,
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确认匹配")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(label)
-        layout.addWidget(height_spin)
-        layout.addWidget(buttons)
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        return float(height_spin.value()), accepted
-
     def toggle_default_selection(self, rule: str) -> None:
         if rule == DEFAULT_FIXED_BASE:
             ganged_candidates = [
@@ -7065,18 +7046,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                 self.default_quantity_manual_overrides.discard(rule)
                 self.rebuild_table()
                 return
-        selected = checked_sources(self, rule)
-        if rule == QUICK_VENTILATION_HOOD and not selected:
-            dimensions = getattr(self, "default_match_dimensions", None)
-            initial_height = float(
-                getattr(self, "ventilation_hood_manual_height_mm", None)
-                or (dimensions[1] if dimensions is not None else 100.0)
-            )
-            height, accepted = self.request_ventilation_hood_height(initial_height)
-            if not accepted:
-                return
-            self.ventilation_hood_manual_height_mm = float(height)
-            build_default_matches(self)
         candidate = getattr(self, "default_matches", {}).get(rule)
         if candidate is None:
             return
@@ -7091,9 +7060,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             set_default_quantity_for_rule(self, rule)
         elif default_is_selected:
             set_checked_for_rule(self, rule, None)
-            if rule == QUICK_VENTILATION_HOOD:
-                self.ventilation_hood_manual_height_mm = None
-                build_default_matches(self)
             self.default_selection_opt_outs.add(rule)
             self.default_quantity_manual_overrides.discard(rule)
         else:
@@ -7682,7 +7648,7 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                                 "宽、高" if is_installation_board(matched) or match_name in {"内门", "玻璃门", "分段板"}
                                 else "高、深" if match_name == "侧板"
                                 else "高度" if match_name == "固定立柱"
-                                else "宽、深" if match_name == "防雨顶"
+                                else "宽、深" if match_name in {"防雨顶", "通风顶罩"}
                                 else "附件尺寸"
                             )
                             quick_match_notice = (
@@ -7715,6 +7681,10 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
                                 quick_match_notice = (
                                     "已按柜体宽、深匹配最相近防雨顶，并按宽+深比例折价："
                                     f"比例 {float(matched.get('size_match_ratio', 1)):g}。"
+                                )
+                            elif size_match_attachment_name(matched) == "通风顶罩":
+                                quick_match_notice = (
+                                    f"已按柜体宽度、深度匹配通风顶罩，罩高 {matched['size_match_height_mm']:g} mm。"
                                 )
                             else:
                                 quick_match_notice = (
@@ -7867,6 +7837,8 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
             ):
                 if source.get(key) is not None:
                     output[key] = source[key]
+            if source.get("size_match_hood_linked"):
+                output["manual_inputs"] = deepcopy(source["manual_inputs"])
             if source.get("matched_price") is not None:
                 output["matched_price"] = source["matched_price"]
             if source.get("unit_price_override") is not None:
@@ -8061,7 +8033,6 @@ def _install_attachment_default_selection_filters(namespace: dict) -> None:
     dialog_class.rebuild_table = rebuild_table_with_defaults
     dialog_class.apply_filter = apply_classification_filter
     dialog_class.collect_attachments = collect_attachments_with_metadata
-    dialog_class.request_ventilation_hood_height = request_ventilation_hood_height
     dialog_class.table_item_changed = table_item_changed_with_defaults
     dialog_class.select_attachment_from_row_click = select_attachment_from_row_click
     dialog_class.update_selection_hint = update_selection_hint_with_row_click
