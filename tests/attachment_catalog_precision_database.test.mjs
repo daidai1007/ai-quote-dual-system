@@ -183,10 +183,7 @@ test('real DB: exact catalogue audit, ordinary/ganged save, refresh and popup-dr
           assert.equal(quickQuotationAmount(workbook.getWorksheet('报价').getCell('G11')),item.quote_display.total);
           assert.equal(workbook.getWorksheet('成本').getCell('F11').value,hydrated.formula.total_cost);
           assert.equal(workbook.getWorksheet('成本').getCell('G11').value,moneyProduct(hydrated.formula.total_cost,quantity));
-          const detail=workbook.getWorksheet('附件双报价明细');
-          assert.equal(detail.getCell('L2').value,sale);
-          assert.equal(detail.getCell('W2').value,75.25);
-          assert.equal(detail.getCell('AF2').value,'当前附件弹窗确认快照');
+          assert.deepEqual(workbook.worksheets.map(sheet=>sheet.name),['成本','报价','报价2','成本明细']);
         }
       }
       assert.equal(frozen(ordinary),before);

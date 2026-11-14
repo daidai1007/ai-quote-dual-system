@@ -94,7 +94,7 @@ test('reverted 2mm uplift: JS JA JE use original cabinet face across thickness, 
   const output=await request('/api/quotes/export',payload,token);
   assert.equal(output.status,200,output.status===200?'':await output.text());
   const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(await output.arrayBuffer()));
-  assert.deepEqual(book.worksheets.map(s=>s.name),['成本','报价','报价2','成本明细','附件双报价明细']);
+  assert.deepEqual(book.worksheets.map(s=>s.name),['成本','报价','报价2','成本明细']);
   const publicQuote=book.getWorksheet('报价2');
   assert.equal(publicQuote.getCell('F11').value.formula,"'报价'!F11");
   assert.equal(publicQuote.getCell('F11').value.result,117);

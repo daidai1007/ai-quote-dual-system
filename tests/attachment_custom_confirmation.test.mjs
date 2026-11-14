@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createAttachmentService} from '../api/attachment_service.mjs';
-import {addAttachmentSnapshotSheet} from '../attachment_snapshot_export.mjs';
 import {formulaAttachmentLineAmount,quickAttachmentLineAmount} from '../quick_discount_rules.mjs';
 
 const lineId='11111111-1111-4111-8111-111111111111';
@@ -40,14 +39,4 @@ test('确认与导出保留人工新增附件，仅对目录附件校验ID',asyn
 test('未标记为人工新增的无ID附件仍被拒绝',async()=>{
   const invalid={...item,attachments:[savedAttachment,{item_name:'无编号附件',quantity:1}]};
   await assert.rejects(()=>service.hydrateDocument({items:[invalid]}),/必须提供有效 attachment_price_id/);
-});
-
-test('附件明细表显示人工新增行，不伪造数据库选择ID',()=>{
-  const rows=[];
-  const sheet={rowCount:0,columns:[],views:[],addRow(values){rows.push(values);this.rowCount=rows.length;return {};},
-    getRow(){return {font:{},height:0};},eachRow(){}};
-  const workbook={addWorksheet(){return sheet;}};
-  addAttachmentSnapshotSheet(workbook,{items:[{...item,attachments:[savedAttachment,item.attachments[1]]}]});
-  assert.equal(rows.length,3);
-  assert.equal(rows[2][1],null);assert.equal(rows[2][5],'临时加强件');assert.equal(rows[2][24],'人工新增');
 });

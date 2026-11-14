@@ -30,7 +30,7 @@ COPY api/experience_dimension_match.mjs ./api/
 COPY api/contract_ledger_data.mjs api/contract_ledger_service.mjs ./api/
 COPY api/quote_delivery_document.mjs api/quote_delivery_service.mjs ./api/
 COPY api/jp_auxiliary_weight.mjs ./api/
-COPY quote_order_nature.mjs exceljs_range_adapter.mjs quote_export_contract.mjs quick_discount_rules.mjs export_dual_quote_workbook.mjs attachment_snapshot_export.mjs ./
+COPY quote_order_nature.mjs exceljs_range_adapter.mjs quote_export_contract.mjs quick_discount_rules.mjs export_dual_quote_workbook.mjs ./
 COPY attachment_cost_allocation.mjs ./
 COPY tax_cost.mjs ./
 COPY public_quote_sheet.mjs ./

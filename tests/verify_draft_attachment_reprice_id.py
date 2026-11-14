@@ -379,7 +379,7 @@ class DraftAttachmentRepriceId(unittest.TestCase):
             "quick_amount":0, "quick_amount_override":0, "computer_tray_auto_match":True}]
         editor = ui.AttachmentEditor(self.window, self.item)
         self.addCleanup(editor.close)
-        self.assertEqual(editor.table.columnCount(), 8)
+        self.assertEqual(editor.table.horizontalHeader().hiddenSectionCount(), 2)
         self.assertEqual(editor.table.item(0, editor.COL_NAME).text(), "电脑托盘")
         self.assertIsNone(editor.table.cellWidget(0, editor.COL_SPECIFICATION))
         for tray in trays:

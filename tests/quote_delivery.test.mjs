@@ -59,11 +59,11 @@ test('delivery rejects unclassified formal face and inconsistent prices without 
  delete broken.draft_items[0].quote_display.unit_price;
  assert.throws(()=>deliveryDocument(broken,'BJ-20261023-000001',1),/未确定/);
 });
-test('real recipient Excel uses fixed version, nature and amount and has no cost sheet',async()=>{
+test('recipient Excel shows the fixed version and amounts with empty order-nature cells',async()=>{
  const d=deliveryDocument(snapshot,'BJ-20261023-000001',2);
  const book=new ExcelJS.Workbook();await book.xlsx.load(await deliveryWorkbook(d));
  assert.deepEqual(book.worksheets.map(s=>s.name),['报价单']);const sheet=book.worksheets[0];
- for(const [cell,value] of [['B2',d.scheme_no],['E2','V3'],['B3','内部'],['E3',350],['B4',snapshot.company],['F10',175],['G10',350],['G11',350]])assert.equal(sheet.getCell(cell).value,value,cell);
+ for(const [cell,value] of [['B2',d.scheme_no],['E2','V3'],['A3',null],['B3',null],['E3',350],['B4',snapshot.company],['F10',175],['G10',350],['G11',350]])assert.equal(sheet.getCell(cell).value,value,cell);
  assert.equal(sheet.getCell('H10').value,'示例备注');
 });
 

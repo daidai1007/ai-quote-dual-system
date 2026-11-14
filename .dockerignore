@@ -9,6 +9,7 @@
 !api/quote_scheme_service.mjs
 !api/quote_analysis_service.mjs
 !api/attachment_service.mjs
+!api/attachment_maintenance.mjs
 !api/standalone_attachment.mjs
 !api/contract_item_row_layout.mjs
 !api/quick_match_override.mjs
@@ -34,7 +35,6 @@
 !quick_discount_rules.mjs
 !public_quote_sheet.mjs
 !export_dual_quote_workbook.mjs
-!attachment_snapshot_export.mjs
 !api/name_login_service.mjs
 !api/quote_access_scope.mjs
 

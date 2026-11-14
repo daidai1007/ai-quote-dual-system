@@ -45,7 +45,7 @@ window = QWidget()
 window.refresh_summary = lambda: None
 item = {"attachments": [row], "formula": result["formula_cost"], "quick": result["quick_quote"]}
 editor = scheme2_ui.AttachmentEditor(window, item)
-assert editor.table.horizontalHeaderItem(editor.table.columnCount() - 1).text() == "折扣面价"
+assert editor.table.horizontalHeaderItem(editor.table.columnCount() - 1).text() == "折扣总价"
 assert editor.table.horizontalHeaderItem(editor.COL_NAME).text() == "名称"
 assert editor.table.item(0, editor.COL_SPECIFICATION).text().startswith("点击补充")
 assert float(editor.table.item(0, editor.COL_AMOUNT).text().replace(",", "")) == 0

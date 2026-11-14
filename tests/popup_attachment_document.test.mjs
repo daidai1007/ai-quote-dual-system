@@ -159,6 +159,7 @@ test('actual ordinary and ganged workbooks preserve popup fan sale and formula c
       await fs.writeFile(input,JSON.stringify(payload));
       await promisify(execFile)(process.execPath,[path.resolve('export_dual_quote_workbook.mjs'),input,output],{windowsHide:true});
       const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);projectQuotationAudit(book);
+      assert.deepEqual(book.worksheets.map(sheet=>sheet.name),['成本','报价','报价2','成本明细']);
       for(const [sheet,amount] of [['报价',480],['成本',280]]){
         const table=book.getWorksheet(sheet),column=table.getRow(10).values.findIndex(value=>value===fan.item_name);
         assert.ok(column>0,`${sheet} missing fan column`);
@@ -179,11 +180,6 @@ test('actual ordinary and ganged workbooks preserve popup fan sale and formula c
       assert.equal(management[0].getCell(10).value,.06);
       assert.equal(management[0].getCell(11).value,25.8);
       assert.equal(management[0].getCell(13).value,51.6);
-      const audit=book.getWorksheet('附件双报价明细');
-      assert.equal(audit.getCell('B2').value,null,'must not invent a database attachment-selection ID');
-      assert.equal(audit.getCell('AF2').value,'当前附件弹窗确认快照');
-      assert.equal(audit.getCell('AG2').value,9);
-      assert.equal(audit.getCell('AH2').value,count===2?1:null);
       if(process.env.AI_QUOTE_KEEP_POPUP_TEST_ARTIFACTS==='1'){
         await fs.copyFile(output,path.resolve(`outputs/popup-snapshot-${count}-cabinet.xlsx`));
       }
@@ -210,12 +206,21 @@ test('edited unit costs including quick-only and deduction survive hydration and
     await fs.writeFile(input,JSON.stringify(payload));
     await promisify(execFile)(process.execPath,[path.resolve('export_dual_quote_workbook.mjs'),input,output],{windowsHide:true});
     const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
-    const audit=book.getWorksheet('附件双报价明细');
-    assert.equal(audit.getCell('K2').value,25.25);
-    assert.equal(audit.getCell('L2').value,101);
-    assert.equal(audit.getCell('V2').value,12.5);
-    assert.equal(audit.getCell('W2').value,50);
-    assert.match(audit.getCell('Z2').value,/成本单价为人工调整值/);
+    const details=new Map();
+    book.getWorksheet('成本明细').eachRow(row=>{
+      if(row.getCell(4).value==='附件成本') details.set(row.getCell(5).value,row);
+    });
+    for (const row of [rows[0],rows[2],rows[3]]) {
+      const detail=details.get(row.item_name);
+      assert.equal(detail.getCell(10).value,row.formula_unit_cost_override*(row.attachment_price_sign??1));
+      assert.equal(detail.getCell(11).value,row.formula_amount*payload.items[0].quantity);
+    }
+    const quickOnly=details.get('仅面价附件');
+    assert.equal(quickOnly.getCell(11).value,0);
+    assert.doesNotMatch(String(quickOnly.getCell(7).value),/附件双报价明细/);
+    const quick=book.getWorksheet('报价');
+    const fanColumn=quick.getRow(10).values.findIndex(value=>value===fan.item_name);
+    assert.equal(quick.getCell(11,fanColumn).value,101);
     for(const bad of [null,-1,'invalid',1000000]){
       const input=quote([{...rows[0],formula_unit_cost_override:bad}]);
       await assert.rejects(harness().service.hydrateDocument({items:[input]}),/成本单价无效/);

@@ -222,10 +222,12 @@ test('V2服务读取STAGED预览、按ID双金额、人工错误阻断和历史�
   fs.writeFileSync(path.join(outputDir,'api-snapshot-export.json'),JSON.stringify(hydrated,null,2));
   execFileSync(process.execPath,[path.join(root,'export_dual_quote_workbook.mjs'),path.join(outputDir,'api-snapshot-export.json'),path.join(outputDir,'api-snapshot-export.xlsx')],{cwd:root,windowsHide:true});
   const workbook=new ExcelJS.Workbook();await workbook.xlsx.readFile(path.join(outputDir,'api-snapshot-export.xlsx'));
-  const sheet=workbook.getWorksheet('附件双报价明细');assert.equal(sheet.rowCount,5);
-  assert.equal(sheet.getCell(2,1).value,complete.quote_line_id);assert.equal(sheet.getCell(5,1).value,stainless.quote_line_id);
-  assert.equal(sheet.getCell(4,20).value,complete.attachments[2].auxiliary_list);
-  assert.equal(sheet.getCell(3,25).value,'仅快速报价');assert.equal(sheet.getCell(3,23).value,null);
+  assert.deepEqual(workbook.worksheets.map(sheet=>sheet.name),['成本','报价','报价2','成本明细']);
+  const quickOnly=complete.attachments.find(row=>row.status==='QUICK_ONLY');
+  const details=workbook.getWorksheet('成本明细');
+  const notes=details.getColumn(7).values;
+  assert.ok(notes.includes('当前产品无适用成本规则，仅快速报价'));
+  assert.ok(details.getColumn(5).values.includes(quickOnly.item_name));
   sql(`UPDATE calc.attachment_cost_rule SET fixed_cost=999 WHERE data_version='${original.data_version}' AND source_row_no=51;`,target);
   const historic=await service.hydrateDocument(document);
   assert.equal(historic.items[0].attachments[0].formula_unit_cost,6);

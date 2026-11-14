@@ -78,9 +78,8 @@ export async function deliveryWorkbook(document){
   sheet.columns=[{width:8},{width:23},{width:26},{width:10},{width:8},{width:17},{width:19},{width:38}];
   sheet.mergeCells('A1:H1');sheet.getCell('A1').value='报价单';
   sheet.getCell('A1').font={name:'微软雅黑',size:20,bold:true};sheet.getCell('A1').alignment={horizontal:'center'};sheet.getRow(1).height=38;
-  const nature=document.order_nature==='INTERNAL'?'内部':'外部';
   sheet.addRow(['编号',document.scheme_no,null,'版本',`V${document.quote_version}`,null,'日期',document.quote_date]);
-  sheet.addRow(['订单性质',nature,null,'含税金额',document.total,null,'币种','人民币']);
+  sheet.addRow([null,null,null,'含税金额',document.total,null,'币种','人民币']);
   sheet.addRow(['买方',document.customer,null,null,'卖方',document.seller.name]);
   sheet.mergeCells('B4:D4');sheet.mergeCells('F4:H4');
   sheet.addRow(['地址','','','','地址',document.seller.address]);sheet.mergeCells('F5:H5');

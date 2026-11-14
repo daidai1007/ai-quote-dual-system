@@ -1,8 +1,9 @@
-"""Actual Qt events for the selected-attachment amount's inline editing box."""
+"""Actual Qt events for editing the attachment's pre-discount unit price."""
 import os
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,7 +11,7 @@ sys.path.insert(0, str(ROOT/'desktop_client'))
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QDoubleSpinBox, QWidget
 import scheme2_ui as ui
 
 app = QApplication.instance() or QApplication([])
@@ -34,31 +35,32 @@ class AmountDoubleClick(unittest.TestCase):
         self.addCleanup(self.owner.close)
         self.addCleanup(self.dialog.close)
 
-    def begin_edit(self):
-        QTest.mouseDClick(self.amount.lineEdit(), Qt.MouseButton.LeftButton)
-        app.processEvents()
+    def click_price(self, row, *, double=True):
+        table = self.dialog.table
+        price = table.item(row, self.dialog.COL_DISCOUNTED_UNIT)
+        table.scrollToItem(price)
+        pos = table.visualItemRect(price).center()
+        QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=pos)
+        if double:
+            QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=pos)
 
-    def test_single_click_keeps_display_double_click_shows_edit_box_and_enter_saves(self):
-        line = self.amount.lineEdit()
-        self.assertTrue(line.font().underline())
-        QTest.mouseClick(line, Qt.MouseButton.LeftButton)
-        QTest.keyClicks(line, '99')
-        self.assertTrue(line.isReadOnly())
-        self.assertFalse(self.amount.property('schemeEditing'))
-        self.assertEqual(self.amount.value(), 60)
-        self.begin_edit()
-        self.assertFalse(line.isReadOnly())
-        self.assertTrue(self.amount.property('schemeEditing'))
-        self.assertFalse(line.font().underline())
-        self.assertEqual(line.selectedText(), line.text())
-        self.assertIn('[schemeEditing="true"]', self.dialog.styleSheet())
-        self.assertTrue(self.dialog.grab().save(str(ROOT/'outputs/attachment-amount-double-click.png')))
-        QTest.keyClicks(line, '210')
-        QTest.keyClick(line, Qt.Key.Key_Return)
-        app.processEvents()
-        self.assertTrue(line.isReadOnly())
-        self.assertFalse(self.amount.property('schemeEditing'))
-        self.assertTrue(line.font().underline())
+    def edit_price(self, row, value, *, confirm=True):
+        def edit(dialog):
+            amount = dialog.findChild(QDoubleSpinBox)
+            amount.lineEdit().selectAll()
+            QTest.keyClicks(amount.lineEdit(), value)
+            buttons = dialog.findChild(QDialogButtonBox)
+            button = QDialogButtonBox.StandardButton.Ok if confirm else QDialogButtonBox.StandardButton.Cancel
+            buttons.button(button).click()
+            return dialog.result()
+        with patch.object(QDialog, 'exec', edit):
+            self.click_price(row)
+
+    def test_single_click_keeps_display_double_click_opens_price_editor(self):
+        with patch.object(QDialog, 'exec') as popup:
+            self.click_price(0, double=False)
+            popup.assert_not_called()
+        self.edit_price(0, '210')
         self.assertEqual(self.amount.value(), 210)
         self.dialog.accept()
         row = self.item['attachments'][0]
@@ -68,14 +70,10 @@ class AmountDoubleClick(unittest.TestCase):
         self.addCleanup(reopened.close)
         self.assertEqual(float(reopened.table.item(0, reopened.COL_AMOUNT).text().replace(",", "")), 420)
 
-    def test_focus_out_hides_edit_box_and_keeps_manual_zero(self):
-        self.begin_edit()
-        QTest.keyClicks(self.amount.lineEdit(), '0')
-        quantity = self.dialog.table.cellWidget(0,self.dialog.COL_QUANTITY)
-        QTest.mouseClick(quantity, Qt.MouseButton.LeftButton)
-        app.processEvents()
-        self.assertTrue(self.amount.lineEdit().isReadOnly())
-        self.assertFalse(self.amount.property('schemeEditing'))
+    def test_cancel_keeps_price_and_confirm_saves_manual_zero(self):
+        self.edit_price(0, '0', confirm=False)
+        self.assertEqual(self.amount.value(), 60)
+        self.edit_price(0, '0')
         self.dialog.accept()
         self.assertEqual(self.item['attachments'][0]['quick_amount_override'], 0)
         self.assertTrue(self.item['attachments'][0]['custom_amount_edited'])
@@ -85,10 +83,10 @@ class AmountDoubleClick(unittest.TestCase):
                       pending_manual_dimensions=['玻璃门高度'], status='PENDING_MANUAL')
         self.dialog.add_row(source)
         pending = self.dialog.table.cellWidget(1, self.dialog.COL_UNIT_AMOUNT)
-        QTest.mouseDClick(pending.lineEdit(),Qt.MouseButton.LeftButton)
+        with patch.object(QDialog, 'exec') as popup:
+            self.click_price(1)
+            popup.assert_not_called()
         self.assertFalse(pending.isEnabled())
-        self.assertTrue(pending.lineEdit().isReadOnly())
-        self.assertFalse(pending.property('schemeEditing'))
 
     def test_custom_cost_link_survives_amount_edit_box(self):
         self.dialog.add_row(dict(custom=True,item_name='临时附件',quantity=1,formula_amount=10,quick_amount=12))
@@ -96,13 +94,9 @@ class AmountDoubleClick(unittest.TestCase):
         amount = self.dialog.table.cellWidget(1, self.dialog.COL_UNIT_AMOUNT)
         cost.setValue(60)
         self.assertEqual(amount.value(),72)
-        QTest.mouseDClick(amount.lineEdit(),Qt.MouseButton.LeftButton)
-        self.assertTrue(amount.property('schemeEditing'))
-        QTest.keyClicks(amount.lineEdit(),'90')
-        QTest.keyClick(amount.lineEdit(),Qt.Key.Key_Return)
+        self.edit_price(1, '90')
         cost.setValue(75)
         self.assertEqual(amount.value(),90)
-        self.assertTrue(amount.lineEdit().isReadOnly())
 
 
 if __name__ == '__main__':

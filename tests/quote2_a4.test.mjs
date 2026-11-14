@@ -32,10 +32,16 @@ async function exported(dir,p,vertical){
  const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);return {book,output};
 }
 for(const vertical of [false,true])for(const count of [1,3,12])test(`报价2 contains only A:H, links physical price/quantity rows, and preserves source (${vertical?'vertical':'standard'},${count})`,()=>inDirectory(async dir=>{
- const p=payload(count),{book}=await exported(dir,p,vertical),q=book.getWorksheet('报价'),sheet=book.getWorksheet('报价2'),layout=quotationLayout(q);
+ const p=payload(count);
+ if(count===3)p.order_nature='INTERNAL';
+ const {book}=await exported(dir,p,vertical),q=book.getWorksheet('报价'),sheet=book.getWorksheet('报价2'),layout=quotationLayout(q);
  assert.deepEqual(book.worksheets.slice(0,4).map(s=>s.name),['成本','报价','报价2','成本明细']);
  assert.equal(sheet.columnCount,8);assert.equal(sheet.rowCount,count+11);assert.equal(sheet.getCell('D1').value,'编号');assert.equal(result(sheet.getCell('E1').value),p.quote_id);
- assert.equal(result(sheet.getCell('D3').value),'订单性质');assert.equal(result(sheet.getCell('F3').value),'外部');assert(sheet.model.merges.includes('D3:E3'));
+ for(const name of ['成本','报价','报价2','成本明细']){
+  const orderNatureCells=name==='成本明细'?['A4','B4']:['D3','E3','F3'];
+  for(const address of orderNatureCells)assert.equal(book.getWorksheet(name).getCell(address).value,null,`${name}!${address}`);
+ }
+ assert(!sheet.model.merges.includes('D3:E3'));
  p.items.forEach((item,i)=>{
   const source=layout?.products[i]??11+i;
   for(const column of ['D','F','G'])assert.equal(sheet.getCell(`${column}${11+i}`).value.formula,`'报价'!${column}${source}`);
@@ -109,7 +115,8 @@ for(const [name,count,long,vertical]of [['short',3,false,true],['long',3,true,tr
  const inspected=JSON.parse((await run(python,['-c',script,pdf],{windowsHide:true,env:{...process.env,PYTHONUTF8:'1'}})).stdout);
  assert(inspected.sizes.every(([w,h])=>Math.abs(w-595.28)<1&&Math.abs(h-841.89)<1),'A4 portrait every page');
  if(name==='short')assert.equal(inspected.pages,1,'three normal rows fit one A4 page');else if(name==='many')assert(inspected.pages>=2);
- const text=inspected.text.replace(/\s/g,'');assert(text.includes(p.quote_id));assert(text.includes('联动测试客户'));assert(text.includes('370.35'));assert(text.includes('订单性质'));assert(text.includes('外部'));
+ const text=inspected.text.replace(/\s/g,'');assert(text.includes(p.quote_id));assert(text.includes('联动测试客户'));assert(text.includes('370.35'));
+ assert.doesNotMatch(text,/订单性质|内部|外部/);
  for(let i=0;i<count;i++){assert(text.includes(p.items[i].quote_display.name));assert(text.includes(`备注结束${String(i+1).padStart(3,'0')}`));}
  if(long)assert(text.includes('规格末行'));
  assert(!text.includes('材料成本'));assert(!text.includes('原价单价'));

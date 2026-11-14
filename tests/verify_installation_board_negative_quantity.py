@@ -4,11 +4,13 @@ import os
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'desktop_client'))
-from PySide6.QtWidgets import QApplication,QWidget
+from PySide6.QtWidgets import QApplication,QPushButton,QTableWidget,QWidget
 import attachment_v2_client as v2
+from quote_document_progress import QuoteDocumentProgress
 import scheme2_ui as ui
 app=QApplication.instance() or QApplication([])
 
@@ -71,6 +73,72 @@ class NegativeBoard(unittest.TestCase):
         self.assertEqual(row['attachment_price_sign'],1)
         self.assertEqual(row['formula_amount'],8)
         self.assertEqual(row['quick_amount'],20)
+
+    def set_priced_boards(self, *boards):
+        attachment_cost = sum(row['formula_amount'] for row in boards)
+        face = sum(row['quick_amount'] for row in boards)
+        self.item.update(name='回归柜体', quick_discount=.5, material_code='SECC',
+                         freight_mode='MANUAL', freight_fee=0,
+                         formula=dict(material_cost=100, auxiliary_cost=10, labor_cost=20, spray_cost=5,
+                                      attachment_fee=attachment_cost, total_cost=135 + attachment_cost),
+                         quick=dict(base_price=500, attachment_fee=face, total_cost=500 + face),
+                         attachments=list(boards), attachment_confirmation_inputs=v2.confirmation_inputs(boards))
+
+    def test_zero_quantity_removes_only_the_selected_child_board_and_keeps_costs(self):
+        first = {**self.row, 'material_cost':2, 'spray_cost':1, 'auxiliary_cost':0, 'labor_cost':1,
+                 'ganged_cabinet_index':0}
+        second = {**first, 'attachment_price_id':2, 'ganged_cabinet_index':1}
+        self.set_priced_boards(first, second)
+        self.item['ganged_cabinet_count'] = 2
+        self.window.draft_items = [self.item]
+        self.window.summary_table = QTableWidget(0, len(ui.HEADERS), self.window)
+        self.window.scheme2_cost_generate = QPushButton(self.window)
+        self.window.refresh_summary = lambda: ui._refresh_cost_table(self.window)
+        self.window.refresh_summary()
+        self.assertEqual(self.item['formula']['cost_allocation']['totals']['material_cost'],104)
+
+        editor = self.editor()
+        editor.table.cellWidget(0, editor.COL_QUANTITY).setValue(0)
+        for column in (editor.COL_FORMULA_AMOUNT, editor.COL_AMOUNT, editor.COL_DISCOUNTED_AMOUNT):
+            self.assertEqual(editor.table.item(0, column).text(), '0.00')
+        editor.accept()
+
+        self.assertEqual([row['ganged_cabinet_index'] for row in self.item['attachments']], [1])
+        formula = self.item['formula']
+        self.assertTrue(formula['cost_allocation']['complete'])
+        self.assertEqual(formula['cost_allocation']['totals']['material_cost'],102)
+        self.assertEqual(formula['attachment_fee'],4)
+        self.assertEqual(formula['tax_cost'],20.55)
+        self.assertEqual(self.item['quick']['attachment_fee'],10)
+        self.assertTrue(self.item['attachment_snapshot_dirty'])
+        grid = self.window.summary_table
+        self.assertEqual(grid.item(0, ui.HEADERS.index('材料成本')).text(), '102.00')
+        self.assertEqual(grid.item(0, ui.TAX_COST_COLUMN).text(), '20.55')
+        self.assertNotIn(grid.item(0, ui.HEADERS.index('成本单价')).text(), ('待核对', '待重算'))
+        self.assertTrue(self.window.scheme2_cost_generate.isEnabled())
+        exported = ui._quote_export_items_snapshot(self.window, [self.item])[0]
+        payload = v2.confirmation_payload({'items': [exported]}, validate=True)['items'][0]
+        self.assertEqual([row['attachment_price_id'] for row in payload['attachments']], [2])
+        self.assertEqual(payload['quote_display']['attachments'], payload['attachments'])
+
+    def test_old_zero_board_with_pending_dimensions_does_not_block_preview(self):
+        self.set_priced_boards({**self.row, 'quantity':0, 'status':'PENDING_MANUAL',
+                                'pending_manual_dimensions':['安装板高度']})
+        original = copy.deepcopy(self.item)
+        progress = SimpleNamespace(ui=ui, window=self.window, kind='generate', trace='test', set_stage=lambda *_: None)
+        exported = QuoteDocumentProgress.validate(progress, [self.item])[0]
+        self.assertEqual(exported['attachments'], [])
+        self.assertEqual(exported['formula']['tax_cost'],20.25)
+        self.assertEqual(self.item, original)
+
+        self.item['formula'].update(cost_allocation={'complete':False, 'errors':['旧安装板分项不全']},
+                                    tax_cost_error='旧安装板分项不全', tax_cost_error_code='MISSING_COSTS')
+        ui._refresh_item_cost(self.item, None, read_only=False)
+        self.assertEqual(self.item['attachments'], [])
+        self.assertNotIn('cost_allocation', self.item['formula'])
+        self.assertNotIn('tax_cost_error', self.item['formula'])
+        self.assertEqual(self.item['formula']['tax_cost'],20.25)
+        self.assertEqual(self.item['quick']['total_cost'],500)
 
     def test_legacy_negative_board_input_and_manual_amount_survive_api_merge(self):
         source={**self.row,'quantity':-2,'quick_amount':-44,'quick_amount_override':-44,

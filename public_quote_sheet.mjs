@@ -50,10 +50,6 @@ export function addPublicQuoteSheet(workbook,source,count){
  // The old public source stores the quote id in D1. Give it the complete
  // merged value field in this new sheet so A4 output never clips the id.
  sheet.getCell('D1').value='编号';sheet.getCell('E1').value=plain(source.getCell('D1').value);
- sheet.mergeCells('D3:E3');
- sheet.getCell('F3').value=plain(source.getCell('E3').value);
- sheet.getCell('D3').alignment={...sheet.getCell('D3').alignment,horizontal:'center'};
- sheet.getCell('F3').alignment={...sheet.getCell('F3').alignment,horizontal:'center'};
  for(let row=11;row<last;row++)sheet.getCell(row,8).font={...sheet.getCell(row,8).font,size:9};
  // The source reserves a 90-point audit subtotal row. The public print sheet
  // needs one readable total line, leaving A4 space for the product remarks.
@@ -78,11 +74,10 @@ export function linkPublicQuoteSheet(plan,source,sourceRows){
  for(let row=1;row<=plan.last;row++)for(let column=1;column<=8;column++){
   const cell=sheet.getCell(row,column),address=columnLetter(column)+row;
   if(cell.isMerged&&cell.master.address!==cell.address)continue;
-  if(address==='D1'||address==='E1'||address==='F3')continue;
+  if(address==='D1'||address==='E1')continue;
   if(cell.value!==null&&cell.value!==undefined&&cell.value!==''||blankContacts.has(address))link(address,address);
  }
  link('E1','D1');
- link('F3','E3');
  return plan;
 }
 export function verifyPublicQuoteSheet(workbook,plan){

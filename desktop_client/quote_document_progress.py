@@ -10,7 +10,7 @@ from uuid import uuid4
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QSizePolicy, QStyle, QVBoxLayout, QWidget
 
-from attachment_v2_client import confirmation_payload, attachment_snapshot_needs_refresh
+from attachment_v2_client import confirmation_payload, attachment_snapshot_needs_refresh, is_zero_quantity_installation_board
 from progress_style import PROGRESS_COLORS
 from standalone_attachment import is_standalone, ready as standalone_ready
 
@@ -428,6 +428,7 @@ class QuoteDocumentProgress:
     def validate(self, items):
         if not items:
             raise ValueError("报价清单为空，请先加入产品。")
+        editable = not self.ui._quote_remark_readonly(self.window)
         for number, item in enumerate(items, 1):
             if not isinstance(item, dict):
                 raise ValueError(f"第{number}行报价数据无效。")
@@ -435,6 +436,8 @@ class QuoteDocumentProgress:
             LOGGER.info("document row checked trace=%s line=%s product=%s attachments=%s", self.trace,
                         number, item.get('name') or item.get('product_code'), len(item.get('attachments') or []))
             for attachment in item.get("attachments") or []:
+                if editable and is_zero_quantity_installation_board(attachment):
+                    continue
                 if isinstance(attachment, dict) and not attachment.get("custom") and attachment.get("status") in ("ERROR", "PENDING_MANUAL"):
                     missing = "、".join(attachment.get("pending_manual_dimensions") or [])
                     reason = attachment.get("error") or ("缺少人工尺寸：" + missing if missing else "附件成本计算失败")

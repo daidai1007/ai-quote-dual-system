@@ -579,6 +579,15 @@ def allows_negative_attachment_quantity(source):
     return not source.get("custom") and installation_board(source)
 
 
+def is_zero_quantity_installation_board(source):
+    if not isinstance(source, dict) or not allows_negative_attachment_quantity(source):
+        return False
+    try:
+        return float(source.get("quantity", 1)) == 0
+    except (TypeError, ValueError):
+        return False
+
+
 def normalize_installation_board_quantity(source):
     """Translate a displayed negative board count to the existing API contract."""
     try:

@@ -43,9 +43,9 @@ editor = scheme2_ui.AttachmentEditor(parent, item)
 editor.show()
 app.processEvents()
 
-assert editor.table.columnCount() == 8
-assert [editor.table.horizontalHeaderItem(column).text() for column in range(editor.table.columnCount())] == [
-    "名称", "尺寸 / 规格", "数量", "成本单价", "成本", "面价单价", "面价", "折扣面价",
+assert [editor.table.horizontalHeaderItem(column).text() for column in range(editor.table.columnCount())
+        if not editor.table.isColumnHidden(column)] == [
+    "名称", "尺寸 / 规格", "数量", "成本单价", "成本总价", "折扣单价", "折扣总价",
 ]
 assert editor.table.item(0, 1).text() == "BASE-800"
 assert editor.table.item(1, 1).text() == "高 2000 × 深 600 mm"

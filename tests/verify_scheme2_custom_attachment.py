@@ -26,9 +26,9 @@ owner = QWidget()
 owner.refresh_summary = lambda: None
 item = {"attachments": rows, "formula": {"attachment_fee": 0, "total_cost": 0}, "quick": {"attachment_fee": 0, "total_cost": 0}}
 editor = scheme2_ui.AttachmentEditor(owner, item)
-assert editor.table.columnCount() == 8
-assert [editor.table.horizontalHeaderItem(i).text() for i in range(editor.table.columnCount())] == [
-    "名称", "尺寸 / 规格", "数量", "成本单价", "成本", "面价单价", "面价", "折扣面价"
+assert [editor.table.horizontalHeaderItem(i).text() for i in range(editor.table.columnCount())
+        if not editor.table.isColumnHidden(i)] == [
+    "名称", "尺寸 / 规格", "数量", "成本单价", "成本总价", "折扣单价", "折扣总价"
 ]
 assert editor.table.item(0, editor.COL_NAME).text() == "自定义附件（新增）"
 cost = editor.table.cellWidget(0, editor.COL_UNIT_COST)

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'desktop_client'))
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QDoubleSpinBox, QWidget
 import scheme2_ui as ui
 import attachment_v2_client as v2
 from quick_discount_rules import formula_attachment_line_amount
@@ -44,8 +44,9 @@ class AttachmentUnitPrices(unittest.TestCase):
 
     def test_catalogue_cost_readonly_editable_sale_unit_and_readonly_totals(self):
         d=self.editor()
-        self.assertEqual([d.table.horizontalHeaderItem(i).text() for i in range(d.table.columnCount())],
-            ['名称','尺寸 / 规格','数量','成本单价','成本','面价单价','面价','折扣面价'])
+        self.assertEqual([d.table.horizontalHeaderItem(i).text() for i in range(d.table.columnCount())
+                          if not d.table.isColumnHidden(i)],
+            ['名称','尺寸 / 规格','数量','成本单价','成本总价','折扣单价','折扣总价'])
         for column in (d.COL_FORMULA_AMOUNT,d.COL_AMOUNT,d.COL_DISCOUNTED_AMOUNT):
             self.assertIsNone(d.table.cellWidget(0,column))
             self.assertFalse(d.table.item(0,column).flags() & Qt.ItemFlag.ItemIsEditable)
@@ -64,6 +65,8 @@ class AttachmentUnitPrices(unittest.TestCase):
         face.setValue(72.5)
         d.table.cellWidget(0,d.COL_QUANTITY).setValue(3)
         self.assertEqual((self.total(d,d.COL_FORMULA_AMOUNT),self.total(d,d.COL_AMOUNT)),(94.44,217.5))
+        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_UNIT).text(), '72.50')
+        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_AMOUNT).text(), '217.50')
         self.assertEqual((cost.value(),face.value()),(31.48,72.5))
         d.accept()
         self.assertEqual(self.item['formula']['attachment_fee'],94.44)
@@ -85,18 +88,25 @@ class AttachmentUnitPrices(unittest.TestCase):
         cabinet = header.logicalIndex(0)
         self.assertEqual(d.table.item(cabinet, d.COL_NAME).text(), '柜体')
         self.assertEqual([d.table.item(cabinet, c).text() for c in
-                          (d.COL_QUANTITY, d.COL_FORMULA_AMOUNT, d.COL_AMOUNT, d.COL_DISCOUNTED_AMOUNT)],
-                         ['1', '300.00', '500.00', '250.00'])
+                          (d.COL_QUANTITY, d.COL_FORMULA_AMOUNT, d.COL_DISCOUNTED_UNIT, d.COL_DISCOUNTED_AMOUNT)],
+                         ['1', '300.00', '250.00', '250.00'])
         self.assertFalse(d.table.item(cabinet, d.COL_AMOUNT).flags() & Qt.ItemFlag.ItemIsEditable)
         self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_AMOUNT).text(), '60.00')
-        self.assertEqual(d.table.item(1, d.COL_DISCOUNTED_AMOUNT).text(), '/')
-        d.table.cellWidget(0, d.COL_UNIT_AMOUNT).setValue(71.37)
+        self.assertEqual(d.table.item(1, d.COL_DISCOUNTED_UNIT).text(), '30.00')
+        self.assertIn('折扣系数 1', d.table.item(1, d.COL_DISCOUNTED_UNIT).toolTip())
+        def change_original_price(dialog):
+            self.assertEqual(dialog.windowTitle(), '调整折前单价')
+            dialog.findChild(QDoubleSpinBox).setValue(71.37)
+            return QDialog.DialogCode.Accepted
+        with patch.object(QDialog, 'exec', change_original_price):
+            d.table.cellDoubleClicked.emit(0, d.COL_DISCOUNTED_UNIT)
         d.table.cellWidget(0, d.COL_QUANTITY).setValue(3)
         self.assertEqual(d.table.item(0, d.COL_AMOUNT).text(), '214.11')
-        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_AMOUNT).text(), '107.06')
+        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_UNIT).text(), '35.69')
+        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_AMOUNT).text(), '107.07')
         d.add_row()
         self.assertEqual(d.table.item(header.logicalIndex(0), d.COL_NAME).text(), '柜体')
-        self.assertEqual(d.table.item(2, d.COL_DISCOUNTED_AMOUNT).text(), '/')
+        self.assertEqual(d.table.item(2, d.COL_DISCOUNTED_AMOUNT).text(), '0.00')
         d.table.removeRow(2)
         self.assertEqual(d.table.item(header.logicalIndex(0), d.COL_NAME).text(), '柜体')
         d.accept()

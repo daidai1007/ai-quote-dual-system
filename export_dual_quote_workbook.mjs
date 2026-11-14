@@ -11,9 +11,8 @@ import ExcelJS from "@excel.js/exceljs";
 import {addPublicQuoteSheet,linkPublicQuoteSheet,verifyPublicQuoteSheet} from './public_quote_sheet.mjs';
 import {hasTaxCost,withTaxCostForItem} from "./tax_cost.mjs";
 import fs from "node:fs/promises";
-import {documentWithOrderNature,orderNatureLabel} from './quote_order_nature.mjs';
+import {documentWithOrderNature} from './quote_order_nature.mjs';
 import path from "node:path";
-import {addAttachmentSnapshotSheet} from "./attachment_snapshot_export.mjs";
 import {withAttachmentCostAllocation} from './attachment_cost_allocation.mjs';
 import {
   attachRangeApi,
@@ -51,8 +50,20 @@ validateConfirmedQuoteSnapshot(payload);
 // Management is always derived from current components, including popup costs.
 // Neither a saved fee, a saved total nor a historical rate may price an export.
 for (const [index,item] of payload.items.entries()) {
-  const rows=item.quote_display?.attachment_source==='popup_v1'
-    ? item.quote_display.attachments : item.attachments||[];
+  const usesPopupSnapshot = item.quote_display?.attachment_source === "popup_v1";
+  const rows = usesPopupSnapshot ? item.quote_display.attachments : item.attachments || [];
+  if (item.attachment_contract === 2) {
+    for (const attachment of rows) {
+      if (attachment.custom === true) continue;
+      if (!item.quote_line_id || (!usesPopupSnapshot &&
+          (!attachment.attachment_selection_id || attachment.quote_line_id !== item.quote_line_id))) {
+        throw new Error("附件导出缺少准确的报价行/选择ID关联");
+      }
+      if (attachment.status === "ERROR") {
+        throw new Error(`${attachment.item_name}：${attachment.error || "附件计算错误"}`);
+      }
+    }
+  }
   item.attachments=rows;
   const formula={...(item.formula||{}),attachment_fee:moneySum(rows.map(formulaAttachmentLineAmount))};
   const missing=missingManagementCosts(formula);
@@ -874,8 +885,6 @@ function fillSheet(sheet, method) {
   // The fixed template labels the date in D2 and merges E2:G2 for its value.
   // Always populate that visible value cell; use today's date as a safe fallback.
   sheet.getRange("E2").values = [[payload.quote_date || today]];
-  sheet.getRange('D3').values = [['订单性质']];
-  sheet.getRange('E3').values = [[orderNatureLabel(payload.order_nature)]];
   sheet.getRange("B4").values = [[payload.company_name || ""]];
   let subtotal = 0;
   items.forEach((item, index) => {
@@ -1332,7 +1341,7 @@ function buildFormulaCostDetailSheet() {
         itemIndex, item, "附件成本", attachment.item_name || attachment.model_code || "附件",
         [attachment.model_code, attachment.variant, attachment.notes].filter(Boolean).join(" / "),
         omittedFromFormula
-          ? (attachment.catalog_version ? '当前产品无适用成本规则，仅快速报价；见附件双报价明细'
+          ? (attachment.catalog_version ? '当前产品无适用成本规则，仅快速报价'
             : `原附件金额 ${amount.toFixed(2)} 元；一级分类为门变形，公式法不计费`)
           : `${componentBasis ? `${componentBasis}；` : ""}${selectedQuantity} × 柜体倍率 ${multiplier} = 最终数量 ${quantity}；`
             + `${quantity} × ${signedPrice.toFixed(2)} = ${formulaAmount.toFixed(2)} 元`,
@@ -1463,8 +1472,6 @@ function buildFormulaCostDetailSheet() {
   sheet.getRange("A1").values = [["公式法报价成本明细"]];
   sheet.getRange("A2").values = [["报价编号"]];
   sheet.getRange("B2").values = [[payload.quote_id || ""]];
-  sheet.getRange('A4').values = [['订单性质']];
-  sheet.getRange('B4').values = [[orderNatureLabel(payload.order_nature)]];
   sheet.getRange("D2").values = [["报价日期"]];
   sheet.getRange("E2").values = [[payload.quote_date || ""]];
   sheet.getRange("G2").values = [["客户"]];
@@ -1906,7 +1913,6 @@ const verifyWorkbookContents = (candidateWorkbook) => {
 
 // Verify before serialization, then verify the serialized temporary file again
 // before publishing it to the user-selected path.
-addAttachmentSnapshotSheet(workbook,payload);
 verifyWorkbookContents(workbook);
 // Generate beside the destination first and publish only after the workbook
 // is complete. A crash can no longer leave a zero-byte or half-written final
