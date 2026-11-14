@@ -1065,6 +1065,40 @@ def expand_ganged_sized_attachments_for_quote(window, rows, catalog, version):
     return expanded, missing
 
 
+def prepare_draft_catalog_attachment(item, choice, catalog, version):
+    """Apply the cabinet's matching rules to a new selection from the cost popup."""
+    from types import SimpleNamespace
+
+    source = {**choice, "catalog_version": version, "quantity": 1, "selection_source": "manual"}
+    product_code = item.get("product_code") or ""
+    material_code = item.get("material_code")
+    children = item.get("ganged_cabinets") or []
+    if len(children) > 1:
+        window = SimpleNamespace(ganged_cabinets=children, selected_product_code=lambda: product_code,
+                                 material_combo=SimpleNamespace(currentData=lambda: material_code))
+        rows = [source]
+        for expand in (expand_ganged_fixed_bases_for_quote, expand_ganged_inner_doors_for_quote,
+                       expand_ganged_glass_doors_for_quote, expand_ganged_sized_attachments_for_quote):
+            rows, missing = expand(window, rows, catalog, version)
+            if missing:
+                raise ValueError("价格库中未找到匹配项：" + "、".join(missing))
+        if rows and rows[0].get("ganged_cabinet_index") is not None:
+            return rows
+
+    if size_match_attachment_name(source) is None and not is_base_attachment(source):
+        return [source]
+    dimensions = tuple(item.get(f"{axis}_mm") for axis in ("width", "height", "depth"))
+    automatic_base = quote_item_base_height(item, source)
+    if is_base_attachment(source):
+        source = default_base_attachment(source, automatic_base)
+    match = match_catalog_attachment(source, catalog, dimensions, product_code, automatic_base, material_code)
+    if match is None or _catalogue_id(match.get("attachment_price_id")) is None:
+        raise ValueError(f"价格库中未找到与当前柜体匹配的{source['item_name']}")
+    if installation_board(source) or is_base_attachment(source):
+        return [resolve_installation_board(source, match, version)]
+    return [resolve_size_matched_attachment(source, match, version)]
+
+
 def base_height(window):
     """Return the base height already entered in the visible cabinet specification."""
     rows = [dict(row) for row in getattr(window, "ganged_cabinets", []) if isinstance(row, dict)]
@@ -1762,7 +1796,7 @@ def install_attachment_v2(namespace):
 
     window_class.resolve_attachments_for_quote = resolve_attachments_for_quote
 
-    def recalculate_draft_attachment(window, quote_item, attachment, succeeded, failed):
+    def recalculate_draft_attachment(window, quote_item, attachment, succeeded, failed, *, allow_pending_manual=False):
         from standalone_attachment import is_standalone, reprice
         if is_standalone(quote_item):
             return reprice(window, quote_item, attachment, succeeded, failed)
@@ -1858,7 +1892,8 @@ def install_attachment_v2(namespace):
                     resolved = resolve_computer_tray(attachment, match, body.get("data_version"))
                 elif size_match_attachment_name(attachment) is not None:
                     resolved = resolve_size_matched_attachment(attachment, match, body.get("data_version"))
-                recalculate_draft_attachment(window, quote_item, resolved, succeeded, failed)
+                recalculate_draft_attachment(window, quote_item, resolved, succeeded, failed,
+                                             allow_pending_manual=allow_pending_manual)
 
             worker.succeeded.connect(catalog_loaded)
             worker.failed.connect(lambda message: failed(f"附件价格库读取失败：{message}"))
@@ -1889,9 +1924,8 @@ def install_attachment_v2(namespace):
             "surface_treatment_unit_price_override": settings.get("surface_price"),
             "attachments": [selected_input(attachment)],
             "attachment_contract": 2,
+            "pricing_basis": quote_item.get("pricing_basis") or PRICING_BASIS,
         }
-        if is_support_plate(attachment):
-            payload["pricing_basis"] = quote_item.get("pricing_basis") or PRICING_BASIS
         # Reprice against this saved order, never the currently visible product.
         # A per-child selection cannot be previewed without its child context.
         child_index = attachment.get("ganged_cabinet_index", attachment.get("ganged_fixed_base_index"))
@@ -1899,6 +1933,10 @@ def install_attachment_v2(namespace):
             environment = attachment.get("environment") or {}
             children = copy.deepcopy(quote_item.get("ganged_cabinets") or environment.get("ganged_cabinets") or [])
             child_inputs = copy.deepcopy(quote_item.get("ganged_cabinet_inputs") or children)
+            child_costs = (quote_item.get("formula") or {}).get("ganged_cabinet_costs") or []
+            for child, cost in zip(child_inputs, child_costs):
+                if not child.get("product_code") and cost.get("product_code"):
+                    child["product_code"] = cost["product_code"]
             if not 0 <= int(child_index) < len(children) or int(child_index) >= len(child_inputs):
                 failed(f"第 {int(child_index) + 1} 个子柜尺寸缺失，请重新计算该产品。")
                 return
@@ -1915,7 +1953,12 @@ def install_attachment_v2(namespace):
             if not rows:
                 failed("附件数据库未返回计算结果")
                 return
+            if allow_pending_manual:
+                rows = provisionalize_manual_dimension_result({
+                    "attachment_contract": 2, "attachments": rows,
+                })["attachments"]
             calculated = merge_cost(attachment, rows[0])
+            calculated.pop("rules", None)
             if calculated.get("status") == "ERROR":
                 failed(str(calculated.get("error") or "附件金额计算失败"))
                 return

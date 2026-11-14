@@ -44,9 +44,9 @@ class AttachmentUnitPrices(unittest.TestCase):
 
     def test_catalogue_cost_readonly_editable_sale_unit_and_readonly_totals(self):
         d=self.editor()
-        self.assertEqual([d.table.horizontalHeaderItem(i).text() for i in range(7)],
-            ['名称','尺寸 / 规格','数量','成本单价','成本','面价单价','面价'])
-        for column in (d.COL_FORMULA_AMOUNT,d.COL_AMOUNT):
+        self.assertEqual([d.table.horizontalHeaderItem(i).text() for i in range(d.table.columnCount())],
+            ['名称','尺寸 / 规格','数量','成本单价','成本','面价单价','面价','折扣面价'])
+        for column in (d.COL_FORMULA_AMOUNT,d.COL_AMOUNT,d.COL_DISCOUNTED_AMOUNT):
             self.assertIsNone(d.table.cellWidget(0,column))
             self.assertFalse(d.table.item(0,column).flags() & Qt.ItemFlag.ItemIsEditable)
         cost=d.table.cellWidget(0,d.COL_UNIT_COST)
@@ -70,6 +70,38 @@ class AttachmentUnitPrices(unittest.TestCase):
         self.assertEqual(self.item['quick']['attachment_fee'],217.5)
         self.assertEqual(self.item['formula']['total_cost'],194.44)
         self.assertEqual(self.item['quick']['total_cost'],717.5)
+
+    def test_cabinet_first_and_discounted_attachment_prices_follow_live_units(self):
+        item = dict(specification='800×600×1800', quantity=7, quick_discount=.5,
+                    formula=dict(material_cost=200, auxiliary_cost=30, labor_cost=60, spray_cost=10,
+                                 attachment_fee=80, manufacturing_cost=40, management_fee=50, tax_cost=20),
+                    quick=dict(total_cost=650, attachment_fee=150),
+                    attachments=[dict(self.source, item_name='通风顶罩', category_level1='控制柜附件'),
+                                 dict(item_name='门锁', category_level1='其他附件', quantity=1,
+                                      formula_amount=17.04, quick_amount=30)])
+        d = ui.AttachmentEditor(self.owner, item)
+        self.addCleanup(d.reject)
+        header = d.table.verticalHeader()
+        cabinet = header.logicalIndex(0)
+        self.assertEqual(d.table.item(cabinet, d.COL_NAME).text(), '柜体')
+        self.assertEqual([d.table.item(cabinet, c).text() for c in
+                          (d.COL_QUANTITY, d.COL_FORMULA_AMOUNT, d.COL_AMOUNT, d.COL_DISCOUNTED_AMOUNT)],
+                         ['1', '300.00', '500.00', '250.00'])
+        self.assertFalse(d.table.item(cabinet, d.COL_AMOUNT).flags() & Qt.ItemFlag.ItemIsEditable)
+        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_AMOUNT).text(), '60.00')
+        self.assertEqual(d.table.item(1, d.COL_DISCOUNTED_AMOUNT).text(), '/')
+        d.table.cellWidget(0, d.COL_UNIT_AMOUNT).setValue(71.37)
+        d.table.cellWidget(0, d.COL_QUANTITY).setValue(3)
+        self.assertEqual(d.table.item(0, d.COL_AMOUNT).text(), '214.11')
+        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_AMOUNT).text(), '107.06')
+        d.add_row()
+        self.assertEqual(d.table.item(header.logicalIndex(0), d.COL_NAME).text(), '柜体')
+        self.assertEqual(d.table.item(2, d.COL_DISCOUNTED_AMOUNT).text(), '/')
+        d.table.removeRow(2)
+        self.assertEqual(d.table.item(header.logicalIndex(0), d.COL_NAME).text(), '柜体')
+        d.accept()
+        self.assertEqual([row['item_name'] for row in item['attachments']], ['通风顶罩', '门锁'])
+        self.assertEqual(item['quick']['attachment_fee'], 244.11)
 
     def test_save_reopen_and_reprice_keep_readonly_cost_and_manual_sale_unit(self):
         d=self.editor()
@@ -98,6 +130,7 @@ class AttachmentUnitPrices(unittest.TestCase):
         d.table.cellWidget(0,d.COL_UNIT_COST).setValue(12.5)
         d.table.cellWidget(0,d.COL_UNIT_AMOUNT).setValue(20)
         d.table.cellWidget(0,d.COL_QUANTITY).setValue(-3)
+        self.assertEqual(d.table.item(0,d.COL_DISCOUNTED_AMOUNT).text(),'-60.00')
         d.accept()
         saved=self.item['attachments'][0]
         self.assertEqual((saved['quantity'],saved['attachment_price_sign']),(3,-1))

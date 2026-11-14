@@ -25,6 +25,8 @@ class HorizontalCostRestore(unittest.TestCase):
         self.assertFalse(hasattr(self.w,'scheme2_cost_vertical'))
         self.assertEqual(table.rowCount(),len(self.w.draft_items)+1)
         self.assertEqual(table.columnCount(),len(ui.HEADERS))
+        self.assertEqual(table.horizontalHeaderItem(ui.ATTACHMENT_DETAIL_COLUMN).text(), '面价明细')
+        self.assertTrue(table.isColumnHidden(ui.ATTACHMENT_FACE_PRICE_COLUMN))
         self.assertEqual(table.item(0,1).text(),self.w.draft_items[0]['name'])
         self.assertEqual(table.item(1,1).text(),self.w.draft_items[1]['name'])
         self.assertEqual(table.item(2,0).text(),'汇总')
@@ -34,9 +36,14 @@ class HorizontalCostRestore(unittest.TestCase):
         before=deepcopy(self.w.draft_items)
         with patch.object(ui,'AttachmentEditor') as editor:
             editor.return_value.exec.return_value=QDialog.DialogCode.Accepted
-            item=table.item(0,5);table.scrollToItem(item);APP.processEvents()
+            item=table.item(0,ui.ATTACHMENT_DETAIL_COLUMN);table.scrollToItem(item);APP.processEvents()
             QTest.mouseClick(table.viewport(),Qt.MouseButton.LeftButton,pos=table.visualItemRect(item).center())
             self.assertIs(editor.call_args.args[1],self.w.draft_items[0])
+        with patch.object(ui,'AttachmentSummaryDialog') as summary:
+            item=table.item(table.rowCount()-1,ui.ATTACHMENT_DETAIL_COLUMN)
+            table.scrollToItem(item);APP.processEvents()
+            QTest.mouseClick(table.viewport(),Qt.MouseButton.LeftButton,pos=table.visualItemRect(item).center())
+            summary.return_value.exec.assert_called_once()
         self.assertEqual(self.w.draft_items,before)
         OUT.mkdir(parents=True,exist_ok=True)
         for width,height in ((1510,960),(1280,860),(1024,768)):
@@ -62,7 +69,7 @@ class HorizontalCostRestore(unittest.TestCase):
             '_discard_close_has_workers', '_defer_discard_close', 'install_scheme2_ui',
             'AttachmentEditor', '_quote_export_items_snapshot', '_apply_cost_control',
             '_build_cost_page', '_edit_selected', '_cost_cell_clicked',
-            '_refresh_cost_table', '_SchemeAttachmentDialog', '_quote_item_remark',
+            '_refresh_cost_table', '_set_cost_column_mode', '_SchemeAttachmentDialog', '_quote_item_remark',
             # Approved D dimension review / page-switch entry points.
             '_Scheme2PageRecognitionWorker', '_sync_scheme2_page_navigation',
             '_finish_scheme2_page_recognition', '_confirm_scheme2_recognition',

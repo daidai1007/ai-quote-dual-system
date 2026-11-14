@@ -151,7 +151,7 @@ parent = QWidget()
 parent.refresh_summary = lambda: None
 item = {"attachments": rows, "formula": {}, "quick": {}}
 editor = scheme2_ui.AttachmentEditor(parent, item)
-assert editor.table.rowCount() == 2
+assert editor.attachment_row_count() == 2
 assert editor.table.item(0, 0).text() == "柜体1｜固定底座"
 assert editor.table.item(1, 0).text() == "柜体2｜固定底座"
 assert editor.table.item(0, 1).text() == "600×500×100 mm"

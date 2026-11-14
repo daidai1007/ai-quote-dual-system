@@ -127,7 +127,7 @@ class SelectedDetail(unittest.TestCase):
                           if label.objectName() in ('scheme2CostSelectionQuickTitle','scheme2CostSelectionFormulaTitle')],
                          ['快速报价','成本报价'])
         captions=lambda group:[tile.findChild(QLabel,'scheme2CostSelectionMetricLabel').text() for tile in group[2]]
-        self.assertEqual(captions(groups[0]),['尺寸','数量','已选附件','附件面价','固定报价','折扣面价','折扣系数','报价','运费','报价总价'])
+        self.assertEqual(captions(groups[0]),['尺寸','数量','面价明细','附件面价','固定报价','折扣面价','折扣系数','报价','运费','报价总价'])
         self.assertEqual(captions(groups[1]),['成本单价','材料差价','材料成本','辅材成本','制造成本','人工成本','附件成本','喷涂费用','管理费用','税费','运费','成本总价','毛利率','净利率','自制件重量'])
         OUT.mkdir(parents=True,exist_ok=True)
         for width,height in ((1560,960),(1280,800),(1024,700),(840,620)):

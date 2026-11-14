@@ -110,7 +110,7 @@ class StandaloneAttachments(unittest.TestCase):
         w.summary_table.item(0,4).setText('3')
         self.assertEqual(item['quantity'],3)
         editor=ui.AttachmentEditor(w,item)
-        self.assertEqual(editor.table.columnCount(),7)
+        self.assertEqual(editor.table.columnCount(),8)
         self.assertTrue(editor.table.cellWidget(0,editor.COL_QUANTITY).isReadOnly())
         editor.accept()
         w.summary_table.selectRow(0);ui._duplicate_selected(w)

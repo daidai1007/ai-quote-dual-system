@@ -40,7 +40,7 @@ assert item["formula"]["total_cost"] == 88
 temporary_item = {"attachments": [], "formula": {"attachment_fee": 0, "total_cost": 0}, "quick": {"attachment_fee": 0, "total_cost": 0}}
 temporary_editor = scheme2_ui.AttachmentEditor(window, temporary_item)
 temporary_editor.add_row()
-assert temporary_editor.table.columnCount() == 7
+assert temporary_editor.table.columnCount() == 8
 assert "单价" not in [temporary_editor.table.horizontalHeaderItem(column).text() for column in range(temporary_editor.table.columnCount())]
 temporary_quantity = temporary_editor.table.cellWidget(0, temporary_editor.COL_QUANTITY)
 assert temporary_quantity.minimum() > 0

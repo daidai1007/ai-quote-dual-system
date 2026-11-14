@@ -25,7 +25,7 @@ original = copy.deepcopy(item)
 editor = AttachmentEditor(parent, item)
 editor.show()
 app.processEvents()
-assert editor.size() == QSize(900, 315)
+assert editor.size() == QSize(990, 315)
 assert editor.isSizeGripEnabled(), 'The frameless dialog needs a manual resize handle'
 grip = editor.findChild(QSizeGrip)
 assert grip is not None and grip.isVisible()
@@ -60,7 +60,7 @@ for event_type, position, global_pos, button, buttons in (
     app.processEvents()
 assert editor.width() > start_size.width() and editor.height() > start_size.height()
 assert editor.pos() == start_pos
-assert editor.table.rowCount() == 12 and item == original
+assert editor.table.rowCount() == 13 and item == original
 assert editor.table.verticalScrollBar().maximum() > 0
 editor.reject()
 assert item == original

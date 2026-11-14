@@ -33,7 +33,7 @@ from manufacturing_cost import manufacturing_cost_snapshot, has_manufacturing_co
 from tax_cost import with_tax_cost, has_tax_cost, TAX_COST_BASIS, TaxCostError
 from profit_metrics import production_total, rate as profit_rate, percentage as profit_percentage, GROSS_TOOLTIP, NET_TOOLTIP, GROSS_MARGIN_BASIS
 from standalone_attachment import is_standalone, ready as standalone_ready, update_item as update_standalone_item
-from attachment_cost_allocation import with_cost_allocation,merge_attachment_details
+from attachment_cost_allocation import COST_PARTS, with_cost_allocation, merge_attachment_details
 from cost_detail_export import write_cost_detail_xlsx
 from quote_request_context import check_quote_response, quote_request_is_current, retire_quote_request, settle_quote_request
 from drawing_orientation import pdf_view_rotation
@@ -74,6 +74,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
@@ -99,7 +101,7 @@ from layout_refresh import (_fit_window_minimum_to_screen, _retire_quote_action_
                             _ensure_quote_action_dock_host)
 from wheel_edit_guard import install_wheel_edit_guard
 from dropdown_style import ComboPopupDelegate as _SchemeComboItemDelegate
-from quick_discount_rules import missing_management_costs, quick_freight_fee, QUICK_FREIGHT_BASIS
+from quick_discount_rules import missing_management_costs, quick_discount_category, quick_freight_fee, QUICK_FREIGHT_BASIS
 try:
     from quick_discount_rules import (PRICING_BASIS, money, money_sum, money_product, apply_management_fee,
                                      quick_attachment_line_amount, quick_discount_breakdown)
@@ -179,15 +181,19 @@ HEADERS = (
 )
 COST_DISPLAY_ORDER = (0, 1, 2, 3, 11, 12, 23, 24, 22, 14, 15, 16, 17, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21, 25, 26, 27, 28, 29)
 COST_COLUMN_WIDTHS = (52, 140, 90, 160, 92, 100, 100, 100, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 92, 88, 100, 92, 92, 92, 92)
+ATTACHMENT_DETAIL_COLUMN = 5
+ATTACHMENT_FACE_PRICE_COLUMN = 6
 FIXED_QUOTE_COLUMN = 7
 DISCOUNTED_QUOTE_COLUMN = 24
 NET_MARGIN_COLUMN = 25
 MANUFACTURING_COLUMN = 26
 QUICK_FREIGHT_COLUMN = 27
 TAX_COST_COLUMN = 28
+# The stored cost snapshot uses HEADERS as field names. Apply UI labels only to the displayed table.
+COST_COLUMN_LABELS = {ATTACHMENT_DETAIL_COLUMN: "面价明细", QUICK_FREIGHT_COLUMN: "运费"}
 COST_VISUAL_ORDER = (0, 1, 2, 3, 4, 5, 6, 8, 7, 24, 9, 10, 27, 11, 12, 13, 14, 26, 15, 16, 17, 18, 28, 19, 20, 21, 25, 22, 23)
 COST_HEADER_GROUPS = (
-    ("柜体信息", 0, 3), ("数量", 4, 4), ("附件", 5, 6), ("报价结果", 7, 11),
+    ("柜体信息", 0, 3), ("数量", 4, 4), ("报价结果", ATTACHMENT_DETAIL_COLUMN, 11),
     ("成本数据", 12, 20), ("利润率", 21, 21), ("自制件重量", 22, 22), ("操作", 23, 23),
 )
 COST_COLUMN_BACKGROUNDS = (
@@ -276,6 +282,8 @@ class _GroupedCostHeader(QHeaderView):
             painter.drawRect(rect.adjusted(0, 0, -1, -1))
             painter.drawText(rect.adjusted(4, 2, -4, -2), Qt.AlignmentFlag.AlignCenter, title)
         for section in range(self.count()):
+            if self.isSectionHidden(section):
+                continue
             left = self.sectionViewportPosition(section)
             rect = QRect(left, top_height, self.sectionSize(section), bottom_height)
             painter.fillRect(rect, QColor("#1F65A8"))
@@ -1224,8 +1232,10 @@ def _attachment_popup_quantity(source):
 
 
 class AttachmentEditor(QDialog):
-    DEFAULT_SIZE = QSize(900, 315)
+    DEFAULT_SIZE = QSize(990, 315)
     MINIMUM_SIZE = QSize(640, 240)
+    HEADERS = ("名称", "尺寸 / 规格", "数量", "成本单价", "成本", "面价单价", "面价", "折扣面价")
+    ROW_HEIGHT = 42
     COL_NAME = 0
     COL_SPECIFICATION = 1
     COL_QUANTITY = 2
@@ -1233,14 +1243,18 @@ class AttachmentEditor(QDialog):
     COL_FORMULA_AMOUNT = 4
     COL_UNIT_AMOUNT = 5
     COL_AMOUNT = 6
+    COL_DISCOUNTED_AMOUNT = 7
 
-    def __init__(self, window, item):
+    def __init__(self, window, item, *, include_cabinet=True):
         super().__init__(window)
         self.window = window
         self.item = item
+        self._cabinet_cell = None
+        self.discount_factor = _number(item.get("quick_discount"), 1)
         _quote_item_remark(item, preserve_existing=_preserve_quote_remark(window))
         from attachment_v2_client import confirmation_inputs
         self.original_snapshot_inputs = confirmation_inputs(item.get("attachments", []))
+        self._catalogue_preview = None
         # A row is already a complete cabinet/ganged set; the product's order
         # quantity must never change these editable attachment values.
         self.cabinet_quantity = 1
@@ -1297,6 +1311,17 @@ class AttachmentEditor(QDialog):
         close_button.clicked.connect(self.accept)
         header_layout.addWidget(title)
         header_layout.addStretch(1)
+        self.catalogue_button = QPushButton("从附件库添加")
+        self.catalogue_button.setObjectName("scheme2PrimaryGhost")
+        self.catalogue_button.setVisible(not is_standalone(item))
+        self.catalogue_button.setEnabled(
+            not _quote_remark_readonly(window) and not _received_cost_view(window)
+            and item.get("attachment_contract") == 2 and bool(item.get("quote_line_id"))
+        )
+        if not self.catalogue_button.isEnabled():
+            self.catalogue_button.setToolTip("可编辑的柜体报价需有计算快照。旧报价请先重新计算。")
+        self.catalogue_button.clicked.connect(self._add_catalogue_attachment)
+        header_layout.addWidget(self.catalogue_button)
         self.dimensions_button = QToolButton()
         self.dimensions_button.setObjectName("scheme2AttachmentDimensions")
         self.dimensions_button.setText("修改尺寸…")
@@ -1307,27 +1332,31 @@ class AttachmentEditor(QDialog):
         header_layout.addWidget(self.dimensions_button)
         header_layout.addWidget(close_button)
         layout.addWidget(header)
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, len(self.HEADERS))
         self.table.setObjectName("scheme2AttachmentEditorTable")
-        self.table.setHorizontalHeaderLabels(("名称", "尺寸 / 规格", "数量", "成本单价", "成本", "面价单价", "面价"))
+        self.table.setHorizontalHeaderLabels(self.HEADERS)
+        self.table.horizontalHeaderItem(self.COL_DISCOUNTED_AMOUNT).setToolTip(
+            f"面价 × 折扣系数（{self.discount_factor:g}）；不参与折扣显示 /。")
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(False)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.setToolTip("数量和面价单价可修改；逐柜尺寸附件和人工新增附件的成本单价可双击修改；成本与面价按数量自动计算；三排安装梁、电脑托盘、有孔承板、无孔承板型号双击后选择；右键可添加或删除临时附件")
+        self.table.setToolTip("数量和面价单价可修改；逐柜尺寸附件和人工新增附件的成本单价可双击修改；成本与面价按数量自动计算；三排安装梁、电脑托盘、有孔承板、无孔承板型号双击后选择；右键可新增临时附件或删除所选")
         self.table.customContextMenuRequested.connect(self._show_table_menu)
         table_header = self.table.horizontalHeader()
         table_header.setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeMode.Stretch)
         table_header.setSectionResizeMode(self.COL_SPECIFICATION, QHeaderView.ResizeMode.Stretch)
         table_header.setSectionResizeMode(self.COL_QUANTITY, QHeaderView.ResizeMode.Fixed)
         table_header.setSectionResizeMode(self.COL_AMOUNT, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(self.COL_DISCOUNTED_AMOUNT, QHeaderView.ResizeMode.Fixed)
         table_header.setSectionResizeMode(self.COL_FORMULA_AMOUNT, QHeaderView.ResizeMode.Fixed)
         for column in (self.COL_UNIT_COST, self.COL_UNIT_AMOUNT):
             table_header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
             self.table.setColumnWidth(column, 112)
         self.table.setColumnWidth(self.COL_QUANTITY, 62)
         self.table.setColumnWidth(self.COL_AMOUNT, 82)
+        self.table.setColumnWidth(self.COL_DISCOUNTED_AMOUNT, 100)
         self.table.setColumnWidth(self.COL_FORMULA_AMOUNT, 88)
         self.table.cellClicked.connect(self.edit_missing_dimensions)
         self.table.cellDoubleClicked.connect(self._begin_model_edit)
@@ -1336,7 +1365,42 @@ class AttachmentEditor(QDialog):
         for attachment in item.get("attachments", []):
             if isinstance(attachment, dict):
                 self.add_row(attachment)
+        if include_cabinet and not is_standalone(item):
+            self._add_cabinet_row()
         self._update_dimension_action()
+
+    def attachment_row_count(self):
+        return self.table.rowCount() - (self._cabinet_cell is not None)
+
+    def _add_cabinet_row(self):
+        formula = _formula(self.item)
+        parts = [_number(formula.get(key), float("nan")) for key in COST_PARTS]
+        cost = _money(money_sum(parts)) if all(math.isfinite(value) for value in parts) else "—"
+        quick = _quick(self.item)
+        attachments = [row for row in self.item.get("attachments", []) if isinstance(row, dict)]
+        face = (quick_discount_breakdown(quick, attachments, self.discount_factor)["base_price"]
+                if quick.get("base_price") is not None or quick.get("total_cost") is not None else None)
+        face_text = _money(face) if face is not None else "—"
+        discounted = _money(money_product(face, self.discount_factor)) if face is not None else "—"
+        specification = self.item.get("specification") or self.item.get("model_code") or "—"
+        # Display the cabinet first while keeping attachment indices aligned with the draft.
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self.table.setRowHeight(row, self.ROW_HEIGHT)
+        self.table.verticalHeader().moveSection(row, 0)
+        for column, value in enumerate(("柜体", str(specification), "1", cost, cost, face_text, face_text, discounted)):
+            cell = QTableWidgetItem(value)
+            cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            cell.setBackground(QColor("#F0F6FD"))
+            font = cell.font()
+            font.setBold(True)
+            cell.setFont(font)
+            if column >= self.COL_QUANTITY:
+                cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if column in (self.COL_UNIT_COST, self.COL_FORMULA_AMOUNT):
+                cell.setToolTip("单台／单套柜体的材料、辅材、人工和喷涂成本合计。")
+            self.table.setItem(row, column, cell)
+        self._cabinet_cell = self.table.item(row, self.COL_NAME)
 
     def _update_dimension_action(self):
         from support_plate_pricing import is_support_plate
@@ -1345,7 +1409,7 @@ class AttachmentEditor(QDialog):
         source = cell.data(ROLE_ROW) if cell is not None else None
         self.dimensions_button.setVisible(any(
             is_support_plate(self.table.item(index, self.COL_NAME).data(ROLE_ROW) or {})
-            for index in range(self.table.rowCount())
+            for index in range(self.attachment_row_count())
             if self.table.item(index, self.COL_NAME) is not None))
         self.dimensions_button.setEnabled(
             isinstance(source, dict) and is_support_plate(source)
@@ -1358,17 +1422,128 @@ class AttachmentEditor(QDialog):
     def _show_table_menu(self, position):
         if is_standalone(self.item):
             return  # Independent entries are added/deleted in the cost table.
-        if getattr(self, "_pending_reprices", {}):
+        if getattr(self, "_pending_reprices", {}) or self._catalogue_preview is not None:
             return
         menu = QMenu(self)
         add_action = menu.addAction("＋ 临时附件")
         remove_action = menu.addAction("删除所选")
-        remove_action.setEnabled(self.table.currentRow() >= 0)
+        remove_action.setEnabled(0 <= self.table.currentRow() < self.attachment_row_count())
         chosen = menu.exec(self.table.viewport().mapToGlobal(position))
         if chosen is add_action:
             self.add_row()
-        elif chosen is remove_action and self.table.currentRow() >= 0:
+        elif chosen is remove_action and 0 <= self.table.currentRow() < self.attachment_row_count():
             self.table.removeRow(self.table.currentRow())
+
+    def _add_catalogue_attachment(self):
+        from shiboken6 import isValid
+        from attachment_v2_client import prepare_draft_catalog_attachment
+        from quote_scheme_center import _run
+
+        if (not self.catalogue_button.isEnabled() or self._catalogue_preview is not None
+                or getattr(self, "_pending_reprices", {})):
+            return
+        picker = _CostAttachmentCatalogue(self)
+        catalog, version = [], None
+
+        def loaded(body):
+            nonlocal catalog, version
+            if not isValid(picker) or not picker.isVisible():
+                return
+            version = body.get("data_version") if isinstance(body, dict) else None
+            items = body.get("items") if version else None
+            if not isinstance(items, list):
+                failed("附件目录返回无效，请重试。")
+                return
+            catalog = [row for row in items if isinstance(row, dict) and row.get("attachment_price_id")
+                       and row.get("item_name") and row.get("is_active") is not False]
+            picker.set_catalogue(catalog)
+
+        def failed(message):
+            if isValid(picker) and picker.isVisible():
+                picker.status.setText(f"读取附件库失败：{message}")
+                picker.retry.show()
+
+        def load():
+            picker.retry.hide()
+            picker.status.setText("正在读取附件库…")
+            try:
+                _run(self.window, "GET", "/api/attachments/catalog?v=2", None, loaded, failed)
+            except RuntimeError as error:
+                failed(str(error))
+
+        picker.retry.clicked.connect(load)
+        QTimer.singleShot(0, picker, load)
+        result = picker.exec()
+        if not isValid(picker):
+            return
+        choice = picker.selected_attachment()
+        picker.deleteLater()
+        if result != QDialog.DialogCode.Accepted or choice is None:
+            return
+        try:
+            additions = prepare_draft_catalog_attachment(self.item, choice, catalog, version)
+        except ValueError as error:
+            QMessageBox.warning(self, "附件匹配失败", str(error))
+            return
+        existing = set()
+        for row in range(self.attachment_row_count()):
+            source = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
+            existing.add((str(source.get("attachment_price_id")), _ganged_attachment_number(source)))
+        additions = [source for source in additions
+                     if (str(source.get("attachment_price_id")), _ganged_attachment_number(source)) not in existing]
+        if not additions:
+            QMessageBox.information(self, "已选附件", "这项附件已在清单中，可直接修改数量。")
+            return
+        self._preview_catalogue_additions(additions)
+
+    def _preview_catalogue_additions(self, additions):
+        from shiboken6 import isValid
+
+        token = object()
+        self._catalogue_preview = token
+        self.catalogue_button.setEnabled(False)
+        self.catalogue_button.setText("正在计算附件…")
+        calculated = []
+
+        def current():
+            return isValid(self) and self._catalogue_preview is token
+
+        def finished():
+            self._catalogue_preview = None
+            self.catalogue_button.setEnabled(True)
+            self.catalogue_button.setText("从附件库添加")
+
+        def failed(message):
+            if current():
+                finished()
+                QMessageBox.warning(self, "附件计算失败", str(message))
+
+        def next_attachment():
+            if len(calculated) == len(additions):
+                first = self.attachment_row_count()
+                for source in calculated:
+                    self.add_row(source)
+                self.table.selectRow(first)
+                self._update_dimension_action()
+                finished()
+                return
+            try:
+                self.window.recalculate_draft_attachment(
+                    self.item, additions[len(calculated)], succeeded, failed, allow_pending_manual=True
+                )
+            except (AttributeError, ValueError, RuntimeError) as error:
+                failed(str(error))
+
+        def succeeded(row):
+            if current():
+                calculated.append(row)
+                next_attachment()
+
+        next_attachment()
+
+    def reject(self):
+        self._catalogue_preview = None
+        super().reject()
 
     def add_row(self, attachment=None):
         source = attachment if isinstance(attachment, dict) else {
@@ -1377,9 +1552,12 @@ class AttachmentEditor(QDialog):
         source = discard_automatic_amount_override(source)
         if is_base_attachment(source) and not is_standalone(self.item):
             source = default_base_attachment(source, quote_item_base_height(self.item, source))
-        row = self.table.rowCount()
+        row = self.attachment_row_count()
         self.table.insertRow(row)
-        self.table.setRowHeight(row, 42)
+        if self._cabinet_cell is not None:
+            header = self.table.verticalHeader()
+            header.moveSection(header.visualIndex(self._cabinet_cell.row()), 0)
+        self.table.setRowHeight(row, self.ROW_HEIGHT)
         name, spec, is_light_switch = _attachment_popup_text(source)
         self.table.setItem(row, self.COL_NAME, QTableWidgetItem(name))
         specification_item = QTableWidgetItem(spec)
@@ -1421,7 +1599,7 @@ class AttachmentEditor(QDialog):
                      if self.table.cellWidget(row, column) is widget), -1)
 
     def _begin_model_edit(self, row, column):
-        if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
+        if column != self.COL_SPECIFICATION or not 0 <= row < self.attachment_row_count():
             return
         if is_standalone(self.item):
             from standalone_attachment_ui import edit_parameters
@@ -1637,13 +1815,31 @@ class AttachmentEditor(QDialog):
             editor = self.table.cellWidget(row, unit_column)
             if editor is None:
                 continue
-            cell = QTableWidgetItem(_money(money_product(editor.value(), quantity)))
+            amount = money_product(editor.value(), quantity)
+            cell = QTableWidgetItem(_money(amount))
             cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
             cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if pending:
                 cell.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
                 cell.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充")
             self.table.setItem(row, total_column, cell)
+            if total_column == self.COL_AMOUNT:
+                self._update_discounted_amount(row, amount, pending=pending)
+
+    def _update_discounted_amount(self, row, face=None, *, pending=False, calculating=False):
+        source = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
+        if not quick_discount_category(source):
+            text = "/"
+        elif calculating:
+            text = "计算中…"
+        elif pending or face is None or source.get("status") == "ERROR":
+            text = "—"
+        else:
+            text = _money(money_product(face, self.discount_factor))
+        cell = QTableWidgetItem(text)
+        cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.table.setItem(row, self.COL_DISCOUNTED_AMOUNT, cell)
 
     def _store_prices(self, row, data):
         from attachment_v2_client import normalize_installation_board_quantity
@@ -1671,9 +1867,10 @@ class AttachmentEditor(QDialog):
         return data
 
     def _save_visible_prices(self, row):
-        self._update_totals(row)
         cell = self.table.item(row, self.COL_NAME)
-        cell.setData(ROLE_ROW, self._store_prices(row, dict(cell.data(ROLE_ROW) or {})))
+        source = self._store_prices(row, dict(cell.data(ROLE_ROW) or {}))
+        cell.setData(ROLE_ROW, source)
+        self._update_totals(row, pending=bool(self._pending_dimensions(source)))
 
     def _amount_changed(self, row, value):
         if row < 0:
@@ -1707,7 +1904,7 @@ class AttachmentEditor(QDialog):
         self._save_visible_prices(row)
 
     def edit_missing_dimensions(self, row, column, *, force=False):
-        if column != self.COL_SPECIFICATION or not 0 <= row < self.table.rowCount():
+        if column != self.COL_SPECIFICATION or not 0 <= row < self.attachment_row_count():
             return
         if is_standalone(self.item):
             from standalone_attachment_ui import edit_parameters
@@ -1778,6 +1975,7 @@ class AttachmentEditor(QDialog):
         if formula_item is not None:
             formula_item.setText("计算中…")
             formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
+        self._update_discounted_amount(row, calculating=True)
         reprice = getattr(self.window, "recalculate_draft_attachment", None)
         def current():
             from shiboken6 import isValid
@@ -1824,6 +2022,7 @@ class AttachmentEditor(QDialog):
             if formula_item is not None:
                 formula_item.setText(_money(0))
                 formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
+            self._update_discounted_amount(row)
             if isinstance(specification_editor, QComboBox):
                 QTimer.singleShot(0, lambda editor=specification_editor: self._end_model_edit(row, editor))
             QMessageBox.warning(self, "附件计算失败", str(message))
@@ -1837,13 +2036,13 @@ class AttachmentEditor(QDialog):
             failed(str(error))
 
     def accept(self):
-        if getattr(self, "_pending_reprices", {}):
+        if getattr(self, "_pending_reprices", {}) or self._catalogue_preview is not None:
             QMessageBox.warning(self, "附件正在计算", "请等待附件计算完成后再确认。")
             return
         old_formula_total = _number(_formula(self.item).get("attachment_fee"), 0)
         old_quick_total = _number(_quick(self.item).get("attachment_fee"), _attachment_total(self.item))
         rows = []
-        for row in range(self.table.rowCount()):
+        for row in range(self.attachment_row_count()):
             for column in (self.COL_QUANTITY, self.COL_UNIT_AMOUNT, self.COL_UNIT_COST):
                 editor = self.table.cellWidget(row, column)
                 if isinstance(editor, QAbstractSpinBox):
@@ -1905,6 +2104,95 @@ class AttachmentEditor(QDialog):
             quote["total_cost"] = money_sum((_number(quote.get("total_cost")), -previous, current))
         self.window.refresh_summary()
         super().accept()
+
+
+class _CostAttachmentCatalogue(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        from dialog_style import DIALOG_METRICS, style_dialog
+
+        self.setWindowTitle("从附件库添加")
+        self.resize(parent.minimumWidth(), parent.height())
+        layout = QVBoxLayout(self)
+        layout.setSpacing(DIALOG_METRICS["spacing"])
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("搜索附件名称、型号或分类")
+        self.search.setAccessibleName("搜索附件")
+        self.search.setClearButtonEnabled(True)
+        self.search.setEnabled(False)
+        layout.addWidget(self.search)
+        self.status = QLabel("正在读取附件库…")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.retry = QPushButton("重试")
+        self.retry.setAutoDefault(False)
+        self.retry.hide()
+        layout.addWidget(self.retry, 0, Qt.AlignmentFlag.AlignLeft)
+        self.list = QListWidget()
+        self.list.setAccessibleName("数据库附件")
+        layout.addWidget(self.list, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.confirm = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.confirm.setText("添加")
+        self.confirm.setEnabled(False)
+        self.confirm.setAutoDefault(False)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel.setText("取消")
+        cancel.setAutoDefault(False)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.list.itemSelectionChanged.connect(lambda: self.confirm.setEnabled(self.selected_attachment() is not None))
+        self.list.itemDoubleClicked.connect(lambda _item: self.accept())
+        self.search.textChanged.connect(self.filter_catalogue)
+        layout.addWidget(buttons)
+        style_dialog(self)
+
+    def set_catalogue(self, catalog):
+        self.list.clear()
+        grouped = {}
+        for row in catalog:
+            group = tuple(str(row.get(key) or "").strip() for key in
+                          ("category_level1", "category_level2", "category_level3", "item_name"))
+            label = " / ".join(dict.fromkeys(part for part in group if part))
+            sized = size_match_attachment_name(row)
+            model = str(row.get("model_code") or "").strip()
+            if sized:
+                entry = grouped.get(group)
+                if entry is not None:
+                    entry.setData(ROLE_DERIVED_SPEC, entry.data(ROLE_DERIVED_SPEC) + " " + model)
+                    continue
+                label += " · 按柜体尺寸匹配"
+            else:
+                label = " · ".join(dict.fromkeys(part for part in (label, model, _attachment_dimension_or_model(row)) if part))
+            entry = QListWidgetItem(label, self.list)
+            entry.setData(ROLE_ROW, row)
+            entry.setData(ROLE_DERIVED_SPEC, label + " " + model)
+            if sized:
+                grouped[group] = entry
+        self.search.setEnabled(True)
+        self.search.setFocus()
+        self.filter_catalogue(self.search.text())
+
+    def filter_catalogue(self, text):
+        tokens = unicodedata.normalize("NFKC", text).casefold().split()
+        visible = 0
+        for index in range(self.list.count()):
+            entry = self.list.item(index)
+            terms = unicodedata.normalize("NFKC", entry.data(ROLE_DERIVED_SPEC)).casefold()
+            matches = all(token in terms for token in tokens)
+            if not matches and entry.isSelected():
+                entry.setSelected(False)
+            entry.setHidden(not matches)
+            visible += int(matches)
+        self.status.setText(f"{visible} 项可选" if visible else "没有匹配的附件。")
+
+    def selected_attachment(self):
+        selected = self.list.selectedItems()
+        return selected[0].data(ROLE_ROW) if selected else None
+
+    def accept(self):
+        if self.selected_attachment() is not None:
+            super().accept()
 
 
 def _attachment_summary_identity(source):
@@ -2409,7 +2697,7 @@ class AttachmentSummaryDialog(AttachmentEditor):
 
     def __init__(self, window):
         # Reuse the shell; only sale-price edits propagate to matching rows.
-        super().__init__(window, {"attachments": []})
+        super().__init__(window, {"attachments": []}, include_cabinet=False)
         self.setWindowTitle("附件汇总")
         self.findChild(QLabel, "scheme2AttachmentEditorTitle").setText("附件汇总")
         self.findChild(QToolButton, "scheme2AttachmentEditorClose").setToolTip("关闭（单价修改已自动保存）")
@@ -4340,7 +4628,7 @@ def _build_cost_page(window):
     table.setObjectName("summaryTable")
     table.setHorizontalHeader(_GroupedCostHeader(table))
     table.setItemDelegate(_CostCellDelegate(table))
-    table.setHorizontalHeaderLabels(["运费" if col == QUICK_FREIGHT_COLUMN else title for col, title in enumerate(HEADERS)])
+    table.setHorizontalHeaderLabels([COST_COLUMN_LABELS.get(column, title) for column, title in enumerate(HEADERS)])
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     table.setAlternatingRowColors(True)
@@ -4426,7 +4714,7 @@ def _build_cost_page(window):
             tile_layout = QVBoxLayout(tile)
             tile_layout.setContentsMargins(0, 0, 0, 0)
             tile_layout.setSpacing(COST_SELECTION_METRICS['label_gap'])
-            caption = QLabel("运费" if column == QUICK_FREIGHT_COLUMN else HEADERS[column])
+            caption = QLabel(COST_COLUMN_LABELS.get(column, HEADERS[column]))
             caption.setObjectName("scheme2CostSelectionMetricLabel")
             caption.setWordWrap(True)
             if column in (FIXED_QUOTE_COLUMN, DISCOUNTED_QUOTE_COLUMN):
@@ -4574,10 +4862,10 @@ def _install_export_busy_feedback(window, export_button):
 
 
 def _set_cost_column_mode(window, full):
-    """Keep all cost columns visible; retained for compatibility with older callers."""
+    """Arrange the cost table, retaining logical columns for the stored cost snapshot."""
     window._scheme2_full_columns = True
     for column in range(len(HEADERS)):
-        window.summary_table.setColumnHidden(column, False)
+        window.summary_table.setColumnHidden(column, column == ATTACHMENT_FACE_PRICE_COLUMN)
     header = window.summary_table.horizontalHeader()
     for visual, column in enumerate(COST_VISUAL_ORDER):
         header.moveSection(header.visualIndex(column), visual)
@@ -5047,7 +5335,7 @@ def _refresh_cost_table(window):
                         cell.setText('待完善')
                     if column == 5:
                         cell.setText('完善规格 / 参数')
-                    cell.setToolTip(item.get('standalone_error') or '点击已选附件，完善该附件自身规格及成本参数')
+                    cell.setToolTip(item.get('standalone_error') or '点击面价明细，完善该附件自身规格及成本参数')
                 allocation=(_formula(item).get('cost_allocation') or {})
                 if allocation and not allocation.get('complete') and column in (13,14,15,17):
                     cell.setText('待重算');cell.setToolTip('；'.join(allocation.get('errors') or []))
@@ -9368,6 +9656,11 @@ def install_scheme2_ui(namespace):
             if str(getattr(worker, "method", "POST")).upper() == "GET":
                 return original_worker_run(worker)
             payload = getattr(worker, "payload", None)
+            # The cost popup already supplies the selected quote row's prices.
+            # Reopening a different configuration must not overwrite them.
+            if (str(getattr(worker, "url", "")).endswith("/api/attachments/preview")
+                    and isinstance(payload, dict) and payload.get("pricing_basis")):
+                return original_worker_run(worker)
             owner = worker.parent()
             if isinstance(payload, dict) and owner is not None and hasattr(owner, "scheme2_defaults"):
                 values = getattr(owner, "_scheme2_active_settings", None) or owner.scheme2_defaults

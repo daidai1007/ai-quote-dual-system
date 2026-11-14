@@ -17,7 +17,7 @@ header = scheme2_ui._GroupedCostHeader(table)
 table.setHorizontalHeader(header)
 table.setHorizontalHeaderLabels(scheme2_ui.HEADERS)
 assert scheme2_ui.COST_HEADER_GROUPS == (
-    ("柜体信息", 0, 3), ("数量", 4, 4), ("附件", 5, 6), ("报价结果", 7, 11),
+    ("柜体信息", 0, 3), ("数量", 4, 4), ("报价结果", 5, 11),
     ("成本数据", 12, 20), ("利润率", 21, 21), ("自制件重量", 22, 22), ("操作", 23, 23),
 )
 assert header.minimumHeight() == 76

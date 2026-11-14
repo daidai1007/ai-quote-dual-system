@@ -1,4 +1,4 @@
-"""Offline regression: a popup option change must resolve its new catalogue ID."""
+"""Offline regression for catalogue selection and repricing in the cost popup."""
 import copy
 import os
 from pathlib import Path
@@ -52,9 +52,16 @@ def start(self):
                           if row["attachment_price_id"] == selected["attachment_price_id"]), None)
             if match is None:
                 self.failed.emit('{"error":"attachment_preview_failed","message":"必须提供有效 attachment_price_id"}')
+            elif match.get("test_preview_error"):
+                self.failed.emit(match["test_preview_error"])
+            elif (parameter := match.get("test_manual_dimension")) and not selected["manual_inputs"].get(parameter):
+                self.succeeded.emit({"attachments": [{**match, **selected, "status": "ERROR",
+                    "required_parameters": [{"name": parameter, "source": "MANUAL"}],
+                    "error": f"人工尺寸{parameter}未填写", "quick_amount": match["face_price"],
+                    "formula_amount": None}]})
             else:
                 quantity = selected["quantity"]
-                self.succeeded.emit({"attachments": [{**match, **selected, "status": "OK",
+                self.succeeded.emit({"attachments": [{**match, **selected, "status": "FIXED",
                     "matched_price": match["face_price"], "formula_unit_cost": 5,
                     "formula_amount": 5 * quantity, "quick_amount": match["face_price"] * quantity}]})
         else:
@@ -116,6 +123,116 @@ class DraftAttachmentRepriceId(unittest.TestCase):
         self.window.recalculate_draft_attachment(self.item, source, results.append, errors.append)
         wait_for(lambda: results or errors)
         return results, errors
+
+    def open_catalogue_and_select(self, editor, search):
+        seen = []
+
+        def load(_window, method, route, payload, succeeded, _failed):
+            seen.append((method, route, payload))
+            succeeded({"items": copy.deepcopy(catalog), "data_version": "offline"})
+            picker = editor.findChild(ui._CostAttachmentCatalogue)
+            picker.search.setText(search)
+            visible = [picker.list.item(i) for i in range(picker.list.count())
+                       if not picker.list.item(i).isHidden()]
+            seen.append(len(visible))
+            if len(visible) != 1:
+                picker.reject()
+                return
+            picker.list.setCurrentItem(visible[0])
+            picker.confirm.click()
+
+        with patch("quote_scheme_center._run", side_effect=load):
+            editor.catalogue_button.click()
+        self.assertEqual(seen, [("GET", "/api/attachments/catalog?v=2", None), 1])
+
+    def test_popup_adds_catalogue_attachment_and_keeps_quantity_editable(self):
+        original = dict(custom=True, item_name="临时木托", quantity=1, formula_amount=10, quick_amount=40)
+        self.item.update(attachment_contract=2, quote_line_id="11111111-1111-4111-8111-111111111111",
+                         attachments=[original], scheme2_cost_settings={"carbon_price": 5.7})
+        editor = ui.AttachmentEditor(self.window, self.item)
+        self.addCleanup(editor.close)
+        self.assertTrue(editor.catalogue_button.isEnabled())
+        tray = trays[1]
+        self.open_catalogue_and_select(editor, f"控制柜附件 {tray['model_code']}")
+        wait_for(lambda: editor.attachment_row_count() == 2 or warnings)
+        self.assertEqual(warnings, [])
+        self.assertEqual(self.item["attachments"], [original])
+        payload = requests[-1][1]
+        self.assertEqual(payload["attachments"][0]["attachment_price_id"], tray["attachment_price_id"])
+        self.assertEqual((payload["width_mm"], payload["height_mm"], payload["depth_mm"]), (1000, 2100, 600))
+        self.assertEqual(payload["material_unit_price_override"], 5.7)
+        with patch.object(QMessageBox, "information") as duplicate:
+            self.open_catalogue_and_select(editor, tray["model_code"])
+            duplicate.assert_called_once()
+        self.assertEqual(editor.attachment_row_count(), 2)
+        editor.table.cellWidget(1, editor.COL_QUANTITY).setValue(2)
+        editor.accept()
+        source = self.item["attachments"][1]
+        self.assertEqual(source["attachment_price_id"], tray["attachment_price_id"])
+        self.assertEqual((source["quantity"], source["formula_amount"], source["quick_amount"]),
+                         (2, 10, 2 * tray["face_price"]))
+        self.assertTrue(self.item["attachment_snapshot_dirty"])
+        self.assertEqual(self.item["formula"]["attachment_fee"], 20)
+        self.assertEqual(self.item["quick"]["attachment_fee"], 40 + 2 * tray["face_price"])
+
+    def test_popup_adds_separate_catalogue_rows_for_ganged_children(self):
+        boards = [dict(attachment_price_id=260 + i, item_name="安装板", category_level1="安装板",
+                       width_mm=width, height_mm=1800, price=100 + i, face_price=100 + i)
+                  for i, width in enumerate((800, 1000))]
+        catalog.extend(boards)
+        self.addCleanup(lambda: [catalog.remove(row) for row in boards])
+        self.item.update(attachment_contract=2, quote_line_id="11111111-1111-4111-8111-111111111111",
+                         width_mm=1800, height_mm=1800, ganged_cabinets=[
+                             dict(width_mm=width, height_mm=1800, depth_mm=600) for width in (800, 1000)])
+        self.item["formula"]["ganged_cabinet_costs"] = [dict(product_code=code)
+                                                       for code in ("JP_SINGLE", "JP_DOUBLE")]
+        editor = ui.AttachmentEditor(self.window, self.item)
+        self.addCleanup(editor.close)
+        boards[1]["test_preview_error"] = "子柜附件取价失败"
+        self.open_catalogue_and_select(editor, "安装板")
+        wait_for(lambda: bool(warnings))
+        self.assertEqual(warnings, ["子柜附件取价失败"])
+        self.assertEqual(editor.attachment_row_count(), 0)
+        self.assertTrue(editor.catalogue_button.isEnabled())
+        del boards[1]["test_preview_error"]
+        warnings.clear()
+        requests.clear()
+        self.open_catalogue_and_select(editor, "安装板")
+        wait_for(lambda: editor.attachment_row_count() == 2 or warnings)
+        self.assertEqual(warnings, [])
+        self.assertEqual([editor.table.item(i, editor.COL_NAME).text() for i in range(2)],
+                         ["柜体1｜安装板", "柜体2｜安装板"])
+        for index, (_, payload) in enumerate(requests):
+            selection = payload["attachments"][0]
+            self.assertEqual((selection["attachment_price_id"], selection["ganged_cabinet_index"]), (260 + index, index))
+            self.assertEqual([child["product_code"] for child in payload["ganged_cabinet_inputs"]],
+                             ["JP_SINGLE", "JP_DOUBLE"])
+        editor.accept()
+        self.assertEqual([row["ganged_cabinet_index"] for row in self.item["attachments"]], [0, 1])
+
+    def test_new_catalogue_attachment_can_be_completed_with_manual_dimensions(self):
+        glass = dict(attachment_price_id=270, category_level1="控制柜附件", category_level2="玻璃门",
+                     item_name="玻璃门", width_mm=1000, height_mm=2100, price=100, face_price=100,
+                     test_manual_dimension="玻璃门宽度")
+        catalog.append(glass)
+        self.addCleanup(catalog.remove, glass)
+        self.item.update(attachment_contract=2, quote_line_id="11111111-1111-4111-8111-111111111111")
+        editor = ui.AttachmentEditor(self.window, self.item)
+        self.addCleanup(editor.close)
+        self.open_catalogue_and_select(editor, "玻璃门")
+        wait_for(lambda: editor.attachment_row_count() == 1 or warnings)
+        self.assertEqual(warnings, [])
+        cell = editor.table.item(0, editor.COL_NAME)
+        self.assertEqual(cell.data(ui.ROLE_ROW)["status"], "PENDING_MANUAL")
+        with patch.object(ui._SchemeDimensionEditor, "exec", return_value=ui.QDialog.DialogCode.Accepted), \
+             patch.object(ui._SchemeDimensionEditor, "values", return_value={"玻璃门宽度": 1000}):
+            editor.edit_missing_dimensions(0, editor.COL_SPECIFICATION)
+        wait_for(lambda: cell.data(ui.ROLE_ROW)["status"] == "FIXED" or warnings)
+        self.assertEqual(warnings, [])
+        editor.accept()
+        saved = self.item["attachments"][0]
+        self.assertEqual(saved["manual_inputs"], {"玻璃门宽度": 1000})
+        self.assertEqual((saved["formula_amount"], saved["quick_amount"]), (5, 100))
 
     def test_missing_or_invalid_ids_are_resolved_before_preview(self):
         for invalid in (None, "", 0, True, "not-an-id"):
@@ -262,7 +379,7 @@ class DraftAttachmentRepriceId(unittest.TestCase):
             "quick_amount":0, "quick_amount_override":0, "computer_tray_auto_match":True}]
         editor = ui.AttachmentEditor(self.window, self.item)
         self.addCleanup(editor.close)
-        self.assertEqual(editor.table.columnCount(), 7)
+        self.assertEqual(editor.table.columnCount(), 8)
         self.assertEqual(editor.table.item(0, editor.COL_NAME).text(), "电脑托盘")
         self.assertIsNone(editor.table.cellWidget(0, editor.COL_SPECIFICATION))
         for tray in trays:

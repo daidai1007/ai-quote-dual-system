@@ -77,7 +77,7 @@ class GangedSizedAttachments(unittest.TestCase):
         quote = {"attachments": rows, "ganged_cabinets": window.ganged_cabinets}
         editor = ui.AttachmentEditor(parent, quote)
         self.addCleanup(editor.close)
-        self.assertEqual(editor.table.rowCount(), 2)
+        self.assertEqual(editor.attachment_row_count(), 2)
         self.assertEqual([editor.table.item(index, editor.COL_NAME).text() for index in range(2)],
                          ["柜体1｜安装板", "柜体2｜安装板"])
         editor.show()
@@ -144,7 +144,7 @@ class GangedSizedAttachments(unittest.TestCase):
         popup_item = {"attachments": rows, "ganged_cabinets": window.ganged_cabinets}
         editor = ui.AttachmentEditor(window, popup_item)
         self.addCleanup(editor.close)
-        popup_names = [editor.table.item(index, editor.COL_NAME).text() for index in range(editor.table.rowCount())]
+        popup_names = [editor.table.item(index, editor.COL_NAME).text() for index in range(editor.attachment_row_count())]
         for index, (_, name, height_field, height) in enumerate(FAMILIES, 1):
             pair = [row for row in rows if row["item_name"] == name]
             self.assertEqual([row.get("ganged_cabinet_index") for row in pair], [0, 1], (name, popup_names))
@@ -160,7 +160,7 @@ class GangedSizedAttachments(unittest.TestCase):
         self.assertEqual([row["attachment_price_id"] for row in sent if "ganged_cabinet_index" not in row], [91, 92])
         self.assertEqual(len(popup_names), 18, popup_names)
         self.assertEqual([bool(editor.table.cellWidget(index, editor.COL_UNIT_COST).property("schemeReadOnly"))
-                          for index in range(editor.table.rowCount())],
+                          for index in range(editor.attachment_row_count())],
                          ["｜" not in name for name in popup_names])
         self.assertFalse(v2.needs_ganged_sized_attachment_resolution(window))
         with patch.object(window, "refresh_summary"):
@@ -169,7 +169,7 @@ class GangedSizedAttachments(unittest.TestCase):
         reopened = ui.AttachmentEditor(window, popup_item)
         self.addCleanup(reopened.close)
         self.assertEqual([reopened.table.item(index, reopened.COL_NAME).text()
-                          for index in range(reopened.table.rowCount())], popup_names)
+                          for index in range(reopened.attachment_row_count())], popup_names)
 
         board = next(row for row in rows if row["attachment_price_id"] == 31)
         board.update(quantity=2, attachment_price_sign=-1, formula_cost_edited=True, formula_unit_cost_override=50)
