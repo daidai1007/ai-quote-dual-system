@@ -1356,7 +1356,7 @@ class AttachmentEditor(QDialog):
         self.table.horizontalHeaderItem(self.COL_DISCOUNTED_UNIT).setToolTip(
             f"参与折扣的项目按当前系数 {self.discount_factor:g} 计算，不参与折扣的附件按原价（系数 1）。")
         self.table.horizontalHeaderItem(self.COL_DISCOUNTED_AMOUNT).setToolTip(
-            "折扣总价 = 折扣单价 × 数量。")
+            "按折前行金额参与报价折扣，并按报价明细分配到分。折扣单价仅显示到分。")
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1380,9 +1380,10 @@ class AttachmentEditor(QDialog):
         layout.addWidget(self.table, 1)
         for attachment in item.get("attachments", []):
             if isinstance(attachment, dict):
-                self.add_row(attachment)
+                self.add_row(attachment, refresh_discounted_amounts=False)
         if include_cabinet and not is_standalone(item):
             self._add_cabinet_row()
+        self._refresh_discounted_amounts()
         self._update_dimension_action()
 
     def attachment_row_count(self):
@@ -1449,6 +1450,7 @@ class AttachmentEditor(QDialog):
             self.add_row()
         elif chosen is remove_action and 0 <= self.table.currentRow() < self.attachment_row_count():
             self.table.removeRow(self.table.currentRow())
+            self._refresh_discounted_amounts()
 
     def _add_catalogue_attachment(self):
         from shiboken6 import isValid
@@ -1538,7 +1540,8 @@ class AttachmentEditor(QDialog):
             if len(calculated) == len(additions):
                 first = self.attachment_row_count()
                 for source in calculated:
-                    self.add_row(source)
+                    self.add_row(source, refresh_discounted_amounts=False)
+                self._refresh_discounted_amounts()
                 self.table.selectRow(first)
                 self._update_dimension_action()
                 finished()
@@ -1561,7 +1564,7 @@ class AttachmentEditor(QDialog):
         self._catalogue_preview = None
         super().reject()
 
-    def add_row(self, attachment=None):
+    def add_row(self, attachment=None, *, refresh_discounted_amounts=True):
         source = attachment if isinstance(attachment, dict) else {
             "custom": True, "item_name": "自定义附件", "category_level1": "其他附件", "quantity": 1}
         from attachment_v2_client import is_base_attachment, default_base_attachment, discard_automatic_amount_override, quote_item_base_height
@@ -1607,6 +1610,8 @@ class AttachmentEditor(QDialog):
         self.table.setCellWidget(row, self.COL_QUANTITY, quantity)
         self.table.item(row, self.COL_NAME).setData(ROLE_ROW, dict(source))
         self._render_amounts(row, source)
+        if refresh_discounted_amounts:
+            self._refresh_discounted_amounts()
         quantity.valueChanged.connect(lambda value, widget=quantity:
             self._quantity_changed(self._widget_row(widget, self.COL_QUANTITY), value))
 
@@ -1876,19 +1881,34 @@ class AttachmentEditor(QDialog):
                 cell.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
                 cell.setToolTip("尺寸不完整，当前按 0 元计；点击“尺寸 / 规格”补充")
             self.table.setItem(row, total_column, cell)
-        self._update_discounted_amount(row, pending=pending)
 
-    def _update_discounted_amount(self, row, *, pending=False, calculating=False):
-        source = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
+    def _refresh_discounted_amounts(self):
+        from attachment_v2_client import is_zero_quantity_installation_board
+        from cost_price_breakdown import quick_price_allocation
+
+        rows = range(self.attachment_row_count())
+        if not rows:
+            return
+        attachments = [self._store_prices(row, dict(self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}))
+                       for row in rows]
+        priced_rows = {row: source for row, source in enumerate(attachments)
+                       if not is_zero_quantity_installation_board(source)}
+        saved_attachments = [row for row in self.item.get("attachments", []) if isinstance(row, dict)]
+        quick, _ = _quote_with_popup_attachment_fee(_quick(self.item), saved_attachments, _popup_quick_amount)
+        _, totals = quick_price_allocation(quick, priced_rows.values(), self.discount_factor)
+        totals_by_row = dict(zip(priced_rows, totals))
+        calculating_rows = getattr(self, "_pending_reprices", {})
+        for row, source in enumerate(attachments):
+            self._update_discounted_amount(row, source, totals_by_row.get(row, 0), calculating=row in calculating_rows)
+
+    def _update_discounted_amount(self, row, source, total, *, calculating=False):
         editor = self.table.cellWidget(row, self.COL_UNIT_AMOUNT)
-        quantity = self.table.cellWidget(row, self.COL_QUANTITY).value()
         factor = self._discount_for_attachment(source)
-        available = not (calculating or pending or source.get("status") == "ERROR")
+        available = not (calculating or self._pending_dimensions(source) or source.get("status") == "ERROR")
         unit_text = total_text = "计算中…" if calculating else "—"
         if available:
-            unit = money_product(editor.value(), factor)
-            unit_text = _money(unit)
-            total_text = _money(money_product(unit, quantity))
+            unit_text = _money(money_product(editor.value(), factor))
+            total_text = _money(total)
         for column, text in ((self.COL_DISCOUNTED_UNIT, unit_text), (self.COL_DISCOUNTED_AMOUNT, total_text)):
             cell = QTableWidgetItem(text)
             cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1930,6 +1950,7 @@ class AttachmentEditor(QDialog):
         source = self._store_prices(row, dict(cell.data(ROLE_ROW) or {}))
         cell.setData(ROLE_ROW, source)
         self._update_totals(row, pending=bool(self._pending_dimensions(source)))
+        self._refresh_discounted_amounts()
 
     def _amount_changed(self, row, value):
         if row < 0:
@@ -2036,7 +2057,7 @@ class AttachmentEditor(QDialog):
         if formula_item is not None:
             formula_item.setText("计算中…")
             formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#B45309"))
-        self._update_discounted_amount(row, calculating=True)
+        self._refresh_discounted_amounts()
         reprice = getattr(self.window, "recalculate_draft_attachment", None)
         def current():
             from shiboken6 import isValid
@@ -2063,6 +2084,7 @@ class AttachmentEditor(QDialog):
             if isinstance(specification_editor, QComboBox):
                 specification_editor.setEnabled(True)
             self._render_amounts(row, calculated)
+            self._refresh_discounted_amounts()
             if isinstance(specification_editor, QComboBox):
                 QTimer.singleShot(0, lambda editor=specification_editor: self._end_model_edit(row, editor))
 
@@ -2083,7 +2105,7 @@ class AttachmentEditor(QDialog):
             if formula_item is not None:
                 formula_item.setText(_money(0))
                 formula_item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#C62828"))
-            self._update_discounted_amount(row)
+            self._refresh_discounted_amounts()
             if isinstance(specification_editor, QComboBox):
                 QTimer.singleShot(0, lambda editor=specification_editor: self._end_model_edit(row, editor))
             QMessageBox.warning(self, "附件计算失败", str(message))
@@ -2384,6 +2406,8 @@ def _attachment_summary_matched_size(item):
 
 def _attachment_summary_product_values(item, sequence, columns=None):
     """Show the cabinet's original price alongside unchanged quote totals."""
+    from cost_price_breakdown import quick_price_allocation
+
     values = _row_values(item)
     names, show_material, show_difference = columns or _attachment_summary_columns([item])
     amounts = _attachment_summary_named_amounts(item)
@@ -2391,30 +2415,19 @@ def _attachment_summary_product_values(item, sequence, columns=None):
     quick = _quick(item)
     fee = _number(quick.get("attachment_fee"), listed)
     discount = values[14]
-    try:
-        from quick_discount_rules import quick_discount_category
-    except ModuleNotFoundError:  # Package import used by focused tests.
-        from .quick_discount_rules import quick_discount_category
-    # Keep each named attachment at its original amount unless its catalogue
-    # category is explicitly eligible for quick-quote discounting.  The
-    # residual between the authoritative attachment fee and listed rows is
-    # also original-price: it represents unlisted attachments/fees.
-    attachments = []
-    for name in names:
-        amount = 0.0
-        for source in item.get("attachments", []):
-            if not isinstance(source, dict) or _attachment_summary_name(source) != name:
-                continue
-            raw = _number(AttachmentEditor._display_amounts(source)[1])
-            amount += raw * discount if quick_discount_category(source) else raw
-        attachments.append(amount)
-    attachments = tuple(attachments)
+    sources = [source for source in item.get("attachments", []) if isinstance(source, dict)]
+    components, totals = quick_price_allocation(quick, sources, discount)
+    discounted_amounts = {}
+    for source, total in zip(sources, totals):
+        name = _attachment_summary_name(source)
+        discounted_amounts[name] = money_sum((discounted_amounts.get(name, 0), total))
+    attachments = tuple(discounted_amounts.get(name, 0.0) for name in names)
     residual = fee - listed
     freight = quick_freight_fee(item)
     # One cabinet/set, before discount; never derive it as the residual of
     # discounted attachment columns. The shared helper also recovers legacy
     # snapshots without base_price from total_cost minus the stored fee.
-    cabinet = quick_discount_breakdown(quick, item.get("attachments", []), 1)["base_price"]
+    cabinet = components["discounted"]["rows"][0]["original"]
     extra = ((values[22],) if show_material else ()) + (
         (residual,) if show_difference else ())
     return (sequence, values[1], values[3], values[11], "台", values[15], values[16],

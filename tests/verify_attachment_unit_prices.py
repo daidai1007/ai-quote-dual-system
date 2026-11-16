@@ -103,7 +103,7 @@ class AttachmentUnitPrices(unittest.TestCase):
         d.table.cellWidget(0, d.COL_QUANTITY).setValue(3)
         self.assertEqual(d.table.item(0, d.COL_AMOUNT).text(), '214.11')
         self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_UNIT).text(), '35.69')
-        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_AMOUNT).text(), '107.07')
+        self.assertEqual(d.table.item(0, d.COL_DISCOUNTED_AMOUNT).text(), '107.06')
         d.add_row()
         self.assertEqual(d.table.item(header.logicalIndex(0), d.COL_NAME).text(), '柜体')
         self.assertEqual(d.table.item(2, d.COL_DISCOUNTED_AMOUNT).text(), '0.00')
@@ -112,6 +112,42 @@ class AttachmentUnitPrices(unittest.TestCase):
         d.accept()
         self.assertEqual([row['item_name'] for row in item['attachments']], ['通风顶罩', '门锁'])
         self.assertEqual(item['quick']['attachment_fee'], 244.11)
+        details = ui._cost_price_components(item)
+        self.assertEqual(details['discounted']['rows'][1]['details'][0]['amount'], 107.06)
+        names = ui._attachment_summary_columns([item])[0]
+        self.assertEqual(ui._attachment_summary_product_values(item, 1)[11 + names.index('通风顶罩')], 107.06)
+        self.assertEqual(ui._row_values(item)[15], details['total'])
+
+    def test_rounding_allocation_refreshes_other_rows_after_a_quantity_edit(self):
+        hood = dict(self.source, item_name='通风顶罩', category_level1='控制柜附件',
+                    quantity=3, quick_amount=214.11, matched_price=71.37)
+        small_hood = dict(hood, quantity=1, quick_amount=.01, matched_price=.01, ganged_cabinet_index=1)
+        door = dict(small_hood, item_name='玻璃门')
+        item = dict(quick_discount=.5, quick=dict(base_price=100), attachments=[hood, door, small_hood])
+        dialog = ui.AttachmentEditor(self.owner, item)
+        self.addCleanup(dialog.reject)
+        self.assertEqual([self.total(dialog, dialog.COL_DISCOUNTED_AMOUNT, row) for row in range(3)],
+                         [107.06, .01, 0])
+
+        dialog.table.cellWidget(0, dialog.COL_QUANTITY).setValue(4)
+        self.assertEqual([self.total(dialog, dialog.COL_DISCOUNTED_AMOUNT, row) for row in range(3)],
+                         [142.74, 0, .01])
+        dialog.accept()
+        self.assertEqual(ui._cost_price_components(item)['total'], 192.75)
+
+    def test_zero_board_does_not_change_other_rows_when_removed_on_save(self):
+        board = dict(self.source, item_name='安装板', category_level1='安装板',
+                     quantity=1, quick_amount=.01, matched_price=.01)
+        hood = dict(board, item_name='通风顶罩', category_level1='控制柜附件')
+        item = dict(quick_discount=.5, quick=dict(base_price=100), attachments=[board, hood, dict(board)])
+        dialog = ui.AttachmentEditor(self.owner, item)
+        self.addCleanup(dialog.reject)
+        dialog.table.cellWidget(0, dialog.COL_QUANTITY).setValue(0)
+        self.assertEqual([self.total(dialog, dialog.COL_DISCOUNTED_AMOUNT, row) for row in range(3)], [0, .01, 0])
+
+        dialog.accept()
+        details = ui._cost_price_components(item)['discounted']['rows'][1:]
+        self.assertEqual([(row['category'], row['amount']) for row in details], [('通风顶罩', .01), ('安装板', 0)])
 
     def test_save_reopen_and_reprice_keep_readonly_cost_and_manual_sale_unit(self):
         d=self.editor()
