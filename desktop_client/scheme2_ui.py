@@ -1251,7 +1251,7 @@ def _attachment_popup_quantity(source):
 class AttachmentEditor(QDialog):
     DEFAULT_SIZE = QSize(990, 315)
     MINIMUM_SIZE = QSize(640, 240)
-    HEADERS = ("名称", "尺寸 / 规格", "数量", "成本单价", "成本总价", "面价单价", "面价", "折扣单价", "折扣总价")
+    HEADERS = ("名称", "尺寸 / 规格", "数量", "成本单价", "成本总价", "单价", "面价", "折扣单价", "折扣总价")
     ROW_HEIGHT = 42
     COL_NAME = 0
     COL_SPECIFICATION = 1
@@ -1356,23 +1356,24 @@ class AttachmentEditor(QDialog):
         self.table.horizontalHeaderItem(self.COL_DISCOUNTED_UNIT).setToolTip(
             f"参与折扣的项目按当前系数 {self.discount_factor:g} 计算，不参与折扣的附件按原价（系数 1）。")
         self.table.horizontalHeaderItem(self.COL_DISCOUNTED_AMOUNT).setToolTip(
-            "按折前行金额参与报价折扣，并按报价明细分配到分。折扣单价仅显示到分。")
+            "折扣总价 = 数量 × 折扣单价。折扣单价按单价乘折扣系数，四舍五入到分。")
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(False)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.setToolTip("可修改数量；双击折扣单价可调整折前单价。逐柜尺寸附件和人工新增附件的成本单价可双击修改。右键可新增临时附件或删除所选。")
+        self.table.setToolTip("可修改数量和单价；折扣单价与折扣总价自动计算。逐柜尺寸附件和人工新增附件的成本单价可双击修改。右键可新增临时附件或删除所选。")
         self.table.customContextMenuRequested.connect(self._show_table_menu)
         table_header = self.table.horizontalHeader()
         table_header.setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeMode.Stretch)
         table_header.setSectionResizeMode(self.COL_SPECIFICATION, QHeaderView.ResizeMode.Stretch)
         table_header.setSectionResizeMode(self.COL_QUANTITY, QHeaderView.ResizeMode.Fixed)
-        for column in (self.COL_UNIT_COST, self.COL_FORMULA_AMOUNT, self.COL_DISCOUNTED_UNIT, self.COL_DISCOUNTED_AMOUNT):
+        for column in (self.COL_UNIT_COST, self.COL_FORMULA_AMOUNT, self.COL_UNIT_AMOUNT,
+                       self.COL_DISCOUNTED_UNIT, self.COL_DISCOUNTED_AMOUNT):
             table_header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
             self.table.setColumnWidth(column, 112)
         self.table.setColumnWidth(self.COL_QUANTITY, 62)
-        self.table.hideColumn(self.COL_UNIT_AMOUNT)
+        self.table.showColumn(self.COL_UNIT_AMOUNT)
         self.table.hideColumn(self.COL_AMOUNT)
         self.table.cellClicked.connect(self.edit_missing_dimensions)
         self.table.cellDoubleClicked.connect(self._begin_model_edit)
@@ -1620,9 +1621,6 @@ class AttachmentEditor(QDialog):
                      if self.table.cellWidget(row, column) is widget), -1)
 
     def _begin_model_edit(self, row, column):
-        if column == self.COL_DISCOUNTED_UNIT:
-            self._edit_original_unit_price(row)
-            return
         if column != self.COL_SPECIFICATION or not 0 <= row < self.attachment_row_count():
             return
         if is_standalone(self.item):
@@ -1771,6 +1769,8 @@ class AttachmentEditor(QDialog):
             if not isinstance(editor, QDoubleSpinBox):
                 editor = _double_click_edit_spin(spin_class=_AttachmentUnitPriceSpin)
                 editor.setObjectName(object_name)
+                if column == self.COL_UNIT_AMOUNT:
+                    editor.setAccessibleName("单价")
                 editor.setDecimals(6)
                 editor.setRange(0, 999999.99)
                 editor.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
@@ -1835,37 +1835,6 @@ class AttachmentEditor(QDialog):
     def _discount_for_attachment(self, source):
         return self.discount_factor if quick_discount_category(source) else 1
 
-    def _edit_original_unit_price(self, row):
-        if not 0 <= row < self.attachment_row_count():
-            return
-        editor = self.table.cellWidget(row, self.COL_UNIT_AMOUNT)
-        source = self.table.item(row, self.COL_NAME).data(ROLE_ROW) or {}
-        if not editor.isEnabled() or source.get("status") == "ERROR":
-            return
-        from dialog_style import style_dialog
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("调整折前单价")
-        layout = QFormLayout(dialog)
-        amount = _AttachmentUnitPriceSpin(dialog)
-        amount.setDecimals(editor.decimals())
-        amount.setRange(editor.minimum(), editor.maximum())
-        amount.setValue(editor.value())
-        layout.addRow("折前单价", amount)
-        layout.addRow("折扣系数", QLabel(f"{self._discount_for_attachment(source):g}"))
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addRow(buttons)
-        style_dialog(dialog)
-        amount.setFocus()
-        amount.selectAll()
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            editor.setValue(amount.value())
-        dialog.deleteLater()
-
     def _update_totals(self, row, *, pending=False):
         quantity = self.table.cellWidget(row, self.COL_QUANTITY).value()
         for unit_column, total_column in ((self.COL_UNIT_COST, self.COL_FORMULA_AMOUNT),
@@ -1914,14 +1883,12 @@ class AttachmentEditor(QDialog):
             cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
             cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if available and column == self.COL_DISCOUNTED_UNIT:
-                cell.setToolTip(f"折前单价 {_money(editor.value())} 元，折扣系数 {factor:g}。双击可调整折前单价。")
-                font = cell.font()
-                font.setUnderline(True)
-                cell.setFont(font)
+                cell.setToolTip(f"单价 {_money(editor.value())} 元 × 折扣系数 {factor:g}，自动计算。")
             self.table.setItem(row, column, cell)
 
     def _store_prices(self, row, data):
         from attachment_v2_client import normalize_installation_board_quantity
+        from quick_discount_rules import ATTACHMENT_DISCOUNT_BASIS
         quantity = self.table.cellWidget(row, self.COL_QUANTITY).value()
         data["quantity"] = quantity
         data["attachment_price_sign"] = 1
@@ -1930,6 +1897,7 @@ class AttachmentEditor(QDialog):
         face = self.table.cellWidget(row, self.COL_UNIT_AMOUNT)
         data["formula_amount"] = money_product(cost.value(), quantity)
         data["quick_amount"] = money_product(face.value(), quantity)
+        data["quick_discount_basis"] = ATTACHMENT_DISCOUNT_BASIS
         if _attachment_popup_cost_editable(data) and cost.property("schemeEdited"):
             data["formula_cost_edited"] = True
             data["formula_unit_cost_override"] = cost.value()

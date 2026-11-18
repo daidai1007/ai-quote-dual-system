@@ -912,7 +912,8 @@ function fillSheet(sheet, method) {
       ? quickPublicLineBreakdown(quickAuditItem)
       : null;
     const quickOriginalBreakdown = method === "quick"
-      ? quickPublicLineBreakdown({ ...quickAuditItem, quick_discount: 1 })
+      ? quickPublicLineBreakdown({ ...quickAuditItem, quick_discount: 1,
+          attachments: attachments.map(({quick_discount_basis, ...attachment}) => attachment) })
       : null;
     const formulaBreakdown = method === "formula" ? formulaOrderLineBreakdown(item) : null;
     const unitCost = method === "quick" && hasFiniteNumber(display?.unit_price)

@@ -5,6 +5,7 @@ const asFiniteNumber = (value, fallback = 0) =>
   hasFiniteNumber(value) ? Number(value) : fallback;
 
 export const PRICING_BASIS = 'per_unit_set_v1';
+export const ATTACHMENT_DISCOUNT_BASIS = 'unit_price_v1';
 export const MANAGEMENT_FEE_RATE = 0.06;
 export const MANAGEMENT_FEE_BASIS = 'pre_management_cost_with_freight_v1';
 export const MANAGEMENT_COST_KEYS = Object.freeze(['material_cost','auxiliary_cost','labor_cost','attachment_fee','spray_cost']);
@@ -173,6 +174,16 @@ export function quickAttachmentLineAmount(item = {}) {
   return moneyProduct(Math.abs(unitPrice), quantity, sign);
 }
 
+export function quickAttachmentDiscountedAmount(item = {}, discount = 1) {
+  const quantity = asFiniteNumber(item.quantity, 1) * (Number(item.attachment_price_sign) === -1 ? -1 : 1);
+  if (!quantity || item.pending_manual_dimensions?.length) return 0;
+  const amount = quickAttachmentLineAmount(item);
+  const savedUnit = item.unit_price_override;
+  const unit = hasFiniteNumber(savedUnit) && moneyProduct(savedUnit, quantity) === amount
+    ? Number(savedUnit) : Number(Math.abs(amount / quantity).toFixed(6));
+  return moneyProduct(moneyProduct(unit, quickDiscountCategory(item) ? discount : 1), quantity);
+}
+
 export function attachmentUsesCabinetQuantity(item = {}) {
   const combined = categoryCandidates(item).join(" ");
   if (combined.includes("风机") || combined.includes("滤网")) return false;
@@ -255,8 +266,12 @@ export function quickDiscountBreakdown({ quote = {}, attachments = [], discount 
   const eligibleAttachmentTotal = listedEligible;
   const originalPriceAttachmentTotal = moneySum([attachmentFee, -eligibleAttachmentTotal]);
   const factor = hasFiniteNumber(discount) ? Number(discount) : 1;
-  const discountedTotal = moneySum([moneyProduct(moneySum([basePrice, eligibleAttachmentTotal]), factor),
-    originalPriceAttachmentTotal]);
+  const unitPriced = attachments.filter(row => row.quick_discount_basis === ATTACHMENT_DISCOUNT_BASIS);
+  const legacy = attachments.filter(row => row.quick_discount_basis !== ATTACHMENT_DISCOUNT_BASIS);
+  const legacyEligible = moneySum(legacy.filter(quickDiscountCategory).map(quickAttachmentLineAmount));
+  const legacyFixed = moneySum(legacy.filter(row => !quickDiscountCategory(row)).map(quickAttachmentLineAmount));
+  const discountedTotal = moneySum([moneyProduct(moneySum([basePrice, legacyEligible]), factor),
+    legacyFixed, ...unitPriced.map(row => quickAttachmentDiscountedAmount(row, factor))]);
   return {
     rawTotal,
     basePrice,

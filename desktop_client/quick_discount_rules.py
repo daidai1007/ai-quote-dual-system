@@ -12,6 +12,7 @@ import math
 from decimal import Decimal, ROUND_HALF_UP
 
 PRICING_BASIS = "per_unit_set_v1"
+ATTACHMENT_DISCOUNT_BASIS = "unit_price_v1"
 MANAGEMENT_FEE_RATE = 0.06
 MANAGEMENT_FEE_BASIS = "pre_management_cost_with_freight_v1"
 MANAGEMENT_COST_KEYS = ("material_cost", "auxiliary_cost", "labor_cost", "attachment_fee", "spray_cost")
@@ -227,6 +228,20 @@ def quick_attachment_line_amount(item: Mapping[str, Any] | None) -> float:
     return money_product(abs(unit_price), _number(item.get("quantity"), 1.0), sign)
 
 
+def quick_attachment_discounted_amount(item, discount):
+    quantity = _number(item.get("quantity"), 1)
+    if not quantity or item.get("pending_manual_dimensions"):
+        return 0.0
+    quantity *= -1 if item.get("attachment_price_sign") == -1 else 1
+    amount = quick_attachment_line_amount(item)
+    unit = abs(Decimal(str(amount)) / Decimal(str(quantity))).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+    saved_unit = item.get("unit_price_override")
+    if saved_unit is not None and money_product(saved_unit, quantity) == amount:
+        unit = Decimal(str(saved_unit))
+    factor = discount if quick_discount_category(item) else 1
+    return money_product(money_product(unit, factor), quantity)
+
+
 def attachment_uses_cabinet_quantity(item: Mapping[str, Any] | None) -> bool:
     item = item or {}
     candidates = [
@@ -313,8 +328,12 @@ def quick_discount_breakdown(
     eligible_attachment_total = listed_eligible
     original_price_attachment_total = money_sum((attachment_fee, -eligible_attachment_total))
     factor = _number(discount, 1.0)
-    discounted_total = money_sum((money_product(money_sum((base_price, eligible_attachment_total)), factor),
-                                  original_price_attachment_total))
+    unit_priced = [row for row in rows if row.get("quick_discount_basis") == ATTACHMENT_DISCOUNT_BASIS]
+    legacy = [row for row in rows if row.get("quick_discount_basis") != ATTACHMENT_DISCOUNT_BASIS]
+    legacy_eligible = money_sum(quick_attachment_line_amount(row) for row in legacy if quick_discount_category(row))
+    legacy_fixed = money_sum(quick_attachment_line_amount(row) for row in legacy if not quick_discount_category(row))
+    discounted_total = money_sum((money_product(money_sum((base_price, legacy_eligible)), factor),
+                                  legacy_fixed, *(quick_attachment_discounted_amount(row, factor) for row in unit_priced)))
     return {
         "raw_total": raw_total,
         "base_price": base_price,

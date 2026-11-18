@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT/'desktop_client'))
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QDoubleSpinBox, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QWidget
 import scheme2_ui as ui
 
 app = QApplication.instance() or QApplication([])
@@ -37,31 +37,26 @@ class AmountDoubleClick(unittest.TestCase):
 
     def click_price(self, row, *, double=True):
         table = self.dialog.table
-        price = table.item(row, self.dialog.COL_DISCOUNTED_UNIT)
-        table.scrollToItem(price)
-        pos = table.visualItemRect(price).center()
-        QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=pos)
+        price = table.cellWidget(row, self.dialog.COL_UNIT_AMOUNT)
+        table.scrollToItem(table.item(row, self.dialog.COL_NAME))
+        QTest.mouseClick(price.lineEdit(), Qt.MouseButton.LeftButton)
         if double:
-            QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=pos)
+            QTest.mouseDClick(price.lineEdit(), Qt.MouseButton.LeftButton)
 
-    def edit_price(self, row, value, *, confirm=True):
-        def edit(dialog):
-            amount = dialog.findChild(QDoubleSpinBox)
-            amount.lineEdit().selectAll()
-            QTest.keyClicks(amount.lineEdit(), value)
-            buttons = dialog.findChild(QDialogButtonBox)
-            button = QDialogButtonBox.StandardButton.Ok if confirm else QDialogButtonBox.StandardButton.Cancel
-            buttons.button(button).click()
-            return dialog.result()
-        with patch.object(QDialog, 'exec', edit):
-            self.click_price(row)
+    def edit_price(self, row, value):
+        self.click_price(row)
+        amount = self.dialog.table.cellWidget(row, self.dialog.COL_UNIT_AMOUNT)
+        QTest.keyClick(amount.lineEdit(), Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClicks(amount.lineEdit(), value)
+        QTest.keyClick(amount.lineEdit(), Qt.Key.Key_Return)
 
-    def test_single_click_keeps_display_double_click_opens_price_editor(self):
+    def test_single_click_keeps_display_double_click_edits_the_unit_column(self):
         with patch.object(QDialog, 'exec') as popup:
             self.click_price(0, double=False)
             popup.assert_not_called()
         self.edit_price(0, '210')
         self.assertEqual(self.amount.value(), 210)
+        self.assertFalse(self.dialog.table.item(0, self.dialog.COL_DISCOUNTED_UNIT).flags() & Qt.ItemFlag.ItemIsEditable)
         self.dialog.accept()
         row = self.item['attachments'][0]
         self.assertEqual(row['quick_amount_override'], 420)
@@ -71,8 +66,13 @@ class AmountDoubleClick(unittest.TestCase):
         self.assertEqual(float(reopened.table.item(0, reopened.COL_AMOUNT).text().replace(",", "")), 420)
 
     def test_cancel_keeps_price_and_confirm_saves_manual_zero(self):
-        self.edit_price(0, '0', confirm=False)
-        self.assertEqual(self.amount.value(), 60)
+        self.edit_price(0, '0')
+        self.dialog.reject()
+        self.assertEqual(self.item['attachments'][0]['quick_amount'],120)
+        self.dialog = ui.AttachmentEditor(self.owner,self.item)
+        self.dialog.show()
+        app.processEvents()
+        self.addCleanup(self.dialog.close)
         self.edit_price(0, '0')
         self.dialog.accept()
         self.assertEqual(self.item['attachments'][0]['quick_amount_override'], 0)

@@ -9,7 +9,7 @@ import test from 'node:test';
 import ExcelJS from '@excel.js/exceljs';
 import {projectQuotationAudit} from './quotation_layout_reader.mjs';
 import {createAttachmentService} from '../api/attachment_service.mjs';
-import {PRICING_BASIS,quickOrderLineBreakdown,moneySum} from '../quick_discount_rules.mjs';
+import {PRICING_BASIS,ATTACHMENT_DISCOUNT_BASIS,quickOrderLineBreakdown,moneySum} from '../quick_discount_rules.mjs';
 
 const lineId='11111111-1111-4111-8111-111111111111';
 const environment={product_code:'JP_SINGLE',material_code:'SECC',width_mm:800,height_mm:1800,depth_mm:600,
@@ -47,6 +47,42 @@ function harness(savedEnvironment=environment){
   }});
   return {service,queries};
 }
+
+test('editable unit price survives API hydration and actual Excel exports with unit-first discounts',async()=>{
+  const hood={...fan,item_name:'通风顶罩',category_level1:'控制柜附件',quantity:3,
+    quick_amount:214.11,quick_amount_override:214.11,unit_price_override:71.37,
+    formula_amount:90,formula_unit_cost:30,quick_discount_basis:ATTACHMENT_DISCOUNT_BASIS};
+  const input=quote([hood]);
+  assert.equal(input.quote_display.unit_price,427.07);
+  const before=structuredClone(input);
+  const {items:[item]}=await harness().service.hydrateDocument({items:[input]});
+  assert.equal(item.attachments[0].quick_discount_basis,ATTACHMENT_DISCOUNT_BASIS);
+  assert.deepEqual(input,before);
+  const folder=await fs.mkdtemp(path.join(os.tmpdir(),'attachment-unit-discount-'));
+  try {
+    for(const vertical of [false,true]){
+      const source=path.join(folder,'input.json'),output=path.join(folder,'quote.xlsx');
+      const document={order_nature:'EXTERNAL',quote_id:'UNIT-DISCOUNT',items:[item],
+        ...(vertical?{quotation_detail_layout:'right_vertical_v1'}:{})};
+      await fs.writeFile(source,JSON.stringify(document));
+      await promisify(execFile)(process.execPath,[path.resolve('export_dual_quote_workbook.mjs'),source,output],{windowsHide:true});
+      const book=new ExcelJS.Workbook();
+      await book.xlsx.readFile(output);
+      for(const name of ['报价','报价2']){
+        const sheet=book.getWorksheet(name);
+        const unit=sheet.getCell('F11').value,total=sheet.getCell('G11').value;
+        assert.equal(typeof unit==='object'?unit.result:unit,427.07);
+        assert.equal(total.result,854.14);
+      }
+    }
+    const legacy=quote([{...hood,quick_discount_basis:undefined}]);
+    assert.equal(legacy.quote_display.unit_price,427.06);
+    const result=await harness().service.hydrateDocument({items:[legacy]});
+    assert.equal(result.items[0].quote_display.unit_price,427.06);
+  } finally {
+    await fs.rm(folder,{recursive:true,force:true});
+  }
+});
 
 test('current popup model, quantity, manual sale and cost replace old attachment rows without repricing',async()=>{
   const h=harness(),input=quote();

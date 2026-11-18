@@ -2,6 +2,7 @@
 from quick_discount_rules import (
     money, money_sum, money_product, quick_discount_breakdown,
     quick_attachment_line_amount, quick_discount_category,
+    ATTACHMENT_DISCOUNT_BASIS, quick_attachment_discounted_amount,
 )
 
 
@@ -36,29 +37,35 @@ def quick_price_allocation(quote, attachments, discount, freight_fee=0, material
                 fixed_details[category].append((None, category, money(amount)))
 
     def explain(groups, details, factor):
-        # Cumulative rounding allocates cents to categories while preserving
-        # the existing whole-bucket discount and the formal quotation amount.
-        explained, cumulative, previous = [], 0, 0
+        # Historical rows retain their cumulative allocation. Rows confirmed
+        # in the unit-price editor use their own rounded unit times quantity.
+        explained, cumulative, previous, total = [], 0, 0, 0
         for category, original in groups.items():
-            detail_cumulative, detail_previous = cumulative, previous
-            cumulative = money_sum((cumulative, original))
-            current = money_product(cumulative, factor)
-            amount = money_sum((current, -previous))
-            entry = dict(category=category, original=money(original), discount=factor, amount=amount)
+            entry = dict(category=category, original=money(original), discount=factor)
             if category in details:
                 entry['details'] = []
                 for index, name, detail_original in details[category]:
-                    detail_cumulative = money_sum((detail_cumulative, detail_original))
-                    detail_current = money_product(detail_cumulative, factor)
-                    detail_amount = money_sum((detail_current, -detail_previous))
+                    if index is not None and rows[index].get("quick_discount_basis") == ATTACHMENT_DISCOUNT_BASIS:
+                        detail_amount = quick_attachment_discounted_amount(rows[index], factor)
+                    else:
+                        cumulative = money_sum((cumulative, detail_original))
+                        current = money_product(cumulative, factor)
+                        detail_amount = money_sum((current, -previous))
+                        previous = current
                     entry['details'].append(dict(name=name, original=money(detail_original),
                                                  amount=detail_amount))
                     if index is not None:
                         attachment_totals[index] = detail_amount
-                    detail_previous = detail_current
+                amount = money_sum(row['amount'] for row in entry['details'])
+            else:
+                cumulative = money_sum((cumulative, original))
+                current = money_product(cumulative, factor)
+                amount = money_sum((current, -previous))
+                previous = current
+            entry['amount'] = amount
             explained.append(entry)
-            previous = current
-        return dict(rows=explained, total=money(previous))
+            total = money_sum((total, amount))
+        return dict(rows=explained, total=total)
 
     fixed = explain(fixed, fixed_details, 1)
     discounted = explain(eligible, eligible_details, source['discount'])

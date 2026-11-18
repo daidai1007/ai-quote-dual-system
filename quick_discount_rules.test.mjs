@@ -10,7 +10,24 @@ import {
   quickDiscountBreakdown,
   quickDiscountCategory,
   quickOrderLineBreakdown,
+  ATTACHMENT_DISCOUNT_BASIS,
+  quickAttachmentDiscountedAmount,
 } from "./quick_discount_rules.mjs";
+
+test("attachment unit discount multiplies the rounded discounted unit and preserves legacy quotes", () => {
+  const hood = {item_name:"通风顶罩", quantity:3, quick_amount:214.11, unit_price_override:71.37};
+  const quote = {base_price:100,total_cost:314.11,attachment_fee:214.11};
+  assert.equal(quickDiscountBreakdown({quote,attachments:[hood],discount:.5}).discountedTotal,157.06);
+  const current = {...hood,quick_discount_basis:ATTACHMENT_DISCOUNT_BASIS};
+  assert.equal(quickAttachmentDiscountedAmount(current,.5),107.07);
+  assert.equal(quickDiscountBreakdown({quote,attachments:[current],discount:.5}).discountedTotal,157.07);
+  assert.equal(quickOrderLineBreakdown({quote,attachments:[current],discount:.5,cabinetQuantity:3}).lineTotal,471.21);
+  assert.equal(quickAttachmentDiscountedAmount({...current,item_name:"门锁"},.5),214.11);
+  assert.equal(quickAttachmentDiscountedAmount({...current,item_name:"安装板",attachment_price_sign:-1,quick_amount:-214.11},.5),-107.07);
+  assert.equal(quickAttachmentDiscountedAmount({...current,quantity:0},.5),0);
+  assert.equal(quickAttachmentDiscountedAmount({...current,pending_manual_dimensions:["高度"]},.5),0);
+  assert.equal(quickAttachmentDiscountedAmount({...current,quick_amount:.15,unit_price_override:undefined},.5),.09);
+});
 
 test("formula-only exclusion uses the exact first-level door-transformation category", () => {
   assert.equal(formulaAttachmentExcluded({

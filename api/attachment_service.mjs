@@ -9,7 +9,7 @@ import { materialUnitPriceFromSidebar } from './material_price_override.mjs';
 import {calculateStandaloneAttachment, assertStandaloneReady, STANDALONE_TYPE} from './standalone_attachment.mjs';
 import {hasManufacturingCost,manufacturingFormulaForItem} from '../quick_discount_rules.mjs';
 import {hasTaxCost,withTaxCostForItem} from '../tax_cost.mjs';
-import {PRICING_BASIS, money, moneySum, quickAttachmentLineAmount, formulaAttachmentLineAmount, validateQuoteDisplay, applyManagementFee, missingManagementCosts} from '../quick_discount_rules.mjs';
+import {PRICING_BASIS, ATTACHMENT_DISCOUNT_BASIS, money, moneySum, quickAttachmentLineAmount, formulaAttachmentLineAmount, validateQuoteDisplay, applyManagementFee, missingManagementCosts} from '../quick_discount_rules.mjs';
 
 // SQL values are always UTF-8 hex literals; formulas are evaluated only by attachment_cost.
 export const sqlValue = value => value == null ? 'NULL' : typeof value === 'number'
@@ -295,6 +295,8 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
         ||row.material_quick_face_price!==source.material_quick_face_price
         ||money(row.quick_amount)!==money(source.quick_amount)||money(row.formula_amount)!==money(source.formula_amount))
       throw new Error('独立附件金额与当前参数不一致，请重新计算');
+    if (source.quick_discount_basis === ATTACHMENT_DISCOUNT_BASIS)
+      row = {...row,quick_discount_basis:ATTACHMENT_DISCOUNT_BASIS};
     const unit=String(row.unit||'件');
     if(item.unit!==unit||item.quote_display?.unit!==unit)throw new Error('独立附件计量单位不一致');
     const formula=withAttachmentCostAllocation(applyManagementFee({material_cost:0,auxiliary_cost:0,
@@ -592,6 +594,8 @@ export function createAttachmentService({runPsql,calculateBase,env=process.env,o
               {attachment_name:row.item_name,attachment_price_id:row.attachment_price_id});
           }
           return {...row,formula_amount:money(row.formula_amount),quick_amount:amount,
+            ...(shown.quick_discount_basis===ATTACHMENT_DISCOUNT_BASIS
+              ?{quick_discount_basis:ATTACHMENT_DISCOUNT_BASIS}:{}),
             ...(edited?{quick_amount_override:amount,custom_amount_edited:true}:{} )};
         });
         const oldQuickFee=Number(quick.attachment_fee||0);
