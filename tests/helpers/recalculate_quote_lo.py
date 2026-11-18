@@ -25,11 +25,21 @@ try:
  if doc is None:raise RuntimeError('Cannot open synthetic quotation')
  assert doc.isAutomaticCalculationEnabled(),'Generated workbook must open with automatic calculation'
  data=json.loads(edits_path.read_text(encoding='utf8'));sheet=doc.Sheets.getByName('报价')
- for address,value in data['edits'].items():sheet.getCellRangeByName(address).setValue(value)
- # Read immediately after native edits: do not calculateAll() to mask a
- # workbook that fails to update automatically when the operator types.
- observed={address:sheet.getCellRangeByName(address).getValue() for address in data['check']}
- report_path.write_text(json.dumps({'automatic':True,'values':observed}),encoding='utf8')
+ reports=[]
+ for step in data.get('steps',[data]):
+  for address,value in step['edits'].items():sheet.getCellRangeByName(address).setValue(value)
+  # Read immediately after native edits: do not calculateAll() to mask a
+  # workbook that fails to update automatically when the operator types.
+  checks={'报价':step['check'],**data.get('check_sheets',{})}
+  observed={}
+  for name,addresses in checks.items():
+   target=doc.Sheets.getByName(name)
+   for address in addresses:
+    cell=target.getCellRangeByName(address)
+    assert not cell.getError(),f'{name}!{address}: formula error {cell.getError()}'
+   observed[name]={address:target.getCellRangeByName(address).getValue() for address in addresses}
+  reports.append({'values':observed['报价'],'sheets':observed})
+ report_path.write_text(json.dumps({'automatic':True,'values':reports[-1]['values'],'steps':reports}),encoding='utf8')
  doc.storeAsURL(destination.resolve().as_uri(),(prop('FilterName','Calc MS Excel 2007 XML'),prop('Overwrite',True)))
 finally:
  if doc is not None:doc.close(True)

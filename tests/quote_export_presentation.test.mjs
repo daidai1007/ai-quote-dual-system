@@ -145,7 +145,7 @@ const recalculateQuoteFormula = (sheet, cell) => {
 
 for (const modern of [false, true]) {
   test(modern ? "current ordinary and ganged UI snapshots keep cent-rounded unit times quantity in Excel"
-    : "legacy public amounts stay intact and ganged compatibility formulas retain their baseline", async () => {
+    : "legacy public amounts stay intact with linked price formulas", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-unit-rounding-"));
     try {
       const cases = JSON.parse(await fs.readFile(new URL("./fixtures/quote_unit_rounding.json", import.meta.url), "utf8"));
@@ -190,21 +190,17 @@ for (const modern of [false, true]) {
           const row = 11 + index;
           const unit=name==='成本'?expectedCurrentFormulaUnit(payload.items[index]):sample.unit;
           const total=moneyProduct(unit,sample.quantity);
-          assert.equal(sheet.getCell(`F${row}`).value,unit,`${name} ${sample.name} unit`);
+          assert.equal(amountValue(sheet.getCell(`F${row}`)),unit,`${name} ${sample.name} unit`);
           assert.equal(amountValue(sheet.getCell(`G${row}`)),total,`${name} ${sample.name} total`);
-          assert.equal(moneyProduct(sheet.getCell(`F${row}`).value,sample.quantity),total);
+          assert.equal(moneyProduct(amountValue(sheet.getCell(`F${row}`)),sample.quantity),total);
           const freightColumn = sheet.getRow(10).values.indexOf("运费");
           assert.ok(freightColumn > 0, `${name} freight column`);
           assert.equal(money(sheet.getCell(row,freightColumn).value || 0),
             moneyProduct(sample.freight,modern ? 1 : sample.quantity), `${sample.name} undiscounted freight`);
           if (name === "报价") {
             if (!modern && sample.ganged > 1) {
-              // Frozen baseline from before the rounding task: this separate
-              // historical branch is not part of current per-set exports.
-              assert.equal(sheet.getCell(`J${row}`).value.formula,
-                sample.legacy_original_formula.replaceAll("{row}",String(row)));
-              assert.equal(sheet.getCell(`K${row}`).value.formula,
-                sample.legacy_discounted_formula.replaceAll("{row}",String(row)));
+              assert.equal(recalculateQuoteFormula(sheet,`F${row}`),sample.unit);
+              assert.equal(recalculateQuoteFormula(sheet,`K${row}`),sample.unit);
               assert.equal(sheet.getCell(`K${row}`).value.result,sample.unit);
             } else {
               const expectedK = modern ? moneyProduct(sheet.getCell(`J${row}`).value.result,sample.quantity) : sample.unit;
@@ -243,7 +239,7 @@ const xlsxEntryNames = (buffer) => {
   return names;
 };
 
-test("quick public quote uses the click-time UI snapshot verbatim", async () => {
+test("quick public quote preserves snapshot identity and calculates its price from right-hand detail", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quote-ui-snapshot-"));
   const inputPath = path.join(tempDir, "quote-ui-snapshot.json");
   const outputPath = path.join(tempDir, "quote-ui-snapshot.xlsx");
@@ -285,7 +281,7 @@ test("quick public quote uses the click-time UI snapshot verbatim", async () => 
     const quickSheet = workbook.getWorksheet("报价");
     assert.deepEqual(
       [2, 3, 4, 5, 6, 7, 8].map((column) => amountValue(quickSheet.getCell(11, column))),
-      ["人工名称", "600*230*400", 1, "台", 448.44, 448.44, "人工备注。"],
+      ["人工名称", "600*230*400", 1, "台", 451, 451, "人工备注。"],
     );
     const headers = quickSheet.getRow(10).values;
     const discountColumn = headers.findIndex((value) => value === "折扣");
@@ -540,10 +536,8 @@ test("formal workbook preserves the legacy desktop quotation format", async () =
     const discountColumn = quickSheet.getRow(10).values.findIndex(
       (value) => value === "折扣",
     );
-    assert.equal(
-      quickFormulaCell.value.formula,
-      `ROUND(ROUND(L11*${quickSheet.getColumn(discountColumn).letter}11,2)+M11+N11,2)`,
-    );
+    assert.match(quickFormulaCell.value.formula,new RegExp(`${quickSheet.getColumn(discountColumn).letter}11`));
+    assert.equal(recalculateQuoteFormula(quickSheet,'K11'),3200);
     closeTo(quickFormulaCell.value.result, 3200, "quick Excel unit formula cached result");
 
     const detailSheet = workbook.getWorksheet("成本明细");
@@ -653,7 +647,8 @@ test("quick workbook uses popup attachment rows and omits synthetic fee deltas",
     assert.equal(otherColumn, -1);
     assert.equal(headers.includes("配置变形说明"), false);
     assert.equal(headers.includes("配置变形"), false);
-    assert.equal(sheet.getCell(11, 11).value.formula, `ROUND(ROUND((L11+M11)*${sheet.getColumn(discountColumn).letter}11,2),2)`);
+    assert.match(sheet.getCell(11,11).value.formula,new RegExp(`${sheet.getColumn(discountColumn).letter}11`));
+    assert.equal(recalculateQuoteFormula(sheet,'K11'),990);
     closeTo(sheet.getCell(11, 6).value, 990, "popup attachment row total");
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -698,7 +693,7 @@ test("workbook uses final attachment quantities for every ordinary row", async (
     closeTo(quickSheet.getCell("L11").value, 1000, "quick per-cabinet cabinet amount");
     closeTo(
       amountValue(quickSheet.getCell("G11")),
-      quickSheet.getCell("F11").value * quickSheet.getCell("D11").value,
+      amountValue(quickSheet.getCell("F11")) * quickSheet.getCell("D11").value,
       "quick total equals unit price times cabinet quantity",
     );
     closeTo(quickSheet.getCell(11, headerIndex("标准安装板")).value, -100, "negative board per-cabinet amount");

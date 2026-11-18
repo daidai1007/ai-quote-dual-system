@@ -202,7 +202,8 @@ test('actual ordinary and ganged workbooks preserve popup fan sale and formula c
         assert.equal(table.getCell(11,column).value,amount);
       }
       const quick=book.getWorksheet('报价');
-      assert.equal(quick.getCell('F11').value,payload.items[0].quote_display.unit_price);
+      assert.equal(typeof quick.getCell('F11').value?.formula,'string');
+      assert.equal(quick.getCell('F11').value.result,payload.items[0].quote_display.unit_price);
       assert.equal(quickQuotationAmount(quick.getCell('G11')),payload.items[0].quote_display.total);
       const formula=book.getWorksheet('成本');
       assert.equal(formula.getCell('F11').value,455.8);

@@ -46,7 +46,7 @@ for(const vertical of [false,true])for(const count of [1,3,12])test(`报价2 con
   const source=layout?.products[i]??11+i;
   for(const column of ['D','F','G'])assert.equal(sheet.getCell(`${column}${11+i}`).value.formula,`'报价'!${column}${source}`);
   assert.equal(result(sheet.getCell(`F${11+i}`).value),item.quote_display.unit_price);assert.equal(result(sheet.getCell(`G${11+i}`).value),item.quote_display.total);
-  assert.equal(typeof q.getCell(`F${source}`).value,'number');assert.equal(q.getCell(`G${source}`).value.formula,`ROUND(F${source}*D${source},2)`);
+  assert.equal(typeof q.getCell(`F${source}`).value.formula,'string');assert.equal(q.getCell(`G${source}`).value.formula,`ROUND(F${source}*D${source},2)`);
   assert.equal(result(sheet.getCell(`H${11+i}`).value),item.quote_display.remark);
  });
  assert.equal(sheet.getCell(`G${11+count}`).value.formula,`'报价'!G${layout?.subtotal??11+count}`);

@@ -45,7 +45,7 @@ for(const vertical of [false,true])for(const count of [1,3,9]){
   const rows=layout?.products??payload.items.map((_,i)=>11+i),subtotal=layout?.subtotal??11+count;
   rows.forEach((row,i)=>{
    assert.equal(numeric(sheet.getCell(row,6).value),payload.items[i].quote_display.unit_price);
-   assert.equal(typeof sheet.getCell(row,6).value,'number');
+   assert.equal(typeof sheet.getCell(row,6).value.formula,'string');
    assert.equal(sheet.getCell(row,7).value.formula,`ROUND(F${row}*D${row},2)`);
    assert.equal(sheet.getCell(row,7).value.result,payload.items[i].quote_display.total);
   });

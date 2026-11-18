@@ -35,6 +35,8 @@ import {
   formulaAttachmentExcluded,
   quickDiscountBreakdown,
   quickDiscountCategory,
+  quickAttachmentLineAmount,
+  ATTACHMENT_DISCOUNT_BASIS,
   quickOrderLineBreakdown,
   money, moneySum, moneyProduct, PRICING_BASIS, validateQuoteDisplay, applyManagementFee, missingManagementCosts, MANAGEMENT_FEE_RATE,
   hasManufacturingCost, manufacturingFormulaForItem, quickFreightFee,
@@ -840,6 +842,70 @@ const standardizedRemark = (item = {}) => {
   return `${parts.filter(Boolean).join("，").replace(/[，。；;\s]+$/u, "")}。`;
 };
 
+// The right-hand cells remain editable original amounts. Build the public
+// discounted price from those cells, retaining the shared unit-price rounding
+// rule for modern attachments instead of discounting an already-rounded total.
+function quickEditablePriceFormula({ row, values, attachments,
+  auditQuantity, snapshotAttachments, freightDivisor,
+  factor = `${col(quickDiscountColumnIndex)}${row}` }) {
+  const reference = index => `${col(index)}${row}`;
+  const unitReference = index => auditQuantity === 1
+    ? reference(index) : `(${reference(index)}/${auditQuantity})`;
+  const attachmentScale = snapshotAttachments ? 1 : auditQuantity;
+  const attachmentReference = index => attachmentScale === 1
+    ? reference(index) : `(${reference(index)}/${attachmentScale})`;
+  const eligible = [unitReference(12)];
+  const fixed = [];
+  const roundedUnits = [];
+  for (const name of quickAttachmentNames) {
+    const index = quickNameColumnByName.get(name);
+    const cell = reference(index);
+    const rows = attachments.filter(attachment => quickAttachmentName(attachment) === name);
+    const sample = rows[0] || quickItemsByName.get(name)?.[0];
+    // Empty/zero cells are deliberately referenced too: an amount entered
+    // after export must participate without requiring the formula to be edited.
+    const active = rows.filter(attachment => Number(attachment.quantity ?? 1) !== 0
+      && !attachment.pending_manual_dimensions?.length);
+    const hasUnitPrices = active.some(attachment => attachment.quick_discount_basis === ATTACHMENT_DISCOUNT_BASIS);
+    const categories = new Set(active.map(attachment => !!quickDiscountCategory(attachment)));
+    if (!hasUnitPrices && categories.size <= 1) {
+      (quickDiscountCategory(active[0] || sample || {}) ? eligible : fixed).push(attachmentReference(index));
+      continue;
+    }
+    const amounts = active.map(quickAttachmentLineAmount);
+    const absoluteTotal = amounts.reduce((sum, amount) => sum + Math.abs(amount), 0);
+    const quantities = active.map(attachment => Number(attachment.quantity ?? 1)
+      * (Number(attachment.attachment_price_sign) === -1 ? -1 : 1));
+    const absoluteQuantity = quantities.reduce((sum, quantity) => sum + Math.abs(quantity), 0);
+    const initial = asNumber(values[index - 1]);
+    active.forEach((attachment, position) => {
+      const amount = amounts[position], quantity = quantities[position];
+      // A shared name may represent several selected models. An edited group
+      // amount is allocated proportionally to its original amounts (or piece
+      // counts if all are zero), keeping every saved row's discount category.
+      const share = absoluteTotal ? Math.abs(amount) / absoluteTotal : Math.abs(quantity) / absoluteQuantity;
+      const change = `(${cell}-(${initial}))/${attachmentScale}*${share}`;
+      if (attachment.quick_discount_basis === ATTACHMENT_DISCOUNT_BASIS) {
+        const override = attachment.unit_price_override;
+        const originalUnit = hasFiniteNumber(override) && moneyProduct(override, quantity) === amount
+          ? Number(override) : Number(Math.abs(amount / quantity).toFixed(6));
+        const expression = `(${originalUnit}+(${change})/(${quantity}))`;
+        roundedUnits.push(`ROUND(${expression}${quickDiscountCategory(attachment) ? `*${factor}` : ''},2)*(${quantity})`);
+      } else {
+        (quickDiscountCategory(attachment) ? eligible : fixed).push(`(${amount}+${change})`);
+      }
+    });
+  }
+  if (quickOtherColumnIndex) fixed.push(unitReference(quickOtherColumnIndex));
+  if (quickMaterialColumnIndex) fixed.push(reference(quickMaterialColumnIndex));
+  const freight = reference(quickFreightColumnIndex);
+  fixed.push(freightDivisor === 1 ? freight : `(${freight}/${freightDivisor})`);
+  const parts = [`ROUND((${eligible.join('+')})*${factor},2)`, ...fixed, ...roundedUnits];
+  // Right-hand original amounts and the discount are the only price inputs.
+  // Never retain an independently saved left price or its opening difference.
+  return `ROUND(${parts.join('+')},2)`;
+}
+
 function fillSheet(sheet, method) {
   const items = payload.items || [];
   const lastColumn = method === "formula" ? formulaLastColumn : quickLastColumn;
@@ -916,14 +982,9 @@ function fillSheet(sheet, method) {
           attachments: attachments.map(({quick_discount_basis, ...attachment}) => attachment) })
       : null;
     const formulaBreakdown = method === "formula" ? formulaOrderLineBreakdown(item) : null;
-    const unitCost = method === "quick" && hasFiniteNumber(display?.unit_price)
-      ? Number(display.unit_price)
-      : method === "quick"
-        ? quickBreakdown.equivalentUnitTotal
+    const unitCost = method === "quick" ? quickBreakdown.equivalentUnitTotal
       : formulaBreakdown.equivalentUnitTotal;
-    const lineTotal = method === "quick" && hasFiniteNumber(display?.total)
-      ? Number(display.total)
-      : method === "quick" ? quickBreakdown.lineTotal : formulaBreakdown.lineTotal;
+    const lineTotal = method === "quick" ? quickBreakdown.lineTotal : formulaBreakdown.lineTotal;
     subtotal = moneySum([subtotal, lineTotal]);
     // final_remark is the operator-confirmed wording shown on the Remarks page.
     // Keep notes as a backward-compatible fallback for older saved drafts.
@@ -993,68 +1054,21 @@ function fillSheet(sheet, method) {
       values[quickFreightColumnIndex - 1] = (unitSet ? quickBreakdown.freightFee : quickBreakdown.freightTotal) || "";
       if (quickMaterialColumnIndex) values[quickMaterialColumnIndex - 1] = money(display?.material_difference || 0);
       values[quickDiscountColumnIndex - 1] = discount;
-      const populatedCellReferences = (columns) => columns
-        .filter(([, valueIndex]) => {
-          const value = values[valueIndex];
-          return value !== "" && value !== null && value !== undefined
-            && Number.isFinite(Number(value)) && Number(value) !== 0;
-        })
-        .map(([column]) => `${column}${row}`);
-      const discountedColumns = [["L", 11]];
-      const originalColumns = [];
-      for (const name of quickAttachmentNames) {
-        const index = quickNameColumnByName.get(name);
-        const sample = attachments.find((attachment) => quickAttachmentName(attachment) === name);
-        const target = [col(index), index - 1];
-        if (sample && quickDiscountCategory(sample)) discountedColumns.push(target);
-        else originalColumns.push(target);
-      }
-      if (quickOtherColumnIndex) {
-        originalColumns.push([col(quickOtherColumnIndex), quickOtherColumnIndex - 1]);
-      }
-      const discountedCells = populatedCellReferences(discountedColumns);
-      const originalPriceCells = populatedCellReferences(originalColumns);
-      // J and K are real, editable Excel formulas. Every amount references its
-      // corresponding source cell; changing an original price or the discount
-      // therefore recalculates both comparisons in Excel/WPS automatically.
-      const formulaParts = [];
-      const originalFormulaParts = [];
-      const originalCells = [...discountedCells, ...originalPriceCells];
-      if (originalCells.length) originalFormulaParts.push(originalCells.join("+"));
-      if (discountedCells.length) {
-        const discountedExpression = discountedCells.length === 1
-          ? discountedCells[0]
-          : `(${discountedCells.join("+")})`;
-        const discountedFormula = `${discountedExpression}*${col(quickDiscountColumnIndex)}${row}`;
-        // Preserve the historical ganged compatibility formula unchanged.
-        // Current per-set rows round the discounted unit price before adding
-        // original-price attachments and freight, matching the desktop client.
-        formulaParts.push(!unitSet && isGanged ? discountedFormula : `ROUND(${discountedFormula},2)`);
-      }
-      if (originalPriceCells.length) formulaParts.push(originalPriceCells.join("+"));
-      if (quickBreakdown.freightTotal) {
-        const freightCell = `${col(quickFreightColumnIndex)}${row}`;
-        const freightExpression = unitSet || isGanged ? freightCell : `${freightCell}/${qty || 1}`;
-        originalFormulaParts.push(freightExpression);
-        formulaParts.push(freightExpression);
-      }
-      if (quickMaterialColumnIndex) {
-        const materialCell = `${col(quickMaterialColumnIndex)}${row}`;
-        originalFormulaParts.push(materialCell);
-        formulaParts.push(materialCell);
-      }
-      const originalFormula = originalFormulaParts.join("+") || "0";
-      const formula = formulaParts.join("+") || "0";
-      const originalPriceFormula = !unitSet && isGanged ? `(${originalFormula})/D${row}` : `ROUND(${originalFormula},2)`;
-      const discountedPriceFormula = !unitSet && isGanged ? `(${formula})/D${row}` : `ROUND(${formula},2)`;
+      const formulaOptions = { row, values, attachments,
+        auditQuantity: auditCabinetQuantity,
+        snapshotAttachments: Array.isArray(display?.attachments),
+        freightDivisor: unitSet ? 1 : qty || 1 };
+      const editablePrice = quickEditablePriceFormula(formulaOptions);
       values[9] = {
-        formula: originalPriceFormula,
+        formula: quickEditablePriceFormula({ ...formulaOptions, factor: '1',
+          attachments: attachments.map(({quick_discount_basis, ...attachment}) => attachment) }),
         result: quickOriginalBreakdown.equivalentUnitTotal,
       };
       values[10] = {
-        formula: unitSetWorkbook ? `ROUND(J${row}*D${row},2)` : discountedPriceFormula,
-        result: unitSetWorkbook ? moneyProduct(quickOriginalBreakdown.equivalentUnitTotal, qty) : quickBreakdown.equivalentUnitTotal,
+        formula: unitSetWorkbook ? `ROUND(J${row}*D${row},2)` : editablePrice,
+        result: unitSetWorkbook ? moneyProduct(quickOriginalBreakdown.equivalentUnitTotal, qty) : unitCost,
       };
+      values[5] = { formula: editablePrice, result: unitCost };
     }
     sheet.getRange(`A${row}:${lastColumn}${row}`).values = [values];
     sheet.getRange(`H${row}`).format.wrapText = true;
@@ -1820,12 +1834,11 @@ const verifyWorkbookContents = (candidateWorkbook) => {
         ? item.formula_discount : display?.discount ?? item.quick_discount) ?? 1);
       const quantity = asNumber(display?.quantity ?? item.quantity ?? 1);
       const lineBreakdown = method === "quick"
-        ? quickPublicLineBreakdown(item)
+        ? quickPublicLineBreakdown({ ...item, quantity, quick_discount: discount,
+            attachments: quickExportAttachments(item), quick: quickExportQuote(item) })
         : formulaOrderLineBreakdown(item);
-      const unitCost = method === "quick" && hasFiniteNumber(display?.unit_price)
-        ? Number(display.unit_price) : lineBreakdown.equivalentUnitTotal;
-      const lineTotal = method === "quick" && hasFiniteNumber(display?.total)
-        ? Number(display.total) : lineBreakdown.lineTotal;
+      const unitCost = lineBreakdown.equivalentUnitTotal;
+      const lineTotal = lineBreakdown.lineTotal;
       subtotal = moneySum([subtotal, lineTotal]);
       const actual = rangePlainValues(sheet, `A${row}:H${row}`)[0];
       const expected = [
