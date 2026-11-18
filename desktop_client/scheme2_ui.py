@@ -8917,6 +8917,7 @@ def _quote_item_remark(item, *, preserve_existing=False):
         # Recognize the previous generated wording without erasing unrelated
         # remarks already saved in old quotation snapshots.
         automatic = {
+            build_configuration_remark(item, group_ganged=False),
             _scheme2_quote_remark(item, legacy=True),
             _scheme2_quote_remark(item, include_quantities=False),
             _previous_scheme2_quote_remark(item),

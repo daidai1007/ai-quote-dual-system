@@ -1,7 +1,7 @@
 """Customer configuration wording from saved quote fields, never price defaults.
 
-Attachment counts describe one cabinet (or an explicitly identified ganged
-child/shared set). Order quantity is deliberately absent from this formatter.
+Attachment counts describe one cabinet, or the combined supplies for one ganged
+set. Order quantity is deliberately absent from this formatter.
 Missing requirements are omitted; free-form manual remarks remain the caller's
 responsibility. The module performs no catalogue lookup or price calculation.
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
+import json
 import re
 
 from ganged_cabinet_rules import DOOR_POSITION_COUNTS
@@ -232,7 +233,42 @@ def _supply_description(name):
     }.get(name)
 
 
-def build_configuration_remark(item):
+def _group_ganged_attachments(rows):
+    """Combine quantities only for the same supplied accessory and specification."""
+    grouped = {}
+    result = []
+    identity_fields = (
+        'model_code', 'specification', 'matched_specification', 'brand', 'voltage',
+        'material_code', 'material_name', 'sheet_thickness_mm', 'thickness_mm', 'color',
+        'width_mm', 'height_mm', 'depth_mm', 'base_height_mm',
+        'position', 'installation_position', 'distribution', 'unit',
+    )
+    for row in rows:
+        quantity = number(row.get('quantity'))
+        if quantity is None:
+            result.append(row)
+            continue
+        signed = quantity * (-1 if row.get('attachment_price_sign') == -1 and quantity > 0 else 1)
+        name = re.sub(r'^柜体\s*\d+\s*[｜:：]\s*', '', text(first(row, 'item_name', 'name')))
+        key = (
+            name, _category(row), signed < 0, bool(row.get('custom')),
+            *(numeric(row.get(field)) if number(row.get(field)) is not None else text(row.get(field))
+              for field in identity_fields),
+            json.dumps(row.get('manual_inputs') or {}, sort_keys=True, ensure_ascii=False, default=str),
+        )
+        if key in grouped:
+            grouped[key]['quantity'] += signed
+            continue
+        combined = deepcopy(row)
+        combined.update(item_name=name, quantity=signed, attachment_price_sign=1)
+        combined.pop('ganged_cabinet_index', None)
+        combined.pop('ganged_fixed_base_index', None)
+        grouped[key] = combined
+        result.append(combined)
+    return result
+
+
+def build_configuration_remark(item, *, group_ganged=True):
     fields = _configuration(item)
     product = text(first(item,'scheme2_selected_product_name','scheme2_selected_product_code','product_family','product_code'))
     rule = product_rule(product)
@@ -273,8 +309,11 @@ def build_configuration_remark(item):
         door = door or '2'
     if body: header.append('柜体'+body+'mm')
     if door: header.append('门板'+door+'mm')
-    rows = [(row,_category(row)) for row in item.get('attachments',[]) if isinstance(row,dict)]
-    plate = installation_state(item,fields,rows)
+    selected_rows = [row for row in item.get('attachments',[]) if isinstance(row,dict)]
+    plate = installation_state(item,fields,[(row,_category(row)) for row in selected_rows])
+    if group_ganged and count > 1:
+        selected_rows = _group_ganged_attachments(selected_rows)
+    rows = [(row,_category(row)) for row in selected_rows]
     if plate['mode']=='none':
         if rule['fixed']: header[2]=rule['fixed']+'，不含安装板。'
         else: header.insert(2,'不含安装板')

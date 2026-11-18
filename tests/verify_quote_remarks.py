@@ -81,14 +81,16 @@ class QuoteRemarks(unittest.TestCase):
     def test_default_names_models_and_per_cabinet_quantities_match_popup_rows(self):
         item=self.w.draft_items[0]
         dialog=ui.AttachmentEditor(self.w,item)
-        names=list(dict.fromkeys(dialog.table.item(row,0).text() for row in range(dialog.table.rowCount())))
+        names=list(dict.fromkeys(dialog.table.item(row,0).text() for row in range(dialog.attachment_row_count())))
         self.assertEqual(names,['风机','照明灯/行程开关','人工附加件'])
         dialog.accept()
         actual=self.w.scheme2_quote_preview.item(10,7).text()
         self.assertEqual(item['quantity'],2)
-        for included in ('配MODEL-NOT-IN-REMARK风机3只','配SECOND-MODEL风机2只',
+        for included in ('配风机3只','配风机2只',
                          '配照明灯220V长款1套','配人工附加件1件'):
             self.assertIn(included,actual)
+        self.assertNotIn('MODEL-NOT-IN-REMARK',actual)
+        self.assertNotIn('SECOND-MODEL',actual)
         self.assertNotIn('120',actual)  # Not an explicit requested specification.
         dialog=ui.AttachmentEditor(self.w,item)
         dialog.table.item(0,0).setText('弹窗更名附件')
@@ -139,11 +141,10 @@ class QuoteRemarks(unittest.TestCase):
         ]
         before=deepcopy(item)
         dialog=ui.AttachmentEditor(self.w,item)
-        counts=[dialog.table.cellWidget(r,dialog.COL_QUANTITY).value() for r in range(dialog.table.rowCount())]
+        counts=[dialog.table.cellWidget(r,dialog.COL_QUANTITY).value() for r in range(dialog.attachment_row_count())]
         self.assertEqual(counts,[2,3,-2,1,-3])
         actual=ui._scheme2_quote_remark(item)
-        for phrase in ('内门2件（柜体1，单台）','内门3件（柜体2，单台）',
-                       '扣减2.5mm镀锌安装板2块（每组）','配2.5mm镀锌安装板1块（每组）','扣减2.5mm镀锌安装板3块（每组）'):
+        for phrase in ('内门5件（每组）','配2.5mm镀锌安装板1块（每组）','扣减2.5mm镀锌安装板5块（每组）'):
             self.assertIn(phrase,actual)
         self.assertNotIn('不含安装板',actual)
         self.assertEqual(item['attachments'],before['attachments'])

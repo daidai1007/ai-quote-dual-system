@@ -154,9 +154,52 @@ class ConfigurationFormat(unittest.TestCase):
                          dict(item_name='接地线',quantity=4)])
         actual=build(item)
         for part in ('2并柜，宽800mm＋600mm','柜体1：前单开门，后双开门','柜体2：前双开门，后单开门',
-                     '配风机2只（柜体1，单台）','配风机3只（柜体2，单台）','配接地线4根（每组）'):
+                     '配风机5只（每组）','配接地线4根（每组）'):
             self.assertIn(part,actual)
         self.assertEqual(build(json.loads(json.dumps(item))),actual)
+
+    def test_four_cabinets_merge_identical_supplies_and_preserve_selected_rows(self):
+        item=dict(product_family='JP', quantity=7, ganged_cabinet_count=4,
+                  ganged_cabinets=[dict(width_mm=800) for _ in range(4)], attachments=[])
+        for index in range(4):
+            for name,extra in (
+                ('安装板',dict(width_mm=800,height_mm=1800)),
+                ('固定底座',dict(height_mm=200,depth_mm=600)),
+                ('通风顶罩',dict(width_mm=800,height_mm=600,depth_mm=80,
+                                 manual_inputs={'通风顶罩高度':80})),
+                ('内门',{}),
+            ):
+                item['attachments'].append(dict(item_name=name,quantity=1,ganged_cabinet_index=index,
+                    formula_amount=12.5,quick_amount=20,**extra))
+        before=deepcopy(item)
+        result=build(item)
+        for label in ('2.5mm镀锌安装板4块','200mm高固定底座4件','通风顶罩4件','内门4件'):
+            self.assertEqual(result.count(label+'（每组）'),1)
+        self.assertNotIn('单台',result)
+        self.assertNotIn('（柜体1，',result)
+        self.assertEqual(item,before)
+
+    def test_different_models_sizes_positions_and_signs_stay_separate(self):
+        pairs=[
+            ({'model_code':'A'},{'model_code':'B'}),
+            ({'width_mm':800},{'width_mm':1000}),
+            ({'material_code':'SECC'},{'material_code':'SUS304'}),
+            ({'position':'前门'},{'position':'后门'}),
+            ({'manual_inputs':{'通风顶罩高度':80}},{'manual_inputs':{'通风顶罩高度':100}}),
+        ]
+        for left,right in pairs:
+            item=dict(ganged_cabinet_count=2,attachments=[
+                dict(item_name='附件',quantity=1,ganged_cabinet_index=0,**left),
+                dict(item_name='附件',quantity=2,ganged_cabinet_index=1,**right)])
+            result=build(item)
+            self.assertIn('1件',result)
+            self.assertIn('2件',result)
+            self.assertNotIn('3件',result)
+        item=dict(ganged_cabinet_count=2,attachments=[
+            dict(item_name='安装板',quantity=2,attachment_price_sign=-1,ganged_cabinet_index=0),
+            dict(item_name='安装板',quantity=-3,ganged_cabinet_index=1),
+            dict(item_name='安装板',quantity=1)])
+        self.assertTrue(build(item).endswith('扣减安装板5块（每组），配安装板1块（每组）。'))
 
     def test_deduction_is_not_claimed_as_supply_or_an_invented_exclusion(self):
         item=dict(attachments=[dict(item_name='安装板',quantity=2,attachment_price_sign=-1),

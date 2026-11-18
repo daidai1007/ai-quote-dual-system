@@ -85,6 +85,67 @@ class RemarkFormatRuntime(unittest.TestCase):
         self.assertNotIn('MS830',removed)
         self.assert_outputs(removed)
 
+    def test_ganged_supplies_merge_through_save_reopen_print_and_excel(self):
+        item=self.configured_item()
+        item.update(quantity=7,ganged_cabinet_count=4,
+                    ganged_cabinets=[dict(width_mm=800,height_mm=1800,depth_mm=600) for _ in range(4)])
+        item['attachments']=[]
+        for index in range(4):
+            for offset,name,extra in (
+                (0,'安装板',dict(width_mm=800,height_mm=1800)),
+                (1,'固定底座',dict(height_mm=200,depth_mm=600)),
+                (2,'通风顶罩',dict(width_mm=800,height_mm=600,depth_mm=80)),
+                (3,'内门',dict(width_mm=800,height_mm=1800)),
+            ):
+                item['attachments'].append(dict(item_name=name,quantity=1,ganged_cabinet_index=index,
+                    attachment_price_id=900+offset,status='FIXED',formula_amount=1,quick_amount=2,
+                    matched_price=2,**extra))
+        before=deepcopy(item['attachments'])
+        prices=ui._row_values(item)[15:17]
+        self.w.refresh_summary();self.w._quote_scheme_save_timer.stop()
+        expected=self.w.scheme2_quote_preview.item(10,7).text()
+        phrases=('配2.5mm镀锌安装板4块（每组）','配200mm高固定底座4件（每组）',
+                 '配通风顶罩4件（每组）','配内门4件（每组）')
+        for phrase in phrases:
+            self.assertEqual(expected.count(phrase),1)
+        self.assertNotIn('单台',expected)
+        self.assertEqual(item['attachments'],before)
+        self.assertEqual(ui._row_values(item)[15:17],prices)
+        self.m.save();wait(lambda:self.w._quote_scheme_save_worker is None)
+        self.assertEqual(self.server['snapshot']['draft_items'][0]['attachments'],before)
+        schemes._apply_opened_scheme(self.w,dict(found=True,**deepcopy(self.server),
+            quote_management_historical_export=True),ui.QUOTE_ROUTE)
+        self.w._quote_scheme_save_timer.stop()
+        self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),expected)
+        pdf=Path(self.folder.name)/'ganged-supplies.pdf'
+        printer=QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat);printer.setOutputFileName(str(pdf))
+        document=QTextDocument();document.setHtml(ui._printable_quote_html(self.w));document.print_(printer)
+        printed=''.join(''.join(page.extract_text() for page in PdfReader(pdf).pages).split())
+        for phrase in phrases:
+            self.assertIn(phrase,printed)
+        with patch('contract_management.show_message',side_effect=lambda *_args:self.fail(_args[-1])):
+            self.assert_outputs(expected)
+        self.assertEqual(self.w.draft_items[0]['attachments'],before)
+        self.screenshot('06-ganged-merged-supplies.png')
+
+    def test_old_ganged_automatic_text_updates_but_manual_and_sealed_text_survive(self):
+        item=self.configured_item()
+        item.update(ganged_cabinet_count=2,attachments=[
+            dict(item_name='内门',quantity=1,ganged_cabinet_index=0),
+            dict(item_name='内门',quantity=1,ganged_cabinet_index=1)])
+        old=ui.build_configuration_remark(item,group_ganged=False)
+        self.assertIn('内门1件（柜体1，单台）',old)
+        item.pop('quote_remark_manual',None);ui._synchronize_export_remark(item,old)
+        self.w._quote_scheme_read_only=True;self.w.refresh_summary()
+        self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),old)
+        self.w._quote_scheme_read_only=False;self.w.refresh_summary()
+        self.assertFalse(item['quote_remark_manual'])
+        self.assertIn('内门2件（每组）',self.w.scheme2_quote_preview.item(10,7).text())
+        item['quote_remark_manual']=True;ui._synchronize_export_remark(item,old)
+        self.w.refresh_summary()
+        self.assertEqual(self.w.scheme2_quote_preview.item(10,7).text(),old)
+
     def test_full_format_real_ui_save_reopen_pdf_and_xlsx(self):
         item=self.configured_item()
         expected=self.w.scheme2_quote_preview.item(10,7).text()

@@ -21,7 +21,7 @@ item = {
     ],
 }
 remark = _scheme2_quote_remark(item)
-assert remark == "仿威图JP柜，侧板、后背板可拆。镀锌板（SECC），喷塑RAL7035橘纹，柜体1.5mm，门板2mm。配24V-0.6m照明灯/行程开关1套，配接地线-黄绿线1根，配固定立柱1件。"
+assert remark == "仿威图JP柜，侧板、后背板可拆。镀锌板（SECC），喷塑RAL7035橘纹，柜体1.5mm，门板2mm。配照明灯/行程开关1套，配接地线-黄绿线1根，配固定立柱1件。"
 assert "仿威图（JP）柜" not in remark and "仿威图(JP)柜" not in remark
 
 item['quantity'] = 3
