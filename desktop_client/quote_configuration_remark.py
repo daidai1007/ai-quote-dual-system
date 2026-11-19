@@ -268,7 +268,7 @@ def _group_ganged_attachments(rows):
     return result
 
 
-def build_configuration_remark(item, *, group_ganged=True):
+def build_configuration_remark(item, *, group_ganged=True, legacy_material_label=False):
     fields = _configuration(item)
     product = text(first(item,'scheme2_selected_product_name','scheme2_selected_product_code','product_family','product_code'))
     rule = product_rule(product)
@@ -280,6 +280,8 @@ def build_configuration_remark(item, *, group_ganged=True):
         product += f'（{numeric(count)}并柜'+('，宽'+ '＋'.join(widths) if widths else '')+'）'
     code=text(item.get('material_code'))
     material = MATERIAL_NAMES[code] if code in ('SUS304','SUS316') else text(item.get('scheme2_selected_material')) or MATERIAL_NAMES.get(code,code)
+    if not legacy_material_label:
+        material = re.sub(r'(?<=碳钢板)\s*[（(][^（）()]*[）)]', '', material)
     surface = text(item.get('scheme2_selected_surface') or item.get('coating_type'))
     texture = text(fields.get('texture'))
     if not texture:

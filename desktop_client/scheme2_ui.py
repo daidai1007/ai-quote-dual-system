@@ -8918,6 +8918,8 @@ def _quote_item_remark(item, *, preserve_existing=False):
         # remarks already saved in old quotation snapshots.
         automatic = {
             build_configuration_remark(item, group_ganged=False),
+            build_configuration_remark(item, legacy_material_label=True),
+            build_configuration_remark(item, group_ganged=False, legacy_material_label=True),
             _scheme2_quote_remark(item, legacy=True),
             _scheme2_quote_remark(item, include_quantities=False),
             _previous_scheme2_quote_remark(item),
