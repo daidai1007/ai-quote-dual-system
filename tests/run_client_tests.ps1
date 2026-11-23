@@ -105,6 +105,7 @@ $testFiles = @(
     "tests/verify_customer_terminology.py",
     "tests/verify_scheme2_company_layout.py",
     "tests/verify_dialog_style.py",
+    "tests/verify_file_dialog_save.py",
     "tests/verify_attachment_add_button_style.py",
     "tests/verify_attachment_picker_search.py",
     "tests/verify_removed_diagnostic_report.py",

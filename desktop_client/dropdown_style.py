@@ -4,7 +4,7 @@ import weakref
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPen
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QCompleter, QLineEdit, QStyle, QStyledItemDelegate
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QCompleter, QFileDialog, QLineEdit, QStyle, QStyledItemDelegate
 from shiboken6 import isValid
 from ui_typography import BODY_PX, FONT_FAMILY_QSS
 
@@ -121,9 +121,20 @@ class ComboPopupDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+def _is_file_dialog_control(widget):
+    while widget is not None:
+        if isinstance(widget, QFileDialog):
+            return True
+        widget = widget.parentWidget()
+    return False
+
+
 def style_popup(combo, view):
     """Style a combo or completer list without changing its model or editor."""
     if not isValid(combo) or not isValid(view) or getattr(combo, '_styling_combo_popup', False):
+        return
+    field = combo.widget() if isinstance(combo, QCompleter) else combo
+    if _is_file_dialog_control(field):
         return
     combo._styling_combo_popup = True
     try:
@@ -158,6 +169,8 @@ def style_popup(combo, view):
 
 
 def style_combo(combo):
+    if _is_file_dialog_control(combo):
+        return
     style_popup(combo, combo.view())
     completer = combo.completer()
     if completer is not None and completer.completionMode() != QCompleter.CompletionMode.InlineCompletion:
@@ -169,6 +182,11 @@ class ComboPopupStyleFilter(QObject):
         # A combo can still be under construction when it is polished. Wait
         # until Show before asking Qt to create its lazily allocated popup.
         if event.type() != QEvent.Type.Show:
+            return False
+        # QFileDialog owns and connects these editors/views in native Qt.
+        # Restyling their completers while the dialog is being shown can
+        # invalidate its filename editor during selection and acceptance.
+        if isinstance(watched, (QComboBox, QLineEdit, QAbstractItemView)) and _is_file_dialog_control(watched):
             return False
         if isinstance(watched, QComboBox):
             style_combo(watched)
@@ -186,6 +204,8 @@ class ComboPopupStyleFilter(QObject):
             # This also covers completion popups whose window has no combo parent.
             for widget in QApplication.allWidgets():
                 if not isinstance(widget, (QComboBox, QLineEdit)):
+                    continue
+                if _is_file_dialog_control(widget):
                     continue
                 if isinstance(widget, QLineEdit) and isinstance(widget.parentWidget(), QComboBox):
                     continue
