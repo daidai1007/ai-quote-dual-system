@@ -13,9 +13,10 @@ import urllib.request
 import urllib.error
 
 from PySide6.QtCore import QThread, Signal, QTimer, QStandardPaths
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,
     QLineEdit,QPushButton,QMessageBox)
-from dialog_style import style_dialog, DIALOG_METRICS
+from dialog_style import style_dialog, DIALOG_COLORS, DIALOG_METRICS
 from name_session_recovery import NameSessionRecovery
 from contextlib import nullcontext
 
@@ -56,6 +57,36 @@ def clear_session():
         _state=None;_epoch+=1
         if _recovery:_recovery.remember(None,_epoch)
 
+
+def session_http_error_message(status,payload,headers):
+    """Separate gateway credentials from name/session errors without exposing keys."""
+    body=payload if isinstance(payload,dict) else {}
+    if status==401 and body.get('error')=='unauthorized':
+        configured=any(str(key).lower()=='x-ai-quote-key' and str(value or '').strip()
+                       for key,value in headers.items())
+        if not configured:
+            return ('客户端未读取到业务API授权，服务器拒绝登录（HTTP 401）。'
+                    '请管理员核对实际启动程序同目录的 client_config.json 中 api_key 是否已填写，'
+                    '保存后完全关闭并重新打开软件。不要发送密钥内容。')
+        return ('业务API授权校验失败，服务器拒绝登录（HTTP 401）。'
+                '请管理员核对当前接口地址及业务API密钥是否正确、有效；'
+                '填写姓名不能替代业务授权。不要发送密钥内容。')
+    return body.get('message') or '姓名登录服务暂不可用，请检查API是否已更新。'
+
+
+def reload_startup_connection(namespace):
+    """Apply administrator changes before a startup login retry, not mid-session."""
+    loader=namespace.get('load_client_config')
+    config=loader() if callable(loader) else {}
+    if not isinstance(config,dict):
+        raise ValueError('invalid client connection configuration')
+    namespace['API_URL']=str(os.getenv('AI_QUOTE_API_URL') or config.get('api_url')
+                             or namespace.get('API_URL','')).strip()
+    namespace['API_KEY']=str(os.getenv('AI_QUOTE_API_KEY') or config.get('api_key',
+                             namespace.get('API_KEY','')) or '').strip()
+    return namespace['API_URL'],namespace['_name_connection_headers']()
+
+
 class SessionWorker(QThread):
     succeeded=Signal(object)
     failed=Signal(str)
@@ -69,24 +100,38 @@ class SessionWorker(QThread):
             self.succeeded.emit(value)
         except urllib.error.HTTPError as error:
             self.http_status=error.code
-            try:message=json.loads(error.read().decode('utf-8')).get('message')
-            except Exception:message=None
-            self.failed.emit(message or '姓名登录服务暂不可用，请检查API是否已更新。')
+            try:payload=json.loads(error.read().decode('utf-8'))
+            except Exception:payload=None
+            self.failed.emit(session_http_error_message(error.code,payload,self.headers))
         except Exception:self.failed.emit('连接失败，当前填写内容已保留，请重试。')
 
 class NameLoginDialog(QDialog):
-    def __init__(self,base_url,headers,parent=None,expected_user=None,*,startup=False):
+    def __init__(self,base_url,headers,parent=None,expected_user=None,*,startup=False,connection_settings=None):
         super().__init__(parent)
         # Initial API_URL is the full calculation endpoint; name switching passes a root.
         self.base_url=str(base_url).strip().split('/api/',1)[0].rstrip('/')
-        self.headers=headers;self.expected_user=expected_user
+        self.headers=headers;self.expected_user=expected_user;self.connection_settings=connection_settings
         self.value=None;self.worker=None;self._startup=startup
         self._startup_timer=QTimer(self);self._startup_timer.setInterval(1000)
         self._startup_timer.timeout.connect(self._waiting_for_name)
+        self.setObjectName('nameLoginDialog')
+        # Startup precedes the workbench theme. A dark Windows palette must
+        # not leave white labels/status text on this explicitly white dialog.
+        self.setStyleSheet(f"""
+QDialog#nameLoginDialog QLabel {{ color:{DIALOG_COLORS['text']}; }}
+QDialog#nameLoginDialog QLineEdit {{ color:{DIALOG_COLORS['text']};
+    background:{DIALOG_COLORS['background']};
+    selection-color:{DIALOG_COLORS['background']};
+    selection-background-color:{DIALOG_COLORS['primary']}; }}
+""")
         self.setWindowTitle('输入姓名');self.setMinimumWidth(420)
         outer=QVBoxLayout(self);outer.setSpacing(DIALOG_METRICS['spacing'])
         outer.addWidget(QLabel('姓名'))
         self.name=QLineEdit();self.name.setMaxLength(100);self.name.setPlaceholderText('请输入您的姓名');outer.addWidget(self.name)
+        self.name.setAccessibleName('姓名')
+        palette=self.name.palette()
+        palette.setColor(QPalette.ColorRole.PlaceholderText,QColor(DIALOG_COLORS['disabled']))
+        self.name.setPalette(palette)
         hint=QLabel('仅按输入姓名识别人员，请使用本人姓名。');hint.setWordWrap(True);outer.addWidget(hint)
         self.error=QLabel();self.error.setWordWrap(True);outer.addWidget(self.error)
         self.enter=QPushButton('进入');self.enter.setObjectName('scheme2PrimaryAction');self.enter.clicked.connect(self.login);outer.addWidget(self.enter)
@@ -109,8 +154,16 @@ class NameLoginDialog(QDialog):
         if self.worker is not None:return
         name=self.name.text().strip()
         if not name:self.error.setText('请输入姓名。');return
+        if self.connection_settings is not None:
+            try:
+                base_url,headers=self.connection_settings()
+                self.base_url=str(base_url).strip().split('/api/',1)[0].rstrip('/')
+                self.headers=dict(headers)
+            except Exception:
+                self.error.setText('无法读取业务连接配置，请管理员核对 client_config.json 后重试。')
+                return
         self._startup_timer.stop();self._report_startup('starting_main_window')
-        self.enter.setEnabled(False);self.name.setEnabled(False);self.error.setText('正在登录…')
+        self.enter.setEnabled(False);self.enter.setText('正在登录…');self.name.setEnabled(False);self.error.setText('正在登录…')
         worker=SessionWorker(self.base_url.rstrip('/')+'/api/name-login',self.headers,{'name':name},self);self.worker=worker
         def loaded(value):
             if self.expected_user and value.get('person',{}).get('user_id')!=self.expected_user:
@@ -118,7 +171,7 @@ class NameLoginDialog(QDialog):
             self.value=value
         worker.succeeded.connect(loaded);worker.failed.connect(self.error.setText)
         def done():
-            self.worker=None;self.enter.setEnabled(True);self.name.setEnabled(True);worker.deleteLater()
+            self.worker=None;self.enter.setEnabled(True);self.enter.setText('进入');self.name.setEnabled(True);worker.deleteLater()
             if self.value is not None:self.accept()
             elif self._startup:
                 self._waiting_for_name();self._startup_timer.start()
@@ -158,7 +211,8 @@ def install_name_login(namespace):
     cls=namespace['MainWindow'];prior_init=cls.__init__
     def init(window,*args,**kwargs):
         if _required and _state is None:
-            dialog=NameLoginDialog(namespace['API_URL'],namespace['_name_connection_headers'](),startup=True)
+            dialog=NameLoginDialog(namespace['API_URL'],namespace['_name_connection_headers'](),startup=True,
+                                   connection_settings=lambda:reload_startup_connection(namespace))
             if dialog.exec()!=QDialog.DialogCode.Accepted:raise LoginCancelled()
             set_session(dialog.value)
         window._name_user_id=user_id();window._name_identity_epoch=_epoch

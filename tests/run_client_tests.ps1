@@ -52,6 +52,8 @@ $testFiles = @(
     "tests/verify_automatic_update_bridge.py",
     "tests/verify_legacy_upgrade_preparation.py",
     "tests/verify_name_login_endpoint.py",
+    "tests/verify_name_login_visibility.py",
+    "tests/verify_name_login_config_reload.py",
     "tests/verify_client_update_login_startup.py",
     "tests/verify_client_service_startup.py",
     "tests/verify_attachment_catalog_names.py",
