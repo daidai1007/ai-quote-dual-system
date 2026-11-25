@@ -4551,6 +4551,11 @@ class _CostCoefficientDialog(QDialog):
 def _show_cost_coefficients(window):
     if getattr(window, "_quote_scheme_read_only", False) or _received_cost_view(window):
         return
+    # The cost page initially has no current row (the total row is also not
+    # editable). Give this editor a visible quote target instead of silently
+    # changing defaults that apply only to a future calculation.
+    if _selected_item(window) is None and getattr(window, "draft_items", []):
+        window.summary_table.selectRow(0)
     _sync_sidebar(window)
     item = _selected_item(window)
     source = window.thickness_surcharge_coefficient_spin
@@ -4595,7 +4600,28 @@ def _apply_cost_control(window, key, value):
         from standalone_attachment import refresh_costs
         refresh_costs(window, item)
         return
+    _apply_formula_cost_control(item, key, value, state, old)
+    _recalculate_item_management(item)
+    window.refresh_summary()
+
+
+def _apply_formula_cost_control(item, key, value, state, old):
+    """Adjust the editable ledger and its child explanations together."""
     formula = _formula(item)
+    if key in ("waste_factor", "labor_discount", "surface_price"):
+        for child in formula.get("ganged_cabinet_costs") or []:
+            if not isinstance(child, dict) or not isinstance(child.get("formula_cost"), dict):
+                continue
+            saved = child.setdefault("scheme2_coefficient_state", {})
+            child_item = {
+                "formula": child["formula_cost"], "formula_base": child.get("formula_base") or {},
+                "material_code": item.get("material_code"),
+                "waste_factor": saved.get("waste_factor", item.get("waste_factor", old)),
+                "labor_multiplier": saved.get("labor_discount", item.get("labor_multiplier", 1)),
+                "scheme2_cost_bases": saved.setdefault("bases", {}),
+            }
+            _apply_formula_cost_control(child_item, key, value, state, saved.get(key, old))
+            saved[key] = value
     if key == "waste_factor":
         base = _number(item.setdefault("scheme2_cost_bases", {}).setdefault("material_cost", formula.get("material_cost")))
         original = _number(item.setdefault("scheme2_cost_bases", {}).setdefault("waste_factor", item.get("waste_factor", old)), 1.2)
@@ -4605,7 +4631,15 @@ def _apply_cost_control(window, key, value):
             _replace_component(item, "material_cost", base * ratio)
         item.pop("cost_detail_rows", None)
     elif key == "labor_discount":
-        base = _number(item.get("formula_base", formula).get("labor_cost", formula.get("labor_cost")))
+        original = item.get("formula_base") or {}
+        if original.get("labor_cost") is not None:
+            base = _number(original["labor_cost"])
+        else:
+            # Portable/legacy rows may not carry formula_base. Retain the
+            # undiscounted amount once, including an already adjusted row.
+            bases = item.setdefault("scheme2_cost_bases", {})
+            multiplier = max(.01, _number(item.get("labor_multiplier", old), 1))
+            base = _number(bases.setdefault("labor_cost", _number(formula.get("labor_cost")) / multiplier))
         item["labor_multiplier"] = value
         _replace_component(item, "labor_cost", base * value)
     elif key in ("carbon_price", "galvanized_price", *MATERIAL_PRICE_KEYS.values()):
@@ -4618,12 +4652,19 @@ def _apply_cost_control(window, key, value):
                 _replace_component(item, "material_cost", base * value / max(original_price, .01))
         item.pop("cost_detail_rows", None)
     elif key == "surface_price":
-        base_state = item.setdefault("scheme2_cost_bases", {})
-        base = _number(base_state.setdefault("spray_cost", formula.get("spray_cost")))
-        original_price = _number(base_state.setdefault(key, old), old)
-        _replace_component(item, "spray_cost", base * value / max(original_price, .01))
-    _recalculate_item_management(item)
-    window.refresh_summary()
+        if formula.get("product_area_m2") is not None:
+            amount = _number(formula["product_area_m2"]) * value
+        else:
+            base_state = item.setdefault("scheme2_cost_bases", {})
+            base = _number(base_state.setdefault("spray_cost", formula.get("spray_cost")))
+            original_price = _number(base_state.setdefault(key, old), old)
+            amount = base * value / max(original_price, .01)
+        formula["spray_unit_price"] = value
+        _replace_component(item, "spray_cost", amount)
+    # Recalculation can produce the same total already set by _replace_component;
+    # invalidate explanations independently of whether totals changed again.
+    item.pop("cost_detail_rows", None)
+    item.pop("quote_display", None)
 
 
 def _build_cost_page(window):

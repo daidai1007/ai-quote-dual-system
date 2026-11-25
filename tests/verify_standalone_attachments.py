@@ -110,7 +110,10 @@ class StandaloneAttachments(unittest.TestCase):
         w.summary_table.item(0,4).setText('3')
         self.assertEqual(item['quantity'],3)
         editor=ui.AttachmentEditor(w,item)
-        self.assertEqual(editor.table.horizontalHeader().hiddenSectionCount(),2)
+        # The current editor shows the editable original unit price and hides
+        # only the superseded face-total column.
+        self.assertFalse(editor.table.isColumnHidden(editor.COL_UNIT_AMOUNT))
+        self.assertTrue(editor.table.isColumnHidden(editor.COL_AMOUNT))
         self.assertTrue(editor.table.cellWidget(0,editor.COL_QUANTITY).isReadOnly())
         editor.accept()
         w.summary_table.selectRow(0);ui._duplicate_selected(w)
