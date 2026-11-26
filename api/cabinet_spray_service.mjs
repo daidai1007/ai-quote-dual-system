@@ -1,3 +1,4 @@
+import {jcCostProfile as jcProfile} from './jc_profile.mjs';
 import {evaluateFormula,round} from './attachment_formula.mjs';
 import {compareExperienceDimensions} from './experience_dimension_match.mjs';
 import {applyManagementFee} from '../quick_discount_rules.mjs';
@@ -43,12 +44,6 @@ export function calculateCabinetSpray(rules,environment){
     spray_unit_price:unitPrice,product_area_m2:area,spray_cost:round(area*unitPrice,2),part_details:details};
 }
 
-function jcProfile(environment){
-  const variant=codeOf(environment.variant_code),model=codeOf(environment.model_code);
-  if(/LUXURY|DELUXE|豪华/.test(variant)||/-1$/.test(model))return 'LUXURY';
-  if(/STANDARD|DEFAULT|标配/.test(variant)||/-2$/.test(model))return 'STANDARD';
-  return null;
-}
 
 export function calculateCabinetSprayFixed(rules,environment){
   const product=codeOf(environment.product_code);

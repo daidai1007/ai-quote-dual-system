@@ -159,7 +159,9 @@ for (const count of [1,2]) test(`real ${count}-cabinet quote/export uses new pri
     await promisify(execFile)(process.execPath,[path.resolve('export_dual_quote_workbook.mjs'),input,file],{windowsHide:true});
     const workbook=new ExcelJS.Workbook();await workbook.xlsx.readFile(file);
     const sheet=workbook.getWorksheet('报价');
-    assert.equal(sheet.getCell('F11').value,line.equivalentUnitTotal);
+    // Unit prices are now editable Excel formulas with a saved numeric result.
+    assert.equal(sheet.getCell('F11').value.formula,'ROUND(ROUND((L11)*O11,2)+M11+N11,2)');
+    assert.equal(sheet.getCell('F11').value.result,line.equivalentUnitTotal);
     assert.equal(quickQuotationAmount(sheet.getCell('G11')),line.lineTotal);
   } finally { await fs.rm(folder,{recursive:true,force:true}); }
 });

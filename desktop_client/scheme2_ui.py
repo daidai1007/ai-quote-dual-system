@@ -6898,7 +6898,7 @@ def _current_product_code(window):
         if isinstance(value, dict):
             value = value.get("product_code") or value.get("code") or value.get("model_code") or ""
         text = str(value or "").strip().upper()
-        for code in ("JP", "JS", "JK", "JA", "JE", "JM"):
+        for code in ("JP", "JS", "JK", "JA", "JE", "JM", "JC"):
             if text == code or text.startswith(code + " ") or text.startswith(code + "-"):
                 return code
     return ""

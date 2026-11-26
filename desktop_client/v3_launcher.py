@@ -30,6 +30,7 @@ from drawing_workflow import install_drawing_workflow
 from dwg_conversion import install_dwg_conversion
 from freight_export import install_freight_export
 from scheme2_ui import install_scheme2_ui
+from jc_profiles import install_jc_profiles
 from quote_scheme_center import install_quote_scheme_center
 from quote_analysis import install_quote_analysis
 from quote_management import install_quote_management
@@ -496,6 +497,7 @@ def load_v3_namespace() -> dict:
     install_drawing_workflow(namespace)
     install_freight_export(namespace)
     install_scheme2_ui(namespace)
+    install_jc_profiles(namespace)
     install_quote_scheme_center(namespace)
     install_quote_analysis(namespace)
     install_quote_management(namespace)

@@ -1,3 +1,4 @@
+import {jcCostProfile as jcProfile} from './jc_profile.mjs';
 import {evaluateFormula,round} from './attachment_formula.mjs';
 import {compareExperienceDimensions} from './experience_dimension_match.mjs';
 import {applyManagementFee} from '../quick_discount_rules.mjs';
@@ -14,12 +15,6 @@ function quantity(rule,environment){
   if(q.kind==='CONSTANT')return finite(q.value,'辅材内部数量',{zero:true});
   if(q.kind==='HEIGHT_GT')return environment.height_mm>Number(q.threshold)?Number(q.when_true):Number(q.when_false);
   throw new Error(`不支持的辅材数量规则：${q.kind||'空'}`);
-}
-function jcProfile(environment){
-  const variant=codeOf(environment.variant_code),model=codeOf(environment.model_code);
-  if(/LUXURY|DELUXE|豪华/.test(variant)||/-1$/.test(model))return 'LUXURY';
-  if(/STANDARD|DEFAULT|标配/.test(variant)||/-2$/.test(model))return 'STANDARD';
-  return null;
 }
 
 export function calculateCabinetAuxiliary(profile,lines,environment){

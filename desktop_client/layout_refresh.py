@@ -1865,6 +1865,8 @@ def _product_code_for_door_counts(window, single: int, double: int) -> tuple[str
         {},
     )
     codes = entry.get("codes") or {}
+    if entry.get('jc_profile_code'):
+        return codes.get(entry['jc_profile_code']), entry['jc_profile_code']
     wanted = "SINGLE" if int(single) > 0 else "DOUBLE"
     for variant in (wanted, "DEFAULT", "SINGLE", "DOUBLE"):
         code = codes.get(variant)

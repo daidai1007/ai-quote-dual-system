@@ -14,6 +14,8 @@ import { normalizeCatalogAttachment } from './attachment_catalog_rules.mjs';
 import {createAttachmentMaintenance,requireAttachmentMaintainer} from './attachment_maintenance.mjs';
 import { attachmentCatalogSql, decodeAttachmentCatalog } from './attachment_catalog_query.mjs';
 import { normalizeDoorVariantInput, normalizeQuickDoorVariantInput } from './door_variant_rules.mjs';
+import {jcQuickMatchSql, assertJcQuickMatch} from './jc_quick_match.mjs';
+import {isJcProduct, selectedJcProfile} from './jc_profile.mjs';
 import { historyPriceMatchSql } from './history_price_query.mjs';
 import { resolveRuntimeConfig } from './runtime_config.mjs';
 import { runPsqlCommand } from './psql_runner.mjs';
@@ -308,7 +310,7 @@ SELECT jsonb_build_object(
     ), '[]'::jsonb) END
 )::text
 FROM (SELECT * FROM calc.calculate_dual_quote(${args.join(', ')})) r
-LEFT JOIN LATERAL calc.match_quick_quote(
+LEFT JOIN LATERAL ${jcQuickMatchSql({...input,quote_date:dateValue(input.quote_date)}) || `calc.match_quick_quote(
   ${sqlText(input.quick_product_code || input.product_code)},
   ${sqlUnicodeText(input.model_code ?? '')},
   ${sqlText(input.material_code)},
@@ -316,7 +318,7 @@ LEFT JOIN LATERAL calc.match_quick_quote(
   ${sqlNumber(input.height_mm, 'height_mm', true)},
   ${sqlNumber(input.depth_mm, 'depth_mm', true)},
   ${sqlText(dateValue(input.quote_date))}
-) qm ON TRUE
+)`} qm ON TRUE
 LEFT JOIN LATERAL (
   SELECT q0.* FROM calc.quick_quote_experience q0
   WHERE q0.quick_rule_id = qm.quick_rule_id
@@ -336,11 +338,16 @@ const createQuoteServices = (readExecutor = runPsql) => {
       cabinetMaterialService.calculate(input),cabinetSprayService.calculate(input),cabinetAuxiliaryService.calculate(input),
     ]);
     const labor=await cabinetLaborService.calculate(input,material);
+    if (isJcProduct(input.product_code) && selectedJcProfile(input)
+        && (!material || !spray || !auxiliary || !labor)) {
+      throw Object.assign(new Error('JC 分型成本目录不完整，请先核对材料、喷涂、辅材及人工目录；本次未采用旧的混合取价。'), {statusCode:422});
+    }
     const databaseInput = material
       ? {...input, base_material_weight_kg: material.corrected_material_weight_kg}
       : input;
     const output=await runPsql(`BEGIN;\n${buildSql(databaseInput)}\nROLLBACK;`);
     const result = JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).at(-1));
+    assertJcQuickMatch(input,result);
     return applyCabinetLabor(applyCabinetAuxiliary(applyCabinetSpray(applyCabinetMaterial(result,material),spray),auxiliary),labor,input.freight_fee??input.freight??0);
   };
   for (const [name, service] of Object.entries({material: cabinetMaterialService, spray: cabinetSprayService,

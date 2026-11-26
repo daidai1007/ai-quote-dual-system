@@ -4,6 +4,8 @@ import {randomUUID} from 'node:crypto';
 import {ownerInsertSql} from './quote_access_scope.mjs';
 import {sqlValue} from './attachment_service.mjs';
 import {normalizeQuickDoorVariantInput} from './door_variant_rules.mjs';
+import {jcQuickMatchSql} from './jc_quick_match.mjs';
+import {isJcProduct, selectedJcProfile} from './jc_profile.mjs';
 
 const jsonSql = value => `${sqlValue(JSON.stringify(value))}::jsonb`;
 const invalid = message => Object.assign(new Error(message), {statusCode: 422});
@@ -40,6 +42,12 @@ export function quickMatchOverrideSql(environment, sizes) {
     const fallback = normalizeQuickDoorVariantInput({...environment, ...source,
       single_door_count: 1, double_door_count: 0}).product_code;
     const product = previous?.[index]?.product_code || fallback;
+    const matchInput = {...environment,...source,product_code:product,...size};
+    // Old child snapshots can still carry SINGLE/DOUBLE. The quote-level JC
+    // configuration is authoritative for every child, including manual rematch.
+    if (isJcProduct(product) && selectedJcProfile(environment)) {
+      matchInput.jc_profile_code = selectedJcProfile(environment);
+    }
     const perimeter = actual.map(sqlValue).join('+');
     return `SELECT ${index} AS cabinet_index,
       sqrt(power(${actual[0]}-qm.reference_width_mm,2)
@@ -52,8 +60,9 @@ export function quickMatchOverrideSql(environment, sizes) {
         'reference_height_mm',qm.reference_height_mm,'quick_base_price',q.quick_base_price,
         'source_file',q.source_file,'source_sheet',q.source_sheet,'source_row_no',q.source_row_no,
         'manual_match',true) AS matched_experience
-      FROM calc.match_quick_quote(${sqlValue(product)},NULL,${sqlValue(environment.material_code)},
-        ${size.width_mm},${size.height_mm},${size.depth_mm},${sqlValue(environment.quote_date)}::date) qm
+      FROM ${jcQuickMatchSql(matchInput) ||
+        `calc.match_quick_quote(${sqlValue(product)},NULL,${sqlValue(environment.material_code)},
+        ${size.width_mm},${size.height_mm},${size.depth_mm},${sqlValue(environment.quote_date)}::date)`} qm
       JOIN calc.quick_quote_experience q USING(quick_rule_id)
       WHERE qm.reference_width_mm=${size.width_mm} AND qm.reference_depth_mm=${size.depth_mm}
         AND qm.reference_height_mm=${size.height_mm} AND qm.dimension_distance=0`;

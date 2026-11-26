@@ -1,0 +1,6 @@
+[
+  {"model":"JC601660-1","profile":"STANDARD","label":"JC 标配型","depth":600},
+  {"model":"JC601680-1","profile":"STANDARD","label":"JC 标配型","depth":800},
+  {"model":"JC601660-2","profile":"LUXURY","label":"JC 豪华型","depth":600},
+  {"model":"JC601680-2","profile":"LUXURY","label":"JC 豪华型","depth":800}
+]

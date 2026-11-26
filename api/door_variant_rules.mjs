@@ -1,3 +1,4 @@
+import {isJcProduct, selectedJcProfile} from './jc_profile.mjs';
 // Door-count business rules shared by the dual-quote API response layer.
 // Product availability remains database-driven; this module only validates
 // the operator's two door counts and selects the approved quote source.
@@ -57,6 +58,10 @@ export function quickDoorVariantForCounts(counts, productCode = '') {
 
 export function normalizeDoorVariantInput(input = {}) {
   const counts = doorCountsFromInput(input, { allowZeroPair: true });
+  if (isJcProduct(input.product_code) && selectedJcProfile(input)) {
+    return {...input, variant_code:selectedJcProfile(input),
+      ...(counts ? {single_door_count:counts.single,double_door_count:counts.double} : {})};
+  }
   if (!counts) return input;
   if (counts.single === 0 && counts.double === 0) return input;
   const currentProduct = String(input.product_code || '').trim();
@@ -91,6 +96,9 @@ export function normalizeDoorVariantInput(input = {}) {
 
 export function normalizeQuickDoorVariantInput(input = {}) {
   const counts = doorCountsFromInput(input, { allowZeroPair: true });
+  if (isJcProduct(input.product_code) && selectedJcProfile(input)) {
+    return {...input, variant_code:selectedJcProfile(input), product_family:'JC'};
+  }
   if (!counts || (counts.single === 0 && counts.double === 0)) return input;
   const currentProduct = String(input.product_code || '').trim();
   const currentVariant = String(input.variant_code || '').trim().toUpperCase();

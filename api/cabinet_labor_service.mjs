@@ -1,3 +1,4 @@
+import {jcCostProfile as jcProfile} from './jc_profile.mjs';
 import {round} from './attachment_formula.mjs';
 import {compareExperienceDimensions,experienceDimensionRank} from './experience_dimension_match.mjs';
 import {applyManagementFee, MANAGEMENT_FEE_RATE} from '../quick_discount_rules.mjs';
@@ -8,12 +9,6 @@ const finite=(value,label,{zero=false}={})=>{const n=Number(value);if(!Number.is
 const codeOf=value=>String(value||'').trim().toUpperCase();
 const familyOf=value=>{const code=codeOf(value);return /^(JP|JS)_WIDE_EXP$/.test(code)?code:code.split('_')[0];};
 const canonicalModel=(model,product)=>product==='JC_EXP'?codeOf(model).replace(/-[12]$/,''):codeOf(model);
-function jcProfile(environment){
-  const variant=codeOf(environment.variant_code),model=codeOf(environment.model_code);
-  if(/LUXURY|DELUXE|豪华/.test(variant)||/-1$/.test(model))return 'LUXURY';
-  if(/STANDARD|DEFAULT|标配/.test(variant)||/-2$/.test(model))return 'STANDARD';
-  return null;
-}
 function linearLabor(rule,material){
   if(!material?.part_details?.length)throw new Error(`${rule.product_code} 人工公式需要当前柜体净材料重量明细`);
   const excluded=new Set(rule.excluded_part_names||[]);

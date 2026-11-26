@@ -182,7 +182,10 @@ class FrontRearDoorTests(unittest.TestCase):
                 self.assertIn('SYN-001/PART-001',remark)
                 self.assertIn('门板1.8mm',remark)
                 self.assertIn('不含空调',remark)
-                self.assertIn('安装板先发',remark)
+                # No installation-board attachment is selected in this fixture.
+                # Keep the original note as source data, but omit board wording
+                # from the final remark under the approved selection rule.
+                self.assertNotIn('安装板',remark)
         self.w._quote_scheme_loading=False
 
     def test_ganged_children_keep_positions_and_legacy_request_counts_on_reopen(self):
