@@ -32,16 +32,14 @@ def with_tax_cost(formula, attachments, quoted_unit_price, cost_freight):
         raise TaxCostError('税费计算所需报价或成本尚未完整，请重新计算')
     deductions = money_sum([*(inputs[key] for key in DEDUCTION_KEYS), cost_freight])
     base = money_sum((quoted_unit_price, -deductions))
-    if base < 0:
-        raise TaxCostError(f'税费计算失败：报价 {_fmt(quoted_unit_price)} 元小于材料、辅材、附件、成本运费及喷涂成本合计 {_fmt(deductions)} 元，税费基数为 {_fmt(base)} 元。请核对报价和成本数据。', 'NEGATIVE_BASE')
     result.update(tax_cost=money_product(base, .15), tax_cost_basis=TAX_COST_BASIS,
                   tax_cost_base=base, tax_cost_rate=.15, tax_cost_inputs={key: money(value) for key, value in inputs.items()})
     result.pop('tax_cost_error', None)
     result.pop('tax_cost_error_code', None)
+    if base < 0:
+        result['tax_cost_notice'] = f'税费基数为 {base:.2f} 元，按原公式计算税费 {result["tax_cost"]:.2f} 元；报价和折扣未调整。'
+    else:
+        result.pop('tax_cost_notice', None)
     manufacturing = result.get('manufacturing_cost') if result.get('manufacturing_cost_basis') == MANUFACTURING_COST_BASIS else 0
     result['total_cost'] = money_sum([*(result[key] for key in MANAGEMENT_COST_KEYS), manufacturing, result['management_fee'], result['tax_cost']])
     return with_cost_allocation(result, attachments)
-
-
-def _fmt(value):
-    return f'{money(value):,.2f}'

@@ -28,19 +28,23 @@ class TaxCostUI(unittest.TestCase):
   before=deepcopy(row)
   for _ in range(3):self.window.refresh_summary()
   self.assertEqual(row,before);self.window.show_error.assert_not_called()
- def test_negative_tax_popup_blocks_output_and_recovers_without_spam(self):
+ def test_negative_tax_is_signed_and_does_not_change_price_or_block_output(self):
   row=self.fill();w=self.window;grid=w.summary_table
   grid.item(0,9).setText('0.5');app.processEvents()
-  w.show_error.assert_called_once();self.assertIn('税费计算失败',w.show_error.call_args.args[0])
-  self.assertEqual(grid.item(0,ui.TAX_COST_COLUMN).text(),'待核对')
-  self.assertEqual(grid.item(0,12).text(),'待核对')
-  self.assertFalse(w.scheme2_cost_generate.isEnabled())
-  w._scheme2_document_controller.sync_buttons();self.assertFalse(w.scheme2_quote_export.isEnabled())
-  with self.assertRaisesRegex(ValueError,'税费计算失败'):ui._quote_export_items_snapshot(w)
-  w.refresh_summary();w.show_error.assert_called_once()
+  w.show_error.assert_not_called()
+  self.assertEqual(row['quick_discount'],.5)
+  self.assertEqual(grid.item(0,10).text(),'550.00')
+  self.assertEqual(grid.item(0,ui.TAX_COST_COLUMN).text(),'-22.50')
+  self.assertEqual(grid.item(0,12).text(),'727.00')
+  self.assertIn('-150.00',row['formula']['tax_cost_notice'])
+  self.assertTrue(w.scheme2_cost_generate.isEnabled())
+  ui._refresh_quote_page(w)
+  self.assertEqual(ui._quote_export_items_snapshot(w)[0]['formula']['tax_cost'],-22.5)
+  w.refresh_summary();w.show_error.assert_not_called()
   grid.item(0,9).setText('1');app.processEvents()
   self.assertEqual(grid.item(0,12).text(),'835.00');self.assertTrue(w.scheme2_cost_generate.isEnabled())
-  grid.item(0,9).setText('0.5');app.processEvents();self.assertEqual(w.show_error.call_count,2)
+  self.assertNotIn('tax_cost_notice',row['formula'])
+  grid.item(0,9).setText('0.5');app.processEvents();w.show_error.assert_not_called()
  def test_quick_freight_is_distinct_from_tax_cost_freight(self):
   row=self.fill();w=self.window
   w.summary_table.item(0,ui.QUICK_FREIGHT_COLUMN).setText('200');app.processEvents()

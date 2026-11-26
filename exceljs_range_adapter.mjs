@@ -45,7 +45,7 @@ export function wrappedCellHeight(text, width, fontSize, padding = 8) {
 }
 
 /** Grow populated rows before any vertical merges. Keep the template minimum. */
-export function fitWrappedTextRows(sheet, first, last) {
+export function fitWrappedTextRows(sheet, first, last, {allowOversizedForLayout = false} = {}) {
   for (let index = first; index <= last; index += 1) {
     const row = sheet.getRow(index);
     let height = row.height ?? sheet.properties.defaultRowHeight ?? 15;
@@ -55,7 +55,7 @@ export function fitWrappedTextRows(sheet, first, last) {
       const text = typeof value === "string" ? value : value?.result;
       if (typeof text !== "string" || !text) return;
       const needed = wrappedCellHeight(text, columnWidthPoints(sheet.getColumn(cell.col)), cell.font?.size ?? 11);
-      if (needed > 409.5) {
+      if (needed > 409.5 && !allowOversizedForLayout) {
         throw Object.assign(new Error(`工作表“${sheet.name}”的 ${cell.address} 内容超过 Excel 单行可显示高度，请拆分说明后重新导出。`), {statusCode: 400});
       }
       height = Math.max(height, needed);

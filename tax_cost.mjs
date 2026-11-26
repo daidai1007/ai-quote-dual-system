@@ -19,12 +19,13 @@ export function withTaxCostForItem(item,formula=item.formula,{validateFrozen=fal
  if(!Object.values(inputs).every(finite))throw fail('税费计算所需报价或成本尚未完整，请重新计算');
  const deductions=moneySum([...keys.map(key=>inputs[key]),inputs.freight_fee]);
  const base=moneySum([inputs.quoted_unit_price,-deductions]);
- if(base<0)throw fail(`税费计算失败：报价 ${money(inputs.quoted_unit_price).toFixed(2)} 元小于材料、辅材、附件、成本运费及喷涂成本合计 ${deductions.toFixed(2)} 元，税费基数为 ${base.toFixed(2)} 元。请核对报价和成本数据。`,'NEGATIVE_BASE');
  const amount=moneyProduct(base,.15);
  if(validateFrozen&&(!finite(frozen?.tax_cost)||money(frozen.tax_cost)!==amount))throw fail('税费与当前报价及成本分项不一致，请重新计算','STALE_TAX');
  Object.assign(result,{tax_cost:amount,tax_cost_basis:TAX_COST_BASIS,tax_cost_base:base,tax_cost_rate:.15,
   tax_cost_inputs:Object.fromEntries(Object.entries(inputs).map(([key,value])=>[key,money(value)]))});
  delete result.tax_cost_error;delete result.tax_cost_error_code;
+ if(base<0)result.tax_cost_notice=`税费基数为 ${base.toFixed(2)} 元，按原公式计算税费 ${amount.toFixed(2)} 元；报价和折扣未调整。`;
+ else delete result.tax_cost_notice;
  const manufacturing=result.manufacturing_cost_basis===MANUFACTURING_COST_BASIS?result.manufacturing_cost:0;
  result.total_cost=moneySum([...MANAGEMENT_COST_KEYS.map(key=>result[key]),manufacturing,result.management_fee,amount]);
  return withAttachmentCostAllocation(result,item.attachments||[]);

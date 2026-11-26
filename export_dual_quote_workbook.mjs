@@ -1568,7 +1568,7 @@ fillSheet(formulaSheet, "formula");
 fillSheet(quickSheet, "quick");
 const publicQuotePlan=addPublicQuoteSheet(workbook,quickSheet,payload.items.length);
 for (const sheet of [formulaSheet, quickSheet]) {
-  fitWrappedTextRows(sheet, 11, 10 + payload.items.length);
+  fitWrappedTextRows(sheet, 11, 10 + payload.items.length, {allowOversizedForLayout:true});
 }
 buildFormulaCostDetailSheet();
 
@@ -1637,6 +1637,10 @@ function arrangeVerticalQuotationDetails(sheet, method) {
   const cuts = new Set([0, headerEndPixel, cursorPixel]);
   for (const range of sourceGeometry) { cuts.add(range.firstPixel); cuts.add(range.lastPixel); }
   for (const range of fieldPixelRows) { cuts.add(range.firstPixel); cuts.add(range.lastPixel); }
+  // Oversized logical remarks are merged over legal physical row heights.
+  const legalCuts=[...cuts].sort((a,b)=>a-b);
+  for(let i=1;i<legalCuts.length;i++)
+    for(let pixel=legalCuts[i-1]+500;pixel<legalCuts[i];pixel+=500)cuts.add(pixel);
   const boundaries = [...cuts].sort((a, b) => a - b), pixelToRow = new Map();
   let geometryIndex = 0, nextRow = 11;
   const allocated = new Map();

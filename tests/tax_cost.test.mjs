@@ -42,9 +42,14 @@ test('tax uses classified displayed material/auxiliary/attachment/spray columns'
  assert.equal(formula.tax_cost_inputs.attachment_fee,12);assert.equal(formula.tax_cost_inputs.material_cost,135);
  assert.equal(formula.total_cost,342.09);
 });
-test('negative base is an explicit error; zero base is a valid zero expense',()=>{
+test('negative base keeps signed tax and saved quote; zero base is a valid zero expense',()=>{
  const item=source();item.quick_discount=.5;
- assert.throws(()=>withTaxCostForItem(item),error=>error.code==='NEGATIVE_BASE'&&error.statusCode===422&&/请核对/.test(error.message));
+ const formula=withTaxCostForItem(item,manufacturingFormulaForItem(item));
+ assert.equal(formula.tax_cost_base,-150);assert.equal(formula.tax_cost,-22.5);
+ assert.match(formula.tax_cost_notice,/-150.00/);assert.equal(item.quick_discount,.5);
+ assert.equal(formula.total_cost,627);
+ assert.equal(withTaxCostForItem({...item,formula},{...formula},{validateFrozen:true}).tax_cost,-22.5);
+ assert.throws(()=>withTaxCostForItem({...item,formula:{...formula,tax_cost:0}},formula,{validateFrozen:true}),/税费.*不一致/);
  item.quick.base_price=600;item.quick_discount=1;
  assert.equal(withTaxCostForItem(item).tax_cost,0);
 });
@@ -58,6 +63,29 @@ test('API validates tax and recipient/contract keep the same frozen expense',asy
  assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf('税费')],45);
  const old=structuredClone(item);delete old.tax_cost_basis;old.formula={material_cost:600};
  assert.deepEqual(withTaxCostForItem(old),old.formula);
+});
+
+test('negative tax survives API validation, contract, delivery and actual Excel',async()=>{
+ const item=source(3);item.quick_discount=.5;
+ item.formula=withTaxCostForItem(item,manufacturingFormulaForItem(item));
+ Object.assign(item.quote_display,{discount:.5,unit_price:550,total:1650});
+ const service=createAttachmentService({runPsql:async()=>{throw Error('offline row needs no SQL');}});
+ assert.equal((await service.hydrateDocument({items:[item]})).items[0].formula.tax_cost,-22.5);
+ assert.equal(contractQuote({draft_items:[item]},'FORMULA').total,2181);
+ const doc=deliveryDocument({draft_items:[item],document:{order_nature:'EXTERNAL'}},'LOCAL-SIGNED',1);
+ assert.equal(doc.cost_snapshot.items[0].columns[doc.cost_snapshot.headers.indexOf('税费')],-22.5);
+ const base=path.join(root,'.codex-tmp');await fs.mkdir(base,{recursive:true});
+ const folder=await fs.mkdtemp(path.join(base,'signed-tax-'));
+ try{
+  const input=path.join(folder,'input.json'),output=path.join(folder,'output.xlsx');
+  await fs.writeFile(input,JSON.stringify({quote_id:'LOCAL-SIGNED',company_name:'合成测试客户',order_nature:'EXTERNAL',items:[item]}));
+  execFileSync(process.execPath,['export_dual_quote_workbook.mjs',input,output],{cwd:root,windowsHide:true,stdio:'pipe'});
+  const book=new ExcelJS.Workbook();await book.xlsx.readFile(output);
+  assert.equal(quickQuotationAmount(book.getWorksheet('报价').getCell('G11')),1650);
+  assert.equal(book.getWorksheet('成本').getCell('G11').value,2181);
+  const taxes=[];book.getWorksheet('成本明细').eachRow(row=>{if(row.getCell(4).value==='税费')taxes.push(row.getCell(13).value);});
+  assert.deepEqual(taxes,[-67.5]);
+ }finally{assert(path.resolve(folder).startsWith(path.resolve(base)+path.sep));await fs.rm(folder,{recursive:true,force:true});}
 });
 test('actual workbook records tax90 for two units, quick2000, formula1670 and no adjustment',async()=>{
  const base=path.join(root,'.codex-tmp');await fs.mkdir(base,{recursive:true});

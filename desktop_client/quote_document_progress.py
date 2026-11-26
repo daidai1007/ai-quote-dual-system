@@ -338,6 +338,11 @@ class QuoteDocumentProgress:
                                                 "正在导出…" if self.busy and self.kind == "export" else
                                                 "重试导出" if self.reason and self.kind == "export" else "导出报价单")
 
+        if getattr(self.window, '_scheme2_cost_recovery', None) is not None:
+            for button in (self.window.scheme2_cost_generate, self.window.scheme2_quote_print,
+                           self.window.scheme2_quote_export):
+                button.setEnabled(False)
+
     def end(self, cancelled=False):
         self.busy = False
         self.finished_at = time.monotonic()
@@ -532,7 +537,7 @@ class QuoteDocumentProgress:
         pump()
 
     def generate(self):
-        if self.busy:
+        if self.busy or getattr(self.window, '_scheme2_cost_recovery', None) is not None:
             return
         if getattr(self.window, '_quote_scheme_pending_export', None):
             QMessageBox.information(self.window, '方案待登记', '文件已导出，请先重试方案登记，无需重新生成报价单。')
@@ -593,7 +598,7 @@ class QuoteDocumentProgress:
             manager.confirm_generation(show, lambda message: self.fail(message) if active() else None, active)
 
     def export(self):
-        if self.busy:
+        if self.busy or getattr(self.window, '_scheme2_cost_recovery', None) is not None:
             return
         prepare = getattr(self.window, 'quote_scheme_prepare_export', None)
         if callable(prepare) and not prepare():

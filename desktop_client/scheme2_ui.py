@@ -603,6 +603,7 @@ def _formula_with_manufacturing(item, formula):
             result = with_tax_cost(result, attachments, line['equivalent_unit_total'], freight)
         except TaxCostError as error:
             result.update(tax_cost=None, tax_cost_basis=TAX_COST_BASIS, tax_cost_error=str(error), tax_cost_error_code=error.code, total_cost=None)
+            result.pop('tax_cost_notice', None)
     return result
 
 
@@ -616,7 +617,7 @@ def _recalculate_item_management(item):
     if updated != _formula(item):
         current = _formula(item)
         current.update(updated)
-        for key in ('cost_allocation', 'tax_cost_error', 'tax_cost_error_code'):
+        for key in ('cost_allocation', 'tax_cost_error', 'tax_cost_error_code', 'tax_cost_notice'):
             if key not in updated:
                 current.pop(key, None)
         item["formula"] = current
@@ -4771,6 +4772,13 @@ def _build_cost_page(window):
     issue_layout = QHBoxLayout()
     issue_layout.setContentsMargins(COST_SELECTION_METRICS['inset'], 0, COST_SELECTION_METRICS['inset'], 0)
     issue_layout.addWidget(detail_issue)
+    recover_cost = QPushButton('补齐成本')
+    recover_cost.setObjectName('scheme2PrimaryGhost')
+    recover_cost.setToolTip('补齐所选行的缺失尺寸并重新核算附件成本，现有报价和折扣保持不变。')
+    recover_cost.hide()
+    from cost_recovery import recover_selected
+    recover_cost.clicked.connect(lambda: recover_selected(window))
+    issue_layout.addWidget(recover_cost)
     detail_content_layout.addLayout(issue_layout)
     metrics = QWidget()
     metrics.setObjectName("scheme2CostSelectionMetrics")
@@ -4908,6 +4916,7 @@ def _build_cost_page(window):
     window.scheme2_cost_selection_detail = selection_detail
     window.scheme2_cost_selection_context = detail_context
     window.scheme2_cost_selection_issue = detail_issue
+    window.scheme2_cost_recover = recover_cost
     window.scheme2_cost_selection_values = detail_values
     window.scheme2_cost_selection_tiles = detail_tiles
     window.scheme2_cost_selection_grid = groups_layout
@@ -5244,6 +5253,8 @@ def _sync_cost_selection_detail(window):
     row = _selected_row(window)
     has_item = 0 <= row < len(getattr(window, "draft_items", []))
     _fill_cost_selection_detail(window, row, has_item)
+    from cost_recovery import sync_action
+    sync_action(window)
 
 
 def _fill_cost_selection_detail(window, row, has_item):
@@ -5267,10 +5278,11 @@ def _fill_cost_selection_detail(window, row, has_item):
             formula = _formula(window.draft_items[row])
             allocation = formula.get('cost_allocation') or {}
             errors = allocation.get('errors') or []
-            message = errors[0] if errors else formula.get('tax_cost_error') or ""
+            message = errors[0] if errors else formula.get('tax_cost_error') or formula.get('tax_cost_notice') or ""
             if len(errors) > 1:
                 message += f"（另有 {len(errors) - 1} 项，见成本单元格提示）"
-        issue.setText("成本待处理：" + message if message else "")
+        notice_only = has_item and not errors and not _formula(window.draft_items[row]).get('tax_cost_error')
+        issue.setText(("成本提示：" if notice_only else "成本待处理：") + message if message else "")
         issue.setToolTip("；".join(errors) if errors else message)
         issue.setVisible(bool(message))
     for column, label in values.items():
@@ -5414,6 +5426,8 @@ def _refresh_cost_table(window):
                 if column == TAX_COST_COLUMN:
                     cell.setText("未记录" if not has_tax_cost(item) else "待核对" if _formula(item).get("tax_cost_error") else _money(canonical[29]) if canonical[29] is not None else "—")
                     cell.setToolTip("税费＝（报价－材料成本－辅材成本－附件成本－成本运费－喷涂成本）×0.15；计入成本单价和净利率，毛利率不扣税费。")
+                    if _formula(item).get('tax_cost_notice'):
+                        cell.setToolTip(cell.toolTip() + '\n' + _formula(item)['tax_cost_notice'])
                 if _formula(item).get("tax_cost_error") and column in (12, 20, NET_MARGIN_COLUMN):
                     cell.setText("待核对" if column != NET_MARGIN_COLUMN else "—")
                     cell.setToolTip(_formula(item)["tax_cost_error"])
