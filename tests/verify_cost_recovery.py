@@ -178,5 +178,40 @@ class CostRecovery(unittest.TestCase):
         self.assertTrue(dialog.confirm_button.isEnabled())
         self.assertEqual(len(dialog.fields),20)
 
+    def test_legacy_ganged_cent_drift_uses_agreeing_base_and_children(self):
+        from cost_recovery import reconcile_ganged_rounding
+        children=[dict(formula_cost=dict(auxiliary_cost=10.23,spray_cost=20.17)) for _ in range(2)]
+        row=dict(formula=dict(auxiliary_cost=20.47,spray_cost=40.35,ganged_cabinet_costs=deepcopy(children)),
+                 formula_base=dict(auxiliary_cost=20.46,spray_cost=40.34,ganged_cabinet_costs=deepcopy(children)),
+                 cost_detail_rows=[dict(stale=True)])
+        before=deepcopy(row)
+        self.assertTrue(reconcile_ganged_rounding(row))
+        self.assertEqual(row['formula']['auxiliary_cost'],20.46)
+        self.assertEqual(row['formula']['spray_cost'],40.34)
+        self.assertEqual(row['formula_base'],before['formula_base'])
+        self.assertNotIn('cost_detail_rows',row)
+        self.assertFalse(reconcile_ganged_rounding(row))
+        ui._refresh_item_cost(before,{},read_only=True)
+        self.assertEqual(before['formula']['auxiliary_cost'],20.47)
+
+    def test_ganged_rounding_keeps_adjustments_incomplete_and_disagreeing_costs(self):
+        from cost_recovery import reconcile_ganged_rounding
+        children=[dict(formula_cost=dict(auxiliary_cost=10.23)) for _ in range(2)]
+        original=dict(formula=dict(auxiliary_cost=20.47,ganged_cabinet_costs=deepcopy(children)),
+                      formula_base=dict(auxiliary_cost=20.46,ganged_cabinet_costs=deepcopy(children)))
+        for kind in ('changed_child','changed_coefficient','explicit_base','large_difference','different_base','missing_child','invalid'):
+            row=deepcopy(original)
+            if kind=='changed_child':row['formula']['ganged_cabinet_costs'][0]['formula_cost']['auxiliary_cost']=10.24
+            elif kind=='changed_coefficient':row['formula']['ganged_cabinet_costs'][0]['scheme2_coefficient_state']={'labor_discount':.5}
+            elif kind=='explicit_base':row['scheme2_cost_bases']={'auxiliary_cost':20.46}
+            elif kind=='large_difference':row['formula']['auxiliary_cost']=20.48
+            elif kind=='different_base':row['formula_base']['auxiliary_cost']=20.45
+            elif kind=='missing_child':row['formula']['ganged_cabinet_costs'][0]['formula_cost'].clear()
+            else:row['formula']['auxiliary_cost']=float('inf')
+            before=deepcopy(row)
+            with self.subTest(kind=kind):
+                self.assertFalse(reconcile_ganged_rounding(row))
+                self.assertEqual(row,before)
+
 
 if __name__=='__main__':unittest.main(verbosity=2)

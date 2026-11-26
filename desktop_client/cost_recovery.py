@@ -6,6 +6,41 @@ RECOVERY_FORM_MAX_HEIGHT = 360
 RECOVERY_DIALOG_RESERVED_HEIGHT = 240
 
 
+def reconcile_ganged_rounding(item):
+    """Repair legacy cent drift only when saved base and unchanged children agree."""
+    from quick_discount_rules import money, money_sum
+    formula, base = item.get('formula') or {}, item.get('formula_base') or {}
+    children, originals = formula.get('ganged_cabinet_costs'), base.get('ganged_cabinet_costs')
+    if not isinstance(children, list) or not isinstance(originals, list) or len(children) < 2 or len(children) != len(originals):
+        return False
+    changed = False
+    for key in ('material_cost', 'auxiliary_cost', 'labor_cost', 'spray_cost'):
+        if key in (item.get('scheme2_cost_bases') or {}):
+            continue
+        try:
+            current, saved = formula[key], base[key]
+            if any(isinstance(v, bool) or not math.isfinite(float(v)) or float(v) < 0 for v in (current, saved)):
+                continue
+            values = []
+            for child, original in zip(children, originals):
+                value, previous = child['formula_cost'][key], original['formula_cost'][key]
+                if child.get('scheme2_coefficient_state') or isinstance(value, bool) or isinstance(previous, bool):
+                    raise ValueError('Adjusted or invalid child')
+                if not math.isfinite(float(value)) or float(value) < 0 or float(value) != float(previous):
+                    raise ValueError('Changed child')
+                values.append(value)
+            expected = money_sum(values)
+            cents = round(money(current) * 100) - round(expected * 100)
+            if money(saved) == expected and abs(cents) == 1:
+                formula[key] = expected
+                changed = True
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    if changed:
+        item.pop('cost_detail_rows', None)
+    return changed
+
+
 def _positive(value):
     try:
         return not isinstance(value, bool) and math.isfinite(float(value)) and float(value) > 0

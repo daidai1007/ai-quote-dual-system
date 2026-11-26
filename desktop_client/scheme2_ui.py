@@ -5364,6 +5364,8 @@ def _received_cost_view(window):
 
 def _refresh_item_cost(item, defaults, *, read_only):
     if not read_only:
+        from cost_recovery import reconcile_ganged_rounding
+        reconcile_ganged_rounding(item)
         _remove_zero_quantity_installation_boards(item)
         item['manufacturing_cost_basis'] = MANUFACTURING_BASIS
         item['tax_cost_basis'] = TAX_COST_BASIS
